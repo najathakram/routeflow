@@ -1,0 +1,36 @@
+955b52395465ed38977be7f7a4b74553
+/**
+ * "Raise a purchase order" on the scan flow (units/PO step 7). The API builds a draft PO from the bill's
+ * own lines and links the two: the bill becomes money-only and the PO moves the stock when it is
+ * received. It refuses a supplier-less bill or an unmapped line (a PO line without a product can't
+ * exist), so the toggle is offered only when those hold.
+ */ "use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, {
+        enumerable: true,
+        get: Object.getOwnPropertyDescriptor(all, name).get
+    });
+}
+_export(exports, {
+    get RAISED_PO_NOTE () {
+        return RAISED_PO_NOTE;
+    },
+    get raisePoBlocker () {
+        return raisePoBlocker;
+    }
+});
+function raisePoBlocker(supplierId, items) {
+    if (!supplierId) return "Select a supplier first.";
+    if (items.length === 0) return "Add at least one line first.";
+    const unmapped = items.filter((i)=>!i.productId).length;
+    if (unmapped > 0) {
+        return `Match ${unmapped === 1 ? "the 1 unmatched line" : `the ${unmapped} unmatched lines`} to a product first.`;
+    }
+    return null;
+}
+const RAISED_PO_NOTE = "Draft purchase order raised — receive it to update inventory (the bill itself doesn't move stock)";
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2xpYi9yYWlzZS1wby50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqIFwiUmFpc2UgYSBwdXJjaGFzZSBvcmRlclwiIG9uIHRoZSBzY2FuIGZsb3cgKHVuaXRzL1BPIHN0ZXAgNykuIFRoZSBBUEkgYnVpbGRzIGEgZHJhZnQgUE8gZnJvbSB0aGUgYmlsbCdzXG4gKiBvd24gbGluZXMgYW5kIGxpbmtzIHRoZSB0d286IHRoZSBiaWxsIGJlY29tZXMgbW9uZXktb25seSBhbmQgdGhlIFBPIG1vdmVzIHRoZSBzdG9jayB3aGVuIGl0IGlzXG4gKiByZWNlaXZlZC4gSXQgcmVmdXNlcyBhIHN1cHBsaWVyLWxlc3MgYmlsbCBvciBhbiB1bm1hcHBlZCBsaW5lIChhIFBPIGxpbmUgd2l0aG91dCBhIHByb2R1Y3QgY2FuJ3RcbiAqIGV4aXN0KSwgc28gdGhlIHRvZ2dsZSBpcyBvZmZlcmVkIG9ubHkgd2hlbiB0aG9zZSBob2xkLlxuICovXG5leHBvcnQgZnVuY3Rpb24gcmFpc2VQb0Jsb2NrZXIoXG4gIHN1cHBsaWVySWQ6IHN0cmluZyxcbiAgaXRlbXM6IHsgcHJvZHVjdElkPzogc3RyaW5nIHwgbnVsbCB9W10sXG4pOiBzdHJpbmcgfCBudWxsIHtcbiAgaWYgKCFzdXBwbGllcklkKSByZXR1cm4gXCJTZWxlY3QgYSBzdXBwbGllciBmaXJzdC5cIjtcbiAgaWYgKGl0ZW1zLmxlbmd0aCA9PT0gMCkgcmV0dXJuIFwiQWRkIGF0IGxlYXN0IG9uZSBsaW5lIGZpcnN0LlwiO1xuICBjb25zdCB1bm1hcHBlZCA9IGl0ZW1zLmZpbHRlcigoaSkgPT4gIWkucHJvZHVjdElkKS5sZW5ndGg7XG4gIGlmICh1bm1hcHBlZCA+IDApIHtcbiAgICByZXR1cm4gYE1hdGNoICR7dW5tYXBwZWQgPT09IDEgPyBcInRoZSAxIHVubWF0Y2hlZCBsaW5lXCIgOiBgdGhlICR7dW5tYXBwZWR9IHVubWF0Y2hlZCBsaW5lc2B9IHRvIGEgcHJvZHVjdCBmaXJzdC5gO1xuICB9XG4gIHJldHVybiBudWxsO1xufVxuXG4vKiogVGhlIG5vdGUgc2hvd24gYWZ0ZXIgYSBzY2FuLWNyZWF0ZWQgYmlsbCB0aGF0IHJhaXNlZCBhIFBPIOKAlCBzdG9jayB3YWl0cyBmb3IgdGhlIFBPJ3MgcmVjZWlwdC4gKi9cbmV4cG9ydCBjb25zdCBSQUlTRURfUE9fTk9URSA9XG4gIFwiRHJhZnQgcHVyY2hhc2Ugb3JkZXIgcmFpc2VkIOKAlCByZWNlaXZlIGl0IHRvIHVwZGF0ZSBpbnZlbnRvcnkgKHRoZSBiaWxsIGl0c2VsZiBkb2Vzbid0IG1vdmUgc3RvY2spXCI7XG4iXSwibmFtZXMiOlsiUkFJU0VEX1BPX05PVEUiLCJyYWlzZVBvQmxvY2tlciIsInN1cHBsaWVySWQiLCJpdGVtcyIsImxlbmd0aCIsInVubWFwcGVkIiwiZmlsdGVyIiwiaSIsInByb2R1Y3RJZCJdLCJtYXBwaW5ncyI6IkFBQUE7Ozs7O0NBS0M7Ozs7Ozs7Ozs7O1FBZVlBO2VBQUFBOztRQWRHQztlQUFBQTs7O0FBQVQsU0FBU0EsZUFDZEMsVUFBa0IsRUFDbEJDLEtBQXNDO0lBRXRDLElBQUksQ0FBQ0QsWUFBWSxPQUFPO0lBQ3hCLElBQUlDLE1BQU1DLE1BQU0sS0FBSyxHQUFHLE9BQU87SUFDL0IsTUFBTUMsV0FBV0YsTUFBTUcsTUFBTSxDQUFDLENBQUNDLElBQU0sQ0FBQ0EsRUFBRUMsU0FBUyxFQUFFSixNQUFNO0lBQ3pELElBQUlDLFdBQVcsR0FBRztRQUNoQixPQUFPLENBQUMsTUFBTSxFQUFFQSxhQUFhLElBQUkseUJBQXlCLENBQUMsSUFBSSxFQUFFQSxTQUFTLGdCQUFnQixDQUFDLENBQUMsb0JBQW9CLENBQUM7SUFDbkg7SUFDQSxPQUFPO0FBQ1Q7QUFHTyxNQUFNTCxpQkFDWCJ9

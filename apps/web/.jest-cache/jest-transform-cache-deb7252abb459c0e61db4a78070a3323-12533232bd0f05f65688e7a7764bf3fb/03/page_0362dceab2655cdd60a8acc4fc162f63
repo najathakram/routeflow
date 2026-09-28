@@ -1,0 +1,473 @@
+a20384efe995eca5b475656ac096161c
+"use client";
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+Object.defineProperty(exports, "default", {
+    enumerable: true,
+    get: function() {
+        return PaymentDetailPage;
+    }
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_default(require("react"));
+const _navigation = require("next/navigation");
+const _link = /*#__PURE__*/ _interop_require_default(require("next/link"));
+const _lucidereact = require("lucide-react");
+const _pagetitlecontext = require("../../../../../lib/page-title-context");
+const _invoices = require("../../../../../lib/api/invoices");
+const _web = require("@routeflow/ui/web");
+const _formatting = require("../../../../../lib/formatting");
+const _paymentmethods = require("../../../../../lib/payment-methods");
+function _interop_require_default(obj) {
+    return obj && obj.__esModule ? obj : {
+        default: obj
+    };
+}
+const BANK_DATE_HELP = "When the funds actually landed in your account — e.g. a post-dated check's clearing date. Leave blank if unknown.";
+function PaymentDetailPage() {
+    const { setTitle } = (0, _pagetitlecontext.usePageTitle)();
+    const { id } = (0, _navigation.useParams)();
+    const router = (0, _navigation.useRouter)();
+    const { toast } = (0, _web.useToast)();
+    const { data: payment, isLoading } = (0, _invoices.usePaymentDetail)(id);
+    const voidPayment = (0, _invoices.useVoidPayment)();
+    _react.default.useEffect(()=>{
+        setTitle("Payment Receipt");
+    }, [
+        setTitle
+    ]);
+    // Enrich the "Applied Invoice" card with the invoice's own total / balance /
+    // status. Guarded below for loading/undefined so the card degrades gracefully.
+    const { data: invoice } = (0, _invoices.useInvoice)(payment?.invoice.id ?? "");
+    // Receipt image (expense-viewer pattern): resolve the presigned URL once we
+    // know the payment has one attached. Called unconditionally (before the
+    // loading/not-found early returns) to respect the Rules of Hooks.
+    const getPaymentImageUrl = (0, _invoices.useGetPaymentImageUrl)();
+    const [receiptUrl, setReceiptUrl] = _react.default.useState(null);
+    _react.default.useEffect(()=>{
+        setReceiptUrl(null);
+        if (payment?.id && payment.imageKey) {
+            getPaymentImageUrl.mutateAsync(payment.id).then((r)=>setReceiptUrl(r.url)).catch(()=>{});
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [
+        payment?.id,
+        payment?.imageKey
+    ]);
+    const handleVoid = async ()=>{
+        if (!payment) return;
+        if (!confirm("Void this payment? This reverses its effect on the invoice and cannot be undone.")) return;
+        try {
+            await voidPayment.mutateAsync({
+                invoiceId: payment.invoice.id,
+                paymentId: payment.id
+            });
+            toast({
+                title: "Payment voided",
+                variant: "success"
+            });
+        } catch  {
+            toast({
+                title: "Failed to void payment",
+                variant: "error"
+            });
+        }
+    };
+    if (isLoading) {
+        return /*#__PURE__*/ (0, _jsxruntime.jsx)("div", {
+            className: "flex h-64 items-center justify-center p-6",
+            children: /*#__PURE__*/ (0, _jsxruntime.jsx)("div", {
+                className: "h-8 w-8 animate-spin rounded-full border-4 border-brand-500 border-t-transparent"
+            })
+        });
+    }
+    if (!payment) {
+        return /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+            className: "p-6 text-center space-y-3",
+            children: [
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                    className: "text-navy/70",
+                    children: "Payment not found."
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                    onClick: ()=>router.back(),
+                    className: "text-brand-500 hover:underline text-sm",
+                    children: "← Back"
+                })
+            ]
+        });
+    }
+    const status = payment.status ?? "PAID";
+    const date = (0, _formatting.fmtDate)(payment.paidAt ?? payment.createdAt);
+    const hasBankCharges = payment.bankCharges != null && payment.bankCharges > 0;
+    return /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+        className: "space-y-5 p-6",
+        children: [
+            /*#__PURE__*/ (0, _jsxruntime.jsxs)(_link.default, {
+                href: "/finance/payments",
+                className: "flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors",
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.ArrowLeft, {
+                        className: "h-4 w-4"
+                    }),
+                    "Payments"
+                ]
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                className: "flex flex-wrap items-start justify-between gap-4",
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                className: "flex items-center gap-3",
+                                children: [
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("h2", {
+                                        className: "font-mono text-2xl font-bold text-navy",
+                                        children: payment.paymentNumber ?? "Payment"
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)(_web.Badge, {
+                                        status: status
+                                    })
+                                ]
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("p", {
+                                className: "mt-1 text-sm text-navy/70",
+                                children: [
+                                    "Payment received \xb7 ",
+                                    payment.invoice.customer?.businessName ?? "—",
+                                    " \xb7 ",
+                                    date
+                                ]
+                            })
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                        className: "flex flex-wrap items-center gap-2",
+                        children: [
+                            status !== "VOID" && /*#__PURE__*/ (0, _jsxruntime.jsx)(_web.Button, {
+                                size: "sm",
+                                variant: "danger",
+                                leftIcon: /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.Ban, {
+                                    className: "h-4 w-4"
+                                }),
+                                onClick: handleVoid,
+                                loading: voidPayment.isPending,
+                                children: "Void Payment"
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)(_web.Button, {
+                                size: "sm",
+                                variant: "secondary",
+                                leftIcon: /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.Printer, {
+                                    className: "h-4 w-4"
+                                }),
+                                onClick: ()=>window.print(),
+                                children: "Print receipt"
+                            })
+                        ]
+                    })
+                ]
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                className: "grid grid-cols-1 items-start gap-4 lg:grid-cols-[1.5fr_1fr]",
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)(_web.Card, {
+                        className: "p-8",
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                className: "mb-6",
+                                children: [
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("h2", {
+                                        className: "display text-[26px]",
+                                        children: "Payment Receipt"
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("p", {
+                                        className: "mono mt-1 text-[12.5px] text-navy/70",
+                                        children: [
+                                            payment.paymentNumber ? `${payment.paymentNumber} · ` : "",
+                                            date
+                                        ]
+                                    })
+                                ]
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                className: "grid grid-cols-1 gap-x-10 sm:grid-cols-2",
+                                children: [
+                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                        className: "flex items-center justify-between gap-3 border-b border-surface-border py-2.5 text-[13px]",
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                className: "text-navy/70",
+                                                children: "Received from"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                className: "text-right font-medium text-navy",
+                                                children: payment.invoice.customer?.businessName ?? "—"
+                                            })
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                        className: "flex items-center justify-between gap-3 border-b border-surface-border py-2.5 text-[13px]",
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                className: "text-navy/70",
+                                                children: "Payment date"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                className: "text-right font-medium text-navy",
+                                                children: date
+                                            })
+                                        ]
+                                    }),
+                                    payment.settledAt && /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                        className: "flex items-center justify-between gap-3 border-b border-surface-border py-2.5 text-[13px]",
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                className: "text-navy/70",
+                                                title: BANK_DATE_HELP,
+                                                children: "Money received in bank"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                className: "text-right font-medium text-navy",
+                                                children: (0, _formatting.fmtDate)(payment.settledAt)
+                                            })
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                        className: "flex items-center justify-between gap-3 border-b border-surface-border py-2.5 text-[13px]",
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                className: "text-navy/70",
+                                                children: "Payment mode"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                className: "text-right font-medium text-navy",
+                                                children: (0, _paymentmethods.paymentMethodLabel)(payment.method)
+                                            })
+                                        ]
+                                    }),
+                                    payment.reference && /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                        className: "flex items-center justify-between gap-3 border-b border-surface-border py-2.5 text-[13px]",
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                className: "text-navy/70",
+                                                children: "Reference"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                className: "mono text-right font-medium text-navy",
+                                                children: payment.reference
+                                            })
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                        className: "flex items-center justify-between gap-3 border-b border-surface-border py-2.5 text-[13px]",
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                className: "text-navy/70",
+                                                children: "Applied to"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)(_link.default, {
+                                                href: `/invoices/${payment.invoice.id}`,
+                                                className: "text-right font-medium text-brand-600 hover:underline",
+                                                children: payment.invoice.invoiceNumber
+                                            })
+                                        ]
+                                    })
+                                ]
+                            }),
+                            payment.notes && /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                className: "mt-6 border-t border-surface-border pt-4",
+                                children: [
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                        className: "overline mb-1",
+                                        children: "Notes"
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                        className: "text-sm text-navy/70 whitespace-pre-line",
+                                        children: payment.notes
+                                    })
+                                ]
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("div", {
+                                className: "mt-6 flex justify-end",
+                                children: /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                    className: "w-full max-w-[300px]",
+                                    children: [
+                                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                            className: "flex justify-between py-1.5 text-[13.5px] text-navy/70",
+                                            children: [
+                                                /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                    children: "Amount received"
+                                                }),
+                                                /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                    className: "money text-navy",
+                                                    children: (0, _formatting.fmt)(payment.amount)
+                                                })
+                                            ]
+                                        }),
+                                        hasBankCharges && /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                            className: "flex justify-between py-1.5 text-[13.5px] text-navy/70",
+                                            children: [
+                                                /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                    children: "Bank charges"
+                                                }),
+                                                /*#__PURE__*/ (0, _jsxruntime.jsxs)("span", {
+                                                    className: "money text-danger",
+                                                    children: [
+                                                        "− ",
+                                                        (0, _formatting.fmt)(payment.bankCharges)
+                                                    ]
+                                                })
+                                            ]
+                                        }),
+                                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                            className: "mt-1.5 flex justify-between border-t border-navy pt-3 text-base font-semibold text-navy",
+                                            children: [
+                                                /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                    children: "Total applied"
+                                                }),
+                                                /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                    className: "money",
+                                                    children: (0, _formatting.fmt)(payment.amount)
+                                                })
+                                            ]
+                                        })
+                                    ]
+                                })
+                            })
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                        className: "space-y-4",
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)(_web.Card, {
+                                title: "Applied Invoice",
+                                children: /*#__PURE__*/ (0, _jsxruntime.jsxs)("dl", {
+                                    className: "space-y-3 text-sm",
+                                    children: [
+                                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                            className: "flex items-center justify-between",
+                                            children: [
+                                                /*#__PURE__*/ (0, _jsxruntime.jsx)("dt", {
+                                                    className: "text-navy/70",
+                                                    children: "Invoice"
+                                                }),
+                                                /*#__PURE__*/ (0, _jsxruntime.jsx)("dd", {
+                                                    children: /*#__PURE__*/ (0, _jsxruntime.jsx)(_link.default, {
+                                                        href: `/invoices/${payment.invoice.id}`,
+                                                        className: "mono text-brand-600 hover:underline",
+                                                        children: payment.invoice.invoiceNumber
+                                                    })
+                                                })
+                                            ]
+                                        }),
+                                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                            className: "flex items-center justify-between",
+                                            children: [
+                                                /*#__PURE__*/ (0, _jsxruntime.jsx)("dt", {
+                                                    className: "text-navy/70",
+                                                    children: "Applied"
+                                                }),
+                                                /*#__PURE__*/ (0, _jsxruntime.jsx)("dd", {
+                                                    className: "money text-success",
+                                                    children: (0, _formatting.fmt)(payment.amount)
+                                                })
+                                            ]
+                                        }),
+                                        invoice && /*#__PURE__*/ (0, _jsxruntime.jsxs)(_jsxruntime.Fragment, {
+                                            children: [
+                                                /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                                    className: "flex items-center justify-between",
+                                                    children: [
+                                                        /*#__PURE__*/ (0, _jsxruntime.jsx)("dt", {
+                                                            className: "text-navy/70",
+                                                            children: "Invoice total"
+                                                        }),
+                                                        /*#__PURE__*/ (0, _jsxruntime.jsx)("dd", {
+                                                            className: "money text-navy",
+                                                            children: (0, _formatting.fmt)(invoice.total)
+                                                        })
+                                                    ]
+                                                }),
+                                                invoice.balanceDue != null && /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                                    className: "flex items-center justify-between",
+                                                    children: [
+                                                        /*#__PURE__*/ (0, _jsxruntime.jsx)("dt", {
+                                                            className: "text-navy/70",
+                                                            children: "Remaining balance"
+                                                        }),
+                                                        /*#__PURE__*/ (0, _jsxruntime.jsx)("dd", {
+                                                            className: "money text-navy",
+                                                            children: (0, _formatting.fmt)(invoice.balanceDue)
+                                                        })
+                                                    ]
+                                                }),
+                                                /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                                    className: "flex items-center justify-between",
+                                                    children: [
+                                                        /*#__PURE__*/ (0, _jsxruntime.jsx)("dt", {
+                                                            className: "text-navy/70",
+                                                            children: "Invoice status"
+                                                        }),
+                                                        /*#__PURE__*/ (0, _jsxruntime.jsx)("dd", {
+                                                            children: /*#__PURE__*/ (0, _jsxruntime.jsx)(_web.Badge, {
+                                                                status: invoice.status
+                                                            })
+                                                        })
+                                                    ]
+                                                })
+                                            ]
+                                        })
+                                    ]
+                                })
+                            }),
+                            payment.imageKey && /*#__PURE__*/ (0, _jsxruntime.jsx)(_web.Card, {
+                                title: "Receipt Image",
+                                children: receiptUrl ? /*#__PURE__*/ (0, _jsxruntime.jsx)("a", {
+                                    href: receiptUrl,
+                                    target: "_blank",
+                                    rel: "noopener noreferrer",
+                                    children: /*#__PURE__*/ (0, _jsxruntime.jsx)("img", {
+                                        src: receiptUrl,
+                                        alt: "Payment receipt",
+                                        className: "max-h-80 w-full rounded-lg border border-surface-border object-contain"
+                                    })
+                                }) : /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                    className: "text-sm text-navy/70",
+                                    children: "Loading receipt…"
+                                })
+                            }),
+                            status !== "VOID" && /*#__PURE__*/ (0, _jsxruntime.jsxs)(_web.Card, {
+                                className: "border border-danger-bg",
+                                children: [
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("h3", {
+                                        className: "mb-2 text-base font-semibold text-danger",
+                                        children: "Void"
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                        className: "text-[12.5px] leading-relaxed text-navy/70",
+                                        children: "Voiding reverses the application, returns the invoice to its prior balance, and keeps this receipt for the audit trail."
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)(_web.Button, {
+                                        variant: "danger",
+                                        size: "sm",
+                                        className: "mt-3 w-full",
+                                        leftIcon: /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.Ban, {
+                                            className: "h-4 w-4"
+                                        }),
+                                        onClick: handleVoid,
+                                        loading: voidPayment.isPending,
+                                        children: "Void Payment…"
+                                    })
+                                ]
+                            })
+                        ]
+                    })
+                ]
+            })
+        ]
+    });
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS9maW5hbmNlL3BheW1lbnRzL1tpZF0vcGFnZS50c3giXSwic291cmNlc0NvbnRlbnQiOlsiXCJ1c2UgY2xpZW50XCI7XG5cbmltcG9ydCBSZWFjdCBmcm9tIFwicmVhY3RcIjtcbmltcG9ydCB7IHVzZVBhcmFtcywgdXNlUm91dGVyIH0gZnJvbSBcIm5leHQvbmF2aWdhdGlvblwiO1xuaW1wb3J0IExpbmsgZnJvbSBcIm5leHQvbGlua1wiO1xuaW1wb3J0IHsgQXJyb3dMZWZ0LCBCYW4sIFByaW50ZXIgfSBmcm9tIFwibHVjaWRlLXJlYWN0XCI7XG5pbXBvcnQgeyB1c2VQYWdlVGl0bGUgfSBmcm9tIFwiQC9saWIvcGFnZS10aXRsZS1jb250ZXh0XCI7XG5pbXBvcnQge1xuICB1c2VJbnZvaWNlLFxuICB1c2VQYXltZW50RGV0YWlsLFxuICB1c2VWb2lkUGF5bWVudCxcbiAgdXNlR2V0UGF5bWVudEltYWdlVXJsLFxufSBmcm9tIFwiQC9saWIvYXBpL2ludm9pY2VzXCI7XG5pbXBvcnQgeyBCYWRnZSwgQnV0dG9uLCBDYXJkLCB1c2VUb2FzdCB9IGZyb20gXCJAcm91dGVmbG93L3VpL3dlYlwiO1xuaW1wb3J0IHsgZm10LCBmbXREYXRlIH0gZnJvbSBcIkAvbGliL2Zvcm1hdHRpbmdcIjtcbmltcG9ydCB7IHBheW1lbnRNZXRob2RMYWJlbCB9IGZyb20gXCJAL2xpYi9wYXltZW50LW1ldGhvZHNcIjtcblxuY29uc3QgQkFOS19EQVRFX0hFTFAgPVxuICBcIldoZW4gdGhlIGZ1bmRzIGFjdHVhbGx5IGxhbmRlZCBpbiB5b3VyIGFjY291bnQg4oCUIGUuZy4gYSBwb3N0LWRhdGVkIGNoZWNrJ3MgY2xlYXJpbmcgZGF0ZS4gTGVhdmUgYmxhbmsgaWYgdW5rbm93bi5cIjtcblxuZXhwb3J0IGRlZmF1bHQgZnVuY3Rpb24gUGF5bWVudERldGFpbFBhZ2UoKSB7XG4gIGNvbnN0IHsgc2V0VGl0bGUgfSA9IHVzZVBhZ2VUaXRsZSgpO1xuICBjb25zdCB7IGlkIH0gPSB1c2VQYXJhbXM8eyBpZDogc3RyaW5nIH0+KCk7XG4gIGNvbnN0IHJvdXRlciA9IHVzZVJvdXRlcigpO1xuICBjb25zdCB7IHRvYXN0IH0gPSB1c2VUb2FzdCgpO1xuXG4gIGNvbnN0IHsgZGF0YTogcGF5bWVudCwgaXNMb2FkaW5nIH0gPSB1c2VQYXltZW50RGV0YWlsKGlkKTtcbiAgY29uc3Qgdm9pZFBheW1lbnQgPSB1c2VWb2lkUGF5bWVudCgpO1xuXG4gIFJlYWN0LnVzZUVmZmVjdCgoKSA9PiB7XG4gICAgc2V0VGl0bGUoXCJQYXltZW50IFJlY2VpcHRcIik7XG4gIH0sIFtzZXRUaXRsZV0pO1xuXG4gIC8vIEVucmljaCB0aGUgXCJBcHBsaWVkIEludm9pY2VcIiBjYXJkIHdpdGggdGhlIGludm9pY2UncyBvd24gdG90YWwgLyBiYWxhbmNlIC9cbiAgLy8gc3RhdHVzLiBHdWFyZGVkIGJlbG93IGZvciBsb2FkaW5nL3VuZGVmaW5lZCBzbyB0aGUgY2FyZCBkZWdyYWRlcyBncmFjZWZ1bGx5LlxuICBjb25zdCB7IGRhdGE6IGludm9pY2UgfSA9IHVzZUludm9pY2UocGF5bWVudD8uaW52b2ljZS5pZCA/PyBcIlwiKTtcblxuICAvLyBSZWNlaXB0IGltYWdlIChleHBlbnNlLXZpZXdlciBwYXR0ZXJuKTogcmVzb2x2ZSB0aGUgcHJlc2lnbmVkIFVSTCBvbmNlIHdlXG4gIC8vIGtub3cgdGhlIHBheW1lbnQgaGFzIG9uZSBhdHRhY2hlZC4gQ2FsbGVkIHVuY29uZGl0aW9uYWxseSAoYmVmb3JlIHRoZVxuICAvLyBsb2FkaW5nL25vdC1mb3VuZCBlYXJseSByZXR1cm5zKSB0byByZXNwZWN0IHRoZSBSdWxlcyBvZiBIb29rcy5cbiAgY29uc3QgZ2V0UGF5bWVudEltYWdlVXJsID0gdXNlR2V0UGF5bWVudEltYWdlVXJsKCk7XG4gIGNvbnN0IFtyZWNlaXB0VXJsLCBzZXRSZWNlaXB0VXJsXSA9IFJlYWN0LnVzZVN0YXRlPHN0cmluZyB8IG51bGw+KG51bGwpO1xuXG4gIFJlYWN0LnVzZUVmZmVjdCgoKSA9PiB7XG4gICAgc2V0UmVjZWlwdFVybChudWxsKTtcbiAgICBpZiAocGF5bWVudD8uaWQgJiYgcGF5bWVudC5pbWFnZUtleSkge1xuICAgICAgZ2V0UGF5bWVudEltYWdlVXJsXG4gICAgICAgIC5tdXRhdGVBc3luYyhwYXltZW50LmlkKVxuICAgICAgICAudGhlbigocikgPT4gc2V0UmVjZWlwdFVybChyLnVybCkpXG4gICAgICAgIC5jYXRjaCgoKSA9PiB7fSk7XG4gICAgfVxuICAgIC8vIGVzbGludC1kaXNhYmxlLW5leHQtbGluZSByZWFjdC1ob29rcy9leGhhdXN0aXZlLWRlcHNcbiAgfSwgW3BheW1lbnQ/LmlkLCBwYXltZW50Py5pbWFnZUtleV0pO1xuXG4gIGNvbnN0IGhhbmRsZVZvaWQgPSBhc3luYyAoKSA9PiB7XG4gICAgaWYgKCFwYXltZW50KSByZXR1cm47XG4gICAgaWYgKFxuICAgICAgIWNvbmZpcm0oXCJWb2lkIHRoaXMgcGF5bWVudD8gVGhpcyByZXZlcnNlcyBpdHMgZWZmZWN0IG9uIHRoZSBpbnZvaWNlIGFuZCBjYW5ub3QgYmUgdW5kb25lLlwiKVxuICAgIClcbiAgICAgIHJldHVybjtcbiAgICB0cnkge1xuICAgICAgYXdhaXQgdm9pZFBheW1lbnQubXV0YXRlQXN5bmMoeyBpbnZvaWNlSWQ6IHBheW1lbnQuaW52b2ljZS5pZCwgcGF5bWVudElkOiBwYXltZW50LmlkIH0pO1xuICAgICAgdG9hc3QoeyB0aXRsZTogXCJQYXltZW50IHZvaWRlZFwiLCB2YXJpYW50OiBcInN1Y2Nlc3NcIiB9KTtcbiAgICB9IGNhdGNoIHtcbiAgICAgIHRvYXN0KHsgdGl0bGU6IFwiRmFpbGVkIHRvIHZvaWQgcGF5bWVudFwiLCB2YXJpYW50OiBcImVycm9yXCIgfSk7XG4gICAgfVxuICB9O1xuXG4gIGlmIChpc0xvYWRpbmcpIHtcbiAgICByZXR1cm4gKFxuICAgICAgPGRpdiBjbGFzc05hbWU9XCJmbGV4IGgtNjQgaXRlbXMtY2VudGVyIGp1c3RpZnktY2VudGVyIHAtNlwiPlxuICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cImgtOCB3LTggYW5pbWF0ZS1zcGluIHJvdW5kZWQtZnVsbCBib3JkZXItNCBib3JkZXItYnJhbmQtNTAwIGJvcmRlci10LXRyYW5zcGFyZW50XCIgLz5cbiAgICAgIDwvZGl2PlxuICAgICk7XG4gIH1cblxuICBpZiAoIXBheW1lbnQpIHtcbiAgICByZXR1cm4gKFxuICAgICAgPGRpdiBjbGFzc05hbWU9XCJwLTYgdGV4dC1jZW50ZXIgc3BhY2UteS0zXCI+XG4gICAgICAgIDxwIGNsYXNzTmFtZT1cInRleHQtbmF2eS83MFwiPlBheW1lbnQgbm90IGZvdW5kLjwvcD5cbiAgICAgICAgPGJ1dHRvbiBvbkNsaWNrPXsoKSA9PiByb3V0ZXIuYmFjaygpfSBjbGFzc05hbWU9XCJ0ZXh0LWJyYW5kLTUwMCBob3Zlcjp1bmRlcmxpbmUgdGV4dC1zbVwiPlxuICAgICAgICAgIOKGkCBCYWNrXG4gICAgICAgIDwvYnV0dG9uPlxuICAgICAgPC9kaXY+XG4gICAgKTtcbiAgfVxuXG4gIGNvbnN0IHN0YXR1cyA9IHBheW1lbnQuc3RhdHVzID8/IFwiUEFJRFwiO1xuICBjb25zdCBkYXRlID0gZm10RGF0ZShwYXltZW50LnBhaWRBdCA/PyBwYXltZW50LmNyZWF0ZWRBdCk7XG4gIGNvbnN0IGhhc0JhbmtDaGFyZ2VzID0gcGF5bWVudC5iYW5rQ2hhcmdlcyAhPSBudWxsICYmIHBheW1lbnQuYmFua0NoYXJnZXMgPiAwO1xuXG4gIHJldHVybiAoXG4gICAgPGRpdiBjbGFzc05hbWU9XCJzcGFjZS15LTUgcC02XCI+XG4gICAgICB7LyogQmFjayAqL31cbiAgICAgIDxMaW5rXG4gICAgICAgIGhyZWY9XCIvZmluYW5jZS9wYXltZW50c1wiXG4gICAgICAgIGNsYXNzTmFtZT1cImZsZXggaXRlbXMtY2VudGVyIGdhcC0xLjUgdGV4dC1zbSB0ZXh0LW5hdnkvNzAgaG92ZXI6dGV4dC1uYXZ5IHRyYW5zaXRpb24tY29sb3JzXCJcbiAgICAgID5cbiAgICAgICAgPEFycm93TGVmdCBjbGFzc05hbWU9XCJoLTQgdy00XCIgLz5cbiAgICAgICAgUGF5bWVudHNcbiAgICAgIDwvTGluaz5cblxuICAgICAgey8qIEhlYWRlciAocGgtcm93KSAqL31cbiAgICAgIDxkaXYgY2xhc3NOYW1lPVwiZmxleCBmbGV4LXdyYXAgaXRlbXMtc3RhcnQganVzdGlmeS1iZXR3ZWVuIGdhcC00XCI+XG4gICAgICAgIDxkaXY+XG4gICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJmbGV4IGl0ZW1zLWNlbnRlciBnYXAtM1wiPlxuICAgICAgICAgICAgPGgyIGNsYXNzTmFtZT1cImZvbnQtbW9ubyB0ZXh0LTJ4bCBmb250LWJvbGQgdGV4dC1uYXZ5XCI+XG4gICAgICAgICAgICAgIHtwYXltZW50LnBheW1lbnROdW1iZXIgPz8gXCJQYXltZW50XCJ9XG4gICAgICAgICAgICA8L2gyPlxuICAgICAgICAgICAgPEJhZGdlIHN0YXR1cz17c3RhdHVzIGFzIFwiUEFJRFwiIHwgXCJEUkFGVFwiIHwgXCJWT0lEXCJ9IC8+XG4gICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgPHAgY2xhc3NOYW1lPVwibXQtMSB0ZXh0LXNtIHRleHQtbmF2eS83MFwiPlxuICAgICAgICAgICAgUGF5bWVudCByZWNlaXZlZCDCtyB7cGF5bWVudC5pbnZvaWNlLmN1c3RvbWVyPy5idXNpbmVzc05hbWUgPz8gXCLigJRcIn0gwrcge2RhdGV9XG4gICAgICAgICAgPC9wPlxuICAgICAgICA8L2Rpdj5cblxuICAgICAgICB7LyogQWN0aW9ucyAqL31cbiAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJmbGV4IGZsZXgtd3JhcCBpdGVtcy1jZW50ZXIgZ2FwLTJcIj5cbiAgICAgICAgICB7c3RhdHVzICE9PSBcIlZPSURcIiAmJiAoXG4gICAgICAgICAgICA8QnV0dG9uXG4gICAgICAgICAgICAgIHNpemU9XCJzbVwiXG4gICAgICAgICAgICAgIHZhcmlhbnQ9XCJkYW5nZXJcIlxuICAgICAgICAgICAgICBsZWZ0SWNvbj17PEJhbiBjbGFzc05hbWU9XCJoLTQgdy00XCIgLz59XG4gICAgICAgICAgICAgIG9uQ2xpY2s9e2hhbmRsZVZvaWR9XG4gICAgICAgICAgICAgIGxvYWRpbmc9e3ZvaWRQYXltZW50LmlzUGVuZGluZ31cbiAgICAgICAgICAgID5cbiAgICAgICAgICAgICAgVm9pZCBQYXltZW50XG4gICAgICAgICAgICA8L0J1dHRvbj5cbiAgICAgICAgICApfVxuICAgICAgICAgIDxCdXR0b25cbiAgICAgICAgICAgIHNpemU9XCJzbVwiXG4gICAgICAgICAgICB2YXJpYW50PVwic2Vjb25kYXJ5XCJcbiAgICAgICAgICAgIGxlZnRJY29uPXs8UHJpbnRlciBjbGFzc05hbWU9XCJoLTQgdy00XCIgLz59XG4gICAgICAgICAgICBvbkNsaWNrPXsoKSA9PiB3aW5kb3cucHJpbnQoKX1cbiAgICAgICAgICA+XG4gICAgICAgICAgICBQcmludCByZWNlaXB0XG4gICAgICAgICAgPC9CdXR0b24+XG4gICAgICAgIDwvZGl2PlxuICAgICAgPC9kaXY+XG5cbiAgICAgIHsvKiBCb2R5OiBkb2MgKDEuNWZyKSArIHNpZGViYXIgKDFmcikgKi99XG4gICAgICA8ZGl2IGNsYXNzTmFtZT1cImdyaWQgZ3JpZC1jb2xzLTEgaXRlbXMtc3RhcnQgZ2FwLTQgbGc6Z3JpZC1jb2xzLVsxLjVmcl8xZnJdXCI+XG4gICAgICAgIHsvKiDilIDilIAgUmVjZWlwdCBkb2N1bWVudCDilIDilIAgKi99XG4gICAgICAgIDxDYXJkIGNsYXNzTmFtZT1cInAtOFwiPlxuICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwibWItNlwiPlxuICAgICAgICAgICAgPGgyIGNsYXNzTmFtZT1cImRpc3BsYXkgdGV4dC1bMjZweF1cIj5QYXltZW50IFJlY2VpcHQ8L2gyPlxuICAgICAgICAgICAgPHAgY2xhc3NOYW1lPVwibW9ubyBtdC0xIHRleHQtWzEyLjVweF0gdGV4dC1uYXZ5LzcwXCI+XG4gICAgICAgICAgICAgIHtwYXltZW50LnBheW1lbnROdW1iZXIgPyBgJHtwYXltZW50LnBheW1lbnROdW1iZXJ9IMK3IGAgOiBcIlwifVxuICAgICAgICAgICAgICB7ZGF0ZX1cbiAgICAgICAgICAgIDwvcD5cbiAgICAgICAgICA8L2Rpdj5cblxuICAgICAgICAgIHsvKiBLViBncmlkICovfVxuICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwiZ3JpZCBncmlkLWNvbHMtMSBnYXAteC0xMCBzbTpncmlkLWNvbHMtMlwiPlxuICAgICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJmbGV4IGl0ZW1zLWNlbnRlciBqdXN0aWZ5LWJldHdlZW4gZ2FwLTMgYm9yZGVyLWIgYm9yZGVyLXN1cmZhY2UtYm9yZGVyIHB5LTIuNSB0ZXh0LVsxM3B4XVwiPlxuICAgICAgICAgICAgICA8c3BhbiBjbGFzc05hbWU9XCJ0ZXh0LW5hdnkvNzBcIj5SZWNlaXZlZCBmcm9tPC9zcGFuPlxuICAgICAgICAgICAgICA8c3BhbiBjbGFzc05hbWU9XCJ0ZXh0LXJpZ2h0IGZvbnQtbWVkaXVtIHRleHQtbmF2eVwiPlxuICAgICAgICAgICAgICAgIHtwYXltZW50Lmludm9pY2UuY3VzdG9tZXI/LmJ1c2luZXNzTmFtZSA/PyBcIuKAlFwifVxuICAgICAgICAgICAgICA8L3NwYW4+XG4gICAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwiZmxleCBpdGVtcy1jZW50ZXIganVzdGlmeS1iZXR3ZWVuIGdhcC0zIGJvcmRlci1iIGJvcmRlci1zdXJmYWNlLWJvcmRlciBweS0yLjUgdGV4dC1bMTNweF1cIj5cbiAgICAgICAgICAgICAgPHNwYW4gY2xhc3NOYW1lPVwidGV4dC1uYXZ5LzcwXCI+UGF5bWVudCBkYXRlPC9zcGFuPlxuICAgICAgICAgICAgICA8c3BhbiBjbGFzc05hbWU9XCJ0ZXh0LXJpZ2h0IGZvbnQtbWVkaXVtIHRleHQtbmF2eVwiPntkYXRlfTwvc3Bhbj5cbiAgICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgICAge3BheW1lbnQuc2V0dGxlZEF0ICYmIChcbiAgICAgICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJmbGV4IGl0ZW1zLWNlbnRlciBqdXN0aWZ5LWJldHdlZW4gZ2FwLTMgYm9yZGVyLWIgYm9yZGVyLXN1cmZhY2UtYm9yZGVyIHB5LTIuNSB0ZXh0LVsxM3B4XVwiPlxuICAgICAgICAgICAgICAgIDxzcGFuIGNsYXNzTmFtZT1cInRleHQtbmF2eS83MFwiIHRpdGxlPXtCQU5LX0RBVEVfSEVMUH0+XG4gICAgICAgICAgICAgICAgICBNb25leSByZWNlaXZlZCBpbiBiYW5rXG4gICAgICAgICAgICAgICAgPC9zcGFuPlxuICAgICAgICAgICAgICAgIDxzcGFuIGNsYXNzTmFtZT1cInRleHQtcmlnaHQgZm9udC1tZWRpdW0gdGV4dC1uYXZ5XCI+XG4gICAgICAgICAgICAgICAgICB7Zm10RGF0ZShwYXltZW50LnNldHRsZWRBdCl9XG4gICAgICAgICAgICAgICAgPC9zcGFuPlxuICAgICAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgICAgICl9XG4gICAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cImZsZXggaXRlbXMtY2VudGVyIGp1c3RpZnktYmV0d2VlbiBnYXAtMyBib3JkZXItYiBib3JkZXItc3VyZmFjZS1ib3JkZXIgcHktMi41IHRleHQtWzEzcHhdXCI+XG4gICAgICAgICAgICAgIDxzcGFuIGNsYXNzTmFtZT1cInRleHQtbmF2eS83MFwiPlBheW1lbnQgbW9kZTwvc3Bhbj5cbiAgICAgICAgICAgICAgPHNwYW4gY2xhc3NOYW1lPVwidGV4dC1yaWdodCBmb250LW1lZGl1bSB0ZXh0LW5hdnlcIj5cbiAgICAgICAgICAgICAgICB7cGF5bWVudE1ldGhvZExhYmVsKHBheW1lbnQubWV0aG9kKX1cbiAgICAgICAgICAgICAgPC9zcGFuPlxuICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgICB7cGF5bWVudC5yZWZlcmVuY2UgJiYgKFxuICAgICAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cImZsZXggaXRlbXMtY2VudGVyIGp1c3RpZnktYmV0d2VlbiBnYXAtMyBib3JkZXItYiBib3JkZXItc3VyZmFjZS1ib3JkZXIgcHktMi41IHRleHQtWzEzcHhdXCI+XG4gICAgICAgICAgICAgICAgPHNwYW4gY2xhc3NOYW1lPVwidGV4dC1uYXZ5LzcwXCI+UmVmZXJlbmNlPC9zcGFuPlxuICAgICAgICAgICAgICAgIDxzcGFuIGNsYXNzTmFtZT1cIm1vbm8gdGV4dC1yaWdodCBmb250LW1lZGl1bSB0ZXh0LW5hdnlcIj57cGF5bWVudC5yZWZlcmVuY2V9PC9zcGFuPlxuICAgICAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgICAgICl9XG4gICAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cImZsZXggaXRlbXMtY2VudGVyIGp1c3RpZnktYmV0d2VlbiBnYXAtMyBib3JkZXItYiBib3JkZXItc3VyZmFjZS1ib3JkZXIgcHktMi41IHRleHQtWzEzcHhdXCI+XG4gICAgICAgICAgICAgIDxzcGFuIGNsYXNzTmFtZT1cInRleHQtbmF2eS83MFwiPkFwcGxpZWQgdG88L3NwYW4+XG4gICAgICAgICAgICAgIDxMaW5rXG4gICAgICAgICAgICAgICAgaHJlZj17YC9pbnZvaWNlcy8ke3BheW1lbnQuaW52b2ljZS5pZH1gfVxuICAgICAgICAgICAgICAgIGNsYXNzTmFtZT1cInRleHQtcmlnaHQgZm9udC1tZWRpdW0gdGV4dC1icmFuZC02MDAgaG92ZXI6dW5kZXJsaW5lXCJcbiAgICAgICAgICAgICAgPlxuICAgICAgICAgICAgICAgIHtwYXltZW50Lmludm9pY2UuaW52b2ljZU51bWJlcn1cbiAgICAgICAgICAgICAgPC9MaW5rPlxuICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgPC9kaXY+XG5cbiAgICAgICAgICB7LyogTm90ZXMgKi99XG4gICAgICAgICAge3BheW1lbnQubm90ZXMgJiYgKFxuICAgICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJtdC02IGJvcmRlci10IGJvcmRlci1zdXJmYWNlLWJvcmRlciBwdC00XCI+XG4gICAgICAgICAgICAgIDxwIGNsYXNzTmFtZT1cIm92ZXJsaW5lIG1iLTFcIj5Ob3RlczwvcD5cbiAgICAgICAgICAgICAgPHAgY2xhc3NOYW1lPVwidGV4dC1zbSB0ZXh0LW5hdnkvNzAgd2hpdGVzcGFjZS1wcmUtbGluZVwiPntwYXltZW50Lm5vdGVzfTwvcD5cbiAgICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgICl9XG5cbiAgICAgICAgICB7LyogVG90YWxzICovfVxuICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwibXQtNiBmbGV4IGp1c3RpZnktZW5kXCI+XG4gICAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cInctZnVsbCBtYXgtdy1bMzAwcHhdXCI+XG4gICAgICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwiZmxleCBqdXN0aWZ5LWJldHdlZW4gcHktMS41IHRleHQtWzEzLjVweF0gdGV4dC1uYXZ5LzcwXCI+XG4gICAgICAgICAgICAgICAgPHNwYW4+QW1vdW50IHJlY2VpdmVkPC9zcGFuPlxuICAgICAgICAgICAgICAgIDxzcGFuIGNsYXNzTmFtZT1cIm1vbmV5IHRleHQtbmF2eVwiPntmbXQocGF5bWVudC5hbW91bnQpfTwvc3Bhbj5cbiAgICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgICAgIHtoYXNCYW5rQ2hhcmdlcyAmJiAoXG4gICAgICAgICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJmbGV4IGp1c3RpZnktYmV0d2VlbiBweS0xLjUgdGV4dC1bMTMuNXB4XSB0ZXh0LW5hdnkvNzBcIj5cbiAgICAgICAgICAgICAgICAgIDxzcGFuPkJhbmsgY2hhcmdlczwvc3Bhbj5cbiAgICAgICAgICAgICAgICAgIDxzcGFuIGNsYXNzTmFtZT1cIm1vbmV5IHRleHQtZGFuZ2VyXCI+4oiSIHtmbXQocGF5bWVudC5iYW5rQ2hhcmdlcyEpfTwvc3Bhbj5cbiAgICAgICAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgICAgICAgKX1cbiAgICAgICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJtdC0xLjUgZmxleCBqdXN0aWZ5LWJldHdlZW4gYm9yZGVyLXQgYm9yZGVyLW5hdnkgcHQtMyB0ZXh0LWJhc2UgZm9udC1zZW1pYm9sZCB0ZXh0LW5hdnlcIj5cbiAgICAgICAgICAgICAgICA8c3Bhbj5Ub3RhbCBhcHBsaWVkPC9zcGFuPlxuICAgICAgICAgICAgICAgIDxzcGFuIGNsYXNzTmFtZT1cIm1vbmV5XCI+e2ZtdChwYXltZW50LmFtb3VudCl9PC9zcGFuPlxuICAgICAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgIDwvZGl2PlxuICAgICAgICA8L0NhcmQ+XG5cbiAgICAgICAgey8qIOKUgOKUgCBTaWRlYmFyIOKUgOKUgCAqL31cbiAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJzcGFjZS15LTRcIj5cbiAgICAgICAgICA8Q2FyZCB0aXRsZT1cIkFwcGxpZWQgSW52b2ljZVwiPlxuICAgICAgICAgICAgPGRsIGNsYXNzTmFtZT1cInNwYWNlLXktMyB0ZXh0LXNtXCI+XG4gICAgICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwiZmxleCBpdGVtcy1jZW50ZXIganVzdGlmeS1iZXR3ZWVuXCI+XG4gICAgICAgICAgICAgICAgPGR0IGNsYXNzTmFtZT1cInRleHQtbmF2eS83MFwiPkludm9pY2U8L2R0PlxuICAgICAgICAgICAgICAgIDxkZD5cbiAgICAgICAgICAgICAgICAgIDxMaW5rXG4gICAgICAgICAgICAgICAgICAgIGhyZWY9e2AvaW52b2ljZXMvJHtwYXltZW50Lmludm9pY2UuaWR9YH1cbiAgICAgICAgICAgICAgICAgICAgY2xhc3NOYW1lPVwibW9ubyB0ZXh0LWJyYW5kLTYwMCBob3Zlcjp1bmRlcmxpbmVcIlxuICAgICAgICAgICAgICAgICAgPlxuICAgICAgICAgICAgICAgICAgICB7cGF5bWVudC5pbnZvaWNlLmludm9pY2VOdW1iZXJ9XG4gICAgICAgICAgICAgICAgICA8L0xpbms+XG4gICAgICAgICAgICAgICAgPC9kZD5cbiAgICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwiZmxleCBpdGVtcy1jZW50ZXIganVzdGlmeS1iZXR3ZWVuXCI+XG4gICAgICAgICAgICAgICAgPGR0IGNsYXNzTmFtZT1cInRleHQtbmF2eS83MFwiPkFwcGxpZWQ8L2R0PlxuICAgICAgICAgICAgICAgIDxkZCBjbGFzc05hbWU9XCJtb25leSB0ZXh0LXN1Y2Nlc3NcIj57Zm10KHBheW1lbnQuYW1vdW50KX08L2RkPlxuICAgICAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgICAgICAge2ludm9pY2UgJiYgKFxuICAgICAgICAgICAgICAgIDw+XG4gICAgICAgICAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cImZsZXggaXRlbXMtY2VudGVyIGp1c3RpZnktYmV0d2VlblwiPlxuICAgICAgICAgICAgICAgICAgICA8ZHQgY2xhc3NOYW1lPVwidGV4dC1uYXZ5LzcwXCI+SW52b2ljZSB0b3RhbDwvZHQ+XG4gICAgICAgICAgICAgICAgICAgIDxkZCBjbGFzc05hbWU9XCJtb25leSB0ZXh0LW5hdnlcIj57Zm10KGludm9pY2UudG90YWwpfTwvZGQ+XG4gICAgICAgICAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgICAgICAgICAgIHtpbnZvaWNlLmJhbGFuY2VEdWUgIT0gbnVsbCAmJiAoXG4gICAgICAgICAgICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwiZmxleCBpdGVtcy1jZW50ZXIganVzdGlmeS1iZXR3ZWVuXCI+XG4gICAgICAgICAgICAgICAgICAgICAgPGR0IGNsYXNzTmFtZT1cInRleHQtbmF2eS83MFwiPlJlbWFpbmluZyBiYWxhbmNlPC9kdD5cbiAgICAgICAgICAgICAgICAgICAgICA8ZGQgY2xhc3NOYW1lPVwibW9uZXkgdGV4dC1uYXZ5XCI+e2ZtdChpbnZvaWNlLmJhbGFuY2VEdWUpfTwvZGQ+XG4gICAgICAgICAgICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgICAgICAgICAgKX1cbiAgICAgICAgICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwiZmxleCBpdGVtcy1jZW50ZXIganVzdGlmeS1iZXR3ZWVuXCI+XG4gICAgICAgICAgICAgICAgICAgIDxkdCBjbGFzc05hbWU9XCJ0ZXh0LW5hdnkvNzBcIj5JbnZvaWNlIHN0YXR1czwvZHQ+XG4gICAgICAgICAgICAgICAgICAgIDxkZD5cbiAgICAgICAgICAgICAgICAgICAgICA8QmFkZ2Ugc3RhdHVzPXtpbnZvaWNlLnN0YXR1c30gLz5cbiAgICAgICAgICAgICAgICAgICAgPC9kZD5cbiAgICAgICAgICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgICAgICAgIDwvPlxuICAgICAgICAgICAgICApfVxuICAgICAgICAgICAgPC9kbD5cbiAgICAgICAgICA8L0NhcmQ+XG5cbiAgICAgICAgICB7cGF5bWVudC5pbWFnZUtleSAmJiAoXG4gICAgICAgICAgICA8Q2FyZCB0aXRsZT1cIlJlY2VpcHQgSW1hZ2VcIj5cbiAgICAgICAgICAgICAge3JlY2VpcHRVcmwgPyAoXG4gICAgICAgICAgICAgICAgPGEgaHJlZj17cmVjZWlwdFVybH0gdGFyZ2V0PVwiX2JsYW5rXCIgcmVsPVwibm9vcGVuZXIgbm9yZWZlcnJlclwiPlxuICAgICAgICAgICAgICAgICAgPGltZ1xuICAgICAgICAgICAgICAgICAgICBzcmM9e3JlY2VpcHRVcmx9XG4gICAgICAgICAgICAgICAgICAgIGFsdD1cIlBheW1lbnQgcmVjZWlwdFwiXG4gICAgICAgICAgICAgICAgICAgIGNsYXNzTmFtZT1cIm1heC1oLTgwIHctZnVsbCByb3VuZGVkLWxnIGJvcmRlciBib3JkZXItc3VyZmFjZS1ib3JkZXIgb2JqZWN0LWNvbnRhaW5cIlxuICAgICAgICAgICAgICAgICAgLz5cbiAgICAgICAgICAgICAgICA8L2E+XG4gICAgICAgICAgICAgICkgOiAoXG4gICAgICAgICAgICAgICAgPHAgY2xhc3NOYW1lPVwidGV4dC1zbSB0ZXh0LW5hdnkvNzBcIj5Mb2FkaW5nIHJlY2VpcHTigKY8L3A+XG4gICAgICAgICAgICAgICl9XG4gICAgICAgICAgICA8L0NhcmQ+XG4gICAgICAgICAgKX1cblxuICAgICAgICAgIHtzdGF0dXMgIT09IFwiVk9JRFwiICYmIChcbiAgICAgICAgICAgIDxDYXJkIGNsYXNzTmFtZT1cImJvcmRlciBib3JkZXItZGFuZ2VyLWJnXCI+XG4gICAgICAgICAgICAgIDxoMyBjbGFzc05hbWU9XCJtYi0yIHRleHQtYmFzZSBmb250LXNlbWlib2xkIHRleHQtZGFuZ2VyXCI+Vm9pZDwvaDM+XG4gICAgICAgICAgICAgIDxwIGNsYXNzTmFtZT1cInRleHQtWzEyLjVweF0gbGVhZGluZy1yZWxheGVkIHRleHQtbmF2eS83MFwiPlxuICAgICAgICAgICAgICAgIFZvaWRpbmcgcmV2ZXJzZXMgdGhlIGFwcGxpY2F0aW9uLCByZXR1cm5zIHRoZSBpbnZvaWNlIHRvIGl0cyBwcmlvciBiYWxhbmNlLCBhbmRcbiAgICAgICAgICAgICAgICBrZWVwcyB0aGlzIHJlY2VpcHQgZm9yIHRoZSBhdWRpdCB0cmFpbC5cbiAgICAgICAgICAgICAgPC9wPlxuICAgICAgICAgICAgICA8QnV0dG9uXG4gICAgICAgICAgICAgICAgdmFyaWFudD1cImRhbmdlclwiXG4gICAgICAgICAgICAgICAgc2l6ZT1cInNtXCJcbiAgICAgICAgICAgICAgICBjbGFzc05hbWU9XCJtdC0zIHctZnVsbFwiXG4gICAgICAgICAgICAgICAgbGVmdEljb249ezxCYW4gY2xhc3NOYW1lPVwiaC00IHctNFwiIC8+fVxuICAgICAgICAgICAgICAgIG9uQ2xpY2s9e2hhbmRsZVZvaWR9XG4gICAgICAgICAgICAgICAgbG9hZGluZz17dm9pZFBheW1lbnQuaXNQZW5kaW5nfVxuICAgICAgICAgICAgICA+XG4gICAgICAgICAgICAgICAgVm9pZCBQYXltZW504oCmXG4gICAgICAgICAgICAgIDwvQnV0dG9uPlxuICAgICAgICAgICAgPC9DYXJkPlxuICAgICAgICAgICl9XG4gICAgICAgIDwvZGl2PlxuICAgICAgPC9kaXY+XG4gICAgPC9kaXY+XG4gICk7XG59XG4iXSwibmFtZXMiOlsiUGF5bWVudERldGFpbFBhZ2UiLCJCQU5LX0RBVEVfSEVMUCIsInNldFRpdGxlIiwidXNlUGFnZVRpdGxlIiwiaWQiLCJ1c2VQYXJhbXMiLCJyb3V0ZXIiLCJ1c2VSb3V0ZXIiLCJ0b2FzdCIsInVzZVRvYXN0IiwiZGF0YSIsInBheW1lbnQiLCJpc0xvYWRpbmciLCJ1c2VQYXltZW50RGV0YWlsIiwidm9pZFBheW1lbnQiLCJ1c2VWb2lkUGF5bWVudCIsIlJlYWN0IiwidXNlRWZmZWN0IiwiaW52b2ljZSIsInVzZUludm9pY2UiLCJnZXRQYXltZW50SW1hZ2VVcmwiLCJ1c2VHZXRQYXltZW50SW1hZ2VVcmwiLCJyZWNlaXB0VXJsIiwic2V0UmVjZWlwdFVybCIsInVzZVN0YXRlIiwiaW1hZ2VLZXkiLCJtdXRhdGVBc3luYyIsInRoZW4iLCJyIiwidXJsIiwiY2F0Y2giLCJoYW5kbGVWb2lkIiwiY29uZmlybSIsImludm9pY2VJZCIsInBheW1lbnRJZCIsInRpdGxlIiwidmFyaWFudCIsImRpdiIsImNsYXNzTmFtZSIsInAiLCJidXR0b24iLCJvbkNsaWNrIiwiYmFjayIsInN0YXR1cyIsImRhdGUiLCJmbXREYXRlIiwicGFpZEF0IiwiY3JlYXRlZEF0IiwiaGFzQmFua0NoYXJnZXMiLCJiYW5rQ2hhcmdlcyIsIkxpbmsiLCJocmVmIiwiQXJyb3dMZWZ0IiwiaDIiLCJwYXltZW50TnVtYmVyIiwiQmFkZ2UiLCJjdXN0b21lciIsImJ1c2luZXNzTmFtZSIsIkJ1dHRvbiIsInNpemUiLCJsZWZ0SWNvbiIsIkJhbiIsImxvYWRpbmciLCJpc1BlbmRpbmciLCJQcmludGVyIiwid2luZG93IiwicHJpbnQiLCJDYXJkIiwic3BhbiIsInNldHRsZWRBdCIsInBheW1lbnRNZXRob2RMYWJlbCIsIm1ldGhvZCIsInJlZmVyZW5jZSIsImludm9pY2VOdW1iZXIiLCJub3RlcyIsImZtdCIsImFtb3VudCIsImRsIiwiZHQiLCJkZCIsInRvdGFsIiwiYmFsYW5jZUR1ZSIsImEiLCJ0YXJnZXQiLCJyZWwiLCJpbWciLCJzcmMiLCJhbHQiLCJoMyJdLCJtYXBwaW5ncyI6IkFBQUE7Ozs7OytCQW9CQTs7O2VBQXdCQTs7Ozs4REFsQk47NEJBQ21COzZEQUNwQjs2QkFDdUI7a0NBQ1g7MEJBTXRCO3FCQUN1Qzs0QkFDakI7Z0NBQ007Ozs7OztBQUVuQyxNQUFNQyxpQkFDSjtBQUVhLFNBQVNEO0lBQ3RCLE1BQU0sRUFBRUUsUUFBUSxFQUFFLEdBQUdDLElBQUFBLDhCQUFZO0lBQ2pDLE1BQU0sRUFBRUMsRUFBRSxFQUFFLEdBQUdDLElBQUFBLHFCQUFTO0lBQ3hCLE1BQU1DLFNBQVNDLElBQUFBLHFCQUFTO0lBQ3hCLE1BQU0sRUFBRUMsS0FBSyxFQUFFLEdBQUdDLElBQUFBLGFBQVE7SUFFMUIsTUFBTSxFQUFFQyxNQUFNQyxPQUFPLEVBQUVDLFNBQVMsRUFBRSxHQUFHQyxJQUFBQSwwQkFBZ0IsRUFBQ1Q7SUFDdEQsTUFBTVUsY0FBY0MsSUFBQUEsd0JBQWM7SUFFbENDLGNBQUssQ0FBQ0MsU0FBUyxDQUFDO1FBQ2RmLFNBQVM7SUFDWCxHQUFHO1FBQUNBO0tBQVM7SUFFYiw2RUFBNkU7SUFDN0UsK0VBQStFO0lBQy9FLE1BQU0sRUFBRVEsTUFBTVEsT0FBTyxFQUFFLEdBQUdDLElBQUFBLG9CQUFVLEVBQUNSLFNBQVNPLFFBQVFkLE1BQU07SUFFNUQsNEVBQTRFO0lBQzVFLHdFQUF3RTtJQUN4RSxrRUFBa0U7SUFDbEUsTUFBTWdCLHFCQUFxQkMsSUFBQUEsK0JBQXFCO0lBQ2hELE1BQU0sQ0FBQ0MsWUFBWUMsY0FBYyxHQUFHUCxjQUFLLENBQUNRLFFBQVEsQ0FBZ0I7SUFFbEVSLGNBQUssQ0FBQ0MsU0FBUyxDQUFDO1FBQ2RNLGNBQWM7UUFDZCxJQUFJWixTQUFTUCxNQUFNTyxRQUFRYyxRQUFRLEVBQUU7WUFDbkNMLG1CQUNHTSxXQUFXLENBQUNmLFFBQVFQLEVBQUUsRUFDdEJ1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

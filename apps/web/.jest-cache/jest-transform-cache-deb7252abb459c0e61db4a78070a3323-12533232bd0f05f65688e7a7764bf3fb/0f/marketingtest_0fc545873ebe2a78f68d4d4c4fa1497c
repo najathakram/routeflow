@@ -1,0 +1,77 @@
+82d03296b7ea43ecb587cbaba32c5c42
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+const _react1 = require("@testing-library/react");
+const _marketing = require("./marketing");
+const _aispotlight = require("./ai-spotlight");
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+// R-MKT T8b — the shared CTA heading keeps its word space across the <br />,
+// which `.rf-marketing .cta-block br { display: none }` hides below 760px.
+describe("CTA heading spacing — R-MKT T8b", ()=>{
+    it("keeps the space in the distributor heading (R-MKT T8b)", ()=>{
+        const { container } = (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_marketing.CTA, {}));
+        expect(container.querySelector("h2")?.textContent).toBe("Put your workflow to the test.");
+    });
+    it("keeps the space in the retailer heading (R-MKT T8b)", ()=>{
+        const { container } = (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_marketing.CTA, {
+            retailer: true
+        }));
+        expect(container.querySelector("h2")?.textContent).toBe("Place your next order with a clearer view.");
+    });
+});
+// R-MKT T8b — the AI-spotlight heading keeps its word space across the em's
+// <br />, which `.rf-marketing .ai-copy h2 br:last-child { display: none }` hides below 660px.
+describe("AISpotlight h2 spacing — R-MKT T8b", ()=>{
+    it("keeps the space in the AI-spotlight heading (R-MKT T8b)", ()=>{
+        const { container } = (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_aispotlight.AISpotlight, {}));
+        const text = container.querySelector("#ai-heading")?.textContent;
+        expect(text).toContain("More clarity on stock and cost.");
+        expect(text).not.toContain("onstock");
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8obWFya2V0aW5nKS9jb21wb25lbnRzL21hcmtldGluZy50ZXN0LnRzeCJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgKiBhcyBSZWFjdCBmcm9tIFwicmVhY3RcIjtcbmltcG9ydCB7IHJlbmRlciB9IGZyb20gXCJAdGVzdGluZy1saWJyYXJ5L3JlYWN0XCI7XG5pbXBvcnQgeyBDVEEgfSBmcm9tIFwiLi9tYXJrZXRpbmdcIjtcbmltcG9ydCB7IEFJU3BvdGxpZ2h0IH0gZnJvbSBcIi4vYWktc3BvdGxpZ2h0XCI7XG5cbi8vIFItTUtUIFQ4YiDigJQgdGhlIHNoYXJlZCBDVEEgaGVhZGluZyBrZWVwcyBpdHMgd29yZCBzcGFjZSBhY3Jvc3MgdGhlIDxiciAvPixcbi8vIHdoaWNoIGAucmYtbWFya2V0aW5nIC5jdGEtYmxvY2sgYnIgeyBkaXNwbGF5OiBub25lIH1gIGhpZGVzIGJlbG93IDc2MHB4LlxuZGVzY3JpYmUoXCJDVEEgaGVhZGluZyBzcGFjaW5nIOKAlCBSLU1LVCBUOGJcIiwgKCkgPT4ge1xuICBpdChcImtlZXBzIHRoZSBzcGFjZSBpbiB0aGUgZGlzdHJpYnV0b3IgaGVhZGluZyAoUi1NS1QgVDhiKVwiLCAoKSA9PiB7XG4gICAgY29uc3QgeyBjb250YWluZXIgfSA9IHJlbmRlcig8Q1RBIC8+KTtcbiAgICBleHBlY3QoY29udGFpbmVyLnF1ZXJ5U2VsZWN0b3IoXCJoMlwiKT8udGV4dENvbnRlbnQpLnRvQmUoXCJQdXQgeW91ciB3b3JrZmxvdyB0byB0aGUgdGVzdC5cIik7XG4gIH0pO1xuXG4gIGl0KFwia2VlcHMgdGhlIHNwYWNlIGluIHRoZSByZXRhaWxlciBoZWFkaW5nIChSLU1LVCBUOGIpXCIsICgpID0+IHtcbiAgICBjb25zdCB7IGNvbnRhaW5lciB9ID0gcmVuZGVyKDxDVEEgcmV0YWlsZXIgLz4pO1xuICAgIGV4cGVjdChjb250YWluZXIucXVlcnlTZWxlY3RvcihcImgyXCIpPy50ZXh0Q29udGVudCkudG9CZShcbiAgICAgIFwiUGxhY2UgeW91ciBuZXh0IG9yZGVyIHdpdGggYSBjbGVhcmVyIHZpZXcuXCIsXG4gICAgKTtcbiAgfSk7XG59KTtcblxuLy8gUi1NS1QgVDhiIOKAlCB0aGUgQUktc3BvdGxpZ2h0IGhlYWRpbmcga2VlcHMgaXRzIHdvcmQgc3BhY2UgYWNyb3NzIHRoZSBlbSdzXG4vLyA8YnIgLz4sIHdoaWNoIGAucmYtbWFya2V0aW5nIC5haS1jb3B5IGgyIGJyOmxhc3QtY2hpbGQgeyBkaXNwbGF5OiBub25lIH1gIGhpZGVzIGJlbG93IDY2MHB4LlxuZGVzY3JpYmUoXCJBSVNwb3RsaWdodCBoMiBzcGFjaW5nIOKAlCBSLU1LVCBUOGJcIiwgKCkgPT4ge1xuICBpdChcImtlZXBzIHRoZSBzcGFjZSBpbiB0aGUgQUktc3BvdGxpZ2h0IGhlYWRpbmcgKFItTUtUIFQ4YilcIiwgKCkgPT4ge1xuICAgIGNvbnN0IHsgY29udGFpbmVyIH0gPSByZW5kZXIoPEFJU3BvdGxpZ2h0IC8+KTtcbiAgICBjb25zdCB0ZXh0ID0gY29udGFpbmVyLnF1ZXJ5U2VsZWN0b3IoXCIjYWktaGVhZGluZ1wiKT8udGV4dENvbnRlbnQ7XG4gICAgZXhwZWN0KHRleHQpLnRvQ29udGFpbihcIk1vcmUgY2xhcml0eSBvbiBzdG9jayBhbmQgY29zdC5cIik7XG4gICAgZXhwZWN0KHRleHQpLm5vdC50b0NvbnRhaW4oXCJvbnN0b2NrXCIpO1xuICB9KTtcbn0pO1xuIl0sIm5hbWVzIjpbImRlc2NyaWJlIiwiaXQiLCJjb250YWluZXIiLCJyZW5kZXIiLCJDVEEiLCJleHBlY3QiLCJxdWVyeVNlbGVjdG9yIiwidGV4dENvbnRlbnQiLCJ0b0JlIiwicmV0YWlsZXIiLCJBSVNwb3RsaWdodCIsInRleHQiLCJ0b0NvbnRhaW4iLCJub3QiXSwibWFwcGluZ3MiOiI7Ozs7OytEQUF1Qjt3QkFDQTsyQkFDSDs2QkFDUTs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7O0FBRTVCLDZFQUE2RTtBQUM3RSwyRUFBMkU7QUFDM0VBLFNBQVMsbUNBQW1DO0lBQzFDQyxHQUFHLDBEQUEwRDtRQUMzRCxNQUFNLEVBQUVDLFNBQVMsRUFBRSxHQUFHQyxJQUFBQSxjQUFNLGdCQUFDLHFCQUFDQyxjQUFHO1FBQ2pDQyxPQUFPSCxVQUFVSSxhQUFhLENBQUMsT0FBT0MsYUFBYUMsSUFBSSxDQUFDO0lBQzFEO0lBRUFQLEdBQUcsdURBQXVEO1FBQ3hELE1BQU0sRUFBRUMsU0FBUyxFQUFFLEdBQUdDLElBQUFBLGNBQU0sZ0JBQUMscUJBQUNDLGNBQUc7WUFBQ0ssUUFBUTs7UUFDMUNKLE9BQU9ILFVBQVVJLGFBQWEsQ0FBQyxPQUFPQyxhQUFhQyxJQUFJLENBQ3JEO0lBRUo7QUFDRjtBQUVBLDRFQUE0RTtBQUM1RSwrRkFBK0Y7QUFDL0ZSLFNBQVMsc0NBQXNDO0lBQzdDQyxHQUFHLDJEQUEyRDtRQUM1RCxNQUFNLEVBQUVDLFNBQVMsRUFBRSxHQUFHQyxJQUFBQSxjQUFNLGdCQUFDLHFCQUFDTyx3QkFBVztRQUN6QyxNQUFNQyxPQUFPVCxVQUFVSSxhQUFhLENBQUMsZ0JBQWdCQztRQUNyREYsT0FBT00sTUFBTUMsU0FBUyxDQUFDO1FBQ3ZCUCxPQUFPTSxNQUFNRSxHQUFHLENBQUNELFNBQVMsQ0FBQztJQUM3QjtBQUNGIn0=

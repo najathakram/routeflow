@@ -1,0 +1,48 @@
+54936ed745c0c40bf419cf398cc04cb1
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.applyPriceOverride = applyPriceOverride;
+exports.needsMarginAck = needsMarginAck;
+/**
+ * B263 (B246 Option B) — pure price-override helper.
+ *
+ * cause-ruling.md §2 D2: centralises the price-override write both
+ * `PriceOverrideModal` hosts (list branch + picker branch, D3) call —
+ * `applyPriceOverride` rounds the typed price with `roundMoney` (money
+ * discipline: CLAUDE.md "Round every monetary write") and stamps the
+ * reason, leaving qty/box/free fields untouched; it never fabricates a
+ * line total — the row's total is derived at render through
+ * `computeLineSubtotal` with `draftFreeUnits(item)` (edit-items.tsx
+ * `:1161`), which stays the single money path. `needsMarginAck` extracts
+ * the existing below-floor ack check (edit-items.tsx `:1220` area) into a
+ * pure function neither host has to duplicate.
+ */
+const pricing_1 = require("@routeflow/pricing");
+/**
+ * Apply a typed price override to a draft item: round the new price to
+ * cents (money discipline — never write an unrounded typed value) and
+ * stamp the reason. Exactly those two fields are written; every other
+ * field (qty, boxes, pieces, unitsPerBox, promo free units, ...)
+ * round-trips unchanged — an override never touches how much was ordered,
+ * and never invents a line total (the row's total is recomputed at render
+ * through `computeLineSubtotal`).
+ */
+function applyPriceOverride(item, input) {
+    return {
+        ...item,
+        unitPrice: (0, pricing_1.roundMoney)(input.unitPrice),
+        overrideReason: input.reason,
+    };
+}
+/**
+ * Whether a typed price needs the below-floor "sell anyway" ack — true
+ * when the new price sits strictly below the margin floor, false when it
+ * meets or exceeds it. `floor` is a null-able price (unknown cost yields no
+ * floor, so no ack is ever needed).
+ */
+function needsMarginAck(_item, newPrice, floor) {
+    if (floor == null)
+        return false;
+    return newPrice < floor;
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3ByaWNlLW92ZXJyaWRlLnRzIiwibWFwcGluZ3MiOiI7O0FBd0NBLGdEQVNDO0FBUUQsd0NBT0M7QUFoRUQ7Ozs7Ozs7Ozs7Ozs7R0FhRztBQUNILGdEQUFnRDtBQWlCaEQ7Ozs7Ozs7O0dBUUc7QUFDSCxTQUFnQixrQkFBa0IsQ0FDaEMsSUFBdUIsRUFDdkIsS0FBeUI7SUFFekIsT0FBTztRQUNMLEdBQUcsSUFBSTtRQUNQLFNBQVMsRUFBRSxJQUFBLG9CQUFVLEVBQUMsS0FBSyxDQUFDLFNBQVMsQ0FBQztRQUN0QyxjQUFjLEVBQUUsS0FBSyxDQUFDLE1BQU07S0FDN0IsQ0FBQztBQUNKLENBQUM7QUFFRDs7Ozs7R0FLRztBQUNILFNBQWdCLGNBQWMsQ0FDNUIsS0FBd0IsRUFDeEIsUUFBZ0IsRUFDaEIsS0FBZ0M7SUFFaEMsSUFBSSxLQUFLLElBQUksSUFBSTtRQUFFLE9BQU8sS0FBSyxDQUFDO0lBQ2hDLE9BQU8sUUFBUSxHQUFHLEtBQUssQ0FBQztBQUMxQixDQUFDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvbW9iaWxlL2xpYi9wcmljZS1vdmVycmlkZS50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqIEIyNjMgKEIyNDYgT3B0aW9uIEIpIOKAlCBwdXJlIHByaWNlLW92ZXJyaWRlIGhlbHBlci5cbiAqXG4gKiBjYXVzZS1ydWxpbmcubWQgwqcyIEQyOiBjZW50cmFsaXNlcyB0aGUgcHJpY2Utb3ZlcnJpZGUgd3JpdGUgYm90aFxuICogYFByaWNlT3ZlcnJpZGVNb2RhbGAgaG9zdHMgKGxpc3QgYnJhbmNoICsgcGlja2VyIGJyYW5jaCwgRDMpIGNhbGwg4oCUXG4gKiBgYXBwbHlQcmljZU92ZXJyaWRlYCByb3VuZHMgdGhlIHR5cGVkIHByaWNlIHdpdGggYHJvdW5kTW9uZXlgIChtb25leVxuICogZGlzY2lwbGluZTogQ0xBVURFLm1kIFwiUm91bmQgZXZlcnkgbW9uZXRhcnkgd3JpdGVcIikgYW5kIHN0YW1wcyB0aGVcbiAqIHJlYXNvbiwgbGVhdmluZyBxdHkvYm94L2ZyZWUgZmllbGRzIHVudG91Y2hlZDsgaXQgbmV2ZXIgZmFicmljYXRlcyBhXG4gKiBsaW5lIHRvdGFsIOKAlCB0aGUgcm93J3MgdG90YWwgaXMgZGVyaXZlZCBhdCByZW5kZXIgdGhyb3VnaFxuICogYGNvbXB1dGVMaW5lU3VidG90YWxgIHdpdGggYGRyYWZ0RnJlZVVuaXRzKGl0ZW0pYCAoZWRpdC1pdGVtcy50c3hcbiAqIGA6MTE2MWApLCB3aGljaCBzdGF5cyB0aGUgc2luZ2xlIG1vbmV5IHBhdGguIGBuZWVkc01hcmdpbkFja2AgZXh0cmFjdHNcbiAqIHRoZSBleGlzdGluZyBiZWxvdy1mbG9vciBhY2sgY2hlY2sgKGVkaXQtaXRlbXMudHN4IGA6MTIyMGAgYXJlYSkgaW50byBhXG4gKiBwdXJlIGZ1bmN0aW9uIG5laXRoZXIgaG9zdCBoYXMgdG8gZHVwbGljYXRlLlxuICovXG5pbXBvcnQgeyByb3VuZE1vbmV5IH0gZnJvbSBcIkByb3V0ZWZsb3cvcHJpY2luZ1wiO1xuXG4vKiogTWluaW1hbCBzaGFwZSBib3RoIGNhbGwgc2l0ZXMgbmVlZCDigJQgbWF0Y2hlcyB0aGUgZmllbGRzIERyYWZ0SXRlbSBleHBvc2VzLiAqL1xuZXhwb3J0IGludGVyZmFjZSBQcmljZU92ZXJyaWRlSXRlbSB7XG4gIHVuaXRQcmljZTogbnVtYmVyO1xuICBib3hlcz86IG51bWJlciB8IG51bGw7XG4gIHBpZWNlcz86IG51bWJlciB8IG51bGw7XG4gIHVuaXRzUGVyQm94PzogbnVtYmVyIHwgbnVsbDtcbiAgb3ZlcnJpZGVSZWFzb24/OiBzdHJpbmc7XG4gIFtrZXk6IHN0cmluZ106IHVua25vd247XG59XG5cbmV4cG9ydCBpbnRlcmZhY2UgUHJpY2VPdmVycmlkZUlucHV0IHtcbiAgdW5pdFByaWNlOiBudW1iZXI7XG4gIHJlYXNvbj86IHN0cmluZztcbn1cblxuLyoqXG4gKiBBcHBseSBhIHR5cGVkIHByaWNlIG92ZXJyaWRlIHRvIGEgZHJhZnQgaXRlbTogcm91bmQgdGhlIG5ldyBwcmljZSB0b1xuICogY2VudHMgKG1vbmV5IGRpc2NpcGxpbmUg4oCUIG5ldmVyIHdyaXRlIGFuIHVucm91bmRlZCB0eXBlZCB2YWx1ZSkgYW5kXG4gKiBzdGFtcCB0aGUgcmVhc29uLiBFeGFjdGx5IHRob3NlIHR3byBmaWVsZHMgYXJlIHdyaXR0ZW47IGV2ZXJ5IG90aGVyXG4gKiBmaWVsZCAocXR5LCBib3hlcywgcGllY2VzLCB1bml0c1BlckJveCwgcHJvbW8gZnJlZSB1bml0cywgLi4uKVxuICogcm91bmQtdHJpcHMgdW5jaGFuZ2VkIOKAlCBhbiBvdmVycmlkZSBuZXZlciB0b3VjaGVzIGhvdyBtdWNoIHdhcyBvcmRlcmVkLFxuICogYW5kIG5ldmVyIGludmVudHMgYSBsaW5lIHRvdGFsICh0aGUgcm93J3MgdG90YWwgaXMgcmVjb21wdXRlZCBhdCByZW5kZXJcbiAqIHRocm91Z2ggYGNvbXB1dGVMaW5lU3VidG90YWxgKS5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIGFwcGx5UHJpY2VPdmVycmlkZShcbiAgaXRlbTogUHJpY2VPdmVycmlkZUl0ZW0sXG4gIGlucHV0OiBQcmljZU92ZXJyaWRlSW5wdXQsXG4pOiBQcmljZU92ZXJyaWRlSXRlbSB7XG4gIHJldHVybiB7XG4gICAgLi4uaXRlbSxcbiAgICB1bml0UHJpY2U6IHJvdW5kTW9uZXkoaW5wdXQudW5pdFByaWNlKSxcbiAgICBvdmVycmlkZVJlYXNvbjogaW5wdXQucmVhc29uLFxuICB9O1xufVxuXG4vKipcbiAqIFdoZXRoZXIgYSB0eXBlZCBwcmljZSBuZWVkcyB0aGUgYmVsb3ctZmxvb3IgXCJzZWxsIGFueXdheVwiIGFjayDigJQgdHJ1ZVxuICogd2hlbiB0aGUgbmV3IHByaWNlIHNpdHMgc3RyaWN0bHkgYmVsb3cgdGhlIG1hcmdpbiBmbG9vciwgZmFsc2Ugd2hlbiBpdFxuICogbWVldHMgb3IgZXhjZWVkcyBpdC4gYGZsb29yYCBpcyBhIG51bGwtYWJsZSBwcmljZSAodW5rbm93biBjb3N0IHlpZWxkcyBub1xuICogZmxvb3IsIHNvIG5vIGFjayBpcyBldmVyIG5lZWRlZCkuXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiBuZWVkc01hcmdpbkFjayhcbiAgX2l0ZW06IFByaWNlT3ZlcnJpZGVJdGVtLFxuICBuZXdQcmljZTogbnVtYmVyLFxuICBmbG9vcjogbnVtYmVyIHwgbnVsbCB8IHVuZGVmaW5lZCxcbik6IGJvb2xlYW4ge1xuICBpZiAoZmxvb3IgPT0gbnVsbCkgcmV0dXJuIGZhbHNlO1xuICByZXR1cm4gbmV3UHJpY2UgPCBmbG9vcjtcbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

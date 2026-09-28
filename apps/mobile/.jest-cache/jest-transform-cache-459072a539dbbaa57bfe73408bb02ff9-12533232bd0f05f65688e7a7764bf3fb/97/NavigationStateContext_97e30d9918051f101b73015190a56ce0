@@ -1,0 +1,58 @@
+4eb02039af282e64dce1c0c443b24f95
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.NavigationStateContext = void 0;
+const React = __importStar(require("react"));
+const MISSING_CONTEXT_ERROR = "Couldn't find a navigation context. Have you wrapped your app with 'NavigationContainer'? See https://reactnavigation.org/docs/getting-started for setup instructions.";
+exports.NavigationStateContext = React.createContext({
+    isDefault: true,
+    get getKey() {
+        throw new Error(MISSING_CONTEXT_ERROR);
+    },
+    get setKey() {
+        throw new Error(MISSING_CONTEXT_ERROR);
+    },
+    get getState() {
+        throw new Error(MISSING_CONTEXT_ERROR);
+    },
+    get setState() {
+        throw new Error(MISSING_CONTEXT_ERROR);
+    },
+    get getIsInitial() {
+        throw new Error(MISSING_CONTEXT_ERROR);
+    }
+});
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0Mzcvbm9kZV9tb2R1bGVzL0ByZWFjdC1uYXZpZ2F0aW9uL2NvcmUvbGliL21vZHVsZS9OYXZpZ2F0aW9uU3RhdGVDb250ZXh0LmpzIiwibWFwcGluZ3MiOiJBQUFBLFlBQVksQ0FBQzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7O0FBRWIsNkNBQStCO0FBQy9CLE1BQU0scUJBQXFCLEdBQUcsd0tBQXdLLENBQUM7QUFDMUwsUUFBQSxzQkFBc0IsR0FBZ0IsS0FBSyxDQUFDLGFBQWEsQ0FBQztJQUNyRSxTQUFTLEVBQUUsSUFBSTtJQUNmLElBQUksTUFBTTtRQUNSLE1BQU0sSUFBSSxLQUFLLENBQUMscUJBQXFCLENBQUMsQ0FBQztJQUN6QyxDQUFDO0lBQ0QsSUFBSSxNQUFNO1FBQ1IsTUFBTSxJQUFJLEtBQUssQ0FBQyxxQkFBcUIsQ0FBQyxDQUFDO0lBQ3pDLENBQUM7SUFDRCxJQUFJLFFBQVE7UUFDVixNQUFNLElBQUksS0FBSyxDQUFDLHFCQUFxQixDQUFDLENBQUM7SUFDekMsQ0FBQztJQUNELElBQUksUUFBUTtRQUNWLE1BQU0sSUFBSSxLQUFLLENBQUMscUJBQXFCLENBQUMsQ0FBQztJQUN6QyxDQUFDO0lBQ0QsSUFBSSxZQUFZO1FBQ2QsTUFBTSxJQUFJLEtBQUssQ0FBQyxxQkFBcUIsQ0FBQyxDQUFDO0lBQ3pDLENBQUM7Q0FDRixDQUFDLENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0Mzcvbm9kZV9tb2R1bGVzL0ByZWFjdC1uYXZpZ2F0aW9uL2NvcmUvbGliL21vZHVsZS9OYXZpZ2F0aW9uU3RhdGVDb250ZXh0LmpzIl0sInNvdXJjZXNDb250ZW50IjpbIlwidXNlIHN0cmljdFwiO1xuXG5pbXBvcnQgKiBhcyBSZWFjdCBmcm9tICdyZWFjdCc7XG5jb25zdCBNSVNTSU5HX0NPTlRFWFRfRVJST1IgPSBcIkNvdWxkbid0IGZpbmQgYSBuYXZpZ2F0aW9uIGNvbnRleHQuIEhhdmUgeW91IHdyYXBwZWQgeW91ciBhcHAgd2l0aCAnTmF2aWdhdGlvbkNvbnRhaW5lcic/IFNlZSBodHRwczovL3JlYWN0bmF2aWdhdGlvbi5vcmcvZG9jcy9nZXR0aW5nLXN0YXJ0ZWQgZm9yIHNldHVwIGluc3RydWN0aW9ucy5cIjtcbmV4cG9ydCBjb25zdCBOYXZpZ2F0aW9uU3RhdGVDb250ZXh0ID0gLyojX19QVVJFX18qL1JlYWN0LmNyZWF0ZUNvbnRleHQoe1xuICBpc0RlZmF1bHQ6IHRydWUsXG4gIGdldCBnZXRLZXkoKSB7XG4gICAgdGhyb3cgbmV3IEVycm9yKE1JU1NJTkdfQ09OVEVYVF9FUlJPUik7XG4gIH0sXG4gIGdldCBzZXRLZXkoKSB7XG4gICAgdGhyb3cgbmV3IEVycm9yKE1JU1NJTkdfQ09OVEVYVF9FUlJPUik7XG4gIH0sXG4gIGdldCBnZXRTdGF0ZSgpIHtcbiAgICB0aHJvdyBuZXcgRXJyb3IoTUlTU0lOR19DT05URVhUX0VSUk9SKTtcbiAgfSxcbiAgZ2V0IHNldFN0YXRlKCkge1xuICAgIHRocm93IG5ldyBFcnJvcihNSVNTSU5HX0NPTlRFWFRfRVJST1IpO1xuICB9LFxuICBnZXQgZ2V0SXNJbml0aWFsKCkge1xuICAgIHRocm93IG5ldyBFcnJvcihNSVNTSU5HX0NPTlRFWFRfRVJST1IpO1xuICB9XG59KTtcbi8vIyBzb3VyY2VNYXBwaW5nVVJMPU5hdmlnYXRpb25TdGF0ZUNvbnRleHQuanMubWFwIl0sInZlcnNpb24iOjN9

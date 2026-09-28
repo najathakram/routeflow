@@ -1,0 +1,92 @@
+42ccbdf7b53b4a2eb9da3375070be65e
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.buildReorderItems = buildReorderItems;
+exports.canReorder = canReorder;
+exports.trackingStepIndex = trackingStepIndex;
+exports.trackingHeadline = trackingHeadline;
+exports.trackingRefetchInterval = trackingRefetchInterval;
+/** Non-cancelled, catalog-backed (productId present), positive-qty lines
+ *  only. Operator-added "unlisted" lines (no productId) can exist on an
+ *  order but can never be reordered through the buyer create path.
+ *
+ *  B651: `ReorderItem` has no `unitLabel` field, so a unit-sold line (Case/Pallet/Piece)
+ *  copied through here would silently re-split at the LIVE pack and reprice as a pack
+ *  line — or, for a factor-1 Piece line, have its bare qty read as SELLING UNITS
+ *  (~unitsPerBox x over). Refuses the WHOLE reorder when any live line is unit-aware,
+ *  same fail-closed posture as the staff merge's refusal (B649) — a partial reorder
+ *  that quietly drops a Case is its own kind of surprise. Carrying `unitLabel` through
+ *  properly is a bigger lift (the create path would need to build a real unit-aware
+ *  line, not just forward a field) and isn't done here. */
+function buildReorderItems(order) {
+    const live = order.lineItems.filter((li) => li.status !== "CANCELLED" && !!li.productId && Number(li.qty) > 0);
+    if (live.some((li) => li.unitLabel != null && li.unitLabel !== ""))
+        return [];
+    return live.map((li) => ({
+        productId: li.productId,
+        qty: Number(li.qty),
+        ...(li.boxes != null ? { boxes: li.boxes } : {}),
+        ...(li.pieces != null ? { pieces: li.pieces } : {}),
+    }));
+}
+/** Reorder only makes sense once an order has actually been placed — DRAFT/
+ *  PENDING orders are still directly editable (see the existing Edit-items
+ *  action), so Reorder is hidden there to avoid two competing affordances. */
+function canReorder(order) {
+    return order.status !== "DRAFT" && order.status !== "PENDING";
+}
+/** Timeline step index for the 5-step bar (mirrors web's buyer-order-detail
+ *  STATUS_STEPS). -1 for any status not in the happy path (e.g. CANCELLED —
+ *  callers hide the whole tracking section for CANCELLED instead). */
+const STATUS_STEPS = [
+    "PENDING",
+    "CONFIRMED",
+    "OUT_FOR_DELIVERY",
+    "PARTIALLY_DELIVERED",
+    "DELIVERED",
+];
+function trackingStepIndex(status) {
+    return STATUS_STEPS.indexOf(status);
+}
+/** F11 (B146). Buyer-card headline for the live tracking block. Precedence is
+ *  deliberate: a cancelled run outranks everything (defensive — the server
+ *  returns tracking: null for CANCELLED since F11, but a new app against an
+ *  old server or a stale cache must never read "You're next"); a SKIPPED own
+ *  stop outranks the live-run copy regardless of runStatus (a pre-fix SKIPPED
+ *  stop on a COMPLETED run reads the same); stopsAhead is ignored when skipped
+ *  (it structurally excludes the own stop, so it would say 0 → "You're next"). */
+function trackingHeadline(t) {
+    if (t.runStatus === "CANCELLED") {
+        return "This delivery run was cancelled — your order will be rescheduled.";
+    }
+    if (t.stopStatus === "SKIPPED") {
+        return "Your stop was skipped on this run — the seller will follow up to reschedule.";
+    }
+    if (t.runStatus === "IN_PROGRESS") {
+        return t.stopsAhead === 0
+            ? "You're next on the route"
+            : `${t.stopsAhead} stop${t.stopsAhead === 1 ? "" : "s"} ahead of you`;
+    }
+    return null;
+}
+/** F11 (B146). Poll cadence for useBuyerOrderTracking. Today's rule (order is
+ *  OUT_FOR_DELIVERY / PARTIALLY_DELIVERED) PLUS "the run is IN_PROGRESS" — a
+ *  CONFIRMED order on a live run never refreshed, so it could never observe
+ *  its own skip. A terminal order (DELIVERED / CANCELLED) stops polling even
+ *  while its run is still live: neither the release helper nor completeStop
+ *  clears a terminal order's stop pointer, so its tracking payload keeps
+ *  reporting the run's status for the rest of the trip — without this arm a
+ *  buyer delivered at stop 2 of 10 would poll for hours. `false` pauses the
+ *  poll (TanStack v5 function form). */
+function trackingRefetchInterval(data) {
+    if (!data)
+        return false;
+    if (data.status === "OUT_FOR_DELIVERY" || data.status === "PARTIALLY_DELIVERED")
+        return 20_000;
+    if (data.status === "DELIVERED" || data.status === "CANCELLED")
+        return false;
+    if (data.tracking?.runStatus === "IN_PROGRESS")
+        return 20_000;
+    return false;
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL29yZGVyLXRyYWNraW5nLWxvZ2ljLnRzIiwibWFwcGluZ3MiOiI7O0FBMkJBLDhDQVdDO0FBS0QsZ0NBRUM7QUFZRCw4Q0FFQztBQVNELDRDQWlCQztBQVdELDBEQVFDO0FBekZEOzs7Ozs7Ozs7OzsyREFXMkQ7QUFDM0QsU0FBZ0IsaUJBQWlCLENBQUMsS0FBb0M7SUFDcEUsTUFBTSxJQUFJLEdBQUcsS0FBSyxDQUFDLFNBQVMsQ0FBQyxNQUFNLENBQ2pDLENBQUMsRUFBRSxFQUFFLEVBQUUsQ0FBQyxFQUFFLENBQUMsTUFBTSxLQUFLLFdBQVcsSUFBSSxDQUFDLENBQUMsRUFBRSxDQUFDLFNBQVMsSUFBSSxNQUFNLENBQUMsRUFBRSxDQUFDLEdBQUcsQ0FBQyxHQUFHLENBQUMsQ0FDMUUsQ0FBQztJQUNGLElBQUksSUFBSSxDQUFDLElBQUksQ0FBQyxDQUFDLEVBQUUsRUFBRSxFQUFFLENBQUMsRUFBRSxDQUFDLFNBQVMsSUFBSSxJQUFJLElBQUksRUFBRSxDQUFDLFNBQVMsS0FBSyxFQUFFLENBQUM7UUFBRSxPQUFPLEVBQUUsQ0FBQztJQUM5RSxPQUFPLElBQUksQ0FBQyxHQUFHLENBQUMsQ0FBQyxFQUFFLEVBQUUsRUFBRSxDQUFDLENBQUM7UUFDdkIsU0FBUyxFQUFFLEVBQUUsQ0FBQyxTQUFTO1FBQ3ZCLEdBQUcsRUFBRSxNQUFNLENBQUMsRUFBRSxDQUFDLEdBQUcsQ0FBQztRQUNuQixHQUFHLENBQUMsRUFBRSxDQUFDLEtBQUssSUFBSSxJQUFJLENBQUMsQ0FBQyxDQUFDLEVBQUUsS0FBSyxFQUFFLEVBQUUsQ0FBQyxLQUFLLEVBQUUsQ0FBQyxDQUFDLENBQUMsRUFBRSxDQUFDO1FBQ2hELEdBQUcsQ0FBQyxFQUFFLENBQUMsTUFBTSxJQUFJLElBQUksQ0FBQyxDQUFDLENBQUMsRUFBRSxNQUFNLEVBQUUsRUFBRSxDQUFDLE1BQU0sRUFBRSxDQUFDLENBQUMsQ0FBQyxFQUFFLENBQUM7S0FDcEQsQ0FBQyxDQUFDLENBQUM7QUFDTixDQUFDO0FBRUQ7OzhFQUU4RTtBQUM5RSxTQUFnQixVQUFVLENBQUMsS0FBaUM7SUFDMUQsT0FBTyxLQUFLLENBQUMsTUFBTSxLQUFLLE9BQU8sSUFBSSxLQUFLLENBQUMsTUFBTSxLQUFLLFNBQVMsQ0FBQztBQUNoRSxDQUFDO0FBRUQ7O3NFQUVzRTtBQUN0RSxNQUFNLFlBQVksR0FBRztJQUNuQixTQUFTO0lBQ1QsV0FBVztJQUNYLGtCQUFrQjtJQUNsQixxQkFBcUI7SUFDckIsV0FBVztDQUNaLENBQUM7QUFDRixTQUFnQixpQkFBaUIsQ0FBQyxNQUFjO0lBQzlDLE9BQU8sWUFBWSxDQUFDLE9BQU8sQ0FBQyxNQUFNLENBQUMsQ0FBQztBQUN0QyxDQUFDO0FBRUQ7Ozs7OztrRkFNa0Y7QUFDbEYsU0FBZ0IsZ0JBQWdCLENBQUMsQ0FJaEM7SUFDQyxJQUFJLENBQUMsQ0FBQyxTQUFTLEtBQUssV0FBVyxFQUFFLENBQUM7UUFDaEMsT0FBTyxtRUFBbUUsQ0FBQztJQUM3RSxDQUFDO0lBQ0QsSUFBSSxDQUFDLENBQUMsVUFBVSxLQUFLLFNBQVMsRUFBRSxDQUFDO1FBQy9CLE9BQU8sOEVBQThFLENBQUM7SUFDeEYsQ0FBQztJQUNELElBQUksQ0FBQyxDQUFDLFNBQVMsS0FBSyxhQUFhLEVBQUUsQ0FBQztRQUNsQyxPQUFPLENBQUMsQ0FBQyxVQUFVLEtBQUssQ0FBQztZQUN2QixDQUFDLENBQUMsMEJBQTBCO1lBQzVCLENBQUMsQ0FBQyxHQUFHLENBQUMsQ0FBQyxVQUFVLFFBQVEsQ0FBQyxDQUFDLFVBQVUsS0FBSyxDQUFDLENBQUMsQ0FBQyxDQUFDLEVBQUUsQ0FBQyxDQUFDLENBQUMsR0FBRyxlQUFlLENBQUM7SUFDMUUsQ0FBQztJQUNELE9BQU8sSUFBSSxDQUFDO0FBQ2QsQ0FBQztBQUVEOzs7Ozs7Ozt3Q0FRd0M7QUFDeEMsU0FBZ0IsdUJBQXVCLENBQ3JDLElBQTRFO0lBRTVFLElBQUksQ0FBQyxJQUFJO1FBQUUsT0FBTyxLQUFLLENBQUM7SUFDeEIsSUFBSSxJQUFJLENBQUMsTUFBTSxLQUFLLGtCQUFrQixJQUFJLElBQUksQ0FBQyxNQUFNLEtBQUsscUJBQXFCO1FBQUUsT0FBTyxNQUFNLENBQUM7SUFDL0YsSUFBSSxJQUFJLENBQUMsTUFBTSxLQUFLLFdBQVcsSUFBSSxJQUFJLENBQUMsTUFBTSxLQUFLLFdBQVc7UUFBRSxPQUFPLEtBQUssQ0FBQztJQUM3RSxJQUFJLElBQUksQ0FBQyxRQUFRLEVBQUUsU0FBUyxLQUFLLGFBQWE7UUFBRSxPQUFPLE1BQU0sQ0FBQztJQUM5RCxPQUFPLEtBQUssQ0FBQztBQUNmLENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL29yZGVyLXRyYWNraW5nLWxvZ2ljLnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogUHVyZSBoZWxwZXJzIGZvciB0aGUgYnV5ZXIgb3JkZXItdHJhY2tpbmcgY2FyZCArIFJlb3JkZXIgYWN0aW9uIChQMTAtQlVZLTgpLlxuICogTm8gbmV0d29yaywgbm8gcHJpY2UgbWF0aCDigJQgUmVvcmRlciBjYXJyaWVzIHF0eS9ib3gvcGllY2UgY291bnRzIGZvcndhcmRcbiAqIFVOQ0hBTkdFRDsgdGhlIHNlcnZlciAoUE9TVCAvYnV5ZXIvb3JkZXJzKSByZS1wcmljZXMgYW5kIHJlLXJ1bnMgZXZlcnlcbiAqIGd1YXJkIGZyZXNoLCBzYW1lIGFzIGFueSBvdGhlciBidXllciBvcmRlciBjcmVhdGUuXG4gKi9cbmltcG9ydCB0eXBlIHsgQnV5ZXJPcmRlciB9IGZyb20gXCIuL2FwaS9idXllclwiO1xuXG5leHBvcnQgaW50ZXJmYWNlIFJlb3JkZXJJdGVtIHtcbiAgcHJvZHVjdElkOiBzdHJpbmc7XG4gIHF0eTogbnVtYmVyO1xuICBib3hlcz86IG51bWJlcjtcbiAgcGllY2VzPzogbnVtYmVyO1xufVxuXG4vKiogTm9uLWNhbmNlbGxlZCwgY2F0YWxvZy1iYWNrZWQgKHByb2R1Y3RJZCBwcmVzZW50KSwgcG9zaXRpdmUtcXR5IGxpbmVzXG4gKiAgb25seS4gT3BlcmF0b3ItYWRkZWQgXCJ1bmxpc3RlZFwiIGxpbmVzIChubyBwcm9kdWN0SWQpIGNhbiBleGlzdCBvbiBhblxuICogIG9yZGVyIGJ1dCBjYW4gbmV2ZXIgYmUgcmVvcmRlcmVkIHRocm91Z2ggdGhlIGJ1eWVyIGNyZWF0ZSBwYXRoLlxuICpcbiAqICBCNjUxOiBgUmVvcmRlckl0ZW1gIGhhcyBubyBgdW5pdExhYmVsYCBmaWVsZCwgc28gYSB1bml0LXNvbGQgbGluZSAoQ2FzZS9QYWxsZXQvUGllY2UpXG4gKiAgY29waWVkIHRocm91Z2ggaGVyZSB3b3VsZCBzaWxlbnRseSByZS1zcGxpdCBhdCB0aGUgTElWRSBwYWNrIGFuZCByZXByaWNlIGFzIGEgcGFja1xuICogIGxpbmUg4oCUIG9yLCBmb3IgYSBmYWN0b3ItMSBQaWVjZSBsaW5lLCBoYXZlIGl0cyBiYXJlIHF0eSByZWFkIGFzIFNFTExJTkcgVU5JVFNcbiAqICAofnVuaXRzUGVyQm94IHggb3ZlcikuIFJlZnVzZXMgdGhlIFdIT0xFIHJlb3JkZXIgd2hlbiBhbnkgbGl2ZSBsaW5lIGlzIHVuaXQtYXdhcmUsXG4gKiAgc2FtZSBmYWlsLWNsb3NlZCBwb3N0dXJlIGFzIHRoZSBzdGFmZiBtZXJnZSdzIHJlZnVzYWwgKEI2NDkpIOKAlCBhIHBhcnRpYWwgcmVvcmRlclxuICogIHRoYXQgcXVpZXRseSBkcm9wcyBhIENhc2UgaXMgaXRzIG93biBraW5kIG9mIHN1cnByaXNlLiBDYXJyeWluZyBgdW5pdExhYmVsYCB0aHJvdWdoXG4gKiAgcHJvcGVybHkgaXMgYSBiaWdnZXIgbGlmdCAodGhlIGNyZWF0ZSBwYXRoIHdvdWxkIG5lZWQgdG8gYnVpbGQgYSByZWFsIHVuaXQtYXdhcmVcbiAqICBsaW5lLCBub3QganVzdCBmb3J3YXJkIGEgZmllbGQpIGFuZCBpc24ndCBkb25lIGhlcmUuICovXG5leHBvcnQgZnVuY3Rpb24gYnVpbGRSZW9yZGVySXRlbXMob3JkZXI6IFBpY2s8QnV5ZXJPcmRlciwgXCJsaW5lSXRlbXNcIj4pOiBSZW9yZGVySXRlbVtdIHtcbiAgY29uc3QgbGl2ZSA9IG9yZGVyLmxpbmVJdGVtcy5maWx0ZXIoXG4gICAgKGxpKSA9PiBsaS5zdGF0dXMgIT09IFwiQ0FOQ0VMTEVEXCIgJiYgISFsaS5wcm9kdWN0SWQgJiYgTnVtYmVyKGxpLnF0eSkgPiAwLFxuICApO1xuICBpZiAobGl2ZS5zb21lKChsaSkgPT4gbGkudW5pdExhYmVsICE9IG51bGwgJiYgbGkudW5pdExhYmVsICE9PSBcIlwiKSkgcmV0dXJuIFtdO1xuICByZXR1cm4gbGl2ZS5tYXAoKGxpKSA9PiAoe1xuICAgIHByb2R1Y3RJZDogbGkucHJvZHVjdElkLFxuICAgIHF0eTogTnVtYmVyKGxpLnF0eSksXG4gICAgLi4uKGxpLmJveGVzICE9IG51bGwgPyB7IGJveGVzOiBsaS5ib3hlcyB9IDoge30pLFxuICAgIC4uLihsaS5waWVjZXMgIT0gbnVsbCA/IHsgcGllY2VzOiBsaS5waWVjZXMgfSA6IHt9KSxcbiAgfSkpO1xufVxuXG4vKiogUmVvcmRlciBvbmx5IG1ha2VzIHNlbnNlIG9uY2UgYW4gb3JkZXIgaGFzIGFjdHVhbGx5IGJlZW4gcGxhY2VkIOKAlCBEUkFGVC9cbiAqICBQRU5ESU5HIG9yZGVycyBhcmUgc3RpbGwgZGlyZWN0bHkgZWRpdGFibGUgKHNlZSB0aGUgZXhpc3RpbmcgRWRpdC1pdGVtc1xuICogIGFjdGlvbiksIHNvIFJlb3JkZXIgaXMgaGlkZGVuIHRoZXJlIHRvIGF2b2lkIHR3byBjb21wZXRpbmcgYWZmb3JkYW5jZXMuICovXG5leHBvcnQgZnVuY3Rpb24gY2FuUmVvcmRlcihvcmRlcjogUGljazxCdXllck9yZGVyLCBcInN0YXR1c1wiPik6IGJvb2xlYW4ge1xuICByZXR1cm4gb3JkZXIuc3RhdHVzICE9PSBcIkRSQUZUXCIgJiYgb3JkZXIuc3RhdHVzICE9PSBcIlBFTkRJTkdcIjtcbn1cblxuLyoqIFRpbWVsaW5lIHN0ZXAgaW5kZXggZm9yIHRoZSA1LXN0ZXAgYmFyIChtaXJyb3JzIHdlYidzIGJ1eWVyLW9yZGVyLWRldGFpbFxuICogIFNUQVRVU19TVEVQUykuIC0xIGZvciBhbnkgc3RhdHVzIG5vdCBpbiB0aGUgaGFwcHkgcGF0aCAoZS5nLiBDQU5DRUxMRUQg4oCUXG4gKiAgY2FsbGVycyBoaWRlIHRoZSB3aG9sZSB0cmFja2luZyBzZWN0aW9uIGZvciBDQU5DRUxMRUQgaW5zdGVhZCkuICovXG5jb25zdCBTVEFUVVNfU1RFUFMgPSBbXG4gIFwiUEVORElOR1wiLFxuICBcIkNPTkZJUk1FRFwiLFxuICBcIk9VVF9GT1JfREVMSVZFUllcIixcbiAgXCJQQVJUSUFMTFlfREVMSVZFUkVEXCIsXG4gIFwiREVMSVZFUkVEXCIsXG5dO1xuZXhwb3J0IGZ1bmN0aW9uIHRyYWNraW5nU3RlcEluZGV4KHN0YXR1czogc3RyaW5nKTogbnVtYmVyIHtcbiAgcmV0dXJuIFNUQVRVU19TVEVQUy5pbmRleE9mKHN0YXR1cyk7XG59XG5cbi8qKiBGMTEgKEIxNDYpLiBCdXllci1jYXJkIGhlYWRsaW5lIGZvciB0aGUgbGl2ZSB0cmFja2luZyBibG9jay4gUHJlY2VkZW5jZSBpc1xuICogIGRlbGliZXJhdGU6IGEgY2FuY2VsbGVkIHJ1biBvdXRyYW5rcyBldmVyeXRoaW5nIChkZWZlbnNpdmUg4oCUIHRoZSBzZXJ2ZXJcbiAqICByZXR1cm5zIHRyYWNraW5nOiBudWxsIGZvciBDQU5DRUxMRUQgc2luY2UgRjExLCBidXQgYSBuZXcgYXBwIGFnYWluc3QgYW5cbiAqICBvbGQgc2VydmVyIG9yIGEgc3RhbGUgY2FjaGUgbXVzdCBuZXZlciByZWFkIFwiWW91J3JlIG5leHRcIik7IGEgU0tJUFBFRCBvd25cbiAqICBzdG9wIG91dHJhbmtzIHRoZSBsaXZlLXJ1biBjb3B5IHJlZ2FyZGxlc3Mgb2YgcnVuU3RhdHVzIChhIHByZS1maXggU0tJUFBFRFxuICogIHN0b3Agb24gYSBDT01QTEVURUQgcnVuIHJlYWRzIHRoZSBzYW1lKTsgc3RvcHNBaGVhZCBpcyBpZ25vcmVkIHdoZW4gc2tpcHBlZFxuICogIChpdCBzdHJ1Y3R1cmFsbHkgZXhjbHVkZXMgdGhlIG93biBzdG9wLCBzbyBpdCB3b3VsZCBzYXkgMCDihpIgXCJZb3UncmUgbmV4dFwiKS4gKi9cbmV4cG9ydCBmdW5jdGlvbiB0cmFja2luZ0hlYWRsaW5lKHQ6IHtcbiAgcnVuU3RhdHVzOiBzdHJpbmc7XG4gIHN0b3BTdGF0dXM6IHN0cmluZztcbiAgc3RvcHNBaGVhZDogbnVtYmVyO1xufSk6IHN0cmluZyB8IG51bGwge1xuICBpZiAodC5ydW5TdGF0dXMgPT09IFwiQ0FOQ0VMTEVEXCIpIHtcbiAgICByZXR1cm4gXCJUaGlzIGRlbGl2ZXJ5IHJ1biB3YXMgY2FuY2VsbGVkIOKAlCB5b3VyIG9yZGVyIHdpbGwgYmUgcmVzY2hlZHVsZWQuXCI7XG4gIH1cbiAgaWYgKHQuc3RvcFN0YXR1cyA9PT0gXCJTS0lQUEVEXCIpIHtcbiAgICByZXR1cm4gXCJZb3VyIHN0b3Agd2FzIHNraXBwZWQgb24gdGhpcyBydW4g4oCUIHRoZSBzZWxsZXIgd2lsbCBmb2xsb3cgdXAgdG8gcmVzY2hlZHVsZS5cIjtcbiAgfVxuICBpZiAodC5ydW5TdGF0dXMgPT09IFwiSU5fUFJPR1JFU1NcIikge1xuICAgIHJldHVybiB0LnN0b3BzQWhlYWQgPT09IDBcbiAgICAgID8gXCJZb3UncmUgbmV4dCBvbiB0aGUgcm91dGVcIlxuICAgICAgOiBgJHt0LnN0b3BzQWhlYWR9IHN0b3Ake3Quc3RvcHNBaGVhZCA9PT0gMSA/IFwiXCIgOiBcInNcIn0gYWhlYWQgb2YgeW91YDtcbiAgfVxuICByZXR1cm4gbnVsbDtcbn1cblxuLyoqIEYxMSAoQjE0NikuIFBvbGwgY2FkZW5jZSBmb3IgdXNlQnV5ZXJPcmRlclRyYWNraW5nLiBUb2RheSdzIHJ1bGUgKG9yZGVyIGlzXG4gKiAgT1VUX0ZPUl9ERUxJVkVSWSAvIFBBUlRJQUxMWV9ERUxJVkVSRUQpIFBMVVMgXCJ0aGUgcnVuIGlzIElOX1BST0dSRVNTXCIg4oCUIGFcbiAqICBDT05GSVJNRUQgb3JkZXIgb24gYSBsaXZlIHJ1biBuZXZlciByZWZyZXNoZWQsIHNvIGl0IGNvdWxkIG5ldmVyIG9ic2VydmVcbiAqICBpdHMgb3duIHNraXAuIEEgdGVybWluYWwgb3JkZXIgKERFTElWRVJFRCAvIENBTkNFTExFRCkgc3RvcHMgcG9sbGluZyBldmVuXG4gKiAgd2hpbGUgaXRzIHJ1biBpcyBzdGlsbCBsaXZlOiBuZWl0aGVyIHRoZSByZWxlYXNlIGhlbHBlciBub3IgY29tcGxldGVTdG9wXG4gKiAgY2xlYXJzIGEgdGVybWluYWwgb3JkZXIncyBzdG9wIHBvaW50ZXIsIHNvIGl0cyB0cmFja2luZyBwYXlsb2FkIGtlZXBzXG4gKiAgcmVwb3J0aW5nIHRoZSBydW4ncyBzdGF0dXMgZm9yIHRoZSByZXN0IG9mIHRoZSB0cmlwIOKAlCB3aXRob3V0IHRoaXMgYXJtIGFcbiAqICBidXllciBkZWxpdmVyZWQgYXQgc3RvcCAyIG9mIDEwIHdvdWxkIHBvbGwgZm9yIGhvdXJzLiBgZmFsc2VgIHBhdXNlcyB0aGVcbiAqICBwb2xsIChUYW5TdGFjayB2NSBmdW5jdGlvbiBmb3JtKS4gKi9cbmV4cG9ydCBmdW5jdGlvbiB0cmFja2luZ1JlZmV0Y2hJbnRlcnZhbChcbiAgZGF0YTogeyBzdGF0dXM6IHN0cmluZzsgdHJhY2tpbmc6IHsgcnVuU3RhdHVzOiBzdHJpbmcgfSB8IG51bGwgfSB8IHVuZGVmaW5lZCxcbik6IG51bWJlciB8IGZhbHNlIHtcbiAgaWYgKCFkYXRhKSByZXR1cm4gZmFsc2U7XG4gIGlmIChkYXRhLnN0YXR1cyA9PT0gXCJPVVRfRk9SX0RFTElWRVJZXCIgfHwgZGF0YS5zdGF0dXMgPT09IFwiUEFSVElBTExZX0RFTElWRVJFRFwiKSByZXR1cm4gMjBfMDAwO1xuICBpZiAoZGF0YS5zdGF0dXMgPT09IFwiREVMSVZFUkVEXCIgfHwgZGF0YS5zdGF0dXMgPT09IFwiQ0FOQ0VMTEVEXCIpIHJldHVybiBmYWxzZTtcbiAgaWYgKGRhdGEudHJhY2tpbmc/LnJ1blN0YXR1cyA9PT0gXCJJTl9QUk9HUkVTU1wiKSByZXR1cm4gMjBfMDAwO1xuICByZXR1cm4gZmFsc2U7XG59XG4iXSwidmVyc2lvbiI6M30=

@@ -1,0 +1,81 @@
+63243c737956e7e7b7e5e096a1e4b2ce
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.usePreventRemove = usePreventRemove;
+const non_secure_1 = require("nanoid/non-secure");
+const React = __importStar(require("react"));
+const use_latest_callback_1 = __importDefault(require("use-latest-callback"));
+const useNavigation_js_1 = require("./useNavigation.js");
+const usePreventRemoveContext_js_1 = require("./usePreventRemoveContext.js");
+const useRoute_js_1 = require("./useRoute.js");
+/**
+ * Hook to prevent screen from being removed. Can be used to prevent users from leaving the screen.
+ *
+ * @param preventRemove Boolean indicating whether to prevent screen from being removed.
+ * @param callback Function which is executed when screen was prevented from being removed.
+ */
+function usePreventRemove(preventRemove, callback) {
+    const [id] = React.useState(() => (0, non_secure_1.nanoid)());
+    const navigation = (0, useNavigation_js_1.useNavigation)();
+    const { key: routeKey } = (0, useRoute_js_1.useRoute)();
+    const { setPreventRemove, notifyPreventRemove } = (0, usePreventRemoveContext_js_1.usePreventRemoveContext)();
+    React.useInsertionEffect(() => {
+        setPreventRemove(id, routeKey, preventRemove);
+        return () => {
+            setPreventRemove(id, routeKey, false);
+        };
+    }, [setPreventRemove, id, routeKey, preventRemove]);
+    React.useEffect(() => {
+        notifyPreventRemove();
+        return () => {
+            notifyPreventRemove();
+        };
+    }, [id, routeKey, preventRemove, notifyPreventRemove]);
+    const beforeRemoveListener = (0, use_latest_callback_1.default)(e => {
+        if (!preventRemove) {
+            return;
+        }
+        e.preventDefault();
+        callback({
+            data: e.data
+        });
+    });
+    React.useEffect(() => navigation?.addListener('beforeRemove', beforeRemoveListener), [navigation, beforeRemoveListener]);
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0Mzcvbm9kZV9tb2R1bGVzL0ByZWFjdC1uYXZpZ2F0aW9uL2NvcmUvbGliL21vZHVsZS91c2VQcmV2ZW50UmVtb3ZlLmpzIiwibWFwcGluZ3MiOiJBQUFBLFlBQVksQ0FBQzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7QUFlYiw0Q0FnQ0M7QUE3Q0Qsa0RBQTJDO0FBQzNDLDZDQUErQjtBQUMvQiw4RUFBb0Q7QUFDcEQseURBQW1EO0FBQ25ELDZFQUF1RTtBQUN2RSwrQ0FBeUM7QUFFekM7Ozs7O0dBS0c7QUFDSCxTQUFnQixnQkFBZ0IsQ0FBQyxhQUFhLEVBQUUsUUFBUTtJQUN0RCxNQUFNLENBQUMsRUFBRSxDQUFDLEdBQUcsS0FBSyxDQUFDLFFBQVEsQ0FBQyxHQUFHLEVBQUUsQ0FBQyxJQUFBLG1CQUFNLEdBQUUsQ0FBQyxDQUFDO0lBQzVDLE1BQU0sVUFBVSxHQUFHLElBQUEsZ0NBQWEsR0FBRSxDQUFDO0lBQ25DLE1BQU0sRUFDSixHQUFHLEVBQUUsUUFBUSxFQUNkLEdBQUcsSUFBQSxzQkFBUSxHQUFFLENBQUM7SUFDZixNQUFNLEVBQ0osZ0JBQWdCLEVBQ2hCLG1CQUFtQixFQUNwQixHQUFHLElBQUEsb0RBQXVCLEdBQUUsQ0FBQztJQUM5QixLQUFLLENBQUMsa0JBQWtCLENBQUMsR0FBRyxFQUFFO1FBQzVCLGdCQUFnQixDQUFDLEVBQUUsRUFBRSxRQUFRLEVBQUUsYUFBYSxDQUFDLENBQUM7UUFDOUMsT0FBTyxHQUFHLEVBQUU7WUFDVixnQkFBZ0IsQ0FBQyxFQUFFLEVBQUUsUUFBUSxFQUFFLEtBQUssQ0FBQyxDQUFDO1FBQ3hDLENBQUMsQ0FBQztJQUNKLENBQUMsRUFBRSxDQUFDLGdCQUFnQixFQUFFLEVBQUUsRUFBRSxRQUFRLEVBQUUsYUFBYSxDQUFDLENBQUMsQ0FBQztJQUNwRCxLQUFLLENBQUMsU0FBUyxDQUFDLEdBQUcsRUFBRTtRQUNuQixtQkFBbUIsRUFBRSxDQUFDO1FBQ3RCLE9BQU8sR0FBRyxFQUFFO1lBQ1YsbUJBQW1CLEVBQUUsQ0FBQztRQUN4QixDQUFDLENBQUM7SUFDSixDQUFDLEVBQUUsQ0FBQyxFQUFFLEVBQUUsUUFBUSxFQUFFLGFBQWEsRUFBRSxtQkFBbUIsQ0FBQyxDQUFDLENBQUM7SUFDdkQsTUFBTSxvQkFBb0IsR0FBRyxJQUFBLDZCQUFpQixFQUFDLENBQUMsQ0FBQyxFQUFFO1FBQ2pELElBQUksQ0FBQyxhQUFhLEVBQUUsQ0FBQztZQUNuQixPQUFPO1FBQ1QsQ0FBQztRQUNELENBQUMsQ0FBQyxjQUFjLEVBQUUsQ0FBQztRQUNuQixRQUFRLENBQUM7WUFDUCxJQUFJLEVBQUUsQ0FBQyxDQUFDLElBQUk7U0FDYixDQUFDLENBQUM7SUFDTCxDQUFDLENBQUMsQ0FBQztJQUNILEtBQUssQ0FBQyxTQUFTLENBQUMsR0FBRyxFQUFFLENBQUMsVUFBVSxFQUFFLFdBQVcsQ0FBQyxjQUFjLEVBQUUsb0JBQW9CLENBQUMsRUFBRSxDQUFDLFVBQVUsRUFBRSxvQkFBb0IsQ0FBQyxDQUFDLENBQUM7QUFDM0gsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9ub2RlX21vZHVsZXMvQHJlYWN0LW5hdmlnYXRpb24vY29yZS9saWIvbW9kdWxlL3VzZVByZXZlbnRSZW1vdmUuanMiXSwic291cmNlc0NvbnRlbnQiOlsiXCJ1c2Ugc3RyaWN0XCI7XG5cbmltcG9ydCB7IG5hbm9pZCB9IGZyb20gJ25hbm9pZC9ub24tc2VjdXJlJztcbmltcG9ydCAqIGFzIFJlYWN0IGZyb20gJ3JlYWN0JztcbmltcG9ydCB1c2VMYXRlc3RDYWxsYmFjayBmcm9tICd1c2UtbGF0ZXN0LWNhbGxiYWNrJztcbmltcG9ydCB7IHVzZU5hdmlnYXRpb24gfSBmcm9tIFwiLi91c2VOYXZpZ2F0aW9uLmpzXCI7XG5pbXBvcnQgeyB1c2VQcmV2ZW50UmVtb3ZlQ29udGV4dCB9IGZyb20gXCIuL3VzZVByZXZlbnRSZW1vdmVDb250ZXh0LmpzXCI7XG5pbXBvcnQgeyB1c2VSb3V0ZSB9IGZyb20gXCIuL3VzZVJvdXRlLmpzXCI7XG5cbi8qKlxuICogSG9vayB0byBwcmV2ZW50IHNjcmVlbiBmcm9tIGJlaW5nIHJlbW92ZWQuIENhbiBiZSB1c2VkIHRvIHByZXZlbnQgdXNlcnMgZnJvbSBsZWF2aW5nIHRoZSBzY3JlZW4uXG4gKlxuICogQHBhcmFtIHByZXZlbnRSZW1vdmUgQm9vbGVhbiBpbmRpY2F0aW5nIHdoZXRoZXIgdG8gcHJldmVudCBzY3JlZW4gZnJvbSBiZWluZyByZW1vdmVkLlxuICogQHBhcmFtIGNhbGxiYWNrIEZ1bmN0aW9uIHdoaWNoIGlzIGV4ZWN1dGVkIHdoZW4gc2NyZWVuIHdhcyBwcmV2ZW50ZWQgZnJvbSBiZWluZyByZW1vdmVkLlxuICovXG5leHBvcnQgZnVuY3Rpb24gdXNlUHJldmVudFJlbW92ZShwcmV2ZW50UmVtb3ZlLCBjYWxsYmFjaykge1xuICBjb25zdCBbaWRdID0gUmVhY3QudXNlU3RhdGUoKCkgPT4gbmFub2lkKCkpO1xuICBjb25zdCBuYXZpZ2F0aW9uID0gdXNlTmF2aWdhdGlvbigpO1xuICBjb25zdCB7XG4gICAga2V5OiByb3V0ZUtleVxuICB9ID0gdXNlUm91dGUoKTtcbiAgY29uc3Qge1xuICAgIHNldFByZXZlbnRSZW1vdmUsXG4gICAgbm90aWZ5UHJldmVudFJlbW92ZVxuICB9ID0gdXNlUHJldmVudFJlbW92ZUNvbnRleHQoKTtcbiAgUmVhY3QudXNlSW5zZXJ0aW9uRWZmZWN0KCgpID0+IHtcbiAgICBzZXRQcmV2ZW50UmVtb3ZlKGlkLCByb3V0ZUtleSwgcHJldmVudFJlbW92ZSk7XG4gICAgcmV0dXJuICgpID0+IHtcbiAgICAgIHNldFByZXZlbnRSZW1vdmUoaWQsIHJvdXRlS2V5LCBmYWxzZSk7XG4gICAgfTtcbiAgfSwgW3NldFByZXZlbnRSZW1vdmUsIGlkLCByb3V0ZUtleSwgcHJldmVudFJlbW92ZV0pO1xuICBSZWFjdC51c2VFZmZlY3QoKCkgPT4ge1xuICAgIG5vdGlmeVByZXZlbnRSZW1vdmUoKTtcbiAgICByZXR1cm4gKCkgPT4ge1xuICAgICAgbm90aWZ5UHJldmVudFJlbW92ZSgpO1xuICAgIH07XG4gIH0sIFtpZCwgcm91dGVLZXksIHByZXZlbnRSZW1vdmUsIG5vdGlmeVByZXZlbnRSZW1vdmVdKTtcbiAgY29uc3QgYmVmb3JlUmVtb3ZlTGlzdGVuZXIgPSB1c2VMYXRlc3RDYWxsYmFjayhlID0+IHtcbiAgICBpZiAoIXByZXZlbnRSZW1vdmUpIHtcbiAgICAgIHJldHVybjtcbiAgICB9XG4gICAgZS5wcmV2ZW50RGVmYXVsdCgpO1xuICAgIGNhbGxiYWNrKHtcbiAgICAgIGRhdGE6IGUuZGF0YVxuICAgIH0pO1xuICB9KTtcbiAgUmVhY3QudXNlRWZmZWN0KCgpID0+IG5hdmlnYXRpb24/LmFkZExpc3RlbmVyKCdiZWZvcmVSZW1vdmUnLCBiZWZvcmVSZW1vdmVMaXN0ZW5lciksIFtuYXZpZ2F0aW9uLCBiZWZvcmVSZW1vdmVMaXN0ZW5lcl0pO1xufVxuLy8jIHNvdXJjZU1hcHBpbmdVUkw9dXNlUHJldmVudFJlbW92ZS5qcy5tYXAiXSwidmVyc2lvbiI6M30=

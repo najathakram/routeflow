@@ -1,0 +1,69 @@
+cfcefa76ec7eccb181284b96de20d0dd
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.IsFocusedContext = exports.FocusedRouteKeyContext = void 0;
+exports.useIsFocused = useIsFocused;
+const React = __importStar(require("react"));
+const useNavigation_js_1 = require("./useNavigation.js");
+exports.FocusedRouteKeyContext = React.createContext(undefined);
+exports.IsFocusedContext = React.createContext(undefined);
+/**
+ * Hook to get the current focus state of the screen. Returns a `true` if screen is focused, otherwise `false`.
+ * This can be used if a component needs to render something based on the focus state.
+ */
+function useIsFocused() {
+    const isFocused = React.useContext(exports.IsFocusedContext);
+    const navigation = (0, useNavigation_js_1.useNavigation)();
+    const isFocusedAvailable = isFocused !== undefined;
+    const subscribe = React.useCallback(callback => {
+        if (isFocusedAvailable) {
+            // If `isFocused` is available in context
+            // We don't need to subscribe to focus and blur events
+            return () => { };
+        }
+        const unsubscribeFocus = navigation.addListener('focus', callback);
+        const unsubscribeBlur = navigation.addListener('blur', callback);
+        return () => {
+            unsubscribeFocus();
+            unsubscribeBlur();
+        };
+    }, [isFocusedAvailable, navigation]);
+    // isFocused from context only works with NavigationProvider
+    // So this is kept for backward compatibility
+    const value = React.useSyncExternalStore(subscribe, navigation.isFocused, navigation.isFocused);
+    return isFocused ?? value;
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0Mzcvbm9kZV9tb2R1bGVzL0ByZWFjdC1uYXZpZ2F0aW9uL2NvcmUvbGliL21vZHVsZS91c2VJc0ZvY3VzZWQuanMiLCJtYXBwaW5ncyI6IkFBQUEsWUFBWSxDQUFDOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7QUFXYixvQ0FzQkM7QUEvQkQsNkNBQStCO0FBQy9CLHlEQUFtRDtBQUN0QyxRQUFBLHNCQUFzQixHQUFnQixLQUFLLENBQUMsYUFBYSxDQUFDLFNBQVMsQ0FBQyxDQUFDO0FBQ3JFLFFBQUEsZ0JBQWdCLEdBQWdCLEtBQUssQ0FBQyxhQUFhLENBQUMsU0FBUyxDQUFDLENBQUM7QUFFNUU7OztHQUdHO0FBQ0gsU0FBZ0IsWUFBWTtJQUMxQixNQUFNLFNBQVMsR0FBRyxLQUFLLENBQUMsVUFBVSxDQUFDLHdCQUFnQixDQUFDLENBQUM7SUFDckQsTUFBTSxVQUFVLEdBQUcsSUFBQSxnQ0FBYSxHQUFFLENBQUM7SUFDbkMsTUFBTSxrQkFBa0IsR0FBRyxTQUFTLEtBQUssU0FBUyxDQUFDO0lBQ25ELE1BQU0sU0FBUyxHQUFHLEtBQUssQ0FBQyxXQUFXLENBQUMsUUFBUSxDQUFDLEVBQUU7UUFDN0MsSUFBSSxrQkFBa0IsRUFBRSxDQUFDO1lBQ3ZCLHlDQUF5QztZQUN6QyxzREFBc0Q7WUFDdEQsT0FBTyxHQUFHLEVBQUUsR0FBRSxDQUFDLENBQUM7UUFDbEIsQ0FBQztRQUNELE1BQU0sZ0JBQWdCLEdBQUcsVUFBVSxDQUFDLFdBQVcsQ0FBQyxPQUFPLEVBQUUsUUFBUSxDQUFDLENBQUM7UUFDbkUsTUFBTSxlQUFlLEdBQUcsVUFBVSxDQUFDLFdBQVcsQ0FBQyxNQUFNLEVBQUUsUUFBUSxDQUFDLENBQUM7UUFDakUsT0FBTyxHQUFHLEVBQUU7WUFDVixnQkFBZ0IsRUFBRSxDQUFDO1lBQ25CLGVBQWUsRUFBRSxDQUFDO1FBQ3BCLENBQUMsQ0FBQztJQUNKLENBQUMsRUFBRSxDQUFDLGtCQUFrQixFQUFFLFVBQVUsQ0FBQyxDQUFDLENBQUM7SUFFckMsNERBQTREO0lBQzVELDZDQUE2QztJQUM3QyxNQUFNLEtBQUssR0FBRyxLQUFLLENBQUMsb0JBQW9CLENBQUMsU0FBUyxFQUFFLFVBQVUsQ0FBQyxTQUFTLEVBQUUsVUFBVSxDQUFDLFNBQVMsQ0FBQyxDQUFDO0lBQ2hHLE9BQU8sU0FBUyxJQUFJLEtBQUssQ0FBQztBQUM1QixDQUFDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L25vZGVfbW9kdWxlcy9AcmVhY3QtbmF2aWdhdGlvbi9jb3JlL2xpYi9tb2R1bGUvdXNlSXNGb2N1c2VkLmpzIl0sInNvdXJjZXNDb250ZW50IjpbIlwidXNlIHN0cmljdFwiO1xuXG5pbXBvcnQgKiBhcyBSZWFjdCBmcm9tICdyZWFjdCc7XG5pbXBvcnQgeyB1c2VOYXZpZ2F0aW9uIH0gZnJvbSBcIi4vdXNlTmF2aWdhdGlvbi5qc1wiO1xuZXhwb3J0IGNvbnN0IEZvY3VzZWRSb3V0ZUtleUNvbnRleHQgPSAvKiNfX1BVUkVfXyovUmVhY3QuY3JlYXRlQ29udGV4dCh1bmRlZmluZWQpO1xuZXhwb3J0IGNvbnN0IElzRm9jdXNlZENvbnRleHQgPSAvKiNfX1BVUkVfXyovUmVhY3QuY3JlYXRlQ29udGV4dCh1bmRlZmluZWQpO1xuXG4vKipcbiAqIEhvb2sgdG8gZ2V0IHRoZSBjdXJyZW50IGZvY3VzIHN0YXRlIG9mIHRoZSBzY3JlZW4uIFJldHVybnMgYSBgdHJ1ZWAgaWYgc2NyZWVuIGlzIGZvY3VzZWQsIG90aGVyd2lzZSBgZmFsc2VgLlxuICogVGhpcyBjYW4gYmUgdXNlZCBpZiBhIGNvbXBvbmVudCBuZWVkcyB0byByZW5kZXIgc29tZXRoaW5nIGJhc2VkIG9uIHRoZSBmb2N1cyBzdGF0ZS5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIHVzZUlzRm9jdXNlZCgpIHtcbiAgY29uc3QgaXNGb2N1c2VkID0gUmVhY3QudXNlQ29udGV4dChJc0ZvY3VzZWRDb250ZXh0KTtcbiAgY29uc3QgbmF2aWdhdGlvbiA9IHVzZU5hdmlnYXRpb24oKTtcbiAgY29uc3QgaXNGb2N1c2VkQXZhaWxhYmxlID0gaXNGb2N1c2VkICE9PSB1bmRlZmluZWQ7XG4gIGNvbnN0IHN1YnNjcmliZSA9IFJlYWN0LnVzZUNhbGxiYWNrKGNhbGxiYWNrID0+IHtcbiAgICBpZiAoaXNGb2N1c2VkQXZhaWxhYmxlKSB7XG4gICAgICAvLyBJZiBgaXNGb2N1c2VkYCBpcyBhdmFpbGFibGUgaW4gY29udGV4dFxuICAgICAgLy8gV2UgZG9uJ3QgbmVlZCB0byBzdWJzY3JpYmUgdG8gZm9jdXMgYW5kIGJsdXIgZXZlbnRzXG4gICAgICByZXR1cm4gKCkgPT4ge307XG4gICAgfVxuICAgIGNvbnN0IHVuc3Vic2NyaWJlRm9jdXMgPSBuYXZpZ2F0aW9uLmFkZExpc3RlbmVyKCdmb2N1cycsIGNhbGxiYWNrKTtcbiAgICBjb25zdCB1bnN1YnNjcmliZUJsdXIgPSBuYXZpZ2F0aW9uLmFkZExpc3RlbmVyKCdibHVyJywgY2FsbGJhY2spO1xuICAgIHJldHVybiAoKSA9PiB7XG4gICAgICB1bnN1YnNjcmliZUZvY3VzKCk7XG4gICAgICB1bnN1YnNjcmliZUJsdXIoKTtcbiAgICB9O1xuICB9LCBbaXNGb2N1c2VkQXZhaWxhYmxlLCBuYXZpZ2F0aW9uXSk7XG5cbiAgLy8gaXNGb2N1c2VkIGZyb20gY29udGV4dCBvbmx5IHdvcmtzIHdpdGggTmF2aWdhdGlvblByb3ZpZGVyXG4gIC8vIFNvIHRoaXMgaXMga2VwdCBmb3IgYmFja3dhcmQgY29tcGF0aWJpbGl0eVxuICBjb25zdCB2YWx1ZSA9IFJlYWN0LnVzZVN5bmNFeHRlcm5hbFN0b3JlKHN1YnNjcmliZSwgbmF2aWdhdGlvbi5pc0ZvY3VzZWQsIG5hdmlnYXRpb24uaXNGb2N1c2VkKTtcbiAgcmV0dXJuIGlzRm9jdXNlZCA/PyB2YWx1ZTtcbn1cbi8vIyBzb3VyY2VNYXBwaW5nVVJMPXVzZUlzRm9jdXNlZC5qcy5tYXAiXSwidmVyc2lvbiI6M30=

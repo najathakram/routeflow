@@ -1,0 +1,27 @@
+e6890a71cfaedbd61632a41884cb590f
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _fs = /*#__PURE__*/ _interop_require_default(require("fs"));
+const _path = /*#__PURE__*/ _interop_require_default(require("path"));
+function _interop_require_default(obj) {
+    return obj && obj.__esModule ? obj : {
+        default: obj
+    };
+}
+/**
+ * #2211 (1): the import cards sat in a bare `grid grid-cols-2` at every width, so at 390px the
+ * second card clipped and button labels wrapped to three lines. They stack below lg now. jsdom
+ * has no layout, so this pins the class wiring; the 320-430px proof is a Playwright capture.
+ */ const src = _fs.default.readFileSync(_path.default.join(__dirname, "page.tsx"), "utf8");
+describe("#2211 — settings/import cards stack on narrow screens", ()=>{
+    it("has no unconditional two-column grid", ()=>{
+        expect(src).not.toMatch(/className="grid grid-cols-2 gap-5"/);
+    });
+    it("uses one column below lg and two from lg up", ()=>{
+        expect(src).toMatch(/className="grid grid-cols-1 gap-5 lg:grid-cols-2"/);
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS9zZXR0aW5ncy9pbXBvcnQvcGFnZS5tb2JpbGUtZ3JpZC1iMjIxMS50ZXN0LnRzIl0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCBmcyBmcm9tIFwiZnNcIjtcbmltcG9ydCBwYXRoIGZyb20gXCJwYXRoXCI7XG5cbi8qKlxuICogIzIyMTEgKDEpOiB0aGUgaW1wb3J0IGNhcmRzIHNhdCBpbiBhIGJhcmUgYGdyaWQgZ3JpZC1jb2xzLTJgIGF0IGV2ZXJ5IHdpZHRoLCBzbyBhdCAzOTBweCB0aGVcbiAqIHNlY29uZCBjYXJkIGNsaXBwZWQgYW5kIGJ1dHRvbiBsYWJlbHMgd3JhcHBlZCB0byB0aHJlZSBsaW5lcy4gVGhleSBzdGFjayBiZWxvdyBsZyBub3cuIGpzZG9tXG4gKiBoYXMgbm8gbGF5b3V0LCBzbyB0aGlzIHBpbnMgdGhlIGNsYXNzIHdpcmluZzsgdGhlIDMyMC00MzBweCBwcm9vZiBpcyBhIFBsYXl3cmlnaHQgY2FwdHVyZS5cbiAqL1xuY29uc3Qgc3JjID0gZnMucmVhZEZpbGVTeW5jKHBhdGguam9pbihfX2Rpcm5hbWUsIFwicGFnZS50c3hcIiksIFwidXRmOFwiKTtcblxuZGVzY3JpYmUoXCIjMjIxMSDigJQgc2V0dGluZ3MvaW1wb3J0IGNhcmRzIHN0YWNrIG9uIG5hcnJvdyBzY3JlZW5zXCIsICgpID0+IHtcbiAgaXQoXCJoYXMgbm8gdW5jb25kaXRpb25hbCB0d28tY29sdW1uIGdyaWRcIiwgKCkgPT4ge1xuICAgIGV4cGVjdChzcmMpLm5vdC50b01hdGNoKC9jbGFzc05hbWU9XCJncmlkIGdyaWQtY29scy0yIGdhcC01XCIvKTtcbiAgfSk7XG5cbiAgaXQoXCJ1c2VzIG9uZSBjb2x1bW4gYmVsb3cgbGcgYW5kIHR3byBmcm9tIGxnIHVwXCIsICgpID0+IHtcbiAgICBleHBlY3Qoc3JjKS50b01hdGNoKC9jbGFzc05hbWU9XCJncmlkIGdyaWQtY29scy0xIGdhcC01IGxnOmdyaWQtY29scy0yXCIvKTtcbiAgfSk7XG59KTtcbiJdLCJuYW1lcyI6WyJzcmMiLCJmcyIsInJlYWRGaWxlU3luYyIsInBhdGgiLCJqb2luIiwiX19kaXJuYW1lIiwiZGVzY3JpYmUiLCJpdCIsImV4cGVjdCIsIm5vdCIsInRvTWF0Y2giXSwibWFwcGluZ3MiOiI7Ozs7MkRBQWU7NkRBQ0U7Ozs7OztBQUVqQjs7OztDQUlDLEdBQ0QsTUFBTUEsTUFBTUMsV0FBRSxDQUFDQyxZQUFZLENBQUNDLGFBQUksQ0FBQ0MsSUFBSSxDQUFDQyxXQUFXLGFBQWE7QUFFOURDLFNBQVMseURBQXlEO0lBQ2hFQyxHQUFHLHdDQUF3QztRQUN6Q0MsT0FBT1IsS0FBS1MsR0FBRyxDQUFDQyxPQUFPLENBQUM7SUFDMUI7SUFFQUgsR0FBRywrQ0FBK0M7UUFDaERDLE9BQU9SLEtBQUtVLE9BQU8sQ0FBQztJQUN0QjtBQUNGIn0=

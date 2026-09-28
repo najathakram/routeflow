@@ -1,0 +1,23 @@
+d540336e40a4538550a2f39c5c031c12
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.SCAN_SLOTS = exports.SCAN_COOLDOWN_MS = exports.ABSENCE_GAP_MS = void 0;
+exports.gateScan = gateScan;
+/**
+ * The continuous-scan gate now lives in `@routeflow/scanning` (one source shared with apps/web).
+ * This file keeps every existing `../lib/scan-loop` import path working and does the ONE thing the
+ * shared gate deliberately does not: injects `normalizeScanCode`, because mobile has two decoders
+ * that can disagree within a session (native vs BarcodeDetector/zxing — an iOS 13-digit decode and
+ * a 12-digit decode of the same UPC-A must be one item). Behaviour is identical to the
+ * pre-extraction gate; `__tests__/scan-loop.test.ts` pins that against this wrapper.
+ */
+const scanning_1 = require("@routeflow/scanning");
+const barcode_normalize_1 = require("./barcode-normalize");
+var scanning_2 = require("@routeflow/scanning");
+Object.defineProperty(exports, "ABSENCE_GAP_MS", { enumerable: true, get: function () { return scanning_2.ABSENCE_GAP_MS; } });
+Object.defineProperty(exports, "SCAN_COOLDOWN_MS", { enumerable: true, get: function () { return scanning_2.SCAN_COOLDOWN_MS; } });
+Object.defineProperty(exports, "SCAN_SLOTS", { enumerable: true, get: function () { return scanning_2.SCAN_SLOTS; } });
+function gateScan(code, state, now, cooldownMs = scanning_1.SCAN_COOLDOWN_MS) {
+    return (0, scanning_1.gateScan)(code, state, now, cooldownMs, barcode_normalize_1.normalizeScanCode);
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3NjYW4tbG9vcC50cyIsIm1hcHBpbmdzIjoiOzs7QUFzQkEsNEJBT0M7QUE3QkQ7Ozs7Ozs7R0FPRztBQUNILGtEQUFtRjtBQUVuRiwyREFBd0Q7QUFFeEQsZ0RBQW1GO0FBQTFFLDBHQUFBLGNBQWMsT0FBQTtBQUFFLDRHQUFBLGdCQUFnQixPQUFBO0FBQUUsc0dBQUEsVUFBVSxPQUFBO0FBVXJELFNBQWdCLFFBQVEsQ0FDdEIsSUFBWSxFQUNaLEtBQTJCLEVBQzNCLEdBQVcsRUFDWCxhQUFxQiwyQkFBZ0I7SUFFckMsT0FBTyxJQUFBLG1CQUFjLEVBQUMsSUFBSSxFQUFFLEtBQUssRUFBRSxHQUFHLEVBQUUsVUFBVSxFQUFFLHFDQUFpQixDQUFDLENBQUM7QUFDekUsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9hcHBzL21vYmlsZS9saWIvc2Nhbi1sb29wLnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogVGhlIGNvbnRpbnVvdXMtc2NhbiBnYXRlIG5vdyBsaXZlcyBpbiBgQHJvdXRlZmxvdy9zY2FubmluZ2AgKG9uZSBzb3VyY2Ugc2hhcmVkIHdpdGggYXBwcy93ZWIpLlxuICogVGhpcyBmaWxlIGtlZXBzIGV2ZXJ5IGV4aXN0aW5nIGAuLi9saWIvc2Nhbi1sb29wYCBpbXBvcnQgcGF0aCB3b3JraW5nIGFuZCBkb2VzIHRoZSBPTkUgdGhpbmcgdGhlXG4gKiBzaGFyZWQgZ2F0ZSBkZWxpYmVyYXRlbHkgZG9lcyBub3Q6IGluamVjdHMgYG5vcm1hbGl6ZVNjYW5Db2RlYCwgYmVjYXVzZSBtb2JpbGUgaGFzIHR3byBkZWNvZGVyc1xuICogdGhhdCBjYW4gZGlzYWdyZWUgd2l0aGluIGEgc2Vzc2lvbiAobmF0aXZlIHZzIEJhcmNvZGVEZXRlY3Rvci96eGluZyDigJQgYW4gaU9TIDEzLWRpZ2l0IGRlY29kZSBhbmRcbiAqIGEgMTItZGlnaXQgZGVjb2RlIG9mIHRoZSBzYW1lIFVQQy1BIG11c3QgYmUgb25lIGl0ZW0pLiBCZWhhdmlvdXIgaXMgaWRlbnRpY2FsIHRvIHRoZVxuICogcHJlLWV4dHJhY3Rpb24gZ2F0ZTsgYF9fdGVzdHNfXy9zY2FuLWxvb3AudGVzdC50c2AgcGlucyB0aGF0IGFnYWluc3QgdGhpcyB3cmFwcGVyLlxuICovXG5pbXBvcnQgeyBnYXRlU2NhbiBhcyBnYXRlU2NhblNoYXJlZCwgU0NBTl9DT09MRE9XTl9NUyB9IGZyb20gXCJAcm91dGVmbG93L3NjYW5uaW5nXCI7XG5pbXBvcnQgdHlwZSB7IFNjYW5HYXRlU3RhdGUgfSBmcm9tIFwiQHJvdXRlZmxvdy9zY2FubmluZ1wiO1xuaW1wb3J0IHsgbm9ybWFsaXplU2NhbkNvZGUgfSBmcm9tIFwiLi9iYXJjb2RlLW5vcm1hbGl6ZVwiO1xuXG5leHBvcnQgeyBBQlNFTkNFX0dBUF9NUywgU0NBTl9DT09MRE9XTl9NUywgU0NBTl9TTE9UUyB9IGZyb20gXCJAcm91dGVmbG93L3NjYW5uaW5nXCI7XG5leHBvcnQgdHlwZSB7XG4gIFNjYW5DYW5kaWRhdGVzLFxuICBTY2FuRmVlZGJhY2ssXG4gIFNjYW5GZWVkYmFja0FjdGlvbixcbiAgU2NhbkdhdGVTdGF0ZSxcbiAgU2Nhbk91dGNvbWUsXG4gIFNjYW5TbG90LFxufSBmcm9tIFwiQHJvdXRlZmxvdy9zY2FubmluZ1wiO1xuXG5leHBvcnQgZnVuY3Rpb24gZ2F0ZVNjYW4oXG4gIGNvZGU6IHN0cmluZyxcbiAgc3RhdGU6IFNjYW5HYXRlU3RhdGUgfCBudWxsLFxuICBub3c6IG51bWJlcixcbiAgY29vbGRvd25NczogbnVtYmVyID0gU0NBTl9DT09MRE9XTl9NUyxcbik6IHsgYWNjZXB0OiBib29sZWFuOyBzdGF0ZTogU2NhbkdhdGVTdGF0ZSB9IHtcbiAgcmV0dXJuIGdhdGVTY2FuU2hhcmVkKGNvZGUsIHN0YXRlLCBub3csIGNvb2xkb3duTXMsIG5vcm1hbGl6ZVNjYW5Db2RlKTtcbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

@@ -1,0 +1,63 @@
+81161b69a0cbf3ce09dc502d383e8905
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.useComponent = useComponent;
+const React = __importStar(require("react"));
+const jsx_runtime_1 = require("react/jsx-runtime");
+const NavigationContent = ({ render, children }) => {
+    return render(children);
+};
+function useComponent(render) {
+    const renderRef = React.useRef(render);
+    // Normally refs shouldn't be mutated in render
+    // But we return a component which will be rendered
+    // So it's just for immediate consumption
+    renderRef.current = render;
+    React.useEffect(() => {
+        renderRef.current = null;
+    });
+    return React.useRef(({ children }) => {
+        const render = renderRef.current;
+        if (render === null) {
+            throw new Error('The returned component must be rendered in the same render phase as the hook.');
+        }
+        return /*#__PURE__*/ (0, jsx_runtime_1.jsx)(NavigationContent, {
+            render: render,
+            children: children
+        });
+    }).current;
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0Mzcvbm9kZV9tb2R1bGVzL0ByZWFjdC1uYXZpZ2F0aW9uL2NvcmUvbGliL21vZHVsZS91c2VDb21wb25lbnQuanMiLCJtYXBwaW5ncyI6IkFBQUEsWUFBWSxDQUFDOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7OztBQVViLG9DQXNCQztBQTlCRCw2Q0FBK0I7QUFDL0IsbURBQWdEO0FBQ2hELE1BQU0saUJBQWlCLEdBQUcsQ0FBQyxFQUN6QixNQUFNLEVBQ04sUUFBUSxFQUNULEVBQUUsRUFBRTtJQUNILE9BQU8sTUFBTSxDQUFDLFFBQVEsQ0FBQyxDQUFDO0FBQzFCLENBQUMsQ0FBQztBQUNGLFNBQWdCLFlBQVksQ0FBQyxNQUFNO0lBQ2pDLE1BQU0sU0FBUyxHQUFHLEtBQUssQ0FBQyxNQUFNLENBQUMsTUFBTSxDQUFDLENBQUM7SUFFdkMsK0NBQStDO0lBQy9DLG1EQUFtRDtJQUNuRCx5Q0FBeUM7SUFDekMsU0FBUyxDQUFDLE9BQU8sR0FBRyxNQUFNLENBQUM7SUFDM0IsS0FBSyxDQUFDLFNBQVMsQ0FBQyxHQUFHLEVBQUU7UUFDbkIsU0FBUyxDQUFDLE9BQU8sR0FBRyxJQUFJLENBQUM7SUFDM0IsQ0FBQyxDQUFDLENBQUM7SUFDSCxPQUFPLEtBQUssQ0FBQyxNQUFNLENBQUMsQ0FBQyxFQUNuQixRQUFRLEVBQ1QsRUFBRSxFQUFFO1FBQ0gsTUFBTSxNQUFNLEdBQUcsU0FBUyxDQUFDLE9BQU8sQ0FBQztRQUNqQyxJQUFJLE1BQU0sS0FBSyxJQUFJLEVBQUUsQ0FBQztZQUNwQixNQUFNLElBQUksS0FBSyxDQUFDLCtFQUErRSxDQUFDLENBQUM7UUFDbkcsQ0FBQztRQUNELE9BQU8sYUFBYSxDQUFBLElBQUEsaUJBQUksRUFBQyxpQkFBaUIsRUFBRTtZQUMxQyxNQUFNLEVBQUUsTUFBTTtZQUNkLFFBQVEsRUFBRSxRQUFRO1NBQ25CLENBQUMsQ0FBQztJQUNMLENBQUMsQ0FBQyxDQUFDLE9BQU8sQ0FBQztBQUNiLENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0Mzcvbm9kZV9tb2R1bGVzL0ByZWFjdC1uYXZpZ2F0aW9uL2NvcmUvbGliL21vZHVsZS91c2VDb21wb25lbnQuanMiXSwic291cmNlc0NvbnRlbnQiOlsiXCJ1c2Ugc3RyaWN0XCI7XG5cbmltcG9ydCAqIGFzIFJlYWN0IGZyb20gJ3JlYWN0JztcbmltcG9ydCB7IGpzeCBhcyBfanN4IH0gZnJvbSBcInJlYWN0L2pzeC1ydW50aW1lXCI7XG5jb25zdCBOYXZpZ2F0aW9uQ29udGVudCA9ICh7XG4gIHJlbmRlcixcbiAgY2hpbGRyZW5cbn0pID0+IHtcbiAgcmV0dXJuIHJlbmRlcihjaGlsZHJlbik7XG59O1xuZXhwb3J0IGZ1bmN0aW9uIHVzZUNvbXBvbmVudChyZW5kZXIpIHtcbiAgY29uc3QgcmVuZGVyUmVmID0gUmVhY3QudXNlUmVmKHJlbmRlcik7XG5cbiAgLy8gTm9ybWFsbHkgcmVmcyBzaG91bGRuJ3QgYmUgbXV0YXRlZCBpbiByZW5kZXJcbiAgLy8gQnV0IHdlIHJldHVybiBhIGNvbXBvbmVudCB3aGljaCB3aWxsIGJlIHJlbmRlcmVkXG4gIC8vIFNvIGl0J3MganVzdCBmb3IgaW1tZWRpYXRlIGNvbnN1bXB0aW9uXG4gIHJlbmRlclJlZi5jdXJyZW50ID0gcmVuZGVyO1xuICBSZWFjdC51c2VFZmZlY3QoKCkgPT4ge1xuICAgIHJlbmRlclJlZi5jdXJyZW50ID0gbnVsbDtcbiAgfSk7XG4gIHJldHVybiBSZWFjdC51c2VSZWYoKHtcbiAgICBjaGlsZHJlblxuICB9KSA9PiB7XG4gICAgY29uc3QgcmVuZGVyID0gcmVuZGVyUmVmLmN1cnJlbnQ7XG4gICAgaWYgKHJlbmRlciA9PT0gbnVsbCkge1xuICAgICAgdGhyb3cgbmV3IEVycm9yKCdUaGUgcmV0dXJuZWQgY29tcG9uZW50IG11c3QgYmUgcmVuZGVyZWQgaW4gdGhlIHNhbWUgcmVuZGVyIHBoYXNlIGFzIHRoZSBob29rLicpO1xuICAgIH1cbiAgICByZXR1cm4gLyojX19QVVJFX18qL19qc3goTmF2aWdhdGlvbkNvbnRlbnQsIHtcbiAgICAgIHJlbmRlcjogcmVuZGVyLFxuICAgICAgY2hpbGRyZW46IGNoaWxkcmVuXG4gICAgfSk7XG4gIH0pLmN1cnJlbnQ7XG59XG4vLyMgc291cmNlTWFwcGluZ1VSTD11c2VDb21wb25lbnQuanMubWFwIl0sInZlcnNpb24iOjN9

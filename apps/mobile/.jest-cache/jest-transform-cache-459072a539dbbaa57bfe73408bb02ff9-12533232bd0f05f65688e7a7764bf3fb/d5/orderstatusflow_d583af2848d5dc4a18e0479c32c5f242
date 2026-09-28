@@ -1,0 +1,73 @@
+396e7078576214686631fa17f6ba5ee0
+"use strict";
+/**
+ * Pure order status-flow helpers (no api-client/react-query imports so they stay
+ * unit-testable in the node Jest env). Mirror the server's guards in
+ * `orders.service.ts` `changeStatus`/`deleteOrder` so a visible control never
+ * earns a guaranteed 400.
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.ORDER_STATUS_TRANSITIONS = void 0;
+exports.canTransitionOrder = canTransitionOrder;
+exports.demotionRequiresReason = demotionRequiresReason;
+exports.canDeleteOrder = canDeleteOrder;
+/**
+ * The server's transition table (`orders.service.ts` changeStatus). Anything not
+ * listed 400s with "Cannot transition from X to Y" BEFORE any other check runs.
+ *
+ * Every status can now step back exactly one stage (staff-only, reasoned — see
+ * `demotionRequiresReason` below), including `DELIVERED → CONFIRMED` (the
+ * "Reopen order" action — owner policy reversal 2026-08-25; this was blocked
+ * as BUG-ORD-01) and `DELIVERED → PARTIALLY_DELIVERED`. The server additionally
+ * 409s a DELIVERED demotion when the order was delivered on a route stop
+ * that's already COMPLETED — reopen the stop from its route run instead.
+ * A CANCELLED order is reopened through `POST /orders/:id/reopen` instead, which
+ * is why CANCELLED has no entry here.
+ */
+exports.ORDER_STATUS_TRANSITIONS = {
+    DRAFT: ["PENDING", "CANCELLED"],
+    PENDING: ["CONFIRMED", "CANCELLED", "DRAFT"],
+    CONFIRMED: ["OUT_FOR_DELIVERY", "DELIVERED", "PENDING", "CANCELLED"],
+    OUT_FOR_DELIVERY: ["DELIVERED", "PARTIALLY_DELIVERED", "CONFIRMED", "CANCELLED"],
+    PARTIALLY_DELIVERED: ["OUT_FOR_DELIVERY", "DELIVERED", "CANCELLED"],
+    DELIVERED: ["CONFIRMED", "PARTIALLY_DELIVERED"],
+};
+/** Whether `PATCH /orders/:id/status` will accept this move at all. */
+function canTransitionOrder(from, to) {
+    return (exports.ORDER_STATUS_TRANSITIONS[from] ?? []).includes(to);
+}
+/**
+ * Whether the server demands a `reason` for this move — it 400s with "A reason is
+ * required when demoting an order" otherwise.
+ *
+ * A literal mirror of the server's `isDemotion`, including
+ * `OUT_FOR_DELIVERY → PENDING`, which the transition table above rejects first
+ * (so that arm is unreachable today). Kept faithful rather than pruned: if the
+ * table ever gains the move, this stays correct. Callers must still gate on
+ * `canTransitionOrder` — a reason does not make an illegal move legal.
+ *
+ * `PENDING → DRAFT` and both `DELIVERED` demotions are new (2026-08-25,
+ * universal one-step-back demotion): every new one-step demotion joins this
+ * set, staff-only, same as the existing ones.
+ */
+function demotionRequiresReason(from, to) {
+    return ((from === "CONFIRMED" && to === "PENDING") ||
+        (from === "OUT_FOR_DELIVERY" && (to === "PENDING" || to === "CONFIRMED")) ||
+        (from === "PARTIALLY_DELIVERED" && to === "OUT_FOR_DELIVERY") ||
+        (from === "PENDING" && to === "DRAFT") ||
+        (from === "DELIVERED" && (to === "CONFIRMED" || to === "PARTIALLY_DELIVERED")));
+}
+/**
+ * Whether `DELETE /orders/:id` will accept this order. As of 2026-08-25 staff
+ * may delete an order in ANY status ("delete any order") — the server's only
+ * remaining block is a linked invoice with recorded payments (PAID/PARTIAL),
+ * which 409s with "...void the invoice first." That can't be known from the
+ * order's status alone, so this always returns true and lets the screen show
+ * the action unconditionally, surfacing the 409 as a toast if it comes back.
+ * Kept as a named function (not inlined at call sites) so a future
+ * client-visible block can slot back in here without touching the screen.
+ */
+function canDeleteOrder(_status) {
+    return true;
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL29yZGVyLXN0YXR1cy1mbG93LnRzIiwibWFwcGluZ3MiOiI7QUFBQTs7Ozs7R0FLRzs7O0FBeUJILGdEQUVDO0FBZ0JELHdEQVFDO0FBWUQsd0NBRUM7QUEvREQ7Ozs7Ozs7Ozs7OztHQVlHO0FBQ1UsUUFBQSx3QkFBd0IsR0FBNkI7SUFDaEUsS0FBSyxFQUFFLENBQUMsU0FBUyxFQUFFLFdBQVcsQ0FBQztJQUMvQixPQUFPLEVBQUUsQ0FBQyxXQUFXLEVBQUUsV0FBVyxFQUFFLE9BQU8sQ0FBQztJQUM1QyxTQUFTLEVBQUUsQ0FBQyxrQkFBa0IsRUFBRSxXQUFXLEVBQUUsU0FBUyxFQUFFLFdBQVcsQ0FBQztJQUNwRSxnQkFBZ0IsRUFBRSxDQUFDLFdBQVcsRUFBRSxxQkFBcUIsRUFBRSxXQUFXLEVBQUUsV0FBVyxDQUFDO0lBQ2hGLG1CQUFtQixFQUFFLENBQUMsa0JBQWtCLEVBQUUsV0FBVyxFQUFFLFdBQVcsQ0FBQztJQUNuRSxTQUFTLEVBQUUsQ0FBQyxXQUFXLEVBQUUscUJBQXFCLENBQUM7Q0FDaEQsQ0FBQztBQUVGLHVFQUF1RTtBQUN2RSxTQUFnQixrQkFBa0IsQ0FBQyxJQUFZLEVBQUUsRUFBVTtJQUN6RCxPQUFPLENBQUMsZ0NBQXdCLENBQUMsSUFBSSxDQUFDLElBQUksRUFBRSxDQUFDLENBQUMsUUFBUSxDQUFDLEVBQUUsQ0FBQyxDQUFDO0FBQzdELENBQUM7QUFFRDs7Ozs7Ozs7Ozs7OztHQWFHO0FBQ0gsU0FBZ0Isc0JBQXNCLENBQUMsSUFBWSxFQUFFLEVBQVU7SUFDN0QsT0FBTyxDQUNMLENBQUMsSUFBSSxLQUFLLFdBQVcsSUFBSSxFQUFFLEtBQUssU0FBUyxDQUFDO1FBQzFDLENBQUMsSUFBSSxLQUFLLGtCQUFrQixJQUFJLENBQUMsRUFBRSxLQUFLLFNBQVMsSUFBSSxFQUFFLEtBQUssV0FBVyxDQUFDLENBQUM7UUFDekUsQ0FBQyxJQUFJLEtBQUsscUJBQXFCLElBQUksRUFBRSxLQUFLLGtCQUFrQixDQUFDO1FBQzdELENBQUMsSUFBSSxLQUFLLFNBQVMsSUFBSSxFQUFFLEtBQUssT0FBTyxDQUFDO1FBQ3RDLENBQUMsSUFBSSxLQUFLLFdBQVcsSUFBSSxDQUFDLEVBQUUsS0FBSyxXQUFXLElBQUksRUFBRSxLQUFLLHFCQUFxQixDQUFDLENBQUMsQ0FDL0UsQ0FBQztBQUNKLENBQUM7QUFFRDs7Ozs7Ozs7O0dBU0c7QUFDSCxTQUFnQixjQUFjLENBQUMsT0FBZTtJQUM1QyxPQUFPLElBQUksQ0FBQztBQUNkLENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL29yZGVyLXN0YXR1cy1mbG93LnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogUHVyZSBvcmRlciBzdGF0dXMtZmxvdyBoZWxwZXJzIChubyBhcGktY2xpZW50L3JlYWN0LXF1ZXJ5IGltcG9ydHMgc28gdGhleSBzdGF5XG4gKiB1bml0LXRlc3RhYmxlIGluIHRoZSBub2RlIEplc3QgZW52KS4gTWlycm9yIHRoZSBzZXJ2ZXIncyBndWFyZHMgaW5cbiAqIGBvcmRlcnMuc2VydmljZS50c2AgYGNoYW5nZVN0YXR1c2AvYGRlbGV0ZU9yZGVyYCBzbyBhIHZpc2libGUgY29udHJvbCBuZXZlclxuICogZWFybnMgYSBndWFyYW50ZWVkIDQwMC5cbiAqL1xuXG4vKipcbiAqIFRoZSBzZXJ2ZXIncyB0cmFuc2l0aW9uIHRhYmxlIChgb3JkZXJzLnNlcnZpY2UudHNgIGNoYW5nZVN0YXR1cykuIEFueXRoaW5nIG5vdFxuICogbGlzdGVkIDQwMHMgd2l0aCBcIkNhbm5vdCB0cmFuc2l0aW9uIGZyb20gWCB0byBZXCIgQkVGT1JFIGFueSBvdGhlciBjaGVjayBydW5zLlxuICpcbiAqIEV2ZXJ5IHN0YXR1cyBjYW4gbm93IHN0ZXAgYmFjayBleGFjdGx5IG9uZSBzdGFnZSAoc3RhZmYtb25seSwgcmVhc29uZWQg4oCUIHNlZVxuICogYGRlbW90aW9uUmVxdWlyZXNSZWFzb25gIGJlbG93KSwgaW5jbHVkaW5nIGBERUxJVkVSRUQg4oaSIENPTkZJUk1FRGAgKHRoZVxuICogXCJSZW9wZW4gb3JkZXJcIiBhY3Rpb24g4oCUIG93bmVyIHBvbGljeSByZXZlcnNhbCAyMDI2LTA4LTI1OyB0aGlzIHdhcyBibG9ja2VkXG4gKiBhcyBCVUctT1JELTAxKSBhbmQgYERFTElWRVJFRCDihpIgUEFSVElBTExZX0RFTElWRVJFRGAuIFRoZSBzZXJ2ZXIgYWRkaXRpb25hbGx5XG4gKiA0MDlzIGEgREVMSVZFUkVEIGRlbW90aW9uIHdoZW4gdGhlIG9yZGVyIHdhcyBkZWxpdmVyZWQgb24gYSByb3V0ZSBzdG9wXG4gKiB0aGF0J3MgYWxyZWFkeSBDT01QTEVURUQg4oCUIHJlb3BlbiB0aGUgc3RvcCBmcm9tIGl0cyByb3V0ZSBydW4gaW5zdGVhZC5cbiAqIEEgQ0FOQ0VMTEVEIG9yZGVyIGlzIHJlb3BlbmVkIHRocm91Z2ggYFBPU1QgL29yZGVycy86aWQvcmVvcGVuYCBpbnN0ZWFkLCB3aGljaFxuICogaXMgd2h5IENBTkNFTExFRCBoYXMgbm8gZW50cnkgaGVyZS5cbiAqL1xuZXhwb3J0IGNvbnN0IE9SREVSX1NUQVRVU19UUkFOU0lUSU9OUzogUmVjb3JkPHN0cmluZywgc3RyaW5nW10+ID0ge1xuICBEUkFGVDogW1wiUEVORElOR1wiLCBcIkNBTkNFTExFRFwiXSxcbiAgUEVORElORzogW1wiQ09ORklSTUVEXCIsIFwiQ0FOQ0VMTEVEXCIsIFwiRFJBRlRcIl0sXG4gIENPTkZJUk1FRDogW1wiT1VUX0ZPUl9ERUxJVkVSWVwiLCBcIkRFTElWRVJFRFwiLCBcIlBFTkRJTkdcIiwgXCJDQU5DRUxMRURcIl0sXG4gIE9VVF9GT1JfREVMSVZFUlk6IFtcIkRFTElWRVJFRFwiLCBcIlBBUlRJQUxMWV9ERUxJVkVSRURcIiwgXCJDT05GSVJNRURcIiwgXCJDQU5DRUxMRURcIl0sXG4gIFBBUlRJQUxMWV9ERUxJVkVSRUQ6IFtcIk9VVF9GT1JfREVMSVZFUllcIiwgXCJERUxJVkVSRURcIiwgXCJDQU5DRUxMRURcIl0sXG4gIERFTElWRVJFRDogW1wiQ09ORklSTUVEXCIsIFwiUEFSVElBTExZX0RFTElWRVJFRFwiXSxcbn07XG5cbi8qKiBXaGV0aGVyIGBQQVRDSCAvb3JkZXJzLzppZC9zdGF0dXNgIHdpbGwgYWNjZXB0IHRoaXMgbW92ZSBhdCBhbGwuICovXG5leHBvcnQgZnVuY3Rpb24gY2FuVHJhbnNpdGlvbk9yZGVyKGZyb206IHN0cmluZywgdG86IHN0cmluZyk6IGJvb2xlYW4ge1xuICByZXR1cm4gKE9SREVSX1NUQVRVU19UUkFOU0lUSU9OU1tmcm9tXSA/PyBbXSkuaW5jbHVkZXModG8pO1xufVxuXG4vKipcbiAqIFdoZXRoZXIgdGhlIHNlcnZlciBkZW1hbmRzIGEgYHJlYXNvbmAgZm9yIHRoaXMgbW92ZSDigJQgaXQgNDAwcyB3aXRoIFwiQSByZWFzb24gaXNcbiAqIHJlcXVpcmVkIHdoZW4gZGVtb3RpbmcgYW4gb3JkZXJcIiBvdGhlcndpc2UuXG4gKlxuICogQSBsaXRlcmFsIG1pcnJvciBvZiB0aGUgc2VydmVyJ3MgYGlzRGVtb3Rpb25gLCBpbmNsdWRpbmdcbiAqIGBPVVRfRk9SX0RFTElWRVJZIOKGkiBQRU5ESU5HYCwgd2hpY2ggdGhlIHRyYW5zaXRpb24gdGFibGUgYWJvdmUgcmVqZWN0cyBmaXJzdFxuICogKHNvIHRoYXQgYXJtIGlzIHVucmVhY2hhYmxlIHRvZGF5KS4gS2VwdCBmYWl0aGZ1bCByYXRoZXIgdGhhbiBwcnVuZWQ6IGlmIHRoZVxuICogdGFibGUgZXZlciBnYWlucyB0aGUgbW92ZSwgdGhpcyBzdGF5cyBjb3JyZWN0LiBDYWxsZXJzIG11c3Qgc3RpbGwgZ2F0ZSBvblxuICogYGNhblRyYW5zaXRpb25PcmRlcmAg4oCUIGEgcmVhc29uIGRvZXMgbm90IG1ha2UgYW4gaWxsZWdhbCBtb3ZlIGxlZ2FsLlxuICpcbiAqIGBQRU5ESU5HIOKGkiBEUkFGVGAgYW5kIGJvdGggYERFTElWRVJFRGAgZGVtb3Rpb25zIGFyZSBuZXcgKDIwMjYtMDgtMjUsXG4gKiB1bml2ZXJzYWwgb25lLXN0ZXAtYmFjayBkZW1vdGlvbik6IGV2ZXJ5IG5ldyBvbmUtc3RlcCBkZW1vdGlvbiBqb2lucyB0aGlzXG4gKiBzZXQsIHN0YWZmLW9ubHksIHNhbWUgYXMgdGhlIGV4aXN0aW5nIG9uZXMuXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiBkZW1vdGlvblJlcXVpcmVzUmVhc29uKGZyb206IHN0cmluZywgdG86IHN0cmluZyk6IGJvb2xlYW4ge1xuICByZXR1cm4gKFxuICAgIChmcm9tID09PSBcIkNPTkZJUk1FRFwiICYmIHRvID09PSBcIlBFTkRJTkdcIikgfHxcbiAgICAoZnJvbSA9PT0gXCJPVVRfRk9SX0RFTElWRVJZXCIgJiYgKHRvID09PSBcIlBFTkRJTkdcIiB8fCB0byA9PT0gXCJDT05GSVJNRURcIikpIHx8XG4gICAgKGZyb20gPT09IFwiUEFSVElBTExZX0RFTElWRVJFRFwiICYmIHRvID09PSBcIk9VVF9GT1JfREVMSVZFUllcIikgfHxcbiAgICAoZnJvbSA9PT0gXCJQRU5ESU5HXCIgJiYgdG8gPT09IFwiRFJBRlRcIikgfHxcbiAgICAoZnJvbSA9PT0gXCJERUxJVkVSRURcIiAmJiAodG8gPT09IFwiQ09ORklSTUVEXCIgfHwgdG8gPT09IFwiUEFSVElBTExZX0RFTElWRVJFRFwiKSlcbiAgKTtcbn1cblxuLyoqXG4gKiBXaGV0aGVyIGBERUxFVEUgL29yZGVycy86aWRgIHdpbGwgYWNjZXB0IHRoaXMgb3JkZXIuIEFzIG9mIDIwMjYtMDgtMjUgc3RhZmZcbiAqIG1heSBkZWxldGUgYW4gb3JkZXIgaW4gQU5ZIHN0YXR1cyAoXCJkZWxldGUgYW55IG9yZGVyXCIpIOKAlCB0aGUgc2VydmVyJ3Mgb25seVxuICogcmVtYWluaW5nIGJsb2NrIGlzIGEgbGlua2VkIGludm9pY2Ugd2l0aCByZWNvcmRlZCBwYXltZW50cyAoUEFJRC9QQVJUSUFMKSxcbiAqIHdoaWNoIDQwOXMgd2l0aCBcIi4uLnZvaWQgdGhlIGludm9pY2UgZmlyc3QuXCIgVGhhdCBjYW4ndCBiZSBrbm93biBmcm9tIHRoZVxuICogb3JkZXIncyBzdGF0dXMgYWxvbmUsIHNvIHRoaXMgYWx3YXlzIHJldHVybnMgdHJ1ZSBhbmQgbGV0cyB0aGUgc2NyZWVuIHNob3dcbiAqIHRoZSBhY3Rpb24gdW5jb25kaXRpb25hbGx5LCBzdXJmYWNpbmcgdGhlIDQwOSBhcyBhIHRvYXN0IGlmIGl0IGNvbWVzIGJhY2suXG4gKiBLZXB0IGFzIGEgbmFtZWQgZnVuY3Rpb24gKG5vdCBpbmxpbmVkIGF0IGNhbGwgc2l0ZXMpIHNvIGEgZnV0dXJlXG4gKiBjbGllbnQtdmlzaWJsZSBibG9jayBjYW4gc2xvdCBiYWNrIGluIGhlcmUgd2l0aG91dCB0b3VjaGluZyB0aGUgc2NyZWVuLlxuICovXG5leHBvcnQgZnVuY3Rpb24gY2FuRGVsZXRlT3JkZXIoX3N0YXR1czogc3RyaW5nKTogYm9vbGVhbiB7XG4gIHJldHVybiB0cnVlO1xufVxuIl0sInZlcnNpb24iOjN9

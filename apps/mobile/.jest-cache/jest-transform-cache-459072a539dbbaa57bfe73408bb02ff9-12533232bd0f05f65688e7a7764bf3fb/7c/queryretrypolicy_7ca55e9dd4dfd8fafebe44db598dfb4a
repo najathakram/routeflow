@@ -1,0 +1,19 @@
+ca6b25e818297d68d4406cb0032ba090
+"use strict";
+/**
+ * Shared TanStack Query `retry` predicates. Kept free of any react-native-touching import (unlike
+ * ./api/customers.ts, which pulls in api-client.ts -> react-native's Platform) so mobile's
+ * pure-logic-only Jest lane (__tests__/*.test.ts) can import and pin these directly.
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.shouldRetryCustomerPrices = shouldRetryCustomerPrices;
+/**
+ * useCustomerPrices (Opus W/N, #1339): the pricing_tiers plan gate 403s for LITE/STARTER — the
+ * default `retry: 3` would keep isFetching true through ~7s of exponential backoff (drafts.ts:29's
+ * same pattern) before NewOrderScreen's resume-hydration effect could ever settle. A gated tenant
+ * never gains the flag mid-retry: don't retry it.
+ */
+function shouldRetryCustomerPrices(count, err) {
+    return err?.response?.status !== 403 && count < 3;
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3F1ZXJ5LXJldHJ5LXBvbGljeS50cyIsIm1hcHBpbmdzIjoiO0FBQUE7Ozs7R0FJRzs7QUFRSCw4REFFQztBQVJEOzs7OztHQUtHO0FBQ0gsU0FBZ0IseUJBQXlCLENBQUMsS0FBYSxFQUFFLEdBQVk7SUFDbkUsT0FBUSxHQUEwQyxFQUFFLFFBQVEsRUFBRSxNQUFNLEtBQUssR0FBRyxJQUFJLEtBQUssR0FBRyxDQUFDLENBQUM7QUFDNUYsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9hcHBzL21vYmlsZS9saWIvcXVlcnktcmV0cnktcG9saWN5LnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogU2hhcmVkIFRhblN0YWNrIFF1ZXJ5IGByZXRyeWAgcHJlZGljYXRlcy4gS2VwdCBmcmVlIG9mIGFueSByZWFjdC1uYXRpdmUtdG91Y2hpbmcgaW1wb3J0ICh1bmxpa2VcbiAqIC4vYXBpL2N1c3RvbWVycy50cywgd2hpY2ggcHVsbHMgaW4gYXBpLWNsaWVudC50cyAtPiByZWFjdC1uYXRpdmUncyBQbGF0Zm9ybSkgc28gbW9iaWxlJ3NcbiAqIHB1cmUtbG9naWMtb25seSBKZXN0IGxhbmUgKF9fdGVzdHNfXy8qLnRlc3QudHMpIGNhbiBpbXBvcnQgYW5kIHBpbiB0aGVzZSBkaXJlY3RseS5cbiAqL1xuXG4vKipcbiAqIHVzZUN1c3RvbWVyUHJpY2VzIChPcHVzIFcvTiwgIzEzMzkpOiB0aGUgcHJpY2luZ190aWVycyBwbGFuIGdhdGUgNDAzcyBmb3IgTElURS9TVEFSVEVSIOKAlCB0aGVcbiAqIGRlZmF1bHQgYHJldHJ5OiAzYCB3b3VsZCBrZWVwIGlzRmV0Y2hpbmcgdHJ1ZSB0aHJvdWdoIH43cyBvZiBleHBvbmVudGlhbCBiYWNrb2ZmIChkcmFmdHMudHM6Mjknc1xuICogc2FtZSBwYXR0ZXJuKSBiZWZvcmUgTmV3T3JkZXJTY3JlZW4ncyByZXN1bWUtaHlkcmF0aW9uIGVmZmVjdCBjb3VsZCBldmVyIHNldHRsZS4gQSBnYXRlZCB0ZW5hbnRcbiAqIG5ldmVyIGdhaW5zIHRoZSBmbGFnIG1pZC1yZXRyeTogZG9uJ3QgcmV0cnkgaXQuXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiBzaG91bGRSZXRyeUN1c3RvbWVyUHJpY2VzKGNvdW50OiBudW1iZXIsIGVycjogdW5rbm93bik6IGJvb2xlYW4ge1xuICByZXR1cm4gKGVyciBhcyB7IHJlc3BvbnNlPzogeyBzdGF0dXM/OiBudW1iZXIgfSB9KT8ucmVzcG9uc2U/LnN0YXR1cyAhPT0gNDAzICYmIGNvdW50IDwgMztcbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

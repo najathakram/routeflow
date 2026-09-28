@@ -1,0 +1,61 @@
+047c349d848280c93b651cd1b5d42414
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+/**
+ * B04 (train 2, cause-ruling.md §2/§3, D2) — `push-preference.test.ts`
+ *
+ * The operator Settings → Push notifications switch used to be local-only
+ * state (`(operator)/settings/index.tsx`) — toggling it off never told the
+ * server anything, and the next `login()` (`lib/auth.ts`) re-registered the
+ * device unconditionally, undoing it. The fix binds the switch to the
+ * `pushEnabled` UserPreference via `lib/notification-prefs.ts`, and gates
+ * login's push-token registration on the same preference.
+ *
+ * Source-text spec in the style of `edit-items-scan-fab.test.ts`: nothing
+ * renders under mobile Jest, so this reads the two screens as text and pins
+ * pattern presence, never a rendered tree. Paths resolve from `__dirname`.
+ */
+const fs_1 = require("fs");
+const path_1 = require("path");
+const SETTINGS_PATH = (0, path_1.join)(__dirname, "..", "app", "(operator)", "settings", "index.tsx");
+const AUTH_PATH = (0, path_1.join)(__dirname, "..", "lib", "auth.ts");
+const settingsSource = (0, fs_1.readFileSync)(SETTINGS_PATH, "utf8");
+const authSource = (0, fs_1.readFileSync)(AUTH_PATH, "utf8");
+describe("push notification preference (B04)", () => {
+    it("REG-B04-A the settings switch reads/writes the pushEnabled preference", () => {
+        // Must bind through the shared preference module, not local-only state.
+        expect(settingsSource).toMatch(/notification-prefs/);
+        expect(settingsSource).toMatch(/getPushEnabled/);
+        expect(settingsSource).toMatch(/setPushEnabled/);
+        // Amended (Fable train-2 fix round, item 3): the switch now defaults ON
+        // (`useState(true)`) while the preference loads/fails, matching the
+        // server's opt-out semantics — a `useState(false)` placeholder is the
+        // pre-fix "silently OFF until the fetch resolves" bug.
+        expect(settingsSource).not.toMatch(/useState\(false\)/);
+        // Toggling must (de)register this device immediately, not just persist
+        // the flag and wait for the next login.
+        expect(settingsSource).toMatch(/registerPushToken/);
+        expect(settingsSource).toMatch(/deregisterPushToken/);
+    });
+    it("REG-B04-B login registration is gated by the preference", () => {
+        // Either registerPushToken() itself consults the preference, or login()
+        // does before calling it — either way the source must reference the
+        // preference module around the registration call, not call it
+        // unconditionally the way the pre-fix code did.
+        expect(authSource).toMatch(/notification-prefs|getPushEnabled/);
+        const registerFnMatch = authSource.match(/async function registerPushToken\(\)[\s\S]*?\n}/);
+        const registerFnBody = registerFnMatch ? registerFnMatch[0] : "";
+        expect(registerFnBody).toMatch(/getPushEnabled/);
+    });
+    it("REG-B04-B extended: a preference-fetch rejection still lets registration through (fails OPEN)", () => {
+        // A user with the preference genuinely enabled must not be silently
+        // skipped just because the read (SecureStore/AsyncStorage) errored —
+        // `getPushEnabled()` is awaited with a `.catch(() => true)` fallback,
+        // not a bare `await getPushEnabled()` that would throw/return falsy and
+        // short-circuit the `if (!(...)) return;` gate into a skip.
+        const registerFnMatch = authSource.match(/async function registerPushToken\(\)[\s\S]*?\n}/);
+        const registerFnBody = registerFnMatch ? registerFnMatch[0] : "";
+        expect(registerFnBody).toMatch(/getPushEnabled\(\)\.catch\(\(\)\s*=>\s*true\)/);
+    });
+});
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvX190ZXN0c19fL3B1c2gtcHJlZmVyZW5jZS50ZXN0LnRzIiwibWFwcGluZ3MiOiI7O0FBQUE7Ozs7Ozs7Ozs7Ozs7R0FhRztBQUNILDJCQUFrQztBQUNsQywrQkFBNEI7QUFFNUIsTUFBTSxhQUFhLEdBQUcsSUFBQSxXQUFJLEVBQUMsU0FBUyxFQUFFLElBQUksRUFBRSxLQUFLLEVBQUUsWUFBWSxFQUFFLFVBQVUsRUFBRSxXQUFXLENBQUMsQ0FBQztBQUMxRixNQUFNLFNBQVMsR0FBRyxJQUFBLFdBQUksRUFBQyxTQUFTLEVBQUUsSUFBSSxFQUFFLEtBQUssRUFBRSxTQUFTLENBQUMsQ0FBQztBQUUxRCxNQUFNLGNBQWMsR0FBRyxJQUFBLGlCQUFZLEVBQUMsYUFBYSxFQUFFLE1BQU0sQ0FBQyxDQUFDO0FBQzNELE1BQU0sVUFBVSxHQUFHLElBQUEsaUJBQVksRUFBQyxTQUFTLEVBQUUsTUFBTSxDQUFDLENBQUM7QUFFbkQsUUFBUSxDQUFDLG9DQUFvQyxFQUFFLEdBQUcsRUFBRTtJQUNsRCxFQUFFLENBQUMsdUVBQXVFLEVBQUUsR0FBRyxFQUFFO1FBQy9FLHdFQUF3RTtRQUN4RSxNQUFNLENBQUMsY0FBYyxDQUFDLENBQUMsT0FBTyxDQUFDLG9CQUFvQixDQUFDLENBQUM7UUFDckQsTUFBTSxDQUFDLGNBQWMsQ0FBQyxDQUFDLE9BQU8sQ0FBQyxnQkFBZ0IsQ0FBQyxDQUFDO1FBQ2pELE1BQU0sQ0FBQyxjQUFjLENBQUMsQ0FBQyxPQUFPLENBQUMsZ0JBQWdCLENBQUMsQ0FBQztRQUNqRCx3RUFBd0U7UUFDeEUsb0VBQW9FO1FBQ3BFLHNFQUFzRTtRQUN0RSx1REFBdUQ7UUFDdkQsTUFBTSxDQUFDLGNBQWMsQ0FBQyxDQUFDLEdBQUcsQ0FBQyxPQUFPLENBQUMsbUJBQW1CLENBQUMsQ0FBQztRQUN4RCx1RUFBdUU7UUFDdkUsd0NBQXdDO1FBQ3hDLE1BQU0sQ0FBQyxjQUFjLENBQUMsQ0FBQyxPQUFPLENBQUMsbUJBQW1CLENBQUMsQ0FBQztRQUNwRCxNQUFNLENBQUMsY0FBYyxDQUFDLENBQUMsT0FBTyxDQUFDLHFCQUFxQixDQUFDLENBQUM7SUFDeEQsQ0FBQyxDQUFDLENBQUM7SUFFSCxFQUFFLENBQUMseURBQXlELEVBQUUsR0FBRyxFQUFFO1FBQ2pFLHdFQUF3RTtRQUN4RSxvRUFBb0U7UUFDcEUsOERBQThEO1FBQzlELGdEQUFnRDtRQUNoRCxNQUFNLENBQUMsVUFBVSxDQUFDLENBQUMsT0FBTyxDQUFDLG1DQUFtQyxDQUFDLENBQUM7UUFFaEUsTUFBTSxlQUFlLEdBQUcsVUFBVSxDQUFDLEtBQUssQ0FBQyxpREFBaUQsQ0FBQyxDQUFDO1FBQzVGLE1BQU0sY0FBYyxHQUFHLGVBQWUsQ0FBQyxDQUFDLENBQUMsZUFBZSxDQUFDLENBQUMsQ0FBQyxDQUFDLENBQUMsQ0FBQyxFQUFFLENBQUM7UUFDakUsTUFBTSxDQUFDLGNBQWMsQ0FBQyxDQUFDLE9BQU8sQ0FBQyxnQkFBZ0IsQ0FBQyxDQUFDO0lBQ25ELENBQUMsQ0FBQyxDQUFDO0lBRUgsRUFBRSxDQUFDLCtGQUErRixFQUFFLEdBQUcsRUFBRTtRQUN2RyxvRUFBb0U7UUFDcEUscUVBQXFFO1FBQ3JFLHNFQUFzRTtRQUN0RSx3RUFBd0U7UUFDeEUsNERBQTREO1FBQzVELE1BQU0sZUFBZSxHQUFHLFVBQVUsQ0FBQyxLQUFLLENBQUMsaURBQWlELENBQUMsQ0FBQztRQUM1RixNQUFNLGNBQWMsR0FBRyxlQUFlLENBQUMsQ0FBQyxDQUFDLGVBQWUsQ0FBQyxDQUFDLENBQUMsQ0FBQyxDQUFDLENBQUMsRUFBRSxDQUFDO1FBQ2pFLE1BQU0sQ0FBQyxjQUFjLENBQUMsQ0FBQyxPQUFPLENBQUMsK0NBQStDLENBQUMsQ0FBQztJQUNsRixDQUFDLENBQUMsQ0FBQztBQUNMLENBQUMsQ0FBQyxDQUFDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvbW9iaWxlL19fdGVzdHNfXy9wdXNoLXByZWZlcmVuY2UudGVzdC50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqIEIwNCAodHJhaW4gMiwgY2F1c2UtcnVsaW5nLm1kIMKnMi/CpzMsIEQyKSDigJQgYHB1c2gtcHJlZmVyZW5jZS50ZXN0LnRzYFxuICpcbiAqIFRoZSBvcGVyYXRvciBTZXR0aW5ncyDihpIgUHVzaCBub3RpZmljYXRpb25zIHN3aXRjaCB1c2VkIHRvIGJlIGxvY2FsLW9ubHlcbiAqIHN0YXRlIChgKG9wZXJhdG9yKS9zZXR0aW5ncy9pbmRleC50c3hgKSDigJQgdG9nZ2xpbmcgaXQgb2ZmIG5ldmVyIHRvbGQgdGhlXG4gKiBzZXJ2ZXIgYW55dGhpbmcsIGFuZCB0aGUgbmV4dCBgbG9naW4oKWAgKGBsaWIvYXV0aC50c2ApIHJlLXJlZ2lzdGVyZWQgdGhlXG4gKiBkZXZpY2UgdW5jb25kaXRpb25hbGx5LCB1bmRvaW5nIGl0LiBUaGUgZml4IGJpbmRzIHRoZSBzd2l0Y2ggdG8gdGhlXG4gKiBgcHVzaEVuYWJsZWRgIFVzZXJQcmVmZXJlbmNlIHZpYSBgbGliL25vdGlmaWNhdGlvbi1wcmVmcy50c2AsIGFuZCBnYXRlc1xuICogbG9naW4ncyBwdXNoLXRva2VuIHJlZ2lzdHJhdGlvbiBvbiB0aGUgc2FtZSBwcmVmZXJlbmNlLlxuICpcbiAqIFNvdXJjZS10ZXh0IHNwZWMgaW4gdGhlIHN0eWxlIG9mIGBlZGl0LWl0ZW1zLXNjYW4tZmFiLnRlc3QudHNgOiBub3RoaW5nXG4gKiByZW5kZXJzIHVuZGVyIG1vYmlsZSBKZXN0LCBzbyB0aGlzIHJlYWRzIHRoZSB0d28gc2NyZWVucyBhcyB0ZXh0IGFuZCBwaW5zXG4gKiBwYXR0ZXJuIHByZXNlbmNlLCBuZXZlciBhIHJlbmRlcmVkIHRyZWUuIFBhdGhzIHJlc29sdmUgZnJvbSBgX19kaXJuYW1lYC5cbiAqL1xuaW1wb3J0IHsgcmVhZEZpbGVTeW5jIH0gZnJvbSBcImZzXCI7XG5pbXBvcnQgeyBqb2luIH0gZnJvbSBcInBhdGhcIjtcblxuY29uc3QgU0VUVElOR1NfUEFUSCA9IGpvaW4oX19kaXJuYW1lLCBcIi4uXCIsIFwiYXBwXCIsIFwiKG9wZXJhdG9yKVwiLCBcInNldHRpbmdzXCIsIFwiaW5kZXgudHN4XCIpO1xuY29uc3QgQVVUSF9QQVRIID0gam9pbihfX2Rpcm5hbWUsIFwiLi5cIiwgXCJsaWJcIiwgXCJhdXRoLnRzXCIpO1xuXG5jb25zdCBzZXR0aW5nc1NvdXJjZSA9IHJlYWRGaWxlU3luYyhTRVRUSU5HU19QQVRILCBcInV0ZjhcIik7XG5jb25zdCBhdXRoU291cmNlID0gcmVhZEZpbGVTeW5jKEFVVEhfUEFUSCwgXCJ1dGY4XCIpO1xuXG5kZXNjcmliZShcInB1c2ggbm90aWZpY2F0aW9uIHByZWZlcmVuY2UgKEIwNClcIiwgKCkgPT4ge1xuICBpdChcIlJFRy1CMDQtQSB0aGUgc2V0dGluZ3Mgc3dpdGNoIHJlYWRzL3dyaXRlcyB0aGUgcHVzaEVuYWJsZWQgcHJlZmVyZW5jZVwiLCAoKSA9PiB7XG4gICAgLy8gTXVzdCBiaW5kIHRocm91Z2ggdGhlIHNoYXJlZCBwcmVmZXJlbmNlIG1vZHVsZSwgbm90IGxvY2FsLW9ubHkgc3RhdGUuXG4gICAgZXhwZWN0KHNldHRpbmdzU291cmNlKS50b01hdGNoKC9ub3RpZmljYXRpb24tcHJlZnMvKTtcbiAgICBleHBlY3Qoc2V0dGluZ3NTb3VyY2UpLnRvTWF0Y2goL2dldFB1c2hFbmFibGVkLyk7XG4gICAgZXhwZWN0KHNldHRpbmdzU291cmNlKS50b01hdGNoKC9zZXRQdXNoRW5hYmxlZC8pO1xuICAgIC8vIEFtZW5kZWQgKEZhYmxlIHRyYWluLTIgZml4IHJvdW5kLCBpdGVtIDMpOiB0aGUgc3dpdGNoIG5vdyBkZWZhdWx0cyBPTlxuICAgIC8vIChgdXNlU3RhdGUodHJ1ZSlgKSB3aGlsZSB0aGUgcHJlZmVyZW5jZSBsb2Fkcy9mYWlscywgbWF0Y2hpbmcgdGhlXG4gICAgLy8gc2VydmVyJ3Mgb3B0LW91dCBzZW1hbnRpY3Mg4oCUIGEgYHVzZVN0YXRlKGZhbHNlKWAgcGxhY2Vob2xkZXIgaXMgdGhlXG4gICAgLy8gcHJlLWZpeCBcInNpbGVudGx5IE9GRiB1bnRpbCB0aGUgZmV0Y2ggcmVzb2x2ZXNcIiBidWcuXG4gICAgZXhwZWN0KHNldHRpbmdzU291cmNlKS5ub3QudG9NYXRjaCgvdXNlU3RhdGVcXChmYWxzZVxcKS8pO1xuICAgIC8vIFRvZ2dsaW5nIG11c3QgKGRlKXJlZ2lzdGVyIHRoaXMgZGV2aWNlIGltbWVkaWF0ZWx5LCBub3QganVzdCBwZXJzaXN0XG4gICAgLy8gdGhlIGZsYWcgYW5kIHdhaXQgZm9yIHRoZSBuZXh0IGxvZ2luLlxuICAgIGV4cGVjdChzZXR0aW5nc1NvdXJjZSkudG9NYXRjaCgvcmVnaXN0ZXJQdXNoVG9rZW4vKTtcbiAgICBleHBlY3Qoc2V0dGluZ3NTb3VyY2UpLnRvTWF0Y2goL2RlcmVnaXN0ZXJQdXNoVG9rZW4vKTtcbiAgfSk7XG5cbiAgaXQoXCJSRUctQjA0LUIgbG9naW4gcmVnaXN0cmF0aW9uIGlzIGdhdGVkIGJ5IHRoZSBwcmVmZXJlbmNlXCIsICgpID0+IHtcbiAgICAvLyBFaXRoZXIgcmVnaXN0ZXJQdXNoVG9rZW4oKSBpdHNlbGYgY29uc3VsdHMgdGhlIHByZWZlcmVuY2UsIG9yIGxvZ2luKClcbiAgICAvLyBkb2VzIGJlZm9yZSBjYWxsaW5nIGl0IOKAlCBlaXRoZXIgd2F5IHRoZSBzb3VyY2UgbXVzdCByZWZlcmVuY2UgdGhlXG4gICAgLy8gcHJlZmVyZW5jZSBtb2R1bGUgYXJvdW5kIHRoZSByZWdpc3RyYXRpb24gY2FsbCwgbm90IGNhbGwgaXRcbiAgICAvLyB1bmNvbmRpdGlvbmFsbHkgdGhlIHdheSB0aGUgcHJlLWZpeCBjb2RlIGRpZC5cbiAgICBleHBlY3QoYXV0aFNvdXJjZSkudG9NYXRjaCgvbm90aWZpY2F0aW9uLXByZWZzfGdldFB1c2hFbmFibGVkLyk7XG5cbiAgICBjb25zdCByZWdpc3RlckZuTWF0Y2ggPSBhdXRoU291cmNlLm1hdGNoKC9hc3luYyBmdW5jdGlvbiByZWdpc3RlclB1c2hUb2tlblxcKFxcKVtcXHNcXFNdKj9cXG59Lyk7XG4gICAgY29uc3QgcmVnaXN0ZXJGbkJvZHkgPSByZWdpc3RlckZuTWF0Y2ggPyByZWdpc3RlckZuTWF0Y2hbMF0gOiBcIlwiO1xuICAgIGV4cGVjdChyZWdpc3RlckZuQm9keSkudG9NYXRjaCgvZ2V0UHVzaEVuYWJsZWQvKTtcbiAgfSk7XG5cbiAgaXQoXCJSRUctQjA0LUIgZXh0ZW5kZWQ6IGEgcHJlZmVyZW5jZS1mZXRjaCByZWplY3Rpb24gc3RpbGwgbGV0cyByZWdpc3RyYXRpb24gdGhyb3VnaCAoZmFpbHMgT1BFTilcIiwgKCkgPT4ge1xuICAgIC8vIEEgdXNlciB3aXRoIHRoZSBwcmVmZXJlbmNlIGdlbnVpbmVseSBlbmFibGVkIG11c3Qgbm90IGJlIHNpbGVudGx5XG4gICAgLy8gc2tpcHBlZCBqdXN0IGJlY2F1c2UgdGhlIHJlYWQgKFNlY3VyZVN0b3JlL0FzeW5jU3RvcmFnZSkgZXJyb3JlZCDigJRcbiAgICAvLyBgZ2V0UHVzaEVuYWJsZWQoKWAgaXMgYXdhaXRlZCB3aXRoIGEgYC5jYXRjaCgoKSA9PiB0cnVlKWAgZmFsbGJhY2ssXG4gICAgLy8gbm90IGEgYmFyZSBgYXdhaXQgZ2V0UHVzaEVuYWJsZWQoKWAgdGhhdCB3b3VsZCB0aHJvdy9yZXR1cm4gZmFsc3kgYW5kXG4gICAgLy8gc2hvcnQtY2lyY3VpdCB0aGUgYGlmICghKC4uLikpIHJldHVybjtgIGdhdGUgaW50byBhIHNraXAuXG4gICAgY29uc3QgcmVnaXN0ZXJGbk1hdGNoID0gYXV0aFNvdXJjZS5tYXRjaCgvYXN5bmMgZnVuY3Rpb24gcmVnaXN0ZXJQdXNoVG9rZW5cXChcXClbXFxzXFxTXSo/XFxufS8pO1xuICAgIGNvbnN0IHJlZ2lzdGVyRm5Cb2R5ID0gcmVnaXN0ZXJGbk1hdGNoID8gcmVnaXN0ZXJGbk1hdGNoWzBdIDogXCJcIjtcbiAgICBleHBlY3QocmVnaXN0ZXJGbkJvZHkpLnRvTWF0Y2goL2dldFB1c2hFbmFibGVkXFwoXFwpXFwuY2F0Y2hcXChcXChcXClcXHMqPT5cXHMqdHJ1ZVxcKS8pO1xuICB9KTtcbn0pO1xuIl0sInZlcnNpb24iOjN9

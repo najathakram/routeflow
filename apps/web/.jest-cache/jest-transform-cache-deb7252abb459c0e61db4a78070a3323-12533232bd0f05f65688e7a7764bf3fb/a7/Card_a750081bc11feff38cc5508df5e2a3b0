@@ -1,0 +1,70 @@
+ee3a5a18c6d80855dd9c316bf5ffe4bb
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+Object.defineProperty(exports, "Card", {
+    enumerable: true,
+    get: function() {
+        return Card;
+    }
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+const _utils = require("./utils");
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+const Card = /*#__PURE__*/ _react.forwardRef(({ className, title, children, ...props }, ref)=>/*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+        ref: ref,
+        className: (0, _utils.cn)("rounded-lg bg-white p-6 shadow-card", className),
+        ...props,
+        children: [
+            title && /*#__PURE__*/ (0, _jsxruntime.jsx)("h3", {
+                className: "mb-4 text-base font-semibold text-navy",
+                children: title
+            }),
+            children
+        ]
+    }));
+Card.displayName = "Card";
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L3BhY2thZ2VzL3VpL3NyYy93ZWIvQ2FyZC50c3giXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0ICogYXMgUmVhY3QgZnJvbSBcInJlYWN0XCI7XG5pbXBvcnQgeyBjbiB9IGZyb20gXCIuL3V0aWxzXCI7XG5cbmV4cG9ydCBpbnRlcmZhY2UgQ2FyZFByb3BzIGV4dGVuZHMgUmVhY3QuSFRNTEF0dHJpYnV0ZXM8SFRNTERpdkVsZW1lbnQ+IHtcbiAgdGl0bGU/OiBzdHJpbmc7XG59XG5cbmV4cG9ydCBjb25zdCBDYXJkID0gUmVhY3QuZm9yd2FyZFJlZjxIVE1MRGl2RWxlbWVudCwgQ2FyZFByb3BzPihcbiAgKHsgY2xhc3NOYW1lLCB0aXRsZSwgY2hpbGRyZW4sIC4uLnByb3BzIH0sIHJlZikgPT4gKFxuICAgIDxkaXYgcmVmPXtyZWZ9IGNsYXNzTmFtZT17Y24oXCJyb3VuZGVkLWxnIGJnLXdoaXRlIHAtNiBzaGFkb3ctY2FyZFwiLCBjbGFzc05hbWUpfSB7Li4ucHJvcHN9PlxuICAgICAge3RpdGxlICYmIDxoMyBjbGFzc05hbWU9XCJtYi00IHRleHQtYmFzZSBmb250LXNlbWlib2xkIHRleHQtbmF2eVwiPnt0aXRsZX08L2gzPn1cbiAgICAgIHtjaGlsZHJlbn1cbiAgICA8L2Rpdj5cbiAgKSxcbik7XG5cbkNhcmQuZGlzcGxheU5hbWUgPSBcIkNhcmRcIjtcbiJdLCJuYW1lcyI6WyJDYXJkIiwiUmVhY3QiLCJmb3J3YXJkUmVmIiwiY2xhc3NOYW1lIiwidGl0bGUiLCJjaGlsZHJlbiIsInByb3BzIiwicmVmIiwiZGl2IiwiY24iLCJoMyIsImRpc3BsYXlOYW1lIl0sIm1hcHBpbmdzIjoiOzs7OytCQU9hQTs7O2VBQUFBOzs7OytEQVBVO3VCQUNKOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7QUFNWixNQUFNQSxxQkFBT0MsT0FBTUMsVUFBVSxDQUNsQyxDQUFDLEVBQUVDLFNBQVMsRUFBRUMsS0FBSyxFQUFFQyxRQUFRLEVBQUUsR0FBR0MsT0FBTyxFQUFFQyxvQkFDekMsc0JBQUNDO1FBQUlELEtBQUtBO1FBQUtKLFdBQVdNLElBQUFBLFNBQUUsRUFBQyx1Q0FBdUNOO1FBQWEsR0FBR0csS0FBSzs7WUFDdEZGLHVCQUFTLHFCQUFDTTtnQkFBR1AsV0FBVTswQkFBMENDOztZQUNqRUM7OztBQUtQTCxLQUFLVyxXQUFXLEdBQUcifQ==

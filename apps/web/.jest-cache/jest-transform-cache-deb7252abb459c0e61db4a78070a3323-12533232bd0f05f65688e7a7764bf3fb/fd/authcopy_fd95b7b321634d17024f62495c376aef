@@ -1,0 +1,58 @@
+2cdc461eb1e9448ce873f50dd2ef8c6b
+// Verbatim audience copy for the reskinned auth surface.
+// Transcribed from the redesign source (read-only reference):
+// C:/Users/nakram/Documents/Codex/2026-09-06/rev/work/routeflow-redesign/components/auth-preview.tsx:33-75
+// .claude/pipeline/2026-09-07-auth-redesign/build-plan.md — P1 auth-shell
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, {
+        enumerable: true,
+        get: Object.getOwnPropertyDescriptor(all, name).get
+    });
+}
+_export(exports, {
+    get AUTH_AI_CHIP () {
+        return AUTH_AI_CHIP;
+    },
+    get AUTH_ORBIT () {
+        return AUTH_ORBIT;
+    },
+    get AUTH_STORY () {
+        return AUTH_STORY;
+    },
+    get AUTH_TAGLINE () {
+        return AUTH_TAGLINE;
+    }
+});
+const AUTH_STORY = {
+    distributor: {
+        kicker: "For distributors",
+        heading: "A clearer picture of your business.",
+        paragraph: "Connect your warehouse, delivery team, and customer accounts."
+    },
+    retailer: {
+        kicker: "For retailers",
+        heading: "Stock your shelves. Stay in control.",
+        paragraph: "Keep supplier orders and purchases in one place."
+    }
+};
+const AUTH_ORBIT = {
+    orderLabel: "Order RF-1042",
+    orderStatus: "Ready for the next stop.",
+    steps: [
+        "Order",
+        "Route",
+        "Delivery",
+        "Invoice"
+    ]
+};
+const AUTH_AI_CHIP = {
+    title: "AI purchase-invoice scanning",
+    body: "Multiple vendors. Easier inventory and costing."
+};
+const AUTH_TAGLINE = "One brand. One connected workflow.";
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2NvbXBvbmVudHMvYXV0aC9hdXRoLWNvcHkudHMiXSwic291cmNlc0NvbnRlbnQiOlsiLy8gVmVyYmF0aW0gYXVkaWVuY2UgY29weSBmb3IgdGhlIHJlc2tpbm5lZCBhdXRoIHN1cmZhY2UuXG4vLyBUcmFuc2NyaWJlZCBmcm9tIHRoZSByZWRlc2lnbiBzb3VyY2UgKHJlYWQtb25seSByZWZlcmVuY2UpOlxuLy8gQzovVXNlcnMvbmFrcmFtL0RvY3VtZW50cy9Db2RleC8yMDI2LTA5LTA2L3Jldi93b3JrL3JvdXRlZmxvdy1yZWRlc2lnbi9jb21wb25lbnRzL2F1dGgtcHJldmlldy50c3g6MzMtNzVcbi8vIC5jbGF1ZGUvcGlwZWxpbmUvMjAyNi0wOS0wNy1hdXRoLXJlZGVzaWduL2J1aWxkLXBsYW4ubWQg4oCUIFAxIGF1dGgtc2hlbGxcblxuZXhwb3J0IHR5cGUgQXV0aEF1ZGllbmNlID0gXCJkaXN0cmlidXRvclwiIHwgXCJyZXRhaWxlclwiO1xuXG5leHBvcnQgY29uc3QgQVVUSF9TVE9SWTogUmVjb3JkPFxuICBBdXRoQXVkaWVuY2UsXG4gIHsga2lja2VyOiBzdHJpbmc7IGhlYWRpbmc6IHN0cmluZzsgcGFyYWdyYXBoOiBzdHJpbmcgfVxuPiA9IHtcbiAgZGlzdHJpYnV0b3I6IHtcbiAgICBraWNrZXI6IFwiRm9yIGRpc3RyaWJ1dG9yc1wiLFxuICAgIGhlYWRpbmc6IFwiQSBjbGVhcmVyIHBpY3R1cmUgb2YgeW91ciBidXNpbmVzcy5cIixcbiAgICBwYXJhZ3JhcGg6IFwiQ29ubmVjdCB5b3VyIHdhcmVob3VzZSwgZGVsaXZlcnkgdGVhbSwgYW5kIGN1c3RvbWVyIGFjY291bnRzLlwiLFxuICB9LFxuICByZXRhaWxlcjoge1xuICAgIGtpY2tlcjogXCJGb3IgcmV0YWlsZXJzXCIsXG4gICAgaGVhZGluZzogXCJTdG9jayB5b3VyIHNoZWx2ZXMuIFN0YXkgaW4gY29udHJvbC5cIixcbiAgICBwYXJhZ3JhcGg6IFwiS2VlcCBzdXBwbGllciBvcmRlcnMgYW5kIHB1cmNoYXNlcyBpbiBvbmUgcGxhY2UuXCIsXG4gIH0sXG59O1xuXG5leHBvcnQgY29uc3QgQVVUSF9PUkJJVCA9IHtcbiAgb3JkZXJMYWJlbDogXCJPcmRlciBSRi0xMDQyXCIsXG4gIG9yZGVyU3RhdHVzOiBcIlJlYWR5IGZvciB0aGUgbmV4dCBzdG9wLlwiLFxuICBzdGVwczogW1wiT3JkZXJcIiwgXCJSb3V0ZVwiLCBcIkRlbGl2ZXJ5XCIsIFwiSW52b2ljZVwiXSBhcyBjb25zdCxcbn07XG5cbmV4cG9ydCBjb25zdCBBVVRIX0FJX0NISVAgPSB7XG4gIHRpdGxlOiBcIkFJIHB1cmNoYXNlLWludm9pY2Ugc2Nhbm5pbmdcIixcbiAgYm9keTogXCJNdWx0aXBsZSB2ZW5kb3JzLiBFYXNpZXIgaW52ZW50b3J5IGFuZCBjb3N0aW5nLlwiLFxufTtcblxuZXhwb3J0IGNvbnN0IEFVVEhfVEFHTElORSA9IFwiT25lIGJyYW5kLiBPbmUgY29ubmVjdGVkIHdvcmtmbG93LlwiO1xuIl0sIm5hbWVzIjpbIkFVVEhfQUlfQ0hJUCIsIkFVVEhfT1JCSVQiLCJBVVRIX1NUT1JZIiwiQVVUSF9UQUdMSU5FIiwiZGlzdHJpYnV0b3IiLCJraWNrZXIiLCJoZWFkaW5nIiwicGFyYWdyYXBoIiwicmV0YWlsZXIiLCJvcmRlckxhYmVsIiwib3JkZXJTdGF0dXMiLCJzdGVwcyIsInRpdGxlIiwiYm9keSJdLCJtYXBwaW5ncyI6IkFBQUEseURBQXlEO0FBQ3pELDhEQUE4RDtBQUM5RCwyR0FBMkc7QUFDM0csMEVBQTBFOzs7Ozs7Ozs7Ozs7UUEwQjdEQTtlQUFBQTs7UUFOQUM7ZUFBQUE7O1FBaEJBQztlQUFBQTs7UUEyQkFDO2VBQUFBOzs7QUEzQk4sTUFBTUQsYUFHVDtJQUNGRSxhQUFhO1FBQ1hDLFFBQVE7UUFDUkMsU0FBUztRQUNUQyxXQUFXO0lBQ2I7SUFDQUMsVUFBVTtRQUNSSCxRQUFRO1FBQ1JDLFNBQVM7UUFDVEMsV0FBVztJQUNiO0FBQ0Y7QUFFTyxNQUFNTixhQUFhO0lBQ3hCUSxZQUFZO0lBQ1pDLGFBQWE7SUFDYkMsT0FBTztRQUFDO1FBQVM7UUFBUztRQUFZO0tBQVU7QUFDbEQ7QUFFTyxNQUFNWCxlQUFlO0lBQzFCWSxPQUFPO0lBQ1BDLE1BQU07QUFDUjtBQUVPLE1BQU1WLGVBQWUifQ==

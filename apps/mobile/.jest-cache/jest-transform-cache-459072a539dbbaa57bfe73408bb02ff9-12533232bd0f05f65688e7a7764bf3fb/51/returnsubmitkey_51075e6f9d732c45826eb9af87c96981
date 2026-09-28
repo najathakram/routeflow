@@ -1,0 +1,74 @@
+cef3c61f2aff919aa60e96e8057a7298
+"use strict";
+/**
+ * Deterministic client-generated Idempotency-Key for POST /returns (returns-idem lane).
+ *
+ * `apps/api/src/returns/returns.service.ts#create` now honours an `Idempotency-Key` header,
+ * collapsing a replayed submission onto the first result instead of minting a SECOND return —
+ * and once approved a duplicate return is a double customer credit. That server guard does
+ * nothing until a client actually sends the header, which is what this module supplies for the
+ * driver return screen.
+ *
+ * DETERMINISTIC, NOT MINTED — and deliberately unlike `lib/order-submit-key.ts`:
+ *
+ * - `order-submit-key` mints a random uuid per cart SESSION and holds it in a module map,
+ *   because a cart is a free-form, evolving thing with no stable identity of its own.
+ * - A driver return has one: it is fully described by the stop being served, the order being
+ *   returned against, and the goods going back. Deriving the key from those facts means a
+ *   remount, an app kill, a reinstall, or a second device re-derive the SAME key with no state
+ *   to persist and nothing to rotate, clear or leak across users. There is no module-level
+ *   storage here on purpose.
+ *
+ * IDENTITY = stopId + orderId + the sorted `productId:qty` pairs + a per-attempt NONCE. Sorting
+ * the pairs is what makes the key insensitive to the order `undeliveredReturnLines` happens to
+ * emit rows in (it walks `deliveryMutations`, whose order is a server read detail, not a driver
+ * decision). Per-row REASON is deliberately NOT part of the identity: the same goods going back
+ * on the same stop are the same return whether or not the driver flipped the "Damaged" chip
+ * before retrying.
+ *
+ * THE NONCE (F1, independent review, PR-2): stopId+orderId+goods alone is deterministic BY
+ * DESIGN — see below — but that determinism silently collapsed a genuinely NEW later return for
+ * identical goods into an earlier, already-landed one (the driver returns 2 units, then later
+ * finds 2 more of the same product), under-crediting the customer. `caller` supplies a value from
+ * `store/returnSubmissionStore.ts#getOrCreateNonce`, scoped per PENDING attempt: stable across
+ * retries of ONE attempt (a network timeout, an offline-queue replay, an app kill mid-request all
+ * reuse it, so those still collapse onto the same server-side return), cleared the moment that
+ * attempt lands — so the caller's NEXT call for the same stop+order gets a fresh value and a
+ * genuinely new return.
+ *
+ * The server hashes the header into `sha256(scope:key)` (`common/idempotency.service.ts`) under
+ * scope `returns.create:<tenantId>:<orderId>`, so this value never needs to be short or opaque —
+ * a readable canonical string beats a home-rolled hash here, because it cannot collide two
+ * genuinely different returns into one lost credit. Its length is bounded by the returned line
+ * count of a single order (tens of lines at worst — far inside any HTTP header limit).
+ *
+ * `lib/api-client.ts` copies the `idempotency-key` header onto a queued offline replay, so the
+ * drain replay and a manual re-issue of the same goods both collapse to ONE server-side return.
+ *
+ * Pure module, no RN dependency — usable as-is under plain Node in Jest.
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.returnSubmitKey = returnSubmitKey;
+/**
+ * Header values must stay in the printable-ASCII range. Every real component is a UUID or a
+ * number, so this never fires in practice — it is here so a surprising `productId` can never
+ * produce an unsendable header (and the substitution is itself deterministic).
+ */
+function headerSafe(value) {
+    return value.replace(/[^A-Za-z0-9:,._-]/g, "_");
+}
+/**
+ * The Idempotency-Key for ONE ATTEMPT at returning goods for one order at one stop. Every
+ * submit/retry/offline-replay of the SAME attempt must pass the SAME `nonce` (from
+ * `returnSubmissionStore#getOrCreateNonce`) to produce this exact value — that is what lets the
+ * server collapse them into a single return. A genuinely new attempt (the nonce was cleared
+ * because the prior one landed) produces a different value on purpose, even for identical goods.
+ */
+function returnSubmitKey(stopId, payload, nonce) {
+    const pairs = payload.items
+        .map((i) => `${i.productId}:${i.qty}`)
+        .sort()
+        .join(",");
+    return headerSafe(`rtn:${stopId}:${payload.orderId}:${pairs}:${nonce}`);
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3JldHVybi1zdWJtaXQta2V5LnRzIiwibWFwcGluZ3MiOiI7QUFBQTs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7OztHQThDRzs7QUF3QkgsMENBVUM7QUExQkQ7Ozs7R0FJRztBQUNILFNBQVMsVUFBVSxDQUFDLEtBQWE7SUFDL0IsT0FBTyxLQUFLLENBQUMsT0FBTyxDQUFDLG9CQUFvQixFQUFFLEdBQUcsQ0FBQyxDQUFDO0FBQ2xELENBQUM7QUFFRDs7Ozs7O0dBTUc7QUFDSCxTQUFnQixlQUFlLENBQzdCLE1BQWMsRUFDZCxPQUE2QixFQUM3QixLQUFhO0lBRWIsTUFBTSxLQUFLLEdBQUcsT0FBTyxDQUFDLEtBQUs7U0FDeEIsR0FBRyxDQUFDLENBQUMsQ0FBQyxFQUFFLEVBQUUsQ0FBQyxHQUFHLENBQUMsQ0FBQyxTQUFTLElBQUksQ0FBQyxDQUFDLEdBQUcsRUFBRSxDQUFDO1NBQ3JDLElBQUksRUFBRTtTQUNOLElBQUksQ0FBQyxHQUFHLENBQUMsQ0FBQztJQUNiLE9BQU8sVUFBVSxDQUFDLE9BQU8sTUFBTSxJQUFJLE9BQU8sQ0FBQyxPQUFPLElBQUksS0FBSyxJQUFJLEtBQUssRUFBRSxDQUFDLENBQUM7QUFDMUUsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9hcHBzL21vYmlsZS9saWIvcmV0dXJuLXN1Ym1pdC1rZXkudHMiXSwic291cmNlc0NvbnRlbnQiOlsiLyoqXG4gKiBEZXRlcm1pbmlzdGljIGNsaWVudC1nZW5lcmF0ZWQgSWRlbXBvdGVuY3ktS2V5IGZvciBQT1NUIC9yZXR1cm5zIChyZXR1cm5zLWlkZW0gbGFuZSkuXG4gKlxuICogYGFwcHMvYXBpL3NyYy9yZXR1cm5zL3JldHVybnMuc2VydmljZS50cyNjcmVhdGVgIG5vdyBob25vdXJzIGFuIGBJZGVtcG90ZW5jeS1LZXlgIGhlYWRlcixcbiAqIGNvbGxhcHNpbmcgYSByZXBsYXllZCBzdWJtaXNzaW9uIG9udG8gdGhlIGZpcnN0IHJlc3VsdCBpbnN0ZWFkIG9mIG1pbnRpbmcgYSBTRUNPTkQgcmV0dXJuIOKAlFxuICogYW5kIG9uY2UgYXBwcm92ZWQgYSBkdXBsaWNhdGUgcmV0dXJuIGlzIGEgZG91YmxlIGN1c3RvbWVyIGNyZWRpdC4gVGhhdCBzZXJ2ZXIgZ3VhcmQgZG9lc1xuICogbm90aGluZyB1bnRpbCBhIGNsaWVudCBhY3R1YWxseSBzZW5kcyB0aGUgaGVhZGVyLCB3aGljaCBpcyB3aGF0IHRoaXMgbW9kdWxlIHN1cHBsaWVzIGZvciB0aGVcbiAqIGRyaXZlciByZXR1cm4gc2NyZWVuLlxuICpcbiAqIERFVEVSTUlOSVNUSUMsIE5PVCBNSU5URUQg4oCUIGFuZCBkZWxpYmVyYXRlbHkgdW5saWtlIGBsaWIvb3JkZXItc3VibWl0LWtleS50c2A6XG4gKlxuICogLSBgb3JkZXItc3VibWl0LWtleWAgbWludHMgYSByYW5kb20gdXVpZCBwZXIgY2FydCBTRVNTSU9OIGFuZCBob2xkcyBpdCBpbiBhIG1vZHVsZSBtYXAsXG4gKiAgIGJlY2F1c2UgYSBjYXJ0IGlzIGEgZnJlZS1mb3JtLCBldm9sdmluZyB0aGluZyB3aXRoIG5vIHN0YWJsZSBpZGVudGl0eSBvZiBpdHMgb3duLlxuICogLSBBIGRyaXZlciByZXR1cm4gaGFzIG9uZTogaXQgaXMgZnVsbHkgZGVzY3JpYmVkIGJ5IHRoZSBzdG9wIGJlaW5nIHNlcnZlZCwgdGhlIG9yZGVyIGJlaW5nXG4gKiAgIHJldHVybmVkIGFnYWluc3QsIGFuZCB0aGUgZ29vZHMgZ29pbmcgYmFjay4gRGVyaXZpbmcgdGhlIGtleSBmcm9tIHRob3NlIGZhY3RzIG1lYW5zIGFcbiAqICAgcmVtb3VudCwgYW4gYXBwIGtpbGwsIGEgcmVpbnN0YWxsLCBvciBhIHNlY29uZCBkZXZpY2UgcmUtZGVyaXZlIHRoZSBTQU1FIGtleSB3aXRoIG5vIHN0YXRlXG4gKiAgIHRvIHBlcnNpc3QgYW5kIG5vdGhpbmcgdG8gcm90YXRlLCBjbGVhciBvciBsZWFrIGFjcm9zcyB1c2Vycy4gVGhlcmUgaXMgbm8gbW9kdWxlLWxldmVsXG4gKiAgIHN0b3JhZ2UgaGVyZSBvbiBwdXJwb3NlLlxuICpcbiAqIElERU5USVRZID0gc3RvcElkICsgb3JkZXJJZCArIHRoZSBzb3J0ZWQgYHByb2R1Y3RJZDpxdHlgIHBhaXJzICsgYSBwZXItYXR0ZW1wdCBOT05DRS4gU29ydGluZ1xuICogdGhlIHBhaXJzIGlzIHdoYXQgbWFrZXMgdGhlIGtleSBpbnNlbnNpdGl2ZSB0byB0aGUgb3JkZXIgYHVuZGVsaXZlcmVkUmV0dXJuTGluZXNgIGhhcHBlbnMgdG9cbiAqIGVtaXQgcm93cyBpbiAoaXQgd2Fsa3MgYGRlbGl2ZXJ5TXV0YXRpb25zYCwgd2hvc2Ugb3JkZXIgaXMgYSBzZXJ2ZXIgcmVhZCBkZXRhaWwsIG5vdCBhIGRyaXZlclxuICogZGVjaXNpb24pLiBQZXItcm93IFJFQVNPTiBpcyBkZWxpYmVyYXRlbHkgTk9UIHBhcnQgb2YgdGhlIGlkZW50aXR5OiB0aGUgc2FtZSBnb29kcyBnb2luZyBiYWNrXG4gKiBvbiB0aGUgc2FtZSBzdG9wIGFyZSB0aGUgc2FtZSByZXR1cm4gd2hldGhlciBvciBub3QgdGhlIGRyaXZlciBmbGlwcGVkIHRoZSBcIkRhbWFnZWRcIiBjaGlwXG4gKiBiZWZvcmUgcmV0cnlpbmcuXG4gKlxuICogVEhFIE5PTkNFIChGMSwgaW5kZXBlbmRlbnQgcmV2aWV3LCBQUi0yKTogc3RvcElkK29yZGVySWQrZ29vZHMgYWxvbmUgaXMgZGV0ZXJtaW5pc3RpYyBCWVxuICogREVTSUdOIOKAlCBzZWUgYmVsb3cg4oCUIGJ1dCB0aGF0IGRldGVybWluaXNtIHNpbGVudGx5IGNvbGxhcHNlZCBhIGdlbnVpbmVseSBORVcgbGF0ZXIgcmV0dXJuIGZvclxuICogaWRlbnRpY2FsIGdvb2RzIGludG8gYW4gZWFybGllciwgYWxyZWFkeS1sYW5kZWQgb25lICh0aGUgZHJpdmVyIHJldHVybnMgMiB1bml0cywgdGhlbiBsYXRlclxuICogZmluZHMgMiBtb3JlIG9mIHRoZSBzYW1lIHByb2R1Y3QpLCB1bmRlci1jcmVkaXRpbmcgdGhlIGN1c3RvbWVyLiBgY2FsbGVyYCBzdXBwbGllcyBhIHZhbHVlIGZyb21cbiAqIGBzdG9yZS9yZXR1cm5TdWJtaXNzaW9uU3RvcmUudHMjZ2V0T3JDcmVhdGVOb25jZWAsIHNjb3BlZCBwZXIgUEVORElORyBhdHRlbXB0OiBzdGFibGUgYWNyb3NzXG4gKiByZXRyaWVzIG9mIE9ORSBhdHRlbXB0IChhIG5ldHdvcmsgdGltZW91dCwgYW4gb2ZmbGluZS1xdWV1ZSByZXBsYXksIGFuIGFwcCBraWxsIG1pZC1yZXF1ZXN0IGFsbFxuICogcmV1c2UgaXQsIHNvIHRob3NlIHN0aWxsIGNvbGxhcHNlIG9udG8gdGhlIHNhbWUgc2VydmVyLXNpZGUgcmV0dXJuKSwgY2xlYXJlZCB0aGUgbW9tZW50IHRoYXRcbiAqIGF0dGVtcHQgbGFuZHMg4oCUIHNvIHRoZSBjYWxsZXIncyBORVhUIGNhbGwgZm9yIHRoZSBzYW1lIHN0b3Arb3JkZXIgZ2V0cyBhIGZyZXNoIHZhbHVlIGFuZCBhXG4gKiBnZW51aW5lbHkgbmV3IHJldHVybi5cbiAqXG4gKiBUaGUgc2VydmVyIGhhc2hlcyB0aGUgaGVhZGVyIGludG8gYHNoYTI1NihzY29wZTprZXkpYCAoYGNvbW1vbi9pZGVtcG90ZW5jeS5zZXJ2aWNlLnRzYCkgdW5kZXJcbiAqIHNjb3BlIGByZXR1cm5zLmNyZWF0ZTo8dGVuYW50SWQ+OjxvcmRlcklkPmAsIHNvIHRoaXMgdmFsdWUgbmV2ZXIgbmVlZHMgdG8gYmUgc2hvcnQgb3Igb3BhcXVlIOKAlFxuICogYSByZWFkYWJsZSBjYW5vbmljYWwgc3RyaW5nIGJlYXRzIGEgaG9tZS1yb2xsZWQgaGFzaCBoZXJlLCBiZWNhdXNlIGl0IGNhbm5vdCBjb2xsaWRlIHR3b1xuICogZ2VudWluZWx5IGRpZmZlcmVudCByZXR1cm5zIGludG8gb25lIGxvc3QgY3JlZGl0LiBJdHMgbGVuZ3RoIGlzIGJvdW5kZWQgYnkgdGhlIHJldHVybmVkIGxpbmVcbiAqIGNvdW50IG9mIGEgc2luZ2xlIG9yZGVyICh0ZW5zIG9mIGxpbmVzIGF0IHdvcnN0IOKAlCBmYXIgaW5zaWRlIGFueSBIVFRQIGhlYWRlciBsaW1pdCkuXG4gKlxuICogYGxpYi9hcGktY2xpZW50LnRzYCBjb3BpZXMgdGhlIGBpZGVtcG90ZW5jeS1rZXlgIGhlYWRlciBvbnRvIGEgcXVldWVkIG9mZmxpbmUgcmVwbGF5LCBzbyB0aGVcbiAqIGRyYWluIHJlcGxheSBhbmQgYSBtYW51YWwgcmUtaXNzdWUgb2YgdGhlIHNhbWUgZ29vZHMgYm90aCBjb2xsYXBzZSB0byBPTkUgc2VydmVyLXNpZGUgcmV0dXJuLlxuICpcbiAqIFB1cmUgbW9kdWxlLCBubyBSTiBkZXBlbmRlbmN5IOKAlCB1c2FibGUgYXMtaXMgdW5kZXIgcGxhaW4gTm9kZSBpbiBKZXN0LlxuICovXG5cbi8qKiBUaGUgbWluaW11bSBhIHJldHVybiBwYXlsb2FkIGhhcyB0byBleHBvc2UgdG8gYmUgaWRlbnRpZmllZC4gKi9cbmV4cG9ydCBpbnRlcmZhY2UgUmV0dXJuU3VibWl0S2V5SW5wdXQge1xuICBvcmRlcklkOiBzdHJpbmc7XG4gIGl0ZW1zOiBSZWFkb25seUFycmF5PHsgcHJvZHVjdElkOiBzdHJpbmc7IHF0eTogbnVtYmVyIH0+O1xufVxuXG4vKipcbiAqIEhlYWRlciB2YWx1ZXMgbXVzdCBzdGF5IGluIHRoZSBwcmludGFibGUtQVNDSUkgcmFuZ2UuIEV2ZXJ5IHJlYWwgY29tcG9uZW50IGlzIGEgVVVJRCBvciBhXG4gKiBudW1iZXIsIHNvIHRoaXMgbmV2ZXIgZmlyZXMgaW4gcHJhY3RpY2Ug4oCUIGl0IGlzIGhlcmUgc28gYSBzdXJwcmlzaW5nIGBwcm9kdWN0SWRgIGNhbiBuZXZlclxuICogcHJvZHVjZSBhbiB1bnNlbmRhYmxlIGhlYWRlciAoYW5kIHRoZSBzdWJzdGl0dXRpb24gaXMgaXRzZWxmIGRldGVybWluaXN0aWMpLlxuICovXG5mdW5jdGlvbiBoZWFkZXJTYWZlKHZhbHVlOiBzdHJpbmcpOiBzdHJpbmcge1xuICByZXR1cm4gdmFsdWUucmVwbGFjZSgvW15BLVphLXowLTk6LC5fLV0vZywgXCJfXCIpO1xufVxuXG4vKipcbiAqIFRoZSBJZGVtcG90ZW5jeS1LZXkgZm9yIE9ORSBBVFRFTVBUIGF0IHJldHVybmluZyBnb29kcyBmb3Igb25lIG9yZGVyIGF0IG9uZSBzdG9wLiBFdmVyeVxuICogc3VibWl0L3JldHJ5L29mZmxpbmUtcmVwbGF5IG9mIHRoZSBTQU1FIGF0dGVtcHQgbXVzdCBwYXNzIHRoZSBTQU1FIGBub25jZWAgKGZyb21cbiAqIGByZXR1cm5TdWJtaXNzaW9uU3RvcmUjZ2V0T3JDcmVhdGVOb25jZWApIHRvIHByb2R1Y2UgdGhpcyBleGFjdCB2YWx1ZSDigJQgdGhhdCBpcyB3aGF0IGxldHMgdGhlXG4gKiBzZXJ2ZXIgY29sbGFwc2UgdGhlbSBpbnRvIGEgc2luZ2xlIHJldHVybi4gQSBnZW51aW5lbHkgbmV3IGF0dGVtcHQgKHRoZSBub25jZSB3YXMgY2xlYXJlZFxuICogYmVjYXVzZSB0aGUgcHJpb3Igb25lIGxhbmRlZCkgcHJvZHVjZXMgYSBkaWZmZXJlbnQgdmFsdWUgb24gcHVycG9zZSwgZXZlbiBmb3IgaWRlbnRpY2FsIGdvb2RzLlxuICovXG5leHBvcnQgZnVuY3Rpb24gcmV0dXJuU3VibWl0S2V5KFxuICBzdG9wSWQ6IHN0cmluZyxcbiAgcGF5bG9hZDogUmV0dXJuU3VibWl0S2V5SW5wdXQsXG4gIG5vbmNlOiBzdHJpbmcsXG4pOiBzdHJpbmcge1xuICBjb25zdCBwYWlycyA9IHBheWxvYWQuaXRlbXNcbiAgICAubWFwKChpKSA9PiBgJHtpLnByb2R1Y3RJZH06JHtpLnF0eX1gKVxuICAgIC5zb3J0KClcbiAgICAuam9pbihcIixcIik7XG4gIHJldHVybiBoZWFkZXJTYWZlKGBydG46JHtzdG9wSWR9OiR7cGF5bG9hZC5vcmRlcklkfToke3BhaXJzfToke25vbmNlfWApO1xufVxuIl0sInZlcnNpb24iOjN9

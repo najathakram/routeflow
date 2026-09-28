@@ -1,0 +1,18 @@
+7efc71732f7c910c1baa3502f29e6938
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.createRouteFromAction = createRouteFromAction;
+const non_secure_1 = require("nanoid/non-secure");
+const createParamsFromAction_js_1 = require("./createParamsFromAction.js");
+function createRouteFromAction({ action, routeParamList }) {
+    const { name } = action.payload;
+    return {
+        key: `${name}-${(0, non_secure_1.nanoid)()}`,
+        name,
+        params: (0, createParamsFromAction_js_1.createParamsFromAction)({
+            action,
+            routeParamList
+        })
+    };
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0Mzcvbm9kZV9tb2R1bGVzL0ByZWFjdC1uYXZpZ2F0aW9uL3JvdXRlcnMvbGliL21vZHVsZS9jcmVhdGVSb3V0ZUZyb21BY3Rpb24uanMiLCJtYXBwaW5ncyI6IkFBQUEsWUFBWSxDQUFDOztBQUliLHNEQWVDO0FBakJELGtEQUEyQztBQUMzQywyRUFBcUU7QUFDckUsU0FBZ0IscUJBQXFCLENBQUMsRUFDcEMsTUFBTSxFQUNOLGNBQWMsRUFDZjtJQUNDLE1BQU0sRUFDSixJQUFJLEVBQ0wsR0FBRyxNQUFNLENBQUMsT0FBTyxDQUFDO0lBQ25CLE9BQU87UUFDTCxHQUFHLEVBQUUsR0FBRyxJQUFJLElBQUksSUFBQSxtQkFBTSxHQUFFLEVBQUU7UUFDMUIsSUFBSTtRQUNKLE1BQU0sRUFBRSxJQUFBLGtEQUFzQixFQUFDO1lBQzdCLE1BQU07WUFDTixjQUFjO1NBQ2YsQ0FBQztLQUNILENBQUM7QUFDSixDQUFDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L25vZGVfbW9kdWxlcy9AcmVhY3QtbmF2aWdhdGlvbi9yb3V0ZXJzL2xpYi9tb2R1bGUvY3JlYXRlUm91dGVGcm9tQWN0aW9uLmpzIl0sInNvdXJjZXNDb250ZW50IjpbIlwidXNlIHN0cmljdFwiO1xuXG5pbXBvcnQgeyBuYW5vaWQgfSBmcm9tICduYW5vaWQvbm9uLXNlY3VyZSc7XG5pbXBvcnQgeyBjcmVhdGVQYXJhbXNGcm9tQWN0aW9uIH0gZnJvbSBcIi4vY3JlYXRlUGFyYW1zRnJvbUFjdGlvbi5qc1wiO1xuZXhwb3J0IGZ1bmN0aW9uIGNyZWF0ZVJvdXRlRnJvbUFjdGlvbih7XG4gIGFjdGlvbixcbiAgcm91dGVQYXJhbUxpc3Rcbn0pIHtcbiAgY29uc3Qge1xuICAgIG5hbWVcbiAgfSA9IGFjdGlvbi5wYXlsb2FkO1xuICByZXR1cm4ge1xuICAgIGtleTogYCR7bmFtZX0tJHtuYW5vaWQoKX1gLFxuICAgIG5hbWUsXG4gICAgcGFyYW1zOiBjcmVhdGVQYXJhbXNGcm9tQWN0aW9uKHtcbiAgICAgIGFjdGlvbixcbiAgICAgIHJvdXRlUGFyYW1MaXN0XG4gICAgfSlcbiAgfTtcbn1cbi8vIyBzb3VyY2VNYXBwaW5nVVJMPWNyZWF0ZVJvdXRlRnJvbUFjdGlvbi5qcy5tYXAiXSwidmVyc2lvbiI6M30=

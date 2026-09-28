@@ -1,0 +1,57 @@
+6e8847dc3a2b92fdc48e093ac3fa66dd
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.PrivateValueStore = void 0;
+/**
+ * Flatten a type to remove all type alias names, unions etc.
+ * This will show a plain object when hovering over the type.
+ */
+/**
+ * keyof T doesn't work for union types. We can use distributive conditional types instead.
+ * https://www.typescriptlang.org/docs/handbook/2/conditional-types.html#distributive-conditional-types
+ */
+/**
+ * We get a union type when using keyof, but we want an intersection instead.
+ * https://stackoverflow.com/a/50375286/1665026
+ */
+/**
+ * Infer the param list from the static navigation config.
+ */
+/**
+ * Root navigator used in the app.
+ * It's used for the global types in the app.
+ *
+ * Users need to use module augmentation to add their navigator type:
+ *
+ * ```ts
+ * // Navigator created with static or dynamic API
+ * const RootStack = createStackNavigator({
+ *   // ...
+ * });
+ *
+ * type RootStackType = typeof RootStack;
+ *
+ * declare module '@react-navigation/core' {
+ *   interface RootNavigator extends RootStackType {}
+ * }
+ * ```
+ */
+// eslint-disable-next-line @typescript-eslint/no-empty-interface
+/**
+ * Theme object for the navigation components.
+ *
+ * Custom properties can be added using declaration merging:
+ *
+ * ```ts
+ * declare module '@react-navigation/core' {
+ *   interface Theme extends NativeTheme {
+ *     myCustomProperty: string;
+ *   }
+ * }
+ * ```
+ */
+// eslint-disable-next-line @typescript-eslint/no-empty-interface
+class PrivateValueStore {
+}
+exports.PrivateValueStore = PrivateValueStore;
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0Mzcvbm9kZV9tb2R1bGVzL0ByZWFjdC1uYXZpZ2F0aW9uL2NvcmUvbGliL21vZHVsZS90eXBlcy5qcyIsIm1hcHBpbmdzIjoiQUFBQSxZQUFZLENBQUM7OztBQUViOzs7R0FHRztBQUVIOzs7R0FHRztBQUVIOzs7R0FHRztBQUVIOztHQUVHO0FBRUg7Ozs7Ozs7Ozs7Ozs7Ozs7OztHQWtCRztBQUNILGlFQUFpRTtBQUVqRTs7Ozs7Ozs7Ozs7O0dBWUc7QUFDSCxpRUFBaUU7QUFFakUsTUFBYSxpQkFBaUI7Q0FBRztBQUFqQyw4Q0FBaUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0Mzcvbm9kZV9tb2R1bGVzL0ByZWFjdC1uYXZpZ2F0aW9uL2NvcmUvbGliL21vZHVsZS90eXBlcy5qcyJdLCJzb3VyY2VzQ29udGVudCI6WyJcInVzZSBzdHJpY3RcIjtcblxuLyoqXG4gKiBGbGF0dGVuIGEgdHlwZSB0byByZW1vdmUgYWxsIHR5cGUgYWxpYXMgbmFtZXMsIHVuaW9ucyBldGMuXG4gKiBUaGlzIHdpbGwgc2hvdyBhIHBsYWluIG9iamVjdCB3aGVuIGhvdmVyaW5nIG92ZXIgdGhlIHR5cGUuXG4gKi9cblxuLyoqXG4gKiBrZXlvZiBUIGRvZXNuJ3Qgd29yayBmb3IgdW5pb24gdHlwZXMuIFdlIGNhbiB1c2UgZGlzdHJpYnV0aXZlIGNvbmRpdGlvbmFsIHR5cGVzIGluc3RlYWQuXG4gKiBodHRwczovL3d3dy50eXBlc2NyaXB0bGFuZy5vcmcvZG9jcy9oYW5kYm9vay8yL2NvbmRpdGlvbmFsLXR5cGVzLmh0bWwjZGlzdHJpYnV0aXZlLWNvbmRpdGlvbmFsLXR5cGVzXG4gKi9cblxuLyoqXG4gKiBXZSBnZXQgYSB1bmlvbiB0eXBlIHdoZW4gdXNpbmcga2V5b2YsIGJ1dCB3ZSB3YW50IGFuIGludGVyc2VjdGlvbiBpbnN0ZWFkLlxuICogaHR0cHM6Ly9zdGFja292ZXJmbG93LmNvbS9hLzUwMzc1Mjg2LzE2NjUwMjZcbiAqL1xuXG4vKipcbiAqIEluZmVyIHRoZSBwYXJhbSBsaXN0IGZyb20gdGhlIHN0YXRpYyBuYXZpZ2F0aW9uIGNvbmZpZy5cbiAqL1xuXG4vKipcbiAqIFJvb3QgbmF2aWdhdG9yIHVzZWQgaW4gdGhlIGFwcC5cbiAqIEl0J3MgdXNlZCBmb3IgdGhlIGdsb2JhbCB0eXBlcyBpbiB0aGUgYXBwLlxuICpcbiAqIFVzZXJzIG5lZWQgdG8gdXNlIG1vZHVsZSBhdWdtZW50YXRpb24gdG8gYWRkIHRoZWlyIG5hdmlnYXRvciB0eXBlOlxuICpcbiAqIGBgYHRzXG4gKiAvLyBOYXZpZ2F0b3IgY3JlYXRlZCB3aXRoIHN0YXRpYyBvciBkeW5hbWljIEFQSVxuICogY29uc3QgUm9vdFN0YWNrID0gY3JlYXRlU3RhY2tOYXZpZ2F0b3Ioe1xuICogICAvLyAuLi5cbiAqIH0pO1xuICpcbiAqIHR5cGUgUm9vdFN0YWNrVHlwZSA9IHR5cGVvZiBSb290U3RhY2s7XG4gKlxuICogZGVjbGFyZSBtb2R1bGUgJ0ByZWFjdC1uYXZpZ2F0aW9uL2NvcmUnIHtcbiAqICAgaW50ZXJmYWNlIFJvb3ROYXZpZ2F0b3IgZXh0ZW5kcyBSb290U3RhY2tUeXBlIHt9XG4gKiB9XG4gKiBgYGBcbiAqL1xuLy8gZXNsaW50LWRpc2FibGUtbmV4dC1saW5lIEB0eXBlc2NyaXB0LWVzbGludC9uby1lbXB0eS1pbnRlcmZhY2VcblxuLyoqXG4gKiBUaGVtZSBvYmplY3QgZm9yIHRoZSBuYXZpZ2F0aW9uIGNvbXBvbmVudHMuXG4gKlxuICogQ3VzdG9tIHByb3BlcnRpZXMgY2FuIGJlIGFkZGVkIHVzaW5nIGRlY2xhcmF0aW9uIG1lcmdpbmc6XG4gKlxuICogYGBgdHNcbiAqIGRlY2xhcmUgbW9kdWxlICdAcmVhY3QtbmF2aWdhdGlvbi9jb3JlJyB7XG4gKiAgIGludGVyZmFjZSBUaGVtZSBleHRlbmRzIE5hdGl2ZVRoZW1lIHtcbiAqICAgICBteUN1c3RvbVByb3BlcnR5OiBzdHJpbmc7XG4gKiAgIH1cbiAqIH1cbiAqIGBgYFxuICovXG4vLyBlc2xpbnQtZGlzYWJsZS1uZXh0LWxpbmUgQHR5cGVzY3JpcHQtZXNsaW50L25vLWVtcHR5LWludGVyZmFjZVxuXG5leHBvcnQgY2xhc3MgUHJpdmF0ZVZhbHVlU3RvcmUge31cbi8vIyBzb3VyY2VNYXBwaW5nVVJMPXR5cGVzLmpzLm1hcCJdLCJ2ZXJzaW9uIjozfQ==

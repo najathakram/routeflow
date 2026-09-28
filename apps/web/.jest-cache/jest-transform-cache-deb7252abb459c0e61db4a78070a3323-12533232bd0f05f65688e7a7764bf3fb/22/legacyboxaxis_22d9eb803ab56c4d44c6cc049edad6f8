@@ -1,0 +1,152 @@
+bd59563a674a8d5aa9c60ff6d821c902
+"use strict";
+/**
+ * classifySaleAxis — B681/SA-058/SA-070(a), Senior Architect ruling 2026-09-22. ONE predicate
+ * shared by the B681 correction routine and its write-time guard (the guard imports this exact
+ * function — never a second copy; that duplication is precisely what B681 itself is repairing
+ * the cost of).
+ *
+ * A box-unaware line (no stored boxes/pieces/unitLabel split) that IS boxed today books its SALE
+ * row's `unitBasisQty` two different ways depending on when it was written: before B661
+ * (`f45eaf52`), `unitBasisQty` was a straight copy of `qty` — the BOX axis. After B661,
+ * `regulatedUnitBasis`'s box-unaware branch expands it to `qty * packAtSale` — the PIECES axis.
+ * THREE-STATE, never a boolean — `"unknown"` is a first-class, distinct outcome from `"legacy"`,
+ * exactly as `legacyLinePieces` treats it: a caller REFUSES or PARKS on `unknown`, it never
+ * defaults to a guess.
+ *
+ * IDEMPOTENCY: evaluated on the row PLUS its own prior correction rows (every row whose
+ * `correctsEntryId` names this row), never the bare stored row alone — their `qty`/`unitBasisQty`
+ * deltas are summed onto the row's own figures before the axis check, so a row this routine
+ * already corrected reads as `"piece-axis"` from then on and is never re-corrected or re-parked.
+ *
+ * EVALUATION ORDER — first hit wins, never re-ordered:
+ *   1. `row.entryType !== "SALE"` → unknown (a REVERSAL takes its SALE's axis, decided by the
+ *      correction routine's own per-line classification, never this predicate).
+ *   2. `line === null` → unknown (no line to read a shape from — the row's invoice/order item
+ *      is gone or was never resolved).
+ *   3. `line.boxes` or `line.pieces` non-null → piece-axis (a split line's qty is pieces by the
+ *      OrderItem/InvoiceItem invariant, whatever the ledger row says).
+ *   4. `line.unitLabel` non-blank → piece-axis (a unit-sold line's qty is base units).
+ *   5. Boxed gate: `line.unitsPerBox > 1` when that snapshot exists, else `productPackNow > 1`
+ *      when the caller supplied one (a GATE only, never a multiplier — same convention as
+ *      `legacyLinePieces`/`line-pack-factors.ts`: `null` means "product exists, no box size",
+ *      OMITTING the argument means "caller doesn't know / product not found", and only the
+ *      OMITTED case with no line-level snapshot is `unknown`; an explicit `null` still decides
+ *      "not boxed" → piece-axis, same as a numeric non-boxed value). Not boxed → piece-axis (a
+ *      never-boxed line's qty was always already pieces, nothing to correct).
+ *   6. Fold every correction's `qty`/`unitBasisQty` onto the row's own (`effQty`, `effUbq`).
+ *      `effQty <= 0` → unknown (nothing genuine left to classify). `effUbq ≈ effQty` (within
+ *      0.0005) → legacy (box axis — this is exactly the defect). `effUbq > effQty` → piece-axis
+ *      (already correct). `effUbq < effQty` → unknown ("malformed" — a corrected/booked shape
+ *      that doesn't fit either axis; never silently treated as either).
+ *
+ * Every number is read through `Number()` with a finite check — a Prisma `Decimal` compared with
+ * `===` against a plain `number` is always `false`; `Number()` coerces it correctly (see
+ * `legacyLinePieces`'s own `finiteNumber` helper, same convention).
+ */ Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+exports.classifySaleAxis = classifySaleAxis;
+const EPS = 0.0005;
+/** `Number()` with a finite check — `null` for anything that isn't a real, usable number
+ *  (including a non-numeric string, `null`, `undefined`, `NaN`, `Infinity`). Prisma's `Decimal`
+ *  coerces correctly through `Number()` — this is a guard, not a replacement for it. */ function finiteOrNull(v) {
+    if (v == null) return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+}
+function classifySaleAxis(row, line, corrections = [], productPackNow) {
+    // (1)
+    if (row.entryType !== "SALE") {
+        return {
+            state: "unknown",
+            reason: "a reversal takes its SALE's axis"
+        };
+    }
+    // (2)
+    if (line == null) {
+        return {
+            state: "unknown",
+            reason: "no line to read a shape from"
+        };
+    }
+    // (3)
+    if (finiteOrNull(line.boxes) != null || finiteOrNull(line.pieces) != null) {
+        return {
+            state: "piece-axis",
+            reason: "split line: qty is pieces by invariant"
+        };
+    }
+    // (4)
+    const label = typeof line.unitLabel === "string" ? line.unitLabel.trim() : line.unitLabel;
+    if (label != null && label !== "") {
+        return {
+            state: "piece-axis",
+            reason: "unit line: qty is base units"
+        };
+    }
+    // (5)
+    const unitsPerBox = finiteOrNull(line.unitsPerBox);
+    let boxed;
+    if (unitsPerBox != null) {
+        boxed = unitsPerBox > 1;
+    } else if (productPackNow !== undefined) {
+        const packNow = finiteOrNull(productPackNow);
+        boxed = packNow != null && packNow > 1;
+    } else {
+        return {
+            state: "unknown",
+            reason: "no snapshot and no product to gate on"
+        };
+    }
+    if (!boxed) {
+        return {
+            state: "piece-axis",
+            reason: "not boxed — qty is already pieces"
+        };
+    }
+    // (6)
+    const rowQty = finiteOrNull(row.qty);
+    const rowUbq = finiteOrNull(row.unitBasisQty);
+    if (rowQty == null || rowUbq == null) {
+        return {
+            state: "unknown",
+            reason: "row qty/unitBasisQty is not a usable number"
+        };
+    }
+    let effQty = rowQty;
+    let effUbq = rowUbq;
+    for (const c of corrections){
+        const cQty = finiteOrNull(c.qty);
+        const cUbq = finiteOrNull(c.unitBasisQty);
+        // SA-073: a non-finite correction figure is folded in as a no-op (skipped silently) rather
+        // than refused — acceptable because a Decimal-typed ledger column can never actually hold a
+        // non-finite value, so this branch is unreachable for a real correction row.
+        if (cQty != null) effQty += cQty;
+        if (cUbq != null) effUbq += cUbq;
+    }
+    if (effQty <= 0) {
+        return {
+            state: "unknown",
+            reason: "corrected qty is not positive"
+        };
+    }
+    if (Math.abs(effUbq - effQty) < EPS) {
+        return {
+            state: "legacy",
+            reason: "box axis"
+        };
+    }
+    if (effUbq > effQty) {
+        return {
+            state: "piece-axis",
+            reason: "pieces axis"
+        };
+    }
+    return {
+        state: "unknown",
+        reason: "malformed — unitBasisQty is less than qty"
+    };
+} //# sourceMappingURL=legacy-box-axis.js.map
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoibGVnYWN5LWJveC1heGlzLmpzIiwic291cmNlcyI6WyIuLi9zcmMvbGVnYWN5LWJveC1heGlzLnRzIl0sInNvdXJjZVJvb3QiOiIiLCJuYW1lcyI6W10sIm1hcHBpbmdzIjoiO0FBQUE7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7R0EyQ0c7OztBQWlESCxRQUFBLGdCQUFBLEdBQUEsaUJBZ0VDO0FBM0VELE1BQU0sR0FBRyxHQUFHLE1BQU0sQ0FBQztBQUVuQjs7d0ZBRXdGLENBQ3hGLFNBQVMsWUFBWSxDQUFDLENBQVU7SUFDOUIsSUFBSSxDQUFDLElBQUksSUFBSSxFQUFFLE9BQU8sSUFBSSxDQUFDO0lBQzNCLE1BQU0sQ0FBQyxHQUFHLE1BQU0sQ0FBQyxDQUFDLENBQUMsQ0FBQztJQUNwQixPQUFPLE1BQU0sQ0FBQyxRQUFRLENBQUMsQ0FBQyxDQUFDLENBQUMsQ0FBQyxDQUFDLENBQUMsQ0FBQyxDQUFDLENBQUMsSUFBSSxDQUFDO0FBQ3ZDLENBQUM7QUFFRCxTQUFnQixnQkFBZ0IsQ0FDOUIsR0FBZ0IsRUFDaEIsSUFBeUIsRUFDekIsY0FBb0MsRUFBRSxFQUN0QyxjQUE4QjtJQUU5QixNQUFNO0lBQ04sSUFBSSxHQUFHLENBQUMsU0FBUyxLQUFLLE1BQU0sRUFBRSxDQUFDO1FBQzdCLE9BQU87WUFBRSxLQUFLLEVBQUUsU0FBUztZQUFFLE1BQU0sRUFBRSxrQ0FBa0M7UUFBQSxDQUFFLENBQUM7SUFDMUUsQ0FBQztJQUNELE1BQU07SUFDTixJQUFJLElBQUksSUFBSSxJQUFJLEVBQUUsQ0FBQztRQUNqQixPQUFPO1lBQUUsS0FBSyxFQUFFLFNBQVM7WUFBRSxNQUFNLEVBQUUsOEJBQThCO1FBQUEsQ0FBRSxDQUFDO0lBQ3RFLENBQUM7SUFDRCxNQUFNO0lBQ04sSUFBSSxZQUFZLENBQUMsSUFBSSxDQUFDLEtBQUssQ0FBQyxJQUFJLElBQUksSUFBSSxZQUFZLENBQUMsSUFBSSxDQUFDLE1BQU0sQ0FBQyxJQUFJLElBQUks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

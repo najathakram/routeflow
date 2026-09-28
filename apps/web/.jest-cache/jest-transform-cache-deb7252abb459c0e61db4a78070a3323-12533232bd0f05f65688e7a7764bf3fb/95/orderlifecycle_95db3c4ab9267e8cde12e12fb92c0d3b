@@ -1,0 +1,186 @@
+cad2008b9e218a97ca6292b55c3c9900
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, {
+        enumerable: true,
+        get: Object.getOwnPropertyDescriptor(all, name).get
+    });
+}
+_export(exports, {
+    get OrderLifecycle () {
+        return OrderLifecycle;
+    },
+    get WholesalerCapabilities () {
+        return WholesalerCapabilities;
+    }
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _lucidereact = require("lucide-react");
+const _marketing = require("./marketing");
+// Wholesalers-only content — deliberately does NOT reuse `FeatureCatalog`'s
+// capability grid or `FAQ` from the product page (owner ruling 2026-09-17):
+// this page argues the operational case through one order's real path
+// through the system, not a generic feature grid. Every claim here is
+// checked against `apps/api` behavior, not aspirational.
+const STEPS = [
+    [
+        "Intake",
+        "An order comes in however your customer gives it to you — a call your staff keys in, a standing order that repeats itself, or the customer placing it directly through their own buyer portal. Whichever way it starts, it lands as one order record."
+    ],
+    [
+        "Pricing",
+        "The order prices itself against that customer's tier and any per-product overrides you've set — the same pricing engine whether the order was typed by hand or generated from a standing order."
+    ],
+    [
+        "Route",
+        "The order joins the day's route. Stop order is optimized for time or distance and checked against real delivery windows."
+    ],
+    [
+        "Proof of delivery",
+        "The driver captures a signature and photos at the stop, and records exactly what was delivered — including a short-pick or refusal — not just what was on the original order."
+    ],
+    [
+        "Invoice",
+        "The invoice is generated from what was actually delivered, not just what was ordered. A short-pick or partial delivery adjusts the bill automatically."
+    ],
+    [
+        "Payment",
+        "Collected at the door in cash or check, or settled with the office. A driver's end-of-run settlement checks what they collected against what the system expected, with variance flagged rather than assumed."
+    ]
+];
+function OrderLifecycle() {
+    return /*#__PURE__*/ (0, _jsxruntime.jsxs)("section", {
+        className: "section wrap getting-started order-lifecycle",
+        children: [
+            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)(_marketing.Eyebrow, {
+                        children: "ONE ORDER, START TO FINISH"
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("h2", {
+                        children: [
+                            "Follow an order",
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("br", {}),
+                            "through the system."
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                        children: "Every one of these steps is the same order record — nothing gets re-typed or re-priced between the phone call and the invoice."
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("img", {
+                        src: "/marketing/order-builder.webp",
+                        alt: "RouteFlow order builder showing a wholesale order being priced line by line, with live subtotal and total.",
+                        width: 1400,
+                        height: 933,
+                        loading: "lazy",
+                        decoding: "async",
+                        className: "lifecycle-screenshot"
+                    })
+                ]
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("ol", {
+                children: STEPS.map(([title, text], i)=>/*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("span", {
+                                children: [
+                                    "0",
+                                    i + 1
+                                ]
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                children: [
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("h3", {
+                                        children: title
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                        children: text
+                                    })
+                                ]
+                            })
+                        ]
+                    }, title))
+            })
+        ]
+    });
+}
+const CAPABILITIES = [
+    {
+        icon: _lucidereact.Boxes,
+        name: "Boxed pricing, real units",
+        text: "Sell by the box or the piece — RouteFlow tracks and converts both, so a partial-box order doesn't get charged a full-box rate by accident.",
+        tag: "PRICE IT RIGHT"
+    },
+    {
+        icon: _lucidereact.Tags,
+        name: "Customer-tier pricing",
+        text: "Set a pricing tier per customer and override individual product prices for individual accounts — your agreed rate applies automatically, every time.",
+        tag: "HONOR THE DEAL YOU MADE"
+    },
+    {
+        icon: _lucidereact.Repeat2,
+        name: "Standing orders that re-price",
+        text: "A weekly standing order runs through the same tiered pricing as an order your staff types by hand, so a price change actually reaches your repeat customers.",
+        tag: "REPEAT BUSINESS, CURRENT PRICES"
+    },
+    {
+        icon: _lucidereact.Route,
+        name: "Window-aware routing",
+        text: "Routes are optimized for time or distance and checked against each stop's delivery window — not just a straight line on a map.",
+        tag: "GET THERE ON TIME"
+    },
+    {
+        icon: _lucidereact.Camera,
+        name: "Proof of delivery",
+        text: "A signature, photos, and a record of what was actually delivered versus what was ordered — for every stop.",
+        tag: "SETTLE DISPUTES WITH EVIDENCE"
+    },
+    {
+        icon: _lucidereact.RotateCcw,
+        name: "Returns at the stop",
+        text: "Your driver can log a return right at the delivery — what came back, why, whether it restocks — without a follow-up call to the office.",
+        tag: "NO PHONE TAG ON RETURNS"
+    },
+    {
+        icon: _lucidereact.ReceiptText,
+        name: "Bills what was delivered",
+        text: "A short-pick, a refusal, or a partial delivery adjusts the invoice automatically — you never manually re-key a smaller total.",
+        tag: "INVOICE MATCHES REALITY"
+    },
+    {
+        icon: _lucidereact.HandCoins,
+        name: "Driver settlement",
+        text: "Cash and check collected at the door are recorded against the invoice on the spot, and checked against what the system expected the driver to collect at end of run.",
+        tag: "AN ACTUAL AUDIT TRAIL"
+    }
+];
+function WholesalerCapabilities() {
+    return /*#__PURE__*/ (0, _jsxruntime.jsx)("div", {
+        className: "capability-catalog wholesaler-capabilities",
+        id: "wholesaler-capabilities",
+        children: /*#__PURE__*/ (0, _jsxruntime.jsx)("div", {
+            className: "capability-grid",
+            children: CAPABILITIES.map((f)=>/*#__PURE__*/ (0, _jsxruntime.jsxs)("article", {
+                    className: "capability-card",
+                    children: [
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)(f.icon, {
+                            size: 27
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                            children: f.tag
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("h3", {
+                            children: f.name
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                            children: f.text
+                        })
+                    ]
+                }, f.name))
+        })
+    });
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8obWFya2V0aW5nKS9jb21wb25lbnRzL29yZGVyLWxpZmVjeWNsZS50c3giXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IHtcbiAgQm94ZXMsXG4gIFRhZ3MsXG4gIFJlcGVhdDIsXG4gIFJvdXRlLFxuICBDYW1lcmEsXG4gIFJvdGF0ZUNjdyxcbiAgUmVjZWlwdFRleHQsXG4gIEhhbmRDb2lucyxcbn0gZnJvbSBcImx1Y2lkZS1yZWFjdFwiO1xuaW1wb3J0IHsgRXllYnJvdyB9IGZyb20gXCIuL21hcmtldGluZ1wiO1xuXG4vLyBXaG9sZXNhbGVycy1vbmx5IGNvbnRlbnQg4oCUIGRlbGliZXJhdGVseSBkb2VzIE5PVCByZXVzZSBgRmVhdHVyZUNhdGFsb2dgJ3Ncbi8vIGNhcGFiaWxpdHkgZ3JpZCBvciBgRkFRYCBmcm9tIHRoZSBwcm9kdWN0IHBhZ2UgKG93bmVyIHJ1bGluZyAyMDI2LTA5LTE3KTpcbi8vIHRoaXMgcGFnZSBhcmd1ZXMgdGhlIG9wZXJhdGlvbmFsIGNhc2UgdGhyb3VnaCBvbmUgb3JkZXIncyByZWFsIHBhdGhcbi8vIHRocm91Z2ggdGhlIHN5c3RlbSwgbm90IGEgZ2VuZXJpYyBmZWF0dXJlIGdyaWQuIEV2ZXJ5IGNsYWltIGhlcmUgaXNcbi8vIGNoZWNrZWQgYWdhaW5zdCBgYXBwcy9hcGlgIGJlaGF2aW9yLCBub3QgYXNwaXJhdGlvbmFsLlxuXG5jb25zdCBTVEVQUzogQXJyYXk8W3N0cmluZywgc3RyaW5nXT4gPSBbXG4gIFtcbiAgICBcIkludGFrZVwiLFxuICAgIFwiQW4gb3JkZXIgY29tZXMgaW4gaG93ZXZlciB5b3VyIGN1c3RvbWVyIGdpdmVzIGl0IHRvIHlvdSDigJQgYSBjYWxsIHlvdXIgc3RhZmYga2V5cyBpbiwgYSBzdGFuZGluZyBvcmRlciB0aGF0IHJlcGVhdHMgaXRzZWxmLCBvciB0aGUgY3VzdG9tZXIgcGxhY2luZyBpdCBkaXJlY3RseSB0aHJvdWdoIHRoZWlyIG93biBidXllciBwb3J0YWwuIFdoaWNoZXZlciB3YXkgaXQgc3RhcnRzLCBpdCBsYW5kcyBhcyBvbmUgb3JkZXIgcmVjb3JkLlwiLFxuICBdLFxuICBbXG4gICAgXCJQcmljaW5nXCIsXG4gICAgXCJUaGUgb3JkZXIgcHJpY2VzIGl0c2VsZiBhZ2FpbnN0IHRoYXQgY3VzdG9tZXIncyB0aWVyIGFuZCBhbnkgcGVyLXByb2R1Y3Qgb3ZlcnJpZGVzIHlvdSd2ZSBzZXQg4oCUIHRoZSBzYW1lIHByaWNpbmcgZW5naW5lIHdoZXRoZXIgdGhlIG9yZGVyIHdhcyB0eXBlZCBieSBoYW5kIG9yIGdlbmVyYXRlZCBmcm9tIGEgc3RhbmRpbmcgb3JkZXIuXCIsXG4gIF0sXG4gIFtcbiAgICBcIlJvdXRlXCIsXG4gICAgXCJUaGUgb3JkZXIgam9pbnMgdGhlIGRheSdzIHJvdXRlLiBTdG9wIG9yZGVyIGlzIG9wdGltaXplZCBmb3IgdGltZSBvciBkaXN0YW5jZSBhbmQgY2hlY2tlZCBhZ2FpbnN0IHJlYWwgZGVsaXZlcnkgd2luZG93cy5cIixcbiAgXSxcbiAgW1xuICAgIFwiUHJvb2Ygb2YgZGVsaXZlcnlcIixcbiAgICBcIlRoZSBkcml2ZXIgY2FwdHVyZXMgYSBzaWduYXR1cmUgYW5kIHBob3RvcyBhdCB0aGUgc3RvcCwgYW5kIHJlY29yZHMgZXhhY3RseSB3aGF0IHdhcyBkZWxpdmVyZWQg4oCUIGluY2x1ZGluZyBhIHNob3J0LXBpY2sgb3IgcmVmdXNhbCDigJQgbm90IGp1c3Qgd2hhdCB3YXMgb24gdGhlIG9yaWdpbmFsIG9yZGVyLlwiLFxuICBdLFxuICBbXG4gICAgXCJJbnZvaWNlXCIsXG4gICAgXCJUaGUgaW52b2ljZSBpcyBnZW5lcmF0ZWQgZnJvbSB3aGF0IHdhcyBhY3R1YWxseSBkZWxpdmVyZWQsIG5vdCBqdXN0IHdoYXQgd2FzIG9yZGVyZWQuIEEgc2hvcnQtcGljayBvciBwYXJ0aWFsIGRlbGl2ZXJ5IGFkanVzdHMgdGhlIGJpbGwgYXV0b21hdGljYWxseS5cIixcbiAgXSxcbiAgW1xuICAgIFwiUGF5bWVudFwiLFxuICAgIFwiQ29sbGVjdGVkIGF0IHRoZSBkb29yIGluIGNhc2ggb3IgY2hlY2ssIG9yIHNldHRsZWQgd2l0aCB0aGUgb2ZmaWNlLiBBIGRyaXZlcidzIGVuZC1vZi1ydW4gc2V0dGxlbWVudCBjaGVja3Mgd2hhdCB0aGV5IGNvbGxlY3RlZCBhZ2FpbnN0IHdoYXQgdGhlIHN5c3RlbSBleHBlY3RlZCwgd2l0aCB2YXJpYW5jZSBmbGFnZ2VkIHJhdGhlciB0aGFuIGFzc3VtZWQuXCIsXG4gIF0sXG5dO1xuXG5leHBvcnQgZnVuY3Rpb24gT3JkZXJMaWZlY3ljbGUoKSB7XG4gIHJldHVybiAoXG4gICAgPHNlY3Rpb24gY2xhc3NOYW1lPVwic2VjdGlvbiB3cmFwIGdldHRpbmctc3RhcnRlZCBvcmRlci1saWZlY3ljbGVcIj5cbiAgICAgIDxkaXY+XG4gICAgICAgIDxFeWVicm93Pk9ORSBPUkRFUiwgU1RBUlQgVE8gRklOSVNIPC9FeWVicm93PlxuICAgICAgICA8aDI+XG4gICAgICAgICAgRm9sbG93IGFuIG9yZGVyXG4gICAgICAgICAgPGJyIC8+XG4gICAgICAgICAgdGhyb3VnaCB0aGUgc3lzdGVtLlxuICAgICAgICA8L2gyPlxuICAgICAgICA8cD5cbiAgICAgICAgICBFdmVyeSBvbmUgb2YgdGhlc2Ugc3RlcHMgaXMgdGhlIHNhbWUgb3JkZXIgcmVjb3JkIOKAlCBub3RoaW5nIGdldHMgcmUtdHlwZWQgb3IgcmUtcHJpY2VkXG4gICAgICAgICAgYmV0d2VlbiB0aGUgcGhvbmUgY2FsbCBhbmQgdGhlIGludm9pY2UuXG4gICAgICAgIDwvcD5cbiAgICAgICAgey8qIFBsYWluIDxpbWc+LCBub3QgbmV4dC9pbWFnZSAocnVsaW5nIEIxLCBtYXRjaGluZyB3YXJlaG91c2Uud2VicCB1c2FnZVxuICAgICAgICAgICAgZWxzZXdoZXJlIGluIHRoZSBtYXJrZXRpbmcgcG9ydCk7IGJlbG93IHRoZSBmb2xkLCBzbyBsYXp5LiAqL31cbiAgICAgICAgey8qIGVzbGludC1kaXNhYmxlLW5leHQtbGluZSBAbmV4dC9uZXh0L25vLWltZy1lbGVtZW50IC0tIHNlZSBhYm92ZSAqL31cbiAgICAgICAgPGltZ1xuICAgICAgICAgIHNyYz1cIi9tYXJrZXRpbmcvb3JkZXItYnVpbGRlci53ZWJwXCJcbiAgICAgICAgICBhbHQ9XCJSb3V0ZUZsb3cgb3JkZXIgYnVpbGRlciBzaG93aW5nIGEgd2hvbGVzYWxlIG9yZGVyIGJlaW5nIHByaWNlZCBsaW5lIGJ5IGxpbmUsIHdpdGggbGl2ZSBzdWJ0b3RhbCBhbmQgdG90YWwuXCJcbiAgICAgICAgICB3aWR0aD17MTQwMH1cbiAgICAgICAgICBoZWlnaHQ9ezkzM31cbiAgICAgICAgICBsb2FkaW5nPVwibGF6eVwiXG4gICAgICAgICAgZGVjb2Rpbmc9XCJhc3luY1wiXG4gICAgICAgICAgY2xhc3NOYW1lPVwibGlmZWN5Y2xlLXNjcmVlbnNob3RcIlxuICAgICAgICAvPlxuICAgICAgPC9kaXY+XG4gICAgICA8b2w+XG4gICAgICAgIHtTVEVQUy5tYXAoKFt0aXRsZSwgdGV4dF0sIGkpID0+IChcbiAgICAgICAgICA8bGkga2V5PXt0aXRsZX0+XG4gICAgICAgICAgICA8c3Bhbj4we2kgKyAxfTwvc3Bhbj5cbiAgICAgICAgICAgIDxkaXY+XG4gICAgICAgICAgICAgIDxoMz57dGl0bGV9PC9oMz5cbiAgICAgICAgICAgICAgPHA+e3RleHR9PC9wPlxuICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgPC9saT5cbiAgICAgICAgKSl9XG4gICAgICA8L29sPlxuICAgIDwvc2VjdGlvbj5cbiAgKTtcbn1cblxuY29uc3QgQ0FQQUJJTElUSUVTID0gW1xuICB7XG4gICAgaWNvbjogQm94ZXMsXG4gICAgbmFtZTogXCJCb3hlZCBwcmljaW5nLCByZWFsIHVuaXRzXCIsXG4gICAgdGV4dDogXCJTZWxsIGJ5IHRoZSBib3ggb3IgdGhlIHBpZWNlIOKAlCBSb3V0ZUZsb3cgdHJhY2tzIGFuZCBjb252ZXJ0cyBib3RoLCBzbyBhIHBhcnRpYWwtYm94IG9yZGVyIGRvZXNuJ3QgZ2V0IGNoYXJnZWQgYSBmdWxsLWJveCByYXRlIGJ5IGFjY2lkZW50LlwiLFxuICAgIHRhZzogXCJQUklDRSBJVCBSSUdIVFwiLFxuICB9LFxuICB7XG4gICAgaWNvbjogVGFncyxcbiAgICBuYW1lOiBcIkN1c3RvbWVyLXRpZXIgcHJpY2luZ1wiLFxuICAgIHRleHQ6IFwiU2V0IGEgcHJpY2luZyB0aWVyIHBlciBjdXN0b21lciBhbmQgb3ZlcnJpZGUgaW5kaXZpZHVhbCBwcm9kdWN0IHByaWNlcyBmb3IgaW5kaXZpZHVhbCBhY2NvdW50cyDigJQgeW91ciBhZ3JlZWQgcmF0ZSBhcHBsaWVzIGF1dG9tYXRpY2FsbHksIGV2ZXJ5IHRpbWUuXCIsXG4gICAgdGFnOiBcIkhPTk9SIFRIRSBERUFMIFlPVSBNQURFXCIsXG4gIH0sXG4gIHtcbiAgICBpY29uOiBSZXBlYXQyLFxuICAgIG5hbWU6IFwiU3RhbmRpbmcgb3JkZXJzIHRoYXQgcmUtcHJpY2VcIixcbiAgICB0ZXh0OiBcIkEgd2Vla2x5IHN0YW5kaW5nIG9yZGVyIHJ1bnMgdGhyb3VnaCB0aGUgc2FtZSB0aWVyZWQgcHJpY2luZyBhcyBhbiBvcmRlciB5b3VyIHN0YWZmIHR5cGVzIGJ5IGhhbmQsIHNvIGEgcHJpY2UgY2hhbmdlIGFjdHVhbGx5IHJlYWNoZXMgeW91ciByZXBlYXQgY3VzdG9tZXJzLlwiLFxuICAgIHRhZzogXCJSRVBFQVQgQlVTSU5FU1MsIENVUlJFTlQgUFJJQ0VTXCIsXG4gIH0sXG4gIHtcbiAgICBpY29uOiBSb3V0ZSxcbiAgICBuYW1lOiBcIldpbmRvdy1hd2FyZSByb3V0aW5nXCIsXG4gICAgdGV4dDogXCJSb3V0ZXMgYXJlIG9wdGltaXplZCBmb3IgdGltZSBvciBkaXN0YW5jZSBhbmQgY2hlY2tlZCBhZ2FpbnN0IGVhY2ggc3RvcCdzIGRlbGl2ZXJ5IHdpbmRvdyDigJQgbm90IGp1c3QgYSBzdHJhaWdodCBsaW5lIG9uIGEgbWFwLlwiLFxuICAgIHRhZzogXCJHRVQgVEhFUkUgT04gVElNRVwiLFxuICB9LFxuICB7XG4gICAgaWNvbjogQ2FtZXJhLFxuICAgIG5hbWU6IFwiUHJvb2Ygb2YgZGVsaXZlcnlcIixcbiAgICB0ZXh0OiBcIkEgc2lnbmF0dXJlLCBwaG90b3MsIGFuZCBhIHJlY29yZCBvZiB3aGF0IHdhcyBhY3R1YWxseSBkZWxpdmVyZWQgdmVyc3VzIHdoYXQgd2FzIG9yZGVyZWQg4oCUIGZvciBldmVyeSBzdG9wLlwiLFxuICAgIHRhZzogXCJTRVRUTEUgRElTUFVURVMgV0lUSCBFVklERU5DRVwiLFxuICB9LFxuICB7XG4gICAgaWNvbjogUm90YXRlQ2N3LFxuICAgIG5hbWU6IFwiUmV0dXJucyBhdCB0aGUgc3RvcFwiLFxuICAgIHRleHQ6IFwiWW91ciBkcml2ZXIgY2FuIGxvZyBhIHJldHVybiByaWdodCBhdCB0aGUgZGVsaXZlcnkg4oCUIHdoYXQgY2FtZSBiYWNrLCB3aHksIHdoZXRoZXIgaXQgcmVzdG9ja3Mg4oCUIHdpdGhvdXQgYSBmb2xsb3ctdXAgY2FsbCB0byB0aGUgb2ZmaWNlLlwiLFxuICAgIHRhZzogXCJOTyBQSE9ORSBUQUcgT04gUkVUVVJOU1wiLFxuICB9LFxuICB7XG4gICAgaWNvbjogUmVjZWlwdFRleHQsXG4gICAgbmFtZTogXCJCaWxscyB3aGF0IHdhcyBkZWxpdmVyZWRcIixcbiAgICB0ZXh0OiBcIkEgc2hvcnQtcGljaywgYSByZWZ1c2FsLCBvciBhIHBhcnRpYWwgZGVsaXZlcnkgYWRqdXN0cyB0aGUgaW52b2ljZSBhdXRvbWF0aWNhbGx5IOKAlCB5b3UgbmV2ZXIgbWFudWFsbHkgcmUta2V5IGEgc21hbGxlciB0b3RhbC5cIixcbiAgICB0YWc6IFwiSU5WT0lDRSBNQVRDSEVTIFJFQUxJVFlcIixcbiAgfSxcbiAge1xuICAgIGljb246IEhhbmRDb2lucyxcbiAgICBuYW1lOiBcIkRyaXZlciBzZXR0bGVtZW50XCIsXG4gICAgdGV4dDogXCJDYXNoIGFuZCBjaGVjayBjb2xsZWN0ZWQgYXQgdGhlIGRvb3IgYXJlIHJlY29yZGVkIGFnYWluc3QgdGhlIGludm9pY2Ugb24gdGhlIHNwb3QsIGFuZCBjaGVja2VkIGFnYWluc3Qgd2hhdCB0aGUgc3lzdGVtIGV4cGVjdGVkIHRoZSBkcml2ZXIgdG8gY29sbGVjdCBhdCBlbmQgb2YgcnVuLlwiLFxuICAgIHRhZzogXCJBTiBBQ1RVQUwgQVVESVQgVFJBSUxcIixcbiAgfSxcbl07XG5cbmV4cG9ydCBmdW5jdGlvbiBXaG9sZXNhbGVyQ2FwYWJpbGl0aWVzKCkge1xuICByZXR1cm4gKFxuICAgIDxkaXYgY2xhc3NOYW1lPVwiY2FwYWJpbGl0eS1jYXRhbG9nIHdob2xlc2FsZXItY2FwYWJpbGl0aWVzXCIgaWQ9XCJ3aG9sZXNhbGVyLWNhcGFiaWxpdGllc1wiPlxuICAgICAgPGRpdiBjbGFzc05hbWU9XCJjYXBhYmlsaXR5LWdyaWRcIj5cbiAgICAgICAge0NBUEFCSUxJVElFUy5tYXAoKGYpID0+IChcbiAgICAgICAgICA8YXJ0aWNsZSBrZXk9e2YubmFtZX0gY2xhc3NOYW1lPVwiY2FwYWJpbGl0eS1jYXJkXCI+XG4gICAgICAgICAgICA8Zi5pY29uIHNpemU9ezI3fSAvPlxuICAgICAgICAgICAgPHNwYW4+e2YudGFnfTwvc3Bhbj5cbiAgICAgICAgICAgIDxoMz57Zi5uYW1lfTwvaDM+XG4gICAgICAgICAgICA8cD57Zi50ZXh0fTwvcD5cbiAgICAgICAgICA8L2FydGljbGU+XG4gICAgICAgICkpfVxuICAgICAgPC9kaXY+XG4gICAgPC9kaXY+XG4gICk7XG59XG4iXSwibmFtZXMiOlsiT3JkZXJMaWZlY3ljbGUiLCJXaG9sZXNhbGVyQ2FwYWJpbGl0aWVzIiwiU1RFUFMiLCJzZWN0aW9uIiwiY2xhc3NOYW1lIiwiZGl2IiwiRXllYnJvdyIsImgyIiwiYnIiLCJwIiwiaW1nIiwic3JjIiwiYWx0Iiwid2lkdGgiLCJoZWlnaHQiLCJsb2FkaW5nIiwiZGVjb2RpbmciLCJvbCIsIm1hcCIsInRpdGxlIiwidGV4dCIsImkiLCJsaSIsInNwYW4iLCJoMyIsIkNBUEFCSUxJVElFUyIsImljb24iLCJCb3hlcyIsIm5hbWUiLCJ0YWciLCJUYWdzIiwiUmVwZWF0MiIsIlJvdXRlIiwiQ2FtZXJhIiwiUm90YXRlQ2N3IiwiUmVjZWlwdFRleHQiLCJIYW5kQ29pbnMiLCJpZCIsImYiLCJhcnRpY2xlIiwic2l6ZSJdLCJtYXBwaW5ncyI6Ijs7Ozs7Ozs7Ozs7UUE2Q2dCQTtlQUFBQTs7UUE2RkFDO2VBQUFBOzs7OzZCQWpJVDsyQkFDaUI7QUFFeEIsNEVBQTRFO0FBQzVFLDRFQUE0RTtBQUM1RSxzRUFBc0U7QUFDdEUsc0VBQXNFO0FBQ3RFLHlEQUF5RDtBQUV6RCxNQUFNQyxRQUFpQztJQUNyQztRQUNFO1FBQ0E7S0FDRDtJQUNEO1FBQ0U7UUFDQTtLQUNEO0lBQ0Q7UUFDRTtRQUNBO0tBQ0Q7SUFDRDtRQUNFO1FBQ0E7S0FDRDtJQUNEO1FBQ0U7UUFDQTtLQUNEO0lBQ0Q7UUFDRTtRQUNBO0tBQ0Q7Q0FDRjtBQUVNLFNBQVNGO0lBQ2QscUJBQ0Usc0JBQUNHO1FBQVFDLFdBQVU7OzBCQUNqQixzQkFBQ0M7O2tDQUNDLHFCQUFDQyxrQkFBTztrQ0FBQzs7a0NBQ1Qsc0JBQUNDOzs0QkFBRzswQ0FFRixxQkFBQ0M7NEJBQUs7OztrQ0FHUixxQkFBQ0M7a0NBQUU7O2tDQU9ILHFCQUFDQzt3QkFDQ0MsS0FBSTt3QkFDSkMsS0FBSTt3QkFDSkMsT0FBTzt3QkFDUEMsUUFBUTt3QkFDUkMsU0FBUTt3QkFDUkMsVUFBUzt3QkFDVFosV0FBVTs7OzswQkFHZCxxQkFBQ2E7MEJBQ0VmLE1BQU1nQixHQUFHLENBQUMsQ0FBQyxDQUFDQyxPQUFPQyxLQUFLLEVBQUVDLGtCQUN6QixzQkFBQ0M7OzBDQUNDLHNCQUFDQzs7b0NBQUs7b0NBQUVGLElBQUk7OzswQ0FDWixzQkFBQ2hCOztrREFDQyxxQkFBQ21CO2tEQUFJTDs7a0RBQ0wscUJBQUNWO2tEQUFHVzs7Ozs7dUJBSkNEOzs7O0FBV25CO0FBRUEsTUFBTU0sZUFBZTtJQUNuQjtRQUNFQyxNQUFNQyxrQkFBSztRQUNYQyxNQUFNO1FBQ05SLE1BQU07UUFDTlMsS0FBSztJQUNQO0lBQ0E7UUFDRUgsTUFBTUksaUJBQUk7UUFDVkYsTUFBTTtRQUNOUixNQUFNO1FBQ05TLEtBQUs7SUFDUDtJQUNBO1FBQ0VILE1BQU1LLG9CQUFPO1FBQ2JILE1BQU07UUFDTlIsTUFBTTtRQUNOUyxLQUFLO0lBQ1A7SUFDQTtRQUNFSCxNQUFNTSxrQkFBSztRQUNYSixNQUFNO1FBQ05SLE1BQU07UUFDTlMsS0FBSztJQUNQO0lBQ0E7UUFDRUgsTUFBTU8sbUJBQU07UUFDWkwsTUFBTTtRQUNOUixNQUFNO1FBQ05TLEtBQUs7SUFDUDtJQUNBO1FBQ0VILE1BQU1RLHNCQUFTO1FBQ2ZOLE1BQU07UUFDTlIsTUFBTTtRQUNOUyxLQUFLO0lBQ1A7SUFDQTtRQUNFSCxNQUFNUyx3QkFBVztRQUNqQlAsTUFBTTtRQUNOUixNQUFNO1FBQ05TLEtBQUs7SUFDUDtJQUNBO1FBQ0VILE1BQU1VLHNCQUFTO1FBQ2ZSLE1BQU07UUFDTlIsTUFBTTtRQUNOUyxLQUFLO0lBQ1A7Q0FDRDtBQUVNLFNBQVM1QjtJQUNkLHFCQUNFLHFCQUFDSTtRQUFJRCxXQUFVO1FBQTZDaUMsSUFBRztrQkFDN0QsY0FBQSxxQkFBQ2hDO1lBQUlELFdBQVU7c0JBQ1pxQixhQUFhUCxHQUFHLENBQUMsQ0FBQ29CLGtCQUNqQixzQkFBQ0M7b0JBQXFCbkMsV0FBVTs7c0NBQzlCLHFCQUFDa0MsRUFBRVosSUFBSTs0QkFBQ2MsTUFBTTs7c0NBQ2QscUJBQUNqQjtzQ0FBTWUsRUFBRVQsR0FBRzs7c0NBQ1oscUJBQUNMO3NDQUFJYyxFQUFFVixJQUFJOztzQ0FDWCxxQkFBQ25CO3NDQUFHNkIsRUFBRWxCLElBQUk7OzttQkFKRWtCLEVBQUVWLElBQUk7OztBQVU5QiJ9

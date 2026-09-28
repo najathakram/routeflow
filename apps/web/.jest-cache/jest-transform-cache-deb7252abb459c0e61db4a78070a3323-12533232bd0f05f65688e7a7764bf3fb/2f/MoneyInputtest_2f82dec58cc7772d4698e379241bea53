@@ -1,0 +1,104 @@
+3a609765986bf33d2fb088813dbc0bf6
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+const _react1 = require("@testing-library/react");
+const _MoneyInput = require("./MoneyInput");
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+/**
+ * Money-display component 1/2. `MoneyInput` is the standard money FIELD used
+ * across order/invoice builders — it formats its value to 2 decimal places
+ * on blur (see the file header: "type 2.50, get 2.05" is the bug class this
+ * fixes). It renders a plain decimal string ("1234.50"), not an Intl currency
+ * string ("$1,234.50") — `formatMoney`/`fmt` (Intl currency) are exercised by
+ * the second money-display component, SalesHistoryCard.
+ */ describe("MoneyInput", ()=>{
+    it("displays 1234.5 as 1234.50", ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_MoneyInput.MoneyInput, {
+            value: 1234.5,
+            onChange: ()=>{},
+            "aria-label": "Amount"
+        }));
+        expect(_react1.screen.getByLabelText("Amount")).toHaveValue("1234.50");
+    });
+    it("displays 0 as 0.00", ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_MoneyInput.MoneyInput, {
+            value: 0,
+            onChange: ()=>{},
+            "aria-label": "Amount"
+        }));
+        expect(_react1.screen.getByLabelText("Amount")).toHaveValue("0.00");
+    });
+    it("displays -12.34 as -12.34 when negative values are allowed", ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_MoneyInput.MoneyInput, {
+            value: -12.34,
+            onChange: ()=>{},
+            allowNegative: true,
+            "aria-label": "Amount"
+        }));
+        expect(_react1.screen.getByLabelText("Amount")).toHaveValue("-12.34");
+    });
+    it("re-formats to 2 decimal places on blur without touching the value while typing", ()=>{
+        const onChange = jest.fn();
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_MoneyInput.MoneyInput, {
+            value: null,
+            onChange: onChange,
+            "aria-label": "Amount"
+        }));
+        const input = _react1.screen.getByLabelText("Amount");
+        _react1.fireEvent.change(input, {
+            target: {
+                value: "2.5"
+            }
+        });
+        expect(input).toHaveValue("2.5"); // NOT reformatted mid-typing
+        expect(onChange).toHaveBeenLastCalledWith(2.5);
+        _react1.fireEvent.blur(input);
+        expect(input).toHaveValue("2.50");
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2NvbXBvbmVudHMvTW9uZXlJbnB1dC50ZXN0LnRzeCJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgKiBhcyBSZWFjdCBmcm9tIFwicmVhY3RcIjtcbmltcG9ydCB7IHJlbmRlciwgc2NyZWVuLCBmaXJlRXZlbnQgfSBmcm9tIFwiQHRlc3RpbmctbGlicmFyeS9yZWFjdFwiO1xuaW1wb3J0IHsgTW9uZXlJbnB1dCB9IGZyb20gXCIuL01vbmV5SW5wdXRcIjtcblxuLyoqXG4gKiBNb25leS1kaXNwbGF5IGNvbXBvbmVudCAxLzIuIGBNb25leUlucHV0YCBpcyB0aGUgc3RhbmRhcmQgbW9uZXkgRklFTEQgdXNlZFxuICogYWNyb3NzIG9yZGVyL2ludm9pY2UgYnVpbGRlcnMg4oCUIGl0IGZvcm1hdHMgaXRzIHZhbHVlIHRvIDIgZGVjaW1hbCBwbGFjZXNcbiAqIG9uIGJsdXIgKHNlZSB0aGUgZmlsZSBoZWFkZXI6IFwidHlwZSAyLjUwLCBnZXQgMi4wNVwiIGlzIHRoZSBidWcgY2xhc3MgdGhpc1xuICogZml4ZXMpLiBJdCByZW5kZXJzIGEgcGxhaW4gZGVjaW1hbCBzdHJpbmcgKFwiMTIzNC41MFwiKSwgbm90IGFuIEludGwgY3VycmVuY3lcbiAqIHN0cmluZyAoXCIkMSwyMzQuNTBcIikg4oCUIGBmb3JtYXRNb25leWAvYGZtdGAgKEludGwgY3VycmVuY3kpIGFyZSBleGVyY2lzZWQgYnlcbiAqIHRoZSBzZWNvbmQgbW9uZXktZGlzcGxheSBjb21wb25lbnQsIFNhbGVzSGlzdG9yeUNhcmQuXG4gKi9cbmRlc2NyaWJlKFwiTW9uZXlJbnB1dFwiLCAoKSA9PiB7XG4gIGl0KFwiZGlzcGxheXMgMTIzNC41IGFzIDEyMzQuNTBcIiwgKCkgPT4ge1xuICAgIHJlbmRlcig8TW9uZXlJbnB1dCB2YWx1ZT17MTIzNC41fSBvbkNoYW5nZT17KCkgPT4ge319IGFyaWEtbGFiZWw9XCJBbW91bnRcIiAvPik7XG4gICAgZXhwZWN0KHNjcmVlbi5nZXRCeUxhYmVsVGV4dChcIkFtb3VudFwiKSkudG9IYXZlVmFsdWUoXCIxMjM0LjUwXCIpO1xuICB9KTtcblxuICBpdChcImRpc3BsYXlzIDAgYXMgMC4wMFwiLCAoKSA9PiB7XG4gICAgcmVuZGVyKDxNb25leUlucHV0IHZhbHVlPXswfSBvbkNoYW5nZT17KCkgPT4ge319IGFyaWEtbGFiZWw9XCJBbW91bnRcIiAvPik7XG4gICAgZXhwZWN0KHNjcmVlbi5nZXRCeUxhYmVsVGV4dChcIkFtb3VudFwiKSkudG9IYXZlVmFsdWUoXCIwLjAwXCIpO1xuICB9KTtcblxuICBpdChcImRpc3BsYXlzIC0xMi4zNCBhcyAtMTIuMzQgd2hlbiBuZWdhdGl2ZSB2YWx1ZXMgYXJlIGFsbG93ZWRcIiwgKCkgPT4ge1xuICAgIHJlbmRlcig8TW9uZXlJbnB1dCB2YWx1ZT17LTEyLjM0fSBvbkNoYW5nZT17KCkgPT4ge319IGFsbG93TmVnYXRpdmUgYXJpYS1sYWJlbD1cIkFtb3VudFwiIC8+KTtcbiAgICBleHBlY3Qoc2NyZWVuLmdldEJ5TGFiZWxUZXh0KFwiQW1vdW50XCIpKS50b0hhdmVWYWx1ZShcIi0xMi4zNFwiKTtcbiAgfSk7XG5cbiAgaXQoXCJyZS1mb3JtYXRzIHRvIDIgZGVjaW1hbCBwbGFjZXMgb24gYmx1ciB3aXRob3V0IHRvdWNoaW5nIHRoZSB2YWx1ZSB3aGlsZSB0eXBpbmdcIiwgKCkgPT4ge1xuICAgIGNvbnN0IG9uQ2hhbmdlID0gamVzdC5mbigpO1xuICAgIHJlbmRlcig8TW9uZXlJbnB1dCB2YWx1ZT17bnVsbH0gb25DaGFuZ2U9e29uQ2hhbmdlfSBhcmlhLWxhYmVsPVwiQW1vdW50XCIgLz4pO1xuICAgIGNvbnN0IGlucHV0ID0gc2NyZWVuLmdldEJ5TGFiZWxUZXh0KFwiQW1vdW50XCIpO1xuXG4gICAgZmlyZUV2ZW50LmNoYW5nZShpbnB1dCwgeyB0YXJnZXQ6IHsgdmFsdWU6IFwiMi41XCIgfSB9KTtcbiAgICBleHBlY3QoaW5wdXQpLnRvSGF2ZVZhbHVlKFwiMi41XCIpOyAvLyBOT1QgcmVmb3JtYXR0ZWQgbWlkLXR5cGluZ1xuICAgIGV4cGVjdChvbkNoYW5nZSkudG9IYXZlQmVlbkxhc3RDYWxsZWRXaXRoKDIuNSk7XG5cbiAgICBmaXJlRXZlbnQuYmx1cihpbnB1dCk7XG4gICAgZXhwZWN0KGlucHV0KS50b0hhdmVWYWx1ZShcIjIuNTBcIik7XG4gIH0pO1xufSk7XG4iXSwibmFtZXMiOlsiZGVzY3JpYmUiLCJpdCIsInJlbmRlciIsIk1vbmV5SW5wdXQiLCJ2YWx1ZSIsIm9uQ2hhbmdlIiwiYXJpYS1sYWJlbCIsImV4cGVjdCIsInNjcmVlbiIsImdldEJ5TGFiZWxUZXh0IiwidG9IYXZlVmFsdWUiLCJhbGxvd05lZ2F0aXZlIiwiamVzdCIsImZuIiwiaW5wdXQiLCJmaXJlRXZlbnQiLCJjaGFuZ2UiLCJ0YXJnZXQiLCJ0b0hhdmVCZWVuTGFzdENhbGxlZFdpdGgiLCJibHVyIl0sIm1hcHBpbmdzIjoiOzs7OzsrREFBdUI7d0JBQ21COzRCQUNmOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7QUFFM0I7Ozs7Ozs7Q0FPQyxHQUNEQSxTQUFTLGNBQWM7SUFDckJDLEdBQUcsOEJBQThCO1FBQy9CQyxJQUFBQSxjQUFNLGdCQUFDLHFCQUFDQyxzQkFBVTtZQUFDQyxPQUFPO1lBQVFDLFVBQVUsS0FBTztZQUFHQyxjQUFXOztRQUNqRUMsT0FBT0MsY0FBTSxDQUFDQyxjQUFjLENBQUMsV0FBV0MsV0FBVyxDQUFDO0lBQ3REO0lBRUFULEdBQUcsc0JBQXNCO1FBQ3ZCQyxJQUFBQSxjQUFNLGdCQUFDLHFCQUFDQyxzQkFBVTtZQUFDQyxPQUFPO1lBQUdDLFVBQVUsS0FBTztZQUFHQyxjQUFXOztRQUM1REMsT0FBT0MsY0FBTSxDQUFDQyxjQUFjLENBQUMsV0FBV0MsV0FBVyxDQUFDO0lBQ3REO0lBRUFULEdBQUcsOERBQThEO1FBQy9EQyxJQUFBQSxjQUFNLGdCQUFDLHFCQUFDQyxzQkFBVTtZQUFDQyxPQUFPLENBQUM7WUFBT0MsVUFBVSxLQUFPO1lBQUdNLGFBQWE7WUFBQ0wsY0FBVzs7UUFDL0VDLE9BQU9DLGNBQU0sQ0FBQ0MsY0FBYyxDQUFDLFdBQVdDLFdBQVcsQ0FBQztJQUN0RDtJQUVBVCxHQUFHLGtGQUFrRjtRQUNuRixNQUFNSSxXQUFXTyxLQUFLQyxFQUFFO1FBQ3hCWCxJQUFBQSxjQUFNLGdCQUFDLHFCQUFDQyxzQkFBVTtZQUFDQyxPQUFPO1lBQU1DLFVBQVVBO1lBQVVDLGNBQVc7O1FBQy9ELE1BQU1RLFFBQVFOLGNBQU0sQ0FBQ0MsY0FBYyxDQUFDO1FBRXBDTSxpQkFBUyxDQUFDQyxNQUFNLENBQUNGLE9BQU87WUFBRUcsUUFBUTtnQkFBRWIsT0FBTztZQUFNO1FBQUU7UUFDbkRHLE9BQU9PLE9BQU9KLFdBQVcsQ0FBQyxRQUFRLDZCQUE2QjtRQUMvREgsT0FBT0YsVUFBVWEsd0JBQXdCLENBQUM7UUFFMUNILGlCQUFTLENBQUNJLElBQUksQ0FBQ0w7UUFDZlAsT0FBT08sT0FBT0osV0FBVyxDQUFDO0lBQzVCO0FBQ0YifQ==

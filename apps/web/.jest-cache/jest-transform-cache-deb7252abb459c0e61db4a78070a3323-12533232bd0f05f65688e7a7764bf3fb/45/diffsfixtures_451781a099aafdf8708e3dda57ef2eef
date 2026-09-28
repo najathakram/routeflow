@@ -1,0 +1,43 @@
+0c987d8cb115c6a3613640555ef4f35d
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+Object.defineProperty(exports, "diffsFixture", {
+    enumerable: true,
+    get: function() {
+        return diffsFixture;
+    }
+});
+function diffsFixture(tenantId) {
+    return [
+        {
+            id: "diff-1",
+            tenantId,
+            featureKey: "msrp",
+            before: false,
+            after: true,
+            source: "OVERRIDE_GRANT",
+            firstSeenAt: "2026-09-10T00:00:00.000Z",
+            lastSeenAt: "2026-09-16T00:00:00.000Z",
+            count: 6,
+            explainedAt: null,
+            explanation: null
+        },
+        {
+            id: "diff-2",
+            tenantId,
+            featureKey: "tobacco_dealer",
+            before: true,
+            after: false,
+            source: "OVERRIDE_DENY",
+            firstSeenAt: "2026-09-05T00:00:00.000Z",
+            lastSeenAt: "2026-09-12T00:00:00.000Z",
+            count: 3,
+            explainedAt: "2026-09-13T00:00:00.000Z",
+            explanation: "Expected — compliance review removal, ticket ROAD-63."
+        }
+    ];
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8ocGxhdGZvcm0tYWRtaW4pL2FkbWluL3RlbmFudHMvW2lkXS9fZmVhdHVyZXMvX19maXh0dXJlc19fL2RpZmZzLmZpeHR1cmVzLnRzIl0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCB0eXBlIHsgRmVhdHVyZURpZmZSb3cgfSBmcm9tIFwiLi4vdHlwZXNcIjtcblxuLy8gVGFiLWhlYWRlciBpbmRpY2F0b3IgKGJyaWVmIEQgaXRlbSA0KTogdGhpcyB0ZW5hbnQncyB1bmV4cGxhaW5lZC1kaWZmIGNvdW50IGZyb21cbi8vIGBHRVQgLi4uL2ZlYXR1cmVzL2RpZmZzP3RlbmFudElkPWAuIE9uZSBleHBsYWluZWQsIG9uZSBub3Qg4oCUIHRoZSBiYWRnZSBjb3VudHMgb25seSB0aGUgbGF0dGVyLlxuZXhwb3J0IGZ1bmN0aW9uIGRpZmZzRml4dHVyZSh0ZW5hbnRJZDogc3RyaW5nKTogRmVhdHVyZURpZmZSb3dbXSB7XG4gIHJldHVybiBbXG4gICAge1xuICAgICAgaWQ6IFwiZGlmZi0xXCIsXG4gICAgICB0ZW5hbnRJZCxcbiAgICAgIGZlYXR1cmVLZXk6IFwibXNycFwiLFxuICAgICAgYmVmb3JlOiBmYWxzZSxcbiAgICAgIGFmdGVyOiB0cnVlLFxuICAgICAgc291cmNlOiBcIk9WRVJSSURFX0dSQU5UXCIsXG4gICAgICBmaXJzdFNlZW5BdDogXCIyMDI2LTA5LTEwVDAwOjAwOjAwLjAwMFpcIixcbiAgICAgIGxhc3RTZWVuQXQ6IFwiMjAyNi0wOS0xNlQwMDowMDowMC4wMDBaXCIsXG4gICAgICBjb3VudDogNixcbiAgICAgIGV4cGxhaW5lZEF0OiBudWxsLFxuICAgICAgZXhwbGFuYXRpb246IG51bGwsXG4gICAgfSxcbiAgICB7XG4gICAgICBpZDogXCJkaWZmLTJcIixcbiAgICAgIHRlbmFudElkLFxuICAgICAgZmVhdHVyZUtleTogXCJ0b2JhY2NvX2RlYWxlclwiLFxuICAgICAgYmVmb3JlOiB0cnVlLFxuICAgICAgYWZ0ZXI6IGZhbHNlLFxuICAgICAgc291cmNlOiBcIk9WRVJSSURFX0RFTllcIixcbiAgICAgIGZpcnN0U2VlbkF0OiBcIjIwMjYtMDktMDVUMDA6MDA6MDAuMDAwWlwiLFxuICAgICAgbGFzdFNlZW5BdDogXCIyMDI2LTA5LTEyVDAwOjAwOjAwLjAwMFpcIixcbiAgICAgIGNvdW50OiAzLFxuICAgICAgZXhwbGFpbmVkQXQ6IFwiMjAyNi0wOS0xM1QwMDowMDowMC4wMDBaXCIsXG4gICAgICBleHBsYW5hdGlvbjogXCJFeHBlY3RlZCDigJQgY29tcGxpYW5jZSByZXZpZXcgcmVtb3ZhbCwgdGlja2V0IFJPQUQtNjMuXCIsXG4gICAgfSxcbiAgXTtcbn1cbiJdLCJuYW1lcyI6WyJkaWZmc0ZpeHR1cmUiLCJ0ZW5hbnRJZCIsImlkIiwiZmVhdHVyZUtleSIsImJlZm9yZSIsImFmdGVyIiwic291cmNlIiwiZmlyc3RTZWVuQXQiLCJsYXN0U2VlbkF0IiwiY291bnQiLCJleHBsYWluZWRBdCIsImV4cGxhbmF0aW9uIl0sIm1hcHBpbmdzIjoiOzs7OytCQUlnQkE7OztlQUFBQTs7O0FBQVQsU0FBU0EsYUFBYUMsUUFBZ0I7SUFDM0MsT0FBTztRQUNMO1lBQ0VDLElBQUk7WUFDSkQ7WUFDQUUsWUFBWTtZQUNaQyxRQUFRO1lBQ1JDLE9BQU87WUFDUEMsUUFBUTtZQUNSQyxhQUFhO1lBQ2JDLFlBQVk7WUFDWkMsT0FBTztZQUNQQyxhQUFhO1lBQ2JDLGFBQWE7UUFDZjtRQUNBO1lBQ0VULElBQUk7WUFDSkQ7WUFDQUUsWUFBWTtZQUNaQyxRQUFRO1lBQ1JDLE9BQU87WUFDUEMsUUFBUTtZQUNSQyxhQUFhO1lBQ2JDLFlBQVk7WUFDWkMsT0FBTztZQUNQQyxhQUFhO1lBQ2JDLGFBQWE7UUFDZjtLQUNEO0FBQ0gifQ==

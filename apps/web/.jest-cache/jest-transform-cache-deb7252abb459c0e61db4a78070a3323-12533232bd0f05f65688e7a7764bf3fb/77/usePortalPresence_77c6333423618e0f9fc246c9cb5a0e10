@@ -1,0 +1,71 @@
+49080ddcaf6624a405e1fa519cbb2331
+"use client";
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+Object.defineProperty(exports, "usePortalPresence", {
+    enumerable: true,
+    get: function() {
+        return usePortalPresence;
+    }
+});
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+const _presencecookies = require("../presence-cookies");
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+const NONE = {
+    op: false,
+    buyer: false
+};
+function usePortalPresence() {
+    const [presence, setPresence] = _react.useState(NONE);
+    _react.useEffect(()=>{
+        setPresence({
+            op: (0, _presencecookies.hasOpPresence)(),
+            buyer: (0, _presencecookies.hasBuyerPresence)()
+        });
+    }, []);
+    return presence;
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2xpYi9ob29rcy91c2VQb3J0YWxQcmVzZW5jZS50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJcInVzZSBjbGllbnRcIjtcblxuaW1wb3J0ICogYXMgUmVhY3QgZnJvbSBcInJlYWN0XCI7XG5pbXBvcnQgeyBoYXNCdXllclByZXNlbmNlLCBoYXNPcFByZXNlbmNlIH0gZnJvbSBcIkAvbGliL3ByZXNlbmNlLWNvb2tpZXNcIjtcblxuZXhwb3J0IGludGVyZmFjZSBQb3J0YWxQcmVzZW5jZSB7XG4gIG9wOiBib29sZWFuO1xuICBidXllcjogYm9vbGVhbjtcbn1cblxuY29uc3QgTk9ORTogUG9ydGFsUHJlc2VuY2UgPSB7IG9wOiBmYWxzZSwgYnV5ZXI6IGZhbHNlIH07XG5cbi8qKlxuICogUHJlc2VuY2UgY29va2llcywgcmVhZCBBRlRFUiBtb3VudCDigJQgbmV2ZXIgZHVyaW5nIHJlbmRlciDigJQgc28gdGhlIHNlcnZlclxuICogcmVuZGVyIGFuZCB0aGUgZmlyc3QgY2xpZW50IHJlbmRlciBhZ3JlZSAobm8gaHlkcmF0aW9uIG1pc21hdGNoKS4gVW50aWwgdGhlXG4gKiBlZmZlY3QgcnVucywgY2FsbGVycyBzZWUgXCJubyBwcmVzZW5jZVwiIGFuZCByZW5kZXIgdGhlaXIgc2lnbi1pbiB2YXJpYW50LlxuICovXG5leHBvcnQgZnVuY3Rpb24gdXNlUG9ydGFsUHJlc2VuY2UoKTogUG9ydGFsUHJlc2VuY2Uge1xuICBjb25zdCBbcHJlc2VuY2UsIHNldFByZXNlbmNlXSA9IFJlYWN0LnVzZVN0YXRlPFBvcnRhbFByZXNlbmNlPihOT05FKTtcbiAgUmVhY3QudXNlRWZmZWN0KCgpID0+IHtcbiAgICBzZXRQcmVzZW5jZSh7IG9wOiBoYXNPcFByZXNlbmNlKCksIGJ1eWVyOiBoYXNCdXllclByZXNlbmNlKCkgfSk7XG4gIH0sIFtdKTtcbiAgcmV0dXJuIHByZXNlbmNlO1xufVxuIl0sIm5hbWVzIjpbInVzZVBvcnRhbFByZXNlbmNlIiwiTk9ORSIsIm9wIiwiYnV5ZXIiLCJwcmVzZW5jZSIsInNldFByZXNlbmNlIiwiUmVhY3QiLCJ1c2VTdGF0ZSIsInVzZUVmZmVjdCIsImhhc09wUHJlc2VuY2UiLCJoYXNCdXllclByZXNlbmNlIl0sIm1hcHBpbmdzIjoiQUFBQTs7Ozs7K0JBaUJnQkE7OztlQUFBQTs7OytEQWZPO2lDQUN5Qjs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7O0FBT2hELE1BQU1DLE9BQXVCO0lBQUVDLElBQUk7SUFBT0MsT0FBTztBQUFNO0FBT2hELFNBQVNIO0lBQ2QsTUFBTSxDQUFDSSxVQUFVQyxZQUFZLEdBQUdDLE9BQU1DLFFBQVEsQ0FBaUJOO0lBQy9ESyxPQUFNRSxTQUFTLENBQUM7UUFDZEgsWUFBWTtZQUFFSCxJQUFJTyxJQUFBQSw4QkFBYTtZQUFJTixPQUFPTyxJQUFBQSxpQ0FBZ0I7UUFBRztJQUMvRCxHQUFHLEVBQUU7SUFDTCxPQUFPTjtBQUNUIn0=

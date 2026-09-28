@@ -1,0 +1,122 @@
+aa1ac44be5a84917a2c9b2d0e217fdc6
+"use strict";
+jest.mock("next/navigation", ()=>({
+        useSearchParams: ()=>searchParams,
+        useRouter: ()=>({
+                push: jest.fn(),
+                replace: jest.fn()
+            })
+    }));
+jest.mock("@/lib/api-client", ()=>({
+        apiClient: {
+            get: jest.fn().mockResolvedValue({
+                data: {}
+            }),
+            post: jest.fn(),
+            patch: jest.fn().mockResolvedValue({
+                data: {}
+            }),
+            delete: jest.fn()
+        }
+    }));
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+const _userevent = /*#__PURE__*/ _interop_require_default(require("@testing-library/user-event"));
+const _render = require("../../../test-utils/render");
+const _page = /*#__PURE__*/ _interop_require_default(require("./page"));
+const _apiclient = require("../../../lib/api-client");
+function _interop_require_default(obj) {
+    return obj && obj.__esModule ? obj : {
+        default: obj
+    };
+}
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+/**
+ * Only the "profile" tab's node is placed in SettingsPageInner's returned
+ * tree for `?tab=profile` (see the SECTIONS map + `section.node` in
+ * app/(dashboard)/settings/page.tsx) — the other tabs' hooks never mount, so
+ * this test only needs to satisfy BusinessProfileTab's own dependencies.
+ */ const searchParams = new URLSearchParams("tab=profile");
+describe("SettingsPage — Business Profile tab", ()=>{
+    beforeEach(()=>jest.clearAllMocks());
+    it("shows the zod validation message and never PATCHes /settings on an invalid submit", async ()=>{
+        const user = _userevent.default.setup();
+        (0, _render.renderWithProviders)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_page.default, {}));
+        // Wait for the /settings GET to resolve and the form to hydrate empty.
+        await _render.screen.findByLabelText("Business Name");
+        await user.click(_render.screen.getByRole("button", {
+            name: /save/i
+        }));
+        expect(await _render.screen.findAllByText("Required")).not.toHaveLength(0);
+        expect(_apiclient.apiClient.patch).not.toHaveBeenCalled();
+    });
+    it("saves the minimum valid fields", async ()=>{
+        const user = _userevent.default.setup();
+        (0, _render.renderWithProviders)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_page.default, {}));
+        await user.type(await _render.screen.findByLabelText("Business Name"), "Acme Foods");
+        await user.type(_render.screen.getByLabelText("Account Email"), "ops@acme.test");
+        await user.type(_render.screen.getByLabelText("Owner / Manager Name"), "Jane Doe");
+        await user.type(_render.screen.getByLabelText("Phone"), "5125550100");
+        await user.type(_render.screen.getByLabelText("Street"), "123 Main St");
+        await user.type(_render.screen.getByLabelText("City"), "Austin");
+        await user.type(_render.screen.getByLabelText("ZIP Code"), "78701");
+        await user.click(_render.screen.getByRole("button", {
+            name: /save/i
+        }));
+        await (0, _render.waitFor)(()=>{
+            expect(_apiclient.apiClient.patch).toHaveBeenCalledWith("/settings", expect.objectContaining({
+                businessName: "Acme Foods",
+                email: "ops@acme.test",
+                ownerName: "Jane Doe",
+                street: "123 Main St",
+                city: "Austin",
+                zip: "78701"
+            }));
+        });
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS9zZXR0aW5ncy9zZXR0aW5ncy1wcm9maWxlLnRlc3QudHN4Il0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCAqIGFzIFJlYWN0IGZyb20gXCJyZWFjdFwiO1xuaW1wb3J0IHVzZXJFdmVudCBmcm9tIFwiQHRlc3RpbmctbGlicmFyeS91c2VyLWV2ZW50XCI7XG5pbXBvcnQgeyByZW5kZXJXaXRoUHJvdmlkZXJzLCBzY3JlZW4sIHdhaXRGb3IgfSBmcm9tIFwiQC90ZXN0LXV0aWxzL3JlbmRlclwiO1xuaW1wb3J0IFNldHRpbmdzUGFnZSBmcm9tIFwiLi9wYWdlXCI7XG5cbi8qKlxuICogT25seSB0aGUgXCJwcm9maWxlXCIgdGFiJ3Mgbm9kZSBpcyBwbGFjZWQgaW4gU2V0dGluZ3NQYWdlSW5uZXIncyByZXR1cm5lZFxuICogdHJlZSBmb3IgYD90YWI9cHJvZmlsZWAgKHNlZSB0aGUgU0VDVElPTlMgbWFwICsgYHNlY3Rpb24ubm9kZWAgaW5cbiAqIGFwcC8oZGFzaGJvYXJkKS9zZXR0aW5ncy9wYWdlLnRzeCkg4oCUIHRoZSBvdGhlciB0YWJzJyBob29rcyBuZXZlciBtb3VudCwgc29cbiAqIHRoaXMgdGVzdCBvbmx5IG5lZWRzIHRvIHNhdGlzZnkgQnVzaW5lc3NQcm9maWxlVGFiJ3Mgb3duIGRlcGVuZGVuY2llcy5cbiAqL1xuY29uc3Qgc2VhcmNoUGFyYW1zID0gbmV3IFVSTFNlYXJjaFBhcmFtcyhcInRhYj1wcm9maWxlXCIpO1xuamVzdC5tb2NrKFwibmV4dC9uYXZpZ2F0aW9uXCIsICgpID0+ICh7XG4gIHVzZVNlYXJjaFBhcmFtczogKCkgPT4gc2VhcmNoUGFyYW1zLFxuICB1c2VSb3V0ZXI6ICgpID0+ICh7IHB1c2g6IGplc3QuZm4oKSwgcmVwbGFjZTogamVzdC5mbigpIH0pLFxufSkpO1xuXG5qZXN0Lm1vY2soXCJAL2xpYi9hcGktY2xpZW50XCIsICgpID0+ICh7XG4gIGFwaUNsaWVudDoge1xuICAgIGdldDogamVzdC5mbigpLm1vY2tSZXNvbHZlZFZhbHVlKHsgZGF0YToge30gfSksXG4gICAgcG9zdDogamVzdC5mbigpLFxuICAgIHBhdGNoOiBqZXN0LmZuKCkubW9ja1Jlc29sdmVkVmFsdWUoeyBkYXRhOiB7fSB9KSxcbiAgICBkZWxldGU6IGplc3QuZm4oKSxcbiAgfSxcbn0pKTtcblxuaW1wb3J0IHsgYXBpQ2xpZW50IGFzIGFwaUNsaWVudE1vY2sgfSBmcm9tIFwiQC9saWIvYXBpLWNsaWVudFwiO1xuXG5kZXNjcmliZShcIlNldHRpbmdzUGFnZSDigJQgQnVzaW5lc3MgUHJvZmlsZSB0YWJcIiwgKCkgPT4ge1xuICBiZWZvcmVFYWNoKCgpID0+IGplc3QuY2xlYXJBbGxNb2NrcygpKTtcblxuICBpdChcInNob3dzIHRoZSB6b2QgdmFsaWRhdGlvbiBtZXNzYWdlIGFuZCBuZXZlciBQQVRDSGVzIC9zZXR0aW5ncyBvbiBhbiBpbnZhbGlkIHN1Ym1pdFwiLCBhc3luYyAoKSA9PiB7XG4gICAgY29uc3QgdXNlciA9IHVzZXJFdmVudC5zZXR1cCgpO1xuICAgIHJlbmRlcldpdGhQcm92aWRlcnMoPFNldHRpbmdzUGFnZSAvPik7XG5cbiAgICAvLyBXYWl0IGZvciB0aGUgL3NldHRpbmdzIEdFVCB0byByZXNvbHZlIGFuZCB0aGUgZm9ybSB0byBoeWRyYXRlIGVtcHR5LlxuICAgIGF3YWl0IHNjcmVlbi5maW5kQnlMYWJlbFRleHQoXCJCdXNpbmVzcyBOYW1lXCIpO1xuICAgIGF3YWl0IHVzZXIuY2xpY2soc2NyZWVuLmdldEJ5Um9sZShcImJ1dHRvblwiLCB7IG5hbWU6IC9zYXZlL2kgfSkpO1xuXG4gICAgZXhwZWN0KGF3YWl0IHNjcmVlbi5maW5kQWxsQnlUZXh0KFwiUmVxdWlyZWRcIikpLm5vdC50b0hhdmVMZW5ndGgoMCk7XG4gICAgZXhwZWN0KGFwaUNsaWVudE1vY2sucGF0Y2gpLm5vdC50b0hhdmVCZWVuQ2FsbGVkKCk7XG4gIH0pO1xuXG4gIGl0KFwic2F2ZXMgdGhlIG1pbmltdW0gdmFsaWQgZmllbGRzXCIsIGFzeW5jICgpID0+IHtcbiAgICBjb25zdCB1c2VyID0gdXNlckV2ZW50LnNldHVwKCk7XG4gICAgcmVuZGVyV2l0aFByb3ZpZGVycyg8U2V0dGluZ3NQYWdlIC8+KTtcblxuICAgIGF3YWl0IHVzZXIudHlwZShhd2FpdCBzY3JlZW4uZmluZEJ5TGFiZWxUZXh0KFwiQnVzaW5lc3MgTmFtZVwiKSwgXCJBY21lIEZvb2RzXCIpO1xuICAgIGF3YWl0IHVzZXIudHlwZShzY3JlZW4uZ2V0QnlMYWJlbFRleHQoXCJBY2NvdW50IEVtYWlsXCIpLCBcIm9wc0BhY21lLnRlc3RcIik7XG4gICAgYXdhaXQgdXNlci50eXBlKHNjcmVlbi5nZXRCeUxhYmVsVGV4dChcIk93bmVyIC8gTWFuYWdlciBOYW1lXCIpLCBcIkphbmUgRG9lXCIpO1xuICAgIGF3YWl0IHVzZXIudHlwZShzY3JlZW4uZ2V0QnlMYWJlbFRleHQoXCJQaG9uZVwiKSwgXCI1MTI1NTUwMTAwXCIpO1xuICAgIGF3YWl0IHVzZXIudHlwZShzY3JlZW4uZ2V0QnlMYWJlbFRleHQoXCJTdHJlZXRcIiksIFwiMTIzIE1haW4gU3RcIik7XG4gICAgYXdhaXQgdXNlci50eXBlKHNjcmVlbi5nZXRCeUxhYmVsVGV4dChcIkNpdHlcIiksIFwiQXVzdGluXCIpO1xuICAgIGF3YWl0IHVzZXIudHlwZShzY3JlZW4uZ2V0QnlMYWJlbFRleHQoXCJaSVAgQ29kZVwiKSwgXCI3ODcwMVwiKTtcblxuICAgIGF3YWl0IHVzZXIuY2xpY2soc2NyZWVuLmdldEJ5Um9sZShcImJ1dHRvblwiLCB7IG5hbWU6IC9zYXZlL2kgfSkpO1xuXG4gICAgYXdhaXQgd2FpdEZvcigoKSA9PiB7XG4gICAgICBleHBlY3QoYXBpQ2xpZW50TW9jay5wYXRjaCkudG9IYXZlQmVlbkNhbGxlZFdpdGgoXG4gICAgICAgIFwiL3NldHRpbmdzXCIsXG4gICAgICAgIGV4cGVjdC5vYmplY3RDb250YWluaW5nKHtcbiAgICAgICAgICBidXNpbmVzc05hbWU6IFwiQWNtZSBGb29kc1wiLFxuICAgICAgICAgIGVtYWlsOiBcIm9wc0BhY21lLnRlc3RcIixcbiAgICAgICAgICBvd25lck5hbWU6IFwiSmFuZSBEb2VcIixcbiAgICAgICAgICBzdHJlZXQ6IFwiMTIzIE1haW4gU3RcIixcbiAgICAgICAgICBjaXR5OiBcIkF1c3RpblwiLFxuICAgICAgICAgIHppcDogXCI3ODcwMVwiLFxuICAgICAgICB9KSxcbiAgICAgICk7XG4gICAgfSk7XG4gIH0pO1xufSk7XG4iXSwibmFtZXMiOlsiamVzdCIsIm1vY2siLCJ1c2VTZWFyY2hQYXJhbXMiLCJzZWFyY2hQYXJhbXMiLCJ1c2VSb3V0ZXIiLCJwdXNoIiwiZm4iLCJyZXBsYWNlIiwiYXBpQ2xpZW50IiwiZ2V0IiwibW9ja1Jlc29sdmVkVmFsdWUiLCJkYXRhIiwicG9zdCIsInBhdGNoIiwiZGVsZXRlIiwiVVJMU2VhcmNoUGFyYW1zIiwiZGVzY3JpYmUiLCJiZWZvcmVFYWNoIiwiY2xlYXJBbGxNb2NrcyIsIml0IiwidXNlciIsInVzZXJFdmVudCIsInNldHVwIiwicmVuZGVyV2l0aFByb3ZpZGVycyIsIlNldHRpbmdzUGFnZSIsInNjcmVlbiIsImZpbmRCeUxhYmVsVGV4dCIsImNsaWNrIiwiZ2V0QnlSb2xlIiwibmFtZSIsImV4cGVjdCIsImZpbmRBbGxCeVRleHQiLCJub3QiLCJ0b0hhdmVMZW5ndGgiLCJhcGlDbGllbnRNb2NrIiwidG9IYXZlQmVlbkNhbGxlZCIsInR5cGUiLCJnZXRCeUxhYmVsVGV4dCIsIndhaXRGb3IiLCJ0b0hhdmVCZWVuQ2FsbGVkV2l0aCIsIm9iamVjdENvbnRhaW5pbmciLCJidXNpbmVzc05hbWUiLCJlbWFpbCIsIm93bmVyTmFtZSIsInN0cmVldCIsImNpdHkiLCJ6aXAiXSwibWFwcGluZ3MiOiI7QUFZQUEsS0FBS0MsSUFBSSxDQUFDLG1CQUFtQixJQUFPLENBQUE7UUFDbENDLGlCQUFpQixJQUFNQztRQUN2QkMs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

@@ -1,0 +1,37 @@
+01edc727f687c22312fe3496924d29b4
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+/**
+ * Licence-expiry write (B91) — `expiresAt` is written as a LOCAL 23:59:59 instant
+ * instead of UTC midnight, so the stored calendar day is wrong for every viewer
+ * whose runtime zone is not UTC.
+ *
+ * RELOCATED by the test-remediation round: this file previously lived beside its
+ * seam at `app/(operator)/customers/[id]/licenses.logic.test.ts`, where
+ * `apps/mobile/jest.config.js`'s `testMatch: ["**\/__tests__/**\/*.test.ts"]` NEVER
+ * COLLECTED it (confirmed absent from `npx jest --listTests`). Mobile specs must
+ * live under `__tests__/` to run at all.
+ *
+ * NO `process.env.TZ` PIN: an in-file assignment is inert under Jest (the worker
+ * gets a sandboxed `process.env`, so Node's timezone-reconfiguration hook never
+ * fires). It is not needed here — the ORACLE is zone-independent. The correct
+ * value is "2027-01-01T00:00:00.000Z" in every zone, and today's local-23:59:59
+ * construction cannot produce it in ANY zone: UTC-6 yields
+ * "2027-01-02T05:59:59.000Z", UTC-5 yields "2027-01-02T04:59:59.000Z", and even
+ * TZ=UTC yields "2027-01-01T23:59:59.000Z". Only the reported RECEIVED value
+ * varies by host zone; the test is red everywhere until the fix lands.
+ */
+const licenses_logic_1 = require("../app/(operator)/customers/[id]/licenses.logic");
+const calendar_date_1 = require("../lib/calendar-date");
+describe("buildExpiresAtIso", () => {
+    it("REG-B91 writes UTC midnight for the licence expiry, never a local end-of-day instant", () => {
+        expect((0, licenses_logic_1.buildExpiresAtIso)("2027-01-01")).toBe("2027-01-01T00:00:00.000Z");
+    });
+    // PIN (not REG): the plan's T5 also names the helper the writer now delegates to.
+    // Correct by construction, so it carries no REG token — it is here to catch a future
+    // rewrite of `isoFromCalendarDate` that reintroduces a clock-dependent construction.
+    it("pins isoFromCalendarDate to the UTC-midnight storage convention", () => {
+        expect((0, calendar_date_1.isoFromCalendarDate)("2027-01-01")).toBe("2027-01-01T00:00:00.000Z");
+    });
+});
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvX190ZXN0c19fL2xpY2VuY2UtZXhwaXJ5LWlzby50ZXN0LnRzIiwibWFwcGluZ3MiOiI7O0FBQUE7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7R0FtQkc7QUFDSCxvRkFBb0Y7QUFDcEYsd0RBQTJEO0FBRTNELFFBQVEsQ0FBQyxtQkFBbUIsRUFBRSxHQUFHLEVBQUU7SUFDakMsRUFBRSxDQUFDLHNGQUFzRixFQUFFLEdBQUcsRUFBRTtRQUM5RixNQUFNLENBQUMsSUFBQSxrQ0FBaUIsRUFBQyxZQUFZLENBQUMsQ0FBQyxDQUFDLElBQUksQ0FBQywwQkFBMEIsQ0FBQyxDQUFDO0lBQzNFLENBQUMsQ0FBQyxDQUFDO0lBRUgsa0ZBQWtGO0lBQ2xGLHFGQUFxRjtJQUNyRixxRkFBcUY7SUFDckYsRUFBRSxDQUFDLGlFQUFpRSxFQUFFLEdBQUcsRUFBRTtRQUN6RSxNQUFNLENBQUMsSUFBQSxtQ0FBbUIsRUFBQyxZQUFZLENBQUMsQ0FBQyxDQUFDLElBQUksQ0FBQywwQkFBMEIsQ0FBQyxDQUFDO0lBQzdFLENBQUMsQ0FBQyxDQUFDO0FBQ0wsQ0FBQyxDQUFDLENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvX190ZXN0c19fL2xpY2VuY2UtZXhwaXJ5LWlzby50ZXN0LnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogTGljZW5jZS1leHBpcnkgd3JpdGUgKEI5MSkg4oCUIGBleHBpcmVzQXRgIGlzIHdyaXR0ZW4gYXMgYSBMT0NBTCAyMzo1OTo1OSBpbnN0YW50XG4gKiBpbnN0ZWFkIG9mIFVUQyBtaWRuaWdodCwgc28gdGhlIHN0b3JlZCBjYWxlbmRhciBkYXkgaXMgd3JvbmcgZm9yIGV2ZXJ5IHZpZXdlclxuICogd2hvc2UgcnVudGltZSB6b25lIGlzIG5vdCBVVEMuXG4gKlxuICogUkVMT0NBVEVEIGJ5IHRoZSB0ZXN0LXJlbWVkaWF0aW9uIHJvdW5kOiB0aGlzIGZpbGUgcHJldmlvdXNseSBsaXZlZCBiZXNpZGUgaXRzXG4gKiBzZWFtIGF0IGBhcHAvKG9wZXJhdG9yKS9jdXN0b21lcnMvW2lkXS9saWNlbnNlcy5sb2dpYy50ZXN0LnRzYCwgd2hlcmVcbiAqIGBhcHBzL21vYmlsZS9qZXN0LmNvbmZpZy5qc2AncyBgdGVzdE1hdGNoOiBbXCIqKlxcL19fdGVzdHNfXy8qKlxcLyoudGVzdC50c1wiXWAgTkVWRVJcbiAqIENPTExFQ1RFRCBpdCAoY29uZmlybWVkIGFic2VudCBmcm9tIGBucHggamVzdCAtLWxpc3RUZXN0c2ApLiBNb2JpbGUgc3BlY3MgbXVzdFxuICogbGl2ZSB1bmRlciBgX190ZXN0c19fL2AgdG8gcnVuIGF0IGFsbC5cbiAqXG4gKiBOTyBgcHJvY2Vzcy5lbnYuVFpgIFBJTjogYW4gaW4tZmlsZSBhc3NpZ25tZW50IGlzIGluZXJ0IHVuZGVyIEplc3QgKHRoZSB3b3JrZXJcbiAqIGdldHMgYSBzYW5kYm94ZWQgYHByb2Nlc3MuZW52YCwgc28gTm9kZSdzIHRpbWV6b25lLXJlY29uZmlndXJhdGlvbiBob29rIG5ldmVyXG4gKiBmaXJlcykuIEl0IGlzIG5vdCBuZWVkZWQgaGVyZSDigJQgdGhlIE9SQUNMRSBpcyB6b25lLWluZGVwZW5kZW50LiBUaGUgY29ycmVjdFxuICogdmFsdWUgaXMgXCIyMDI3LTAxLTAxVDAwOjAwOjAwLjAwMFpcIiBpbiBldmVyeSB6b25lLCBhbmQgdG9kYXkncyBsb2NhbC0yMzo1OTo1OVxuICogY29uc3RydWN0aW9uIGNhbm5vdCBwcm9kdWNlIGl0IGluIEFOWSB6b25lOiBVVEMtNiB5aWVsZHNcbiAqIFwiMjAyNy0wMS0wMlQwNTo1OTo1OS4wMDBaXCIsIFVUQy01IHlpZWxkcyBcIjIwMjctMDEtMDJUMDQ6NTk6NTkuMDAwWlwiLCBhbmQgZXZlblxuICogVFo9VVRDIHlpZWxkcyBcIjIwMjctMDEtMDFUMjM6NTk6NTkuMDAwWlwiLiBPbmx5IHRoZSByZXBvcnRlZCBSRUNFSVZFRCB2YWx1ZVxuICogdmFyaWVzIGJ5IGhvc3Qgem9uZTsgdGhlIHRlc3QgaXMgcmVkIGV2ZXJ5d2hlcmUgdW50aWwgdGhlIGZpeCBsYW5kcy5cbiAqL1xuaW1wb3J0IHsgYnVpbGRFeHBpcmVzQXRJc28gfSBmcm9tIFwiLi4vYXBwLyhvcGVyYXRvcikvY3VzdG9tZXJzL1tpZF0vbGljZW5zZXMubG9naWNcIjtcbmltcG9ydCB7IGlzb0Zyb21DYWxlbmRhckRhdGUgfSBmcm9tIFwiLi4vbGliL2NhbGVuZGFyLWRhdGVcIjtcblxuZGVzY3JpYmUoXCJidWlsZEV4cGlyZXNBdElzb1wiLCAoKSA9PiB7XG4gIGl0KFwiUkVHLUI5MSB3cml0ZXMgVVRDIG1pZG5pZ2h0IGZvciB0aGUgbGljZW5jZSBleHBpcnksIG5ldmVyIGEgbG9jYWwgZW5kLW9mLWRheSBpbnN0YW50XCIsICgpID0+IHtcbiAgICBleHBlY3QoYnVpbGRFeHBpcmVzQXRJc28oXCIyMDI3LTAxLTAxXCIpKS50b0JlKFwiMjAyNy0wMS0wMVQwMDowMDowMC4wMDBaXCIpO1xuICB9KTtcblxuICAvLyBQSU4gKG5vdCBSRUcpOiB0aGUgcGxhbidzIFQ1IGFsc28gbmFtZXMgdGhlIGhlbHBlciB0aGUgd3JpdGVyIG5vdyBkZWxlZ2F0ZXMgdG8uXG4gIC8vIENvcnJlY3QgYnkgY29uc3RydWN0aW9uLCBzbyBpdCBjYXJyaWVzIG5vIFJFRyB0b2tlbiDigJQgaXQgaXMgaGVyZSB0byBjYXRjaCBhIGZ1dHVyZVxuICAvLyByZXdyaXRlIG9mIGBpc29Gcm9tQ2FsZW5kYXJEYXRlYCB0aGF0IHJlaW50cm9kdWNlcyBhIGNsb2NrLWRlcGVuZGVudCBjb25zdHJ1Y3Rpb24uXG4gIGl0KFwicGlucyBpc29Gcm9tQ2FsZW5kYXJEYXRlIHRvIHRoZSBVVEMtbWlkbmlnaHQgc3RvcmFnZSBjb252ZW50aW9uXCIsICgpID0+IHtcbiAgICBleHBlY3QoaXNvRnJvbUNhbGVuZGFyRGF0ZShcIjIwMjctMDEtMDFcIikpLnRvQmUoXCIyMDI3LTAxLTAxVDAwOjAwOjAwLjAwMFpcIik7XG4gIH0pO1xufSk7XG4iXSwidmVyc2lvbiI6M30=

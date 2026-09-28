@@ -1,0 +1,43 @@
+2b64ad1ce140ec56aad367b7fb15e174
+/**
+ * EditRunModal calendar-date defects (B59).
+ *
+ * T1 is host-zone-independent: `readCalendarInput` reads the calendar day straight off the
+ * ISO string via `calendarDateFromIso`, never through a local-zone getter, so this oracle
+ * cannot pass on a UTC host by accident (unlike the old local-getter body, which was only
+ * wrong for a negative-UTC-offset host). The zone-driven proof of B59's read half — that a
+ * negative-UTC-offset (America/Los_Angeles) viewer sees the run's own day, not the day
+ * before — lives in e2e spec 34 flow 1 (`timezoneId` America/Los_Angeles) and the EditRunModal
+ * RTL test. T2 below is the host-independent guard for B59's write half.
+ */ "use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _editrunmodallogic = require("./edit-run-modal.logic");
+describe("readCalendarInput", ()=>{
+    it("REG-B59 pre-fills the run's own stored calendar date", ()=>{
+        // T1: a UTC-midnight scheduledDate must pre-fill its OWN calendar day, read straight
+        // off the ISO string — not derived through any local-zone calendar getter.
+        const result = (0, _editrunmodallogic.readCalendarInput)("2026-06-10T00:00:00.000Z");
+        expect(result).toBe("2026-06-10");
+    });
+});
+describe("buildRunPatchBody", ()=>{
+    it("REG-B59 omits scheduledDate from the PATCH when the date field is unchanged", ()=>{
+        // T2: today's body always includes scheduledDate whenever !isInProgress, with no
+        // dirty check of `date` against the seeded `initialDate` — so merely opening the
+        // modal and saving a driver change rewrites the run's date.
+        const body = (0, _editrunmodallogic.buildRunPatchBody)({
+            id: "r1",
+            driverId: "d2",
+            initialDriverId: "d1",
+            date: "2026-06-10",
+            initialDate: "2026-06-10",
+            notes: "x",
+            isInProgress: false
+        });
+        expect(body.scheduledDate).toBeUndefined();
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS9yb3V0ZXMvX2NvbXBvbmVudHMvZWRpdC1ydW4tbW9kYWwubG9naWMudGVzdC50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqIEVkaXRSdW5Nb2RhbCBjYWxlbmRhci1kYXRlIGRlZmVjdHMgKEI1OSkuXG4gKlxuICogVDEgaXMgaG9zdC16b25lLWluZGVwZW5kZW50OiBgcmVhZENhbGVuZGFySW5wdXRgIHJlYWRzIHRoZSBjYWxlbmRhciBkYXkgc3RyYWlnaHQgb2ZmIHRoZVxuICogSVNPIHN0cmluZyB2aWEgYGNhbGVuZGFyRGF0ZUZyb21Jc29gLCBuZXZlciB0aHJvdWdoIGEgbG9jYWwtem9uZSBnZXR0ZXIsIHNvIHRoaXMgb3JhY2xlXG4gKiBjYW5ub3QgcGFzcyBvbiBhIFVUQyBob3N0IGJ5IGFjY2lkZW50ICh1bmxpa2UgdGhlIG9sZCBsb2NhbC1nZXR0ZXIgYm9keSwgd2hpY2ggd2FzIG9ubHlcbiAqIHdyb25nIGZvciBhIG5lZ2F0aXZlLVVUQy1vZmZzZXQgaG9zdCkuIFRoZSB6b25lLWRyaXZlbiBwcm9vZiBvZiBCNTkncyByZWFkIGhhbGYg4oCUIHRoYXQgYVxuICogbmVnYXRpdmUtVVRDLW9mZnNldCAoQW1lcmljYS9Mb3NfQW5nZWxlcykgdmlld2VyIHNlZXMgdGhlIHJ1bidzIG93biBkYXksIG5vdCB0aGUgZGF5XG4gKiBiZWZvcmUg4oCUIGxpdmVzIGluIGUyZSBzcGVjIDM0IGZsb3cgMSAoYHRpbWV6b25lSWRgIEFtZXJpY2EvTG9zX0FuZ2VsZXMpIGFuZCB0aGUgRWRpdFJ1bk1vZGFsXG4gKiBSVEwgdGVzdC4gVDIgYmVsb3cgaXMgdGhlIGhvc3QtaW5kZXBlbmRlbnQgZ3VhcmQgZm9yIEI1OSdzIHdyaXRlIGhhbGYuXG4gKi9cbmltcG9ydCB7IHJlYWRDYWxlbmRhcklucHV0LCBidWlsZFJ1blBhdGNoQm9keSB9IGZyb20gXCIuL2VkaXQtcnVuLW1vZGFsLmxvZ2ljXCI7XG5cbmRlc2NyaWJlKFwicmVhZENhbGVuZGFySW5wdXRcIiwgKCkgPT4ge1xuICBpdChcIlJFRy1CNTkgcHJlLWZpbGxzIHRoZSBydW4ncyBvd24gc3RvcmVkIGNhbGVuZGFyIGRhdGVcIiwgKCkgPT4ge1xuICAgIC8vIFQxOiBhIFVUQy1taWRuaWdodCBzY2hlZHVsZWREYXRlIG11c3QgcHJlLWZpbGwgaXRzIE9XTiBjYWxlbmRhciBkYXksIHJlYWQgc3RyYWlnaHRcbiAgICAvLyBvZmYgdGhlIElTTyBzdHJpbmcg4oCUIG5vdCBkZXJpdmVkIHRocm91Z2ggYW55IGxvY2FsLXpvbmUgY2FsZW5kYXIgZ2V0dGVyLlxuICAgIGNvbnN0IHJlc3VsdCA9IHJlYWRDYWxlbmRhcklucHV0KFwiMjAyNi0wNi0xMFQwMDowMDowMC4wMDBaXCIpO1xuICAgIGV4cGVjdChyZXN1bHQpLnRvQmUoXCIyMDI2LTA2LTEwXCIpO1xuICB9KTtcbn0pO1xuXG5kZXNjcmliZShcImJ1aWxkUnVuUGF0Y2hCb2R5XCIsICgpID0+IHtcbiAgaXQoXCJSRUctQjU5IG9taXRzIHNjaGVkdWxlZERhdGUgZnJvbSB0aGUgUEFUQ0ggd2hlbiB0aGUgZGF0ZSBmaWVsZCBpcyB1bmNoYW5nZWRcIiwgKCkgPT4ge1xuICAgIC8vIFQyOiB0b2RheSdzIGJvZHkgYWx3YXlzIGluY2x1ZGVzIHNjaGVkdWxlZERhdGUgd2hlbmV2ZXIgIWlzSW5Qcm9ncmVzcywgd2l0aCBub1xuICAgIC8vIGRpcnR5IGNoZWNrIG9mIGBkYXRlYCBhZ2FpbnN0IHRoZSBzZWVkZWQgYGluaXRpYWxEYXRlYCDigJQgc28gbWVyZWx5IG9wZW5pbmcgdGhlXG4gICAgLy8gbW9kYWwgYW5kIHNhdmluZyBhIGRyaXZlciBjaGFuZ2UgcmV3cml0ZXMgdGhlIHJ1bidzIGRhdGUuXG4gICAgY29uc3QgYm9keSA9IGJ1aWxkUnVuUGF0Y2hCb2R5KHtcbiAgICAgIGlkOiBcInIxXCIsXG4gICAgICBkcml2ZXJJZDogXCJkMlwiLFxuICAgICAgaW5pdGlhbERyaXZlcklkOiBcImQxXCIsXG4gICAgICBkYXRlOiBcIjIwMjYtMDYtMTBcIixcbiAgICAgIGluaXRpYWxEYXRlOiBcIjIwMjYtMDYtMTBcIixcbiAgICAgIG5vdGVzOiBcInhcIixcbiAgICAgIGlzSW5Qcm9ncmVzczogZmFsc2UsXG4gICAgfSk7XG4gICAgZXhwZWN0KGJvZHkuc2NoZWR1bGVkRGF0ZSkudG9CZVVuZGVmaW5lZCgpO1xuICB9KTtcbn0pO1xuIl0sIm5hbWVzIjpbImRlc2NyaWJlIiwiaXQiLCJyZXN1bHQiLCJyZWFkQ2FsZW5kYXJJbnB1dCIsImV4cGVjdCIsInRvQmUiLCJib2R5IiwiYnVpbGRSdW5QYXRjaEJvZHkiLCJpZCIsImRyaXZlcklkIiwiaW5pdGlhbERyaXZlcklkIiwiZGF0ZSIsImluaXRpYWxEYXRlIiwibm90ZXMiLCJpc0luUHJvZ3Jlc3MiLCJzY2hlZHVsZWREYXRlIiwidG9CZVVuZGVmaW5lZCJdLCJtYXBwaW5ncyI6IkFBQUE7Ozs7Ozs7Ozs7Q0FVQzs7OzttQ0FDb0Q7QUFFckRBLFNBQVMscUJBQXFCO0lBQzVCQyxHQUFHLHdEQUF3RDtRQUN6RCxxRkFBcUY7UUFDckYsMkVBQTJFO1FBQzNFLE1BQU1DLFNBQVNDLElBQUFBLG9DQUFpQixFQUFDO1FBQ2pDQyxPQUFPRixRQUFRRyxJQUFJLENBQUM7SUFDdEI7QUFDRjtBQUVBTCxTQUFTLHFCQUFxQjtJQUM1QkMsR0FBRywrRUFBK0U7UUFDaEYsaUZBQWlGO1FBQ2pGLGlGQUFpRjtRQUNqRiw0REFBNEQ7UUFDNUQsTUFBTUssT0FBT0MsSUFBQUEsb0NBQWlCLEVBQUM7WUFDN0JDLElBQUk7WUFDSkMsVUFBVTtZQUNWQyxpQkFBaUI7WUFDakJDLE1BQU07WUFDTkMsYUFBYTtZQUNiQyxPQUFPO1lBQ1BDLGNBQWM7UUFDaEI7UUFDQVYsT0FBT0UsS0FBS1MsYUFBYSxFQUFFQyxhQUFhO0lBQzFDO0FBQ0YifQ==

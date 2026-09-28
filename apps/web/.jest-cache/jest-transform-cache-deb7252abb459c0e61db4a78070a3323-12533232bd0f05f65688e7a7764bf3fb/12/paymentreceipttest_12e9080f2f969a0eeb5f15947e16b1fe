@@ -1,0 +1,144 @@
+02deabab710abafceddd686d70e06a3b
+"use strict";
+/**
+ * T7 (REG-B80, `.claude/pipeline/2026-09-07-F16-list-caps/bug-test-plan.md`):
+ * the payment-receipt page fetches ONE payment by id (`usePaymentDetail`)
+ * instead of paging through `useInvoicePayments({ limit: 200 })` and
+ * `.find()`-ing the id client-side — a receipt for a payment that isn't in
+ * the first 200 rows currently renders "Payment not found." even though the
+ * payment exists.
+ *
+ * TODAY: the page never calls `usePaymentDetail` at all, and calls
+ * `useInvoicePayments` unconditionally — so this fails on BOTH assertions
+ * below (the spy WAS called; "Payment not found." renders instead of the
+ * payment number) rather than on an import/syntax error.
+ */ jest.mock("next/navigation", ()=>({
+        useParams: ()=>({
+                id: "pay-9"
+            }),
+        useRouter: ()=>({
+                push: jest.fn(),
+                back: jest.fn(),
+                replace: jest.fn()
+            })
+    }));
+jest.mock("@/lib/api/invoices", ()=>({
+        ...jest.requireActual("@/lib/api/invoices"),
+        usePaymentDetail: (id)=>usePaymentDetailMock(id),
+        useInvoicePayments: (...args)=>useInvoicePaymentsSpy(...args),
+        useInvoice: ()=>({
+                data: undefined
+            }),
+        useVoidPayment: ()=>({
+                mutateAsync: jest.fn(),
+                isPending: false
+            }),
+        useGetPaymentImageUrl: ()=>({
+                mutateAsync: jest.fn()
+            })
+    }));
+jest.mock("@/lib/api-client", ()=>({
+        apiClient: {
+            get: jest.fn(),
+            post: jest.fn(),
+            patch: jest.fn(),
+            delete: jest.fn()
+        }
+    }));
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+const _render = require("../../../../../test-utils/render");
+const _page = /*#__PURE__*/ _interop_require_default(require("./page"));
+function _interop_require_default(obj) {
+    return obj && obj.__esModule ? obj : {
+        default: obj
+    };
+}
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+const payment = {
+    id: "pay-9",
+    paymentNumber: "PAY-000009",
+    amount: 42,
+    method: "ACH",
+    status: "PAID",
+    paidAt: "2026-08-26T12:00:00.000Z",
+    createdAt: "2026-08-26T12:00:00.000Z",
+    invoice: {
+        id: "inv-1",
+        invoiceNumber: "INV-000001",
+        customerId: "cust-1",
+        customer: {
+            id: "cust-1",
+            businessName: "Acme Foods"
+        }
+    }
+};
+// The factories below are called WITH arguments by the module mock, so they
+// declare parameters — a zero-arity `jest.fn(() => …)` fails `tsc --noEmit`
+// with TS2554 / TS2556.
+const usePaymentDetailMock = jest.fn((_id)=>({
+        data: payment,
+        isLoading: false
+    }));
+const useInvoicePaymentsSpy = jest.fn((..._args)=>({
+        data: {
+            data: [],
+            meta: {}
+        },
+        isLoading: false
+    }));
+describe("PaymentDetailPage — REG-B80 single-payment fetch", ()=>{
+    beforeEach(()=>jest.clearAllMocks());
+    it("fetches the payment by id via usePaymentDetail, never pages useInvoicePayments, and renders the payment number", async ()=>{
+        (0, _render.renderWithProviders)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_page.default, {}));
+        expect(await _render.screen.findByText("PAY-000009")).toBeInTheDocument();
+        expect(_render.screen.queryByText("Payment not found.")).not.toBeInTheDocument();
+        expect(usePaymentDetailMock).toHaveBeenCalledWith("pay-9");
+        expect(useInvoicePaymentsSpy).not.toHaveBeenCalled();
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS9maW5hbmNlL3BheW1lbnRzL1tpZF0vcGF5bWVudC1yZWNlaXB0LnRlc3QudHN4Il0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCAqIGFzIFJlYWN0IGZyb20gXCJyZWFjdFwiO1xuaW1wb3J0IHsgcmVuZGVyV2l0aFByb3ZpZGVycywgc2NyZWVuIH0gZnJvbSBcIkAvdGVzdC11dGlscy9yZW5kZXJcIjtcbmltcG9ydCBQYXltZW50RGV0YWlsUGFnZSBmcm9tIFwiLi9wYWdlXCI7XG5cbi8qKlxuICogVDcgKFJFRy1CODAsIGAuY2xhdWRlL3BpcGVsaW5lLzIwMjYtMDktMDctRjE2LWxpc3QtY2Fwcy9idWctdGVzdC1wbGFuLm1kYCk6XG4gKiB0aGUgcGF5bWVudC1yZWNlaXB0IHBhZ2UgZmV0Y2hlcyBPTkUgcGF5bWVudCBieSBpZCAoYHVzZVBheW1lbnREZXRhaWxgKVxuICogaW5zdGVhZCBvZiBwYWdpbmcgdGhyb3VnaCBgdXNlSW52b2ljZVBheW1lbnRzKHsgbGltaXQ6IDIwMCB9KWAgYW5kXG4gKiBgLmZpbmQoKWAtaW5nIHRoZSBpZCBjbGllbnQtc2lkZSDigJQgYSByZWNlaXB0IGZvciBhIHBheW1lbnQgdGhhdCBpc24ndCBpblxuICogdGhlIGZpcnN0IDIwMCByb3dzIGN1cnJlbnRseSByZW5kZXJzIFwiUGF5bWVudCBub3QgZm91bmQuXCIgZXZlbiB0aG91Z2ggdGhlXG4gKiBwYXltZW50IGV4aXN0cy5cbiAqXG4gKiBUT0RBWTogdGhlIHBhZ2UgbmV2ZXIgY2FsbHMgYHVzZVBheW1lbnREZXRhaWxgIGF0IGFsbCwgYW5kIGNhbGxzXG4gKiBgdXNlSW52b2ljZVBheW1lbnRzYCB1bmNvbmRpdGlvbmFsbHkg4oCUIHNvIHRoaXMgZmFpbHMgb24gQk9USCBhc3NlcnRpb25zXG4gKiBiZWxvdyAodGhlIHNweSBXQVMgY2FsbGVkOyBcIlBheW1lbnQgbm90IGZvdW5kLlwiIHJlbmRlcnMgaW5zdGVhZCBvZiB0aGVcbiAqIHBheW1lbnQgbnVtYmVyKSByYXRoZXIgdGhhbiBvbiBhbiBpbXBvcnQvc3ludGF4IGVycm9yLlxuICovXG5cbmplc3QubW9jayhcIm5leHQvbmF2aWdhdGlvblwiLCAoKSA9PiAoe1xuICB1c2VQYXJhbXM6ICgpID0+ICh7IGlkOiBcInBheS05XCIgfSksXG4gIHVzZVJvdXRlcjogKCkgPT4gKHsgcHVzaDogamVzdC5mbigpLCBiYWNrOiBqZXN0LmZuKCksIHJlcGxhY2U6IGplc3QuZm4oKSB9KSxcbn0pKTtcblxuY29uc3QgcGF5bWVudCA9IHtcbiAgaWQ6IFwicGF5LTlcIixcbiAgcGF5bWVudE51bWJlcjogXCJQQVktMDAwMDA5XCIsXG4gIGFtb3VudDogNDIsXG4gIG1ldGhvZDogXCJBQ0hcIixcbiAgc3RhdHVzOiBcIlBBSURcIiBhcyBjb25zdCxcbiAgcGFpZEF0OiBcIjIwMjYtMDgtMjZUMTI6MDA6MDAuMDAwWlwiLFxuICBjcmVhdGVkQXQ6IFwiMjAyNi0wOC0yNlQxMjowMDowMC4wMDBaXCIsXG4gIGludm9pY2U6IHtcbiAgICBpZDogXCJpbnYtMVwiLFxuICAgIGludm9pY2VOdW1iZXI6IFwiSU5WLTAwMDAwMVwiLFxuICAgIGN1c3RvbWVySWQ6IFwiY3VzdC0xXCIsXG4gICAgY3VzdG9tZXI6IHsgaWQ6IFwiY3VzdC0xXCIsIGJ1c2luZXNzTmFtZTogXCJBY21lIEZvb2RzXCIgfSxcbiAgfSxcbn07XG5cbi8vIFRoZSBmYWN0b3JpZXMgYmVsb3cgYXJlIGNhbGxlZCBXSVRIIGFyZ3VtZW50cyBieSB0aGUgbW9kdWxlIG1vY2ssIHNvIHRoZXlcbi8vIGRlY2xhcmUgcGFyYW1ldGVycyDigJQgYSB6ZXJvLWFyaXR5IGBqZXN0LmZuKCgpID0+IOKApilgIGZhaWxzIGB0c2MgLS1ub0VtaXRgXG4vLyB3aXRoIFRTMjU1NCAvIFRTMjU1Ni5cbmNvbnN0IHVzZVBheW1lbnREZXRhaWxNb2NrID0gamVzdC5mbigoX2lkOiBzdHJpbmcpID0+ICh7IGRhdGE6IHBheW1lbnQsIGlzTG9hZGluZzogZmFsc2UgfSkpO1xuY29uc3QgdXNlSW52b2ljZVBheW1lbnRzU3B5ID0gamVzdC5mbigoLi4uX2FyZ3M6IHVua25vd25bXSkgPT4gKHtcbiAgZGF0YTogeyBkYXRhOiBbXSwgbWV0YToge30gfSxcbiAgaXNMb2FkaW5nOiBmYWxzZSxcbn0pKTtcblxuamVzdC5tb2NrKFwiQC9saWIvYXBpL2ludm9pY2VzXCIsICgpID0+ICh7XG4gIC4uLmplc3QucmVxdWlyZUFjdHVhbChcIkAvbGliL2FwaS9pbnZvaWNlc1wiKSxcbiAgdXNlUGF5bWVudERldGFpbDogKGlkOiBzdHJpbmcpID0+IHVzZVBheW1lbnREZXRhaWxNb2NrKGlkKSxcbiAgdXNlSW52b2ljZVBheW1lbnRzOiAoLi4uYXJnczogdW5rbm93bltdKSA9PiB1c2VJbnZvaWNlUGF5bWVudHNTcHkoLi4uYXJncyksXG4gIHVzZUludm9pY2U6ICgpID0+ICh7IGRhdGE6IHVuZGVmaW5lZCB9KSxcbiAgdXNlVm9pZFBheW1lbnQ6ICgpID0+ICh7IG11dGF0ZUFzeW5jOiBqZXN0LmZuKCksIGlzUGVuZGluZzogZmFsc2UgfSksXG4gIHVzZUdldFBheW1lbnRJbWFnZVVybDogKCkgPT4gKHsgbXV0YXRlQXN5bmM6IGplc3QuZm4oKSB9KSxcbn0pKTtcblxuamVzdC5tb2NrKFwiQC9saWIvYXBpLWNsaWVudFwiLCAoKSA9PiAoe1xuICBhcGlDbGllbnQ6IHsgZ2V0OiBqZXN0LmZuKCksIHBvc3Q6IGplc3QuZm4oKSwgcGF0Y2g6IGplc3QuZm4oKSwgZGVsZXRlOiBqZXN0LmZuKCkgfSxcbn0pKTtcblxuZGVzY3JpYmUoXCJQYXltZW50RGV0YWlsUGFnZSDigJQgUkVHLUI4MCBzaW5nbGUtcGF5bWVudCBmZXRjaFwiLCAoKSA9PiB7XG4gIGJlZm9yZUVhY2goKCkgPT4gamVzdC5jbGVhckFsbE1vY2tzKCkpO1xuXG4gIGl0KFwiZmV0Y2hlcyB0aGUgcGF5bWVudCBieSBpZCB2aWEgdXNlUGF5bWVudERldGFpbCwgbmV2ZXIgcGFnZXMgdXNlSW52b2ljZVBheW1lbnRzLCBhbmQgcmVuZGVycyB0aGUgcGF5bWVudCBudW1iZXJcIiwgYXN5bmMgKCkgPT4ge1xuICAgIHJlbmRlcldpdGhQcm92aWRlcnMoPFBheW1lbnREZXRhaWxQYWdlIC8+KTtcblxuICAgIGV4cGVjdChhd2FpdCBzY3JlZW4uZmluZEJ5VGV4dChcIlBBWS0wMDAwMDlcIikpLnRvQmVJblRoZURvY3VtZW50KCk7XG4gICAgZXhwZWN0KHNjcmVlbi5xdWVyeUJ5VGV4dChcIlBheW1lbnQgbm90IGZvdW5kLlwiKSkubm90LnRvQmVJblRoZURvY3VtZW50KCk7XG5cbiAgICBleHBlY3QodXNlUGF5bWVudERldGFpbE1vY2spLnRvSGF2ZUJlZW5DYWxsZWRXaXRoKFwicGF5LTlcIik7XG4gICAgZXhwZWN0KHVzZUludm9pY2VQYXltZW50c1NweSkubm90LnRvSGF2ZUJlZW5DYWxsZWQoKTtcbiAgfSk7XG59KTtcbiJdLCJuYW1lcyI6WyJqZXN0IiwibW9jayIsInVzZVBhcmFtcyIsImlkIiwidXNlUm91dGVyIiwicHVzaCIsImZuIiwiYmFjayIsInJlcGxhY2UiLCJyZXF1aXJlQWN0dWFsIiwidXNlUGF5bWVudERldGFpbCIsInVzZVBheW1lbnREZXRhaWxNb2NrIiwidXNlSW52b2ljZVBheW1lbnRzIiwiYXJncyIsInVzZUludm9pY2VQYXltZW50c1NweSIsInVzZUludm9pY2UiLCJkYXRhIiwidW5kZWZpbmVkIiwidXNlVm9pZFBheW1lbnQiLCJtdXRhdGVBc3luYyIsImlzUGVuZGluZyIsInVzZUdldFBheW1lbnRJbWFnZVVybCIsImFwaUNsaWVudCIsImdldCIsInBvc3QiLCJwYXRjaCIsImRlbGV0ZSIsInBheW1lbnQiLCJwYXltZW50TnVtYmVyIiwiYW1vdW50IiwibWV0aG9kIiwic3RhdHVzIiwicGFpZEF0IiwiY3JlYXRlZEF0IiwiaW52b2ljZSIsImludm9pY2VOdW1iZXIiLCJjdXN0b21lcklkIiwiY3VzdG9tZXIiLCJidXNpbmVzc05hbWUiLCJfaWQiLCJpc0xvYWRpbmciLCJfYXJncyIsIm1ldGEiLCJkZXNjcmliZSIsImJlZm9yZUVhY2giLCJjbGVhckFsbE1vY2tzIiwiaXQiLCJyZW5kZXJXaXRoUHJvdmlkZXJzIiwiUGF5bWVudERldGFpbFBhZ2UiLCJleHBlY3QiLCJzY3JlZW4iLCJmaW5kQnlUZXh0IiwidG9CZUluVGhlRG9jdW1lbnQiLCJxdWVyeUJ5VGV4dCIsIm5vdCIsInRvSGF2ZUJlZW5DYWxsZWRXaXRoIiwidG9IYXZlQmVlbkNhbGxlZCJdLCJtYXBwaW5ncyI6IjtBQUlBOzs7Ozs7Ozs7Ozs7Q0FZQyxHQUVEQSxLQUFLQyxJQUFJLENBQUMsbUJBQW1CLElBQU8sQ0FBQTtRQUNsQ0MsV0FBVyxJQUFPLENBQUE7Z0JBQUVDLElBQUk7WUFBUSxDQUFBO1FBQ2hDQyxXQUFXLElBQU8sQ0FBQTtnQkFBRUMsTUFBTUwsS0FBS00sRUFBRTtnQkFBSUMsTUFBTVAsS0FBS00sRUFBRTtnQkFBSUUsU0FBU1IsS0FBS00sRUFBRTtZQUFHLENBQUE7SUFDM0UsQ0FBQTtBQTJCQU4sS0FBS0MsSUFBSSxDQUFDLHNCQUFzQixJQUFPLENBQUE7UUFDckMsR0FBR0QsS0FBS1MsYUFBYSxDQUFDLHFCQUFxQjtRQUMzQ0Msa0JBQWtCLENBQUNQLEtBQWVRLHFCQUFxQlI7UUFDdkRTLG9CQUFvQixDQUFDLEdBQUdDLE9BQW9CQyx5QkFBeUJEO1FBQ3JFRSxZQUFZLElBQU8sQ0FBQTtnQkFBRUMsTUFBTUM7WUFBVSxDQUFBO1FBQ3JDQyxnQkFBZ0IsSUFBTyxDQUFBO2dCQUFFQyxhQUFhbkIsS0FBS00sRUFBRTtnQkFBSWMsV0FBVztZQUFNLENBQUE7UUFDbEVDLHVCQUF1QixJQUFPLENBQUE7Z0JBQUVGLGFBQWFuQixLQUFLTSxFQUFFO1lBQUcsQ0FBQTtJQUN6RCxDQUFBO0FBRUFOLEtBQUtDLElBQUksQ0FBQyxvQkFBb0IsSUFBTyxDQUFBO1FBQ25DcUIsV0FBVztZQUFFQyxLQUFLdkIsS0FBS00sRUFBRTtZQUFJa0IsTUFBTXhCLEtBQUtNLEVBQUU7WUFBSW1CLE9BQU96QixLQUFLTSxFQUFFO1lBQUlvQixRQUFRMUIsS0FBS00sRUFBRTtRQUFHO0lBQ3BGLENBQUE7Ozs7OytEQTNEdUI7d0JBQ3FCOzZEQUNkOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7OztBQXFCOUIsTUFBTXFCLFVBQVU7SUFDZHhCLElBQUk7SUFDSnlCLGVBQWU7SUFDZkMsUUFBUTtJQUNSQyxRQUFRO0lBQ1JDLFFBQVE7SUFDUkMsUUFBUTtJQUNSQyxXQUFXO0lBQ1hDLFNBQVM7UUFDUC9CLElBQUk7UUFDSmdDLGVBQWU7UUFDZkMsWUFBWTtRQUNaQyxVQUFVO1lBQUVsQyxJQUFJO1lBQVVtQyxjQUFjO1FBQWE7SUFDdkQ7QUFDRjtBQUVBLDRFQUE0RTtBQUM1RSw0RUFBNEU7QUFDNUUsd0JBQXdCO0FBQ3hCLE1BQU0zQix1QkFBdUJYLEtBQUtNLEVBQUUsQ0FBQyxDQUFDaUMsTUFBaUIsQ0FBQTtRQUFFdkIsTUFBTVc7UUFBU2EsV0FBVztJQUFNLENBQUE7QUFDekYsTUFBTTFCLHdCQUF3QmQsS0FBS00sRUFBRSxDQUFDLENBQUMsR0FBR21DLFFBQXNCLENBQUE7UUFDOUR6QixNQUFNO1lBQUVBLE1BQU0sRUFBRTtZQUFFMEIsTUFBTSxDQUFDO1FBQUU7UUFDM0JGLFdBQVc7SUFDYixDQUFBO0FBZUFHLFNBQVMsb0RBQW9EO0lBQzNEQyxXQUFXLElBQU01QyxLQUFLNkMsYUFBYTtJQUVuQ0MsR0FBRyxrSEFBa0g7UUFDbkhDLElBQUFBLDJCQUFtQixnQkFBQyxxQkFBQ0MsYUFBaUI7UUFFdENDLE9BQU8sTUFBTUMsY0FBTSxDQUFDQyxVQUFVLENBQUMsZUFBZUMsaUJBQWlCO1FBQy9ESCxPQUFPQyxjQUFNLENBQUNHLFdBQVcsQ0FBQyx1QkFBdUJDLEdBQUcsQ0FBQ0YsaUJBQWlCO1FBRXRFSCxPQUFPdEMsc0JBQXNCNEMsb0JBQW9CLENBQUM7UUFDbEROLE9BQU9uQyx1QkFBdUJ3QyxHQUFHLENBQUNFLGdCQUFnQjtJQUNwRDtBQUNGIn0=

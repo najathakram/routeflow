@@ -1,0 +1,104 @@
+5058789142546d620be293d9f2c3f1c8
+"use strict";
+jest.mock("@sentry/react", ()=>({
+        init: (...args)=>sentryInit(...args),
+        setTag: (...args)=>sentrySetTag(...args)
+    }));
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+const _react1 = require("@testing-library/react");
+const _SentryInit = require("./SentryInit");
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+// Release-health tagging (PR 1): SentryInit must pass `release:
+// NEXT_PUBLIC_RELEASE_SHA` to Sentry.init() in the browser, and never crash when
+// that env var (or the DSN) is unset. @sentry/react is dynamically imported
+// inside a useEffect, so the mock below is what the `import("@sentry/react")`
+// resolves to.
+const sentryInit = jest.fn();
+const sentrySetTag = jest.fn();
+describe("SentryInit release tagging (PR 1)", ()=>{
+    const ORIGINAL_ENV = process.env;
+    beforeEach(()=>{
+        process.env = {
+            ...ORIGINAL_ENV
+        };
+        sentryInit.mockClear();
+        sentrySetTag.mockClear();
+        document.cookie = "tenant-slug=; path=/; max-age=0";
+    });
+    afterAll(()=>{
+        process.env = ORIGINAL_ENV;
+    });
+    it("passes release: NEXT_PUBLIC_RELEASE_SHA to Sentry.init when both DSN and sha are set", async ()=>{
+        process.env.NEXT_PUBLIC_SENTRY_DSN = "https://example@o0.ingest.sentry.io/1";
+        process.env.NEXT_PUBLIC_RELEASE_SHA = "abc123deadbeef";
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_SentryInit.SentryInit, {}));
+        await (0, _react1.waitFor)(()=>expect(sentryInit).toHaveBeenCalled());
+        expect(sentryInit).toHaveBeenCalledWith(expect.objectContaining({
+            release: "abc123deadbeef"
+        }));
+    });
+    it("does not crash and initializes with release: undefined when NEXT_PUBLIC_RELEASE_SHA is unset", async ()=>{
+        process.env.NEXT_PUBLIC_SENTRY_DSN = "https://example@o0.ingest.sentry.io/1";
+        delete process.env.NEXT_PUBLIC_RELEASE_SHA;
+        expect(()=>(0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_SentryInit.SentryInit, {}))).not.toThrow();
+        await (0, _react1.waitFor)(()=>expect(sentryInit).toHaveBeenCalled());
+        expect(sentryInit).toHaveBeenCalledWith(expect.objectContaining({
+            release: undefined
+        }));
+    });
+    it("never initializes Sentry at all when NEXT_PUBLIC_SENTRY_DSN is unset (release-sha alone is not enough)", async ()=>{
+        delete process.env.NEXT_PUBLIC_SENTRY_DSN;
+        process.env.NEXT_PUBLIC_RELEASE_SHA = "abc123deadbeef";
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_SentryInit.SentryInit, {}));
+        // No dynamic import happens without a DSN, so give the microtask queue a
+        // turn and assert init was never reached.
+        await new Promise((r)=>setTimeout(r, 0));
+        expect(sentryInit).not.toHaveBeenCalled();
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2NvbXBvbmVudHMvU2VudHJ5SW5pdC50ZXN0LnRzeCJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgKiBhcyBSZWFjdCBmcm9tIFwicmVhY3RcIjtcbmltcG9ydCB7IHJlbmRlciwgd2FpdEZvciB9IGZyb20gXCJAdGVzdGluZy1saWJyYXJ5L3JlYWN0XCI7XG5pbXBvcnQgeyBTZW50cnlJbml0IH0gZnJvbSBcIi4vU2VudHJ5SW5pdFwiO1xuXG4vLyBSZWxlYXNlLWhlYWx0aCB0YWdnaW5nIChQUiAxKTogU2VudHJ5SW5pdCBtdXN0IHBhc3MgYHJlbGVhc2U6XG4vLyBORVhUX1BVQkxJQ19SRUxFQVNFX1NIQWAgdG8gU2VudHJ5LmluaXQoKSBpbiB0aGUgYnJvd3NlciwgYW5kIG5ldmVyIGNyYXNoIHdoZW5cbi8vIHRoYXQgZW52IHZhciAob3IgdGhlIERTTikgaXMgdW5zZXQuIEBzZW50cnkvcmVhY3QgaXMgZHluYW1pY2FsbHkgaW1wb3J0ZWRcbi8vIGluc2lkZSBhIHVzZUVmZmVjdCwgc28gdGhlIG1vY2sgYmVsb3cgaXMgd2hhdCB0aGUgYGltcG9ydChcIkBzZW50cnkvcmVhY3RcIilgXG4vLyByZXNvbHZlcyB0by5cbmNvbnN0IHNlbnRyeUluaXQgPSBqZXN0LmZuKCk7XG5jb25zdCBzZW50cnlTZXRUYWcgPSBqZXN0LmZuKCk7XG5qZXN0Lm1vY2soXCJAc2VudHJ5L3JlYWN0XCIsICgpID0+ICh7XG4gIGluaXQ6ICguLi5hcmdzOiB1bmtub3duW10pID0+IHNlbnRyeUluaXQoLi4uYXJncyksXG4gIHNldFRhZzogKC4uLmFyZ3M6IHVua25vd25bXSkgPT4gc2VudHJ5U2V0VGFnKC4uLmFyZ3MpLFxufSkpO1xuXG5kZXNjcmliZShcIlNlbnRyeUluaXQgcmVsZWFzZSB0YWdnaW5nIChQUiAxKVwiLCAoKSA9PiB7XG4gIGNvbnN0IE9SSUdJTkFMX0VOViA9IHByb2Nlc3MuZW52O1xuXG4gIGJlZm9yZUVhY2goKCkgPT4ge1xuICAgIHByb2Nlc3MuZW52ID0geyAuLi5PUklHSU5BTF9FTlYgfTtcbiAgICBzZW50cnlJbml0Lm1vY2tDbGVhcigpO1xuICAgIHNlbnRyeVNldFRhZy5tb2NrQ2xlYXIoKTtcbiAgICBkb2N1bWVudC5jb29raWUgPSBcInRlbmFudC1zbHVnPTsgcGF0aD0vOyBtYXgtYWdlPTBcIjtcbiAgfSk7XG5cbiAgYWZ0ZXJBbGwoKCkgPT4ge1xuICAgIHByb2Nlc3MuZW52ID0gT1JJR0lOQUxfRU5WO1xuICB9KTtcblxuICBpdChcInBhc3NlcyByZWxlYXNlOiBORVhUX1BVQkxJQ19SRUxFQVNFX1NIQSB0byBTZW50cnkuaW5pdCB3aGVuIGJvdGggRFNOIGFuZCBzaGEgYXJlIHNldFwiLCBhc3luYyAoKSA9PiB7XG4gICAgcHJvY2Vzcy5lbnYuTkVYVF9QVUJMSUNfU0VOVFJZX0RTTiA9IFwiaHR0cHM6Ly9leGFtcGxlQG8wLmluZ2VzdC5zZW50cnkuaW8vMVwiO1xuICAgIHByb2Nlc3MuZW52Lk5FWFRfUFVCTElDX1JFTEVBU0VfU0hBID0gXCJhYmMxMjNkZWFkYmVlZlwiO1xuXG4gICAgcmVuZGVyKDxTZW50cnlJbml0IC8+KTtcblxuICAgIGF3YWl0IHdhaXRGb3IoKCkgPT4gZXhwZWN0KHNlbnRyeUluaXQpLnRvSGF2ZUJlZW5DYWxsZWQoKSk7XG4gICAgZXhwZWN0KHNlbnRyeUluaXQpLnRvSGF2ZUJlZW5DYWxsZWRXaXRoKGV4cGVjdC5vYmplY3RDb250YWluaW5nKHsgcmVsZWFzZTogXCJhYmMxMjNkZWFkYmVlZlwiIH0pKTtcbiAgfSk7XG5cbiAgaXQoXCJkb2VzIG5vdCBjcmFzaCBhbmQgaW5pdGlhbGl6ZXMgd2l0aCByZWxlYXNlOiB1bmRlZmluZWQgd2hlbiBORVhUX1BVQkxJQ19SRUxFQVNFX1NIQSBpcyB1bnNldFwiLCBhc3luYyAoKSA9PiB7XG4gICAgcHJvY2Vzcy5lbnYuTkVYVF9QVUJMSUNfU0VOVFJZX0RTTiA9IFwiaHR0cHM6Ly9leGFtcGxlQG8wLmluZ2VzdC5zZW50cnkuaW8vMVwiO1xuICAgIGRlbGV0ZSBwcm9jZXNzLmVudi5ORVhUX1BVQkxJQ19SRUxFQVNFX1NIQTtcblxuICAgIGV4cGVjdCgoKSA9PiByZW5kZXIoPFNlbnRyeUluaXQgLz4pKS5ub3QudG9UaHJvdygpO1xuXG4gICAgYXdhaXQgd2FpdEZvcigoKSA9PiBleHBlY3Qoc2VudHJ5SW5pdCkudG9IYXZlQmVlbkNhbGxlZCgpKTtcbiAgICBleHBlY3Qoc2VudHJ5SW5pdCkudG9IYXZlQmVlbkNhbGxlZFdpdGgoZXhwZWN0Lm9iamVjdENvbnRhaW5pbmcoeyByZWxlYXNlOiB1bmRlZmluZWQgfSkpO1xuICB9KTtcblxuICBpdChcIm5ldmVyIGluaXRpYWxpemVzIFNlbnRyeSBhdCBhbGwgd2hlbiBORVhUX1BVQkxJQ19TRU5UUllfRFNOIGlzIHVuc2V0IChyZWxlYXNlLXNoYSBhbG9uZSBpcyBub3QgZW5vdWdoKVwiLCBhc3luYyAoKSA9PiB7XG4gICAgZGVsZXRlIHByb2Nlc3MuZW52Lk5FWFRfUFVCTElDX1NFTlRSWV9EU047XG4gICAgcHJvY2Vzcy5lbnYuTkVYVF9QVUJMSUNfUkVMRUFTRV9TSEEgPSBcImFiYzEyM2RlYWRiZWVmXCI7XG5cbiAgICByZW5kZXIoPFNlbnRyeUluaXQgLz4pO1xuXG4gICAgLy8gTm8gZHluYW1pYyBpbXBvcnQgaGFwcGVucyB3aXRob3V0IGEgRFNOLCBzbyBnaXZlIHRoZSBtaWNyb3Rhc2sgcXVldWUgYVxuICAgIC8vIHR1cm4gYW5kIGFzc2VydCBpbml0IHdhcyBuZXZlciByZWFjaGVkLlxuICAgIGF3YWl0IG5ldyBQcm9taXNlKChyKSA9PiBzZXRUaW1lb3V0KHIsIDApKTtcbiAgICBleHBlY3Qoc2VudHJ5SW5pdCkubm90LnRvSGF2ZUJlZW5DYWxsZWQoKTtcbiAgfSk7XG59KTtcbiJdLCJuYW1lcyI6WyJqZXN0IiwibW9jayIsImluaXQiLCJhcmdzIiwic2VudHJ5SW5pdCIsInNldFRhZyIsInNlbnRyeVNldFRhZyIsImZuIiwiZGVzY3JpYmUiLCJPUklHSU5BTF9FTlYiLCJwcm9jZXNzIiwiZW52IiwiYmVmb3JlRWFjaCIsIm1vY2tDbGVhciIsImRvY3VtZW50IiwiY29va2llIiwiYWZ0ZXJBbGwiLCJpdCIsIk5FWFRfUFVCTElDX1NFTlRSWV9EU04iLCJORVhUX1BVQkxJQ19SRUxFQVNFX1NIQSIsInJlbmRlciIsIlNlbnRyeUluaXQiLCJ3YWl0Rm9yIiwiZXhwZWN0IiwidG9IYXZlQmVlbkNhbGxlZCIsInRvSGF2ZUJlZW5DYWxsZWRXaXRoIiwib2JqZWN0Q29udGFpbmluZyIsInJlbGVhc2UiLCJub3QiLCJ0b1Rocm93IiwidW5kZWZpbmVkIiwiUHJvbWlzZSIsInIiLCJzZXRUaW1lb3V0Il0sIm1hcHBpbmdzIjoiO0FBV0FBLEtBQUtDLElBQUksQ0FBQyxpQkFBaUIsSUFBTyxDQUFBO1FBQ2hDQyxNQUFNLENBQUMsR0FBR0MsT0FBb0JDLGNBQWNEO1FBQzVDRSxRQUFRLENBQUMsR0FBR0YsT0FBb0JHLGdCQUFnQkg7SUFDbEQsQ0FBQTs7Ozs7K0RBZHVCO3dCQUNTOzRCQUNMOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7QUFFM0IsZ0VBQWdFO0FBQ2hFLGlGQUFpRjtBQUNqRiw0RUFBNEU7QUFDNUUsOEVBQThFO0FBQzlFLGVBQWU7QUFDZixNQUFNQyxhQUFhSixLQUFLTyxFQUFFO0FBQzFCLE1BQU1ELGVBQWVOLEtBQUtPLEVBQUU7QUFNNUJDLFNBQVMscUNBQXFDO0lBQzVDLE1BQU1DLGVBQWVDLFFBQVFDLEdBQUc7SUFFaENDLFdBQVc7UUFDVEYsUUFBUUMsR0FBRyxHQUFHO1lBQUUsR0FBR0YsWUFBWTtRQUFDO1FBQ2hDTCxXQUFXUyxTQUFTO1FBQ3BCUCxhQUFhTyxTQUFTO1FBQ3RCQyxTQUFTQyxNQUFNLEdBQUc7SUFDcEI7SUFFQUMsU0FBUztRQUNQTixRQUFRQyxHQUFHLEdBQUdGO0lBQ2hCO0lBRUFRLEdBQUcsd0ZBQXdGO1FBQ3pGUCxRQUFRQyxHQUFHLENBQUNPLHNCQUFzQixHQUFHO1FBQ3JDUixRQUFRQyxHQUFHLENBQUNRLHVCQUF1QixHQUFHO1FBRXRDQyxJQUFBQSxjQUFNLGdCQUFDLHFCQUFDQyxzQkFBVTtRQUVsQixNQUFNQyxJQUFBQSxlQUFPLEVBQUMsSUFBTUMsT0FBT25CLFlBQVlvQixnQkFBZ0I7UUFDdkRELE9BQU9uQixZQUFZcUIsb0JBQW9CLENBQUNGLE9BQU9HLGdCQUFnQixDQUFDO1lBQUVDLFNBQVM7UUFBaUI7SUFDOUY7SUFFQVYsR0FBRyxnR0FBZ0c7UUFDakdQLFFBQVFDLEdBQUcsQ0FBQ08sc0JBQXNCLEdBQUc7UUFDckMsT0FBT1IsUUFBUUMsR0FBRyxDQUFDUSx1QkFBdUI7UUFFMUNJLE9BQU8sSUFBTUgsSUFBQUEsY0FBTSxnQkFBQyxxQkFBQ0Msc0JBQVUsUUFBTU8sR0FBRyxDQUFDQyxPQUFPO1FBRWhELE1BQU1QLElBQUFBLGVBQU8sRUFBQyxJQUFNQyxPQUFPbkIsWUFBWW9CLGdCQUFnQjtRQUN2REQsT0FBT25CLFlBQVlxQixvQkFBb0IsQ0FBQ0YsT0FBT0csZ0JBQWdCLENBQUM7WUFBRUMsU0FBU0c7UUFBVTtJQUN2RjtJQUVBYixHQUFHLDBHQUEwRztRQUMzRyxPQUFPUCxRQUFRQyxHQUFHLENBQUNPLHNCQUFzQjtRQUN6Q1IsUUFBUUMsR0FBRyxDQUFDUSx1QkFBdUIsR0FBRztRQUV0Q0MsSUFBQUEsY0FBTSxnQkFBQyxxQkFBQ0Msc0JBQVU7UUFFbEIseUVBQXlFO1FBQ3pFLDBDQUEwQztRQUMxQyxNQUFNLElBQUlVLFFBQVEsQ0FBQ0MsSUFBTUMsV0FBV0QsR0FBRztRQUN2Q1QsT0FBT25CLFlBQVl3QixHQUFHLENBQUNKLGdCQUFnQjtJQUN6QztBQUNGIn0=

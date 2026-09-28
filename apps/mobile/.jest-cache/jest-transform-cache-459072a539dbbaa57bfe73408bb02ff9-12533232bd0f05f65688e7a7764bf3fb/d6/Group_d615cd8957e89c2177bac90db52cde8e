@@ -1,0 +1,12 @@
+d85ff8108ffe654e7a3f462889e2d839
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.Group = Group;
+/**
+ * Empty component used for grouping screen configs.
+ */
+function Group(_) {
+    /* istanbul ignore next */
+    return null;
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0Mzcvbm9kZV9tb2R1bGVzL0ByZWFjdC1uYXZpZ2F0aW9uL2NvcmUvbGliL21vZHVsZS9Hcm91cC5qcyIsIm1hcHBpbmdzIjoiQUFBQSxZQUFZLENBQUM7O0FBS2Isc0JBR0M7QUFORDs7R0FFRztBQUNILFNBQWdCLEtBQUssQ0FBQyxDQUFDO0lBQ3JCLDBCQUEwQjtJQUMxQixPQUFPLElBQUksQ0FBQztBQUNkLENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0Mzcvbm9kZV9tb2R1bGVzL0ByZWFjdC1uYXZpZ2F0aW9uL2NvcmUvbGliL21vZHVsZS9Hcm91cC5qcyJdLCJzb3VyY2VzQ29udGVudCI6WyJcInVzZSBzdHJpY3RcIjtcblxuLyoqXG4gKiBFbXB0eSBjb21wb25lbnQgdXNlZCBmb3IgZ3JvdXBpbmcgc2NyZWVuIGNvbmZpZ3MuXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiBHcm91cChfKSB7XG4gIC8qIGlzdGFuYnVsIGlnbm9yZSBuZXh0ICovXG4gIHJldHVybiBudWxsO1xufVxuLy8jIHNvdXJjZU1hcHBpbmdVUkw9R3JvdXAuanMubWFwIl0sInZlcnNpb24iOjN9

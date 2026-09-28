@@ -1,0 +1,67 @@
+efa2b11e0a18f7d0a4e2690ae108fbc4
+"use strict";
+/**
+ * F12-005 — OAuth deep-link session-fixation guard (pure logic).
+ *
+ * The Google OAuth flow returns tokens to the app via a `routeflow://` deep link.
+ * A custom-scheme deep link can be fired by ANY other app or web page, so tokens
+ * arriving on that link must be proven to belong to a flow THIS device started.
+ *
+ * We bind the flow with a device-generated `state` nonce: generate it before
+ * opening the browser, persist it (SecureStore), pass it through the OAuth flow,
+ * and only accept the callback when the returned `state` matches the stored one.
+ *
+ * This module is intentionally dependency-free and side-effect-free so it can be
+ * unit-tested in plain Node (see apps/mobile/__tests__/oauth-state.test.ts).
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.OAUTH_STATE_KEY = void 0;
+exports.generateOAuthState = generateOAuthState;
+exports.isValidReturnedState = isValidReturnedState;
+/** Storage key for the pending-flow state nonce (SecureStore / localStorage). */
+exports.OAUTH_STATE_KEY = "rf:oauth:pendingState";
+/** Number of random bytes in a state nonce (256 bits). */
+const STATE_BYTES = 32;
+/**
+ * Best-available cryptographic random bytes. Uses the Web Crypto API when the
+ * runtime exposes it (browsers, react-native-web, Node ≥ 18, any RN build with a
+ * crypto polyfill). Falls back to a non-CSPRNG source only when Web Crypto is
+ * absent so the app never crashes — the state stays single-use and short-lived,
+ * so even the fallback meaningfully binds the flow.
+ */
+function defaultRandomBytes(n) {
+    const g = globalThis;
+    const out = new Uint8Array(n);
+    if (g.crypto?.getRandomValues) {
+        g.crypto.getRandomValues(out);
+        return out;
+    }
+    for (let i = 0; i < n; i++)
+        out[i] = Math.floor(Math.random() * 256);
+    return out;
+}
+function toHex(bytes) {
+    let s = "";
+    for (let i = 0; i < bytes.length; i++)
+        s += bytes[i].toString(16).padStart(2, "0");
+    return s;
+}
+/**
+ * Generate an unguessable, URL-safe state nonce. `randomBytes` is injectable for
+ * deterministic tests; production callers omit it and get the default CSPRNG.
+ */
+function generateOAuthState(randomBytes = defaultRandomBytes) {
+    return toHex(randomBytes(STATE_BYTES));
+}
+/**
+ * Constant-shape validation: the returned state is accepted ONLY when a state
+ * was stored for this flow AND the returned value matches it exactly. A missing
+ * stored value (no flow pending — i.e. an unsolicited deep link) or a missing /
+ * mismatched returned value is rejected.
+ */
+function isValidReturnedState(stored, returned) {
+    if (!stored || !returned)
+        return false;
+    return stored === returned;
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL29hdXRoLXN0YXRlLnRzIiwibWFwcGluZ3MiOiI7QUFBQTs7Ozs7Ozs7Ozs7OztHQWFHOzs7QUFzQ0gsZ0RBSUM7QUFRRCxvREFNQztBQXRERCxpRkFBaUY7QUFDcEUsUUFBQSxlQUFlLEdBQUcsdUJBQXVCLENBQUM7QUFFdkQsMERBQTBEO0FBQzFELE1BQU0sV0FBVyxHQUFHLEVBQUUsQ0FBQztBQUV2Qjs7Ozs7O0dBTUc7QUFDSCxTQUFTLGtCQUFrQixDQUFDLENBQVM7SUFDbkMsTUFBTSxDQUFDLEdBQUcsVUFFVCxDQUFDO0lBQ0YsTUFBTSxHQUFHLEdBQUcsSUFBSSxVQUFVLENBQUMsQ0FBQyxDQUFDLENBQUM7SUFDOUIsSUFBSSxDQUFDLENBQUMsTUFBTSxFQUFFLGVBQWUsRUFBRSxDQUFDO1FBQzlCLENBQUMsQ0FBQyxNQUFNLENBQUMsZUFBZSxDQUFDLEdBQUcsQ0FBQyxDQUFDO1FBQzlCLE9BQU8sR0FBRyxDQUFDO0lBQ2IsQ0FBQztJQUNELEtBQUssSUFBSSxDQUFDLEdBQUcsQ0FBQyxFQUFFLENBQUMsR0FBRyxDQUFDLEVBQUUsQ0FBQyxFQUFFO1FBQUUsR0FBRyxDQUFDLENBQUMsQ0FBQyxHQUFHLElBQUksQ0FBQyxLQUFLLENBQUMsSUFBSSxDQUFDLE1BQU0sRUFBRSxHQUFHLEdBQUcsQ0FBQyxDQUFDO0lBQ3JFLE9BQU8sR0FBRyxDQUFDO0FBQ2IsQ0FBQztBQUVELFNBQVMsS0FBSyxDQUFDLEtBQWlCO0lBQzlCLElBQUksQ0FBQyxHQUFHLEVBQUUsQ0FBQztJQUNYLEtBQUssSUFBSSxDQUFDLEdBQUcsQ0FBQyxFQUFFLENBQUMsR0FBRyxLQUFLLENBQUMsTUFBTSxFQUFFLENBQUMsRUFBRTtRQUFFLENBQUMsSUFBSSxLQUFLLENBQUMsQ0FBQyxDQUFDLENBQUMsUUFBUSxDQUFDLEVBQUUsQ0FBQyxDQUFDLFFBQVEsQ0FBQyxDQUFDLEVBQUUsR0FBRyxDQUFDLENBQUM7SUFDbkYsT0FBTyxDQUFDLENBQUM7QUFDWCxDQUFDO0FBRUQ7OztHQUdHO0FBQ0gsU0FBZ0Isa0JBQWtCLENBQ2hDLGNBQXlDLGtCQUFrQjtJQUUzRCxPQUFPLEtBQUssQ0FBQyxXQUFXLENBQUMsV0FBVyxDQUFDLENBQUMsQ0FBQztBQUN6QyxDQUFDO0FBRUQ7Ozs7O0dBS0c7QUFDSCxTQUFnQixvQkFBb0IsQ0FDbEMsTUFBaUMsRUFDakMsUUFBbUM7SUFFbkMsSUFBSSxDQUFDLE1BQU0sSUFBSSxDQUFDLFFBQVE7UUFBRSxPQUFPLEtBQUssQ0FBQztJQUN2QyxPQUFPLE1BQU0sS0FBSyxRQUFRLENBQUM7QUFDN0IsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9hcHBzL21vYmlsZS9saWIvb2F1dGgtc3RhdGUudHMiXSwic291cmNlc0NvbnRlbnQiOlsiLyoqXG4gKiBGMTItMDA1IOKAlCBPQXV0aCBkZWVwLWxpbmsgc2Vzc2lvbi1maXhhdGlvbiBndWFyZCAocHVyZSBsb2dpYykuXG4gKlxuICogVGhlIEdvb2dsZSBPQXV0aCBmbG93IHJldHVybnMgdG9rZW5zIHRvIHRoZSBhcHAgdmlhIGEgYHJvdXRlZmxvdzovL2AgZGVlcCBsaW5rLlxuICogQSBjdXN0b20tc2NoZW1lIGRlZXAgbGluayBjYW4gYmUgZmlyZWQgYnkgQU5ZIG90aGVyIGFwcCBvciB3ZWIgcGFnZSwgc28gdG9rZW5zXG4gKiBhcnJpdmluZyBvbiB0aGF0IGxpbmsgbXVzdCBiZSBwcm92ZW4gdG8gYmVsb25nIHRvIGEgZmxvdyBUSElTIGRldmljZSBzdGFydGVkLlxuICpcbiAqIFdlIGJpbmQgdGhlIGZsb3cgd2l0aCBhIGRldmljZS1nZW5lcmF0ZWQgYHN0YXRlYCBub25jZTogZ2VuZXJhdGUgaXQgYmVmb3JlXG4gKiBvcGVuaW5nIHRoZSBicm93c2VyLCBwZXJzaXN0IGl0IChTZWN1cmVTdG9yZSksIHBhc3MgaXQgdGhyb3VnaCB0aGUgT0F1dGggZmxvdyxcbiAqIGFuZCBvbmx5IGFjY2VwdCB0aGUgY2FsbGJhY2sgd2hlbiB0aGUgcmV0dXJuZWQgYHN0YXRlYCBtYXRjaGVzIHRoZSBzdG9yZWQgb25lLlxuICpcbiAqIFRoaXMgbW9kdWxlIGlzIGludGVudGlvbmFsbHkgZGVwZW5kZW5jeS1mcmVlIGFuZCBzaWRlLWVmZmVjdC1mcmVlIHNvIGl0IGNhbiBiZVxuICogdW5pdC10ZXN0ZWQgaW4gcGxhaW4gTm9kZSAoc2VlIGFwcHMvbW9iaWxlL19fdGVzdHNfXy9vYXV0aC1zdGF0ZS50ZXN0LnRzKS5cbiAqL1xuXG4vKiogU3RvcmFnZSBrZXkgZm9yIHRoZSBwZW5kaW5nLWZsb3cgc3RhdGUgbm9uY2UgKFNlY3VyZVN0b3JlIC8gbG9jYWxTdG9yYWdlKS4gKi9cbmV4cG9ydCBjb25zdCBPQVVUSF9TVEFURV9LRVkgPSBcInJmOm9hdXRoOnBlbmRpbmdTdGF0ZVwiO1xuXG4vKiogTnVtYmVyIG9mIHJhbmRvbSBieXRlcyBpbiBhIHN0YXRlIG5vbmNlICgyNTYgYml0cykuICovXG5jb25zdCBTVEFURV9CWVRFUyA9IDMyO1xuXG4vKipcbiAqIEJlc3QtYXZhaWxhYmxlIGNyeXB0b2dyYXBoaWMgcmFuZG9tIGJ5dGVzLiBVc2VzIHRoZSBXZWIgQ3J5cHRvIEFQSSB3aGVuIHRoZVxuICogcnVudGltZSBleHBvc2VzIGl0IChicm93c2VycywgcmVhY3QtbmF0aXZlLXdlYiwgTm9kZSDiiaUgMTgsIGFueSBSTiBidWlsZCB3aXRoIGFcbiAqIGNyeXB0byBwb2x5ZmlsbCkuIEZhbGxzIGJhY2sgdG8gYSBub24tQ1NQUk5HIHNvdXJjZSBvbmx5IHdoZW4gV2ViIENyeXB0byBpc1xuICogYWJzZW50IHNvIHRoZSBhcHAgbmV2ZXIgY3Jhc2hlcyDigJQgdGhlIHN0YXRlIHN0YXlzIHNpbmdsZS11c2UgYW5kIHNob3J0LWxpdmVkLFxuICogc28gZXZlbiB0aGUgZmFsbGJhY2sgbWVhbmluZ2Z1bGx5IGJpbmRzIHRoZSBmbG93LlxuICovXG5mdW5jdGlvbiBkZWZhdWx0UmFuZG9tQnl0ZXMobjogbnVtYmVyKTogVWludDhBcnJheSB7XG4gIGNvbnN0IGcgPSBnbG9iYWxUaGlzIGFzIHVua25vd24gYXMge1xuICAgIGNyeXB0bz86IHsgZ2V0UmFuZG9tVmFsdWVzPzogKGE6IFVpbnQ4QXJyYXkpID0+IFVpbnQ4QXJyYXkgfTtcbiAgfTtcbiAgY29uc3Qgb3V0ID0gbmV3IFVpbnQ4QXJyYXkobik7XG4gIGlmIChnLmNyeXB0bz8uZ2V0UmFuZG9tVmFsdWVzKSB7XG4gICAgZy5jcnlwdG8uZ2V0UmFuZG9tVmFsdWVzKG91dCk7XG4gICAgcmV0dXJuIG91dDtcbiAgfVxuICBmb3IgKGxldCBpID0gMDsgaSA8IG47IGkrKykgb3V0W2ldID0gTWF0aC5mbG9vcihNYXRoLnJhbmRvbSgpICogMjU2KTtcbiAgcmV0dXJuIG91dDtcbn1cblxuZnVuY3Rpb24gdG9IZXgoYnl0ZXM6IFVpbnQ4QXJyYXkpOiBzdHJpbmcge1xuICBsZXQgcyA9IFwiXCI7XG4gIGZvciAobGV0IGkgPSAwOyBpIDwgYnl0ZXMubGVuZ3RoOyBpKyspIHMgKz0gYnl0ZXNbaV0udG9TdHJpbmcoMTYpLnBhZFN0YXJ0KDIsIFwiMFwiKTtcbiAgcmV0dXJuIHM7XG59XG5cbi8qKlxuICogR2VuZXJhdGUgYW4gdW5ndWVzc2FibGUsIFVSTC1zYWZlIHN0YXRlIG5vbmNlLiBgcmFuZG9tQnl0ZXNgIGlzIGluamVjdGFibGUgZm9yXG4gKiBkZXRlcm1pbmlzdGljIHRlc3RzOyBwcm9kdWN0aW9uIGNhbGxlcnMgb21pdCBpdCBhbmQgZ2V0IHRoZSBkZWZhdWx0IENTUFJORy5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIGdlbmVyYXRlT0F1dGhTdGF0ZShcbiAgcmFuZG9tQnl0ZXM6IChuOiBudW1iZXIpID0+IFVpbnQ4QXJyYXkgPSBkZWZhdWx0UmFuZG9tQnl0ZXMsXG4pOiBzdHJpbmcge1xuICByZXR1cm4gdG9IZXgocmFuZG9tQnl0ZXMoU1RBVEVfQllURVMpKTtcbn1cblxuLyoqXG4gKiBDb25zdGFudC1zaGFwZSB2YWxpZGF0aW9uOiB0aGUgcmV0dXJuZWQgc3RhdGUgaXMgYWNjZXB0ZWQgT05MWSB3aGVuIGEgc3RhdGVcbiAqIHdhcyBzdG9yZWQgZm9yIHRoaXMgZmxvdyBBTkQgdGhlIHJldHVybmVkIHZhbHVlIG1hdGNoZXMgaXQgZXhhY3RseS4gQSBtaXNzaW5nXG4gKiBzdG9yZWQgdmFsdWUgKG5vIGZsb3cgcGVuZGluZyDigJQgaS5lLiBhbiB1bnNvbGljaXRlZCBkZWVwIGxpbmspIG9yIGEgbWlzc2luZyAvXG4gKiBtaXNtYXRjaGVkIHJldHVybmVkIHZhbHVlIGlzIHJlamVjdGVkLlxuICovXG5leHBvcnQgZnVuY3Rpb24gaXNWYWxpZFJldHVybmVkU3RhdGUoXG4gIHN0b3JlZDogc3RyaW5nIHwgbnVsbCB8IHVuZGVmaW5lZCxcbiAgcmV0dXJuZWQ6IHN0cmluZyB8IG51bGwgfCB1bmRlZmluZWQsXG4pOiBib29sZWFuIHtcbiAgaWYgKCFzdG9yZWQgfHwgIXJldHVybmVkKSByZXR1cm4gZmFsc2U7XG4gIHJldHVybiBzdG9yZWQgPT09IHJldHVybmVkO1xufVxuIl0sInZlcnNpb24iOjN9

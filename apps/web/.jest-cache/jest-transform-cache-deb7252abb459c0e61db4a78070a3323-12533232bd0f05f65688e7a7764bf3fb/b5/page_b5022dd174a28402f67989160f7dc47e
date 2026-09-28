@@ -1,0 +1,252 @@
+34b1157cbfbb5f55dbf31df1329be99e
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, {
+        enumerable: true,
+        get: Object.getOwnPropertyDescriptor(all, name).get
+    });
+}
+_export(exports, {
+    get default () {
+        return ProductPage;
+    },
+    get metadata () {
+        return metadata;
+    }
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _link = /*#__PURE__*/ _interop_require_default(require("next/link"));
+const _lucidereact = require("lucide-react");
+const _site = require("../lib/site");
+const _marketing = require("../components/marketing");
+const _deliverydemo = require("../components/delivery-demo");
+const _featurecatalog = require("../components/feature-catalog");
+const _aispotlight = require("../components/ai-spotlight");
+const _brand = require("../../../components/brand");
+function _interop_require_default(obj) {
+    return obj && obj.__esModule ? obj : {
+        default: obj
+    };
+}
+// Copy verbatim from the redesign's app/[page]/page.tsx `Product()` (M1 §2a).
+//
+// Layout ruling (owner, 2026-09-16, PR-3): add the reference study's
+// "wholesale details + photo" split-panel (its `platform()` — WHOLESALE
+// DETAILS eyebrow, customer pricing/standing orders/supplier bills/returns/
+// credit notes/commissions/imports copy, regulated-goods note, a photo).
+// DifferenceSection/BuyingConfidence/FAQ dropped as duplicative — Home
+// carries the same DifferenceSection/BuyingConfidence content (merged) and
+// the same general FAQ, and the reference's own platform() never had a FAQ
+// section at all. connection-diagram is unique to this page (no equivalent
+// anywhere else in the port) and is kept.
+//
+// Photo: reuses public/marketing/warehouse.webp — no new binary. The
+// reference's own photo here (delivery-editorial.png) isn't a production
+// asset; warehouse.webp is the closest existing theme match and is already
+// established as "wholesale operations" imagery via the company page.
+const route = _site.routes.find((r)=>r.slug === "product");
+const metadata = {
+    title: route.title,
+    description: route.description,
+    alternates: {
+        canonical: "/product"
+    },
+    openGraph: {
+        title: route.title,
+        description: route.description,
+        url: "/product",
+        siteName: _site.site.name,
+        type: "website"
+    }
+};
+const CONNECTION_NODES = [
+    [
+        _lucidereact.Users,
+        "Office"
+    ],
+    [
+        _lucidereact.Warehouse,
+        "Warehouse"
+    ],
+    [
+        _lucidereact.Route,
+        "Drivers"
+    ],
+    [
+        _lucidereact.Store,
+        "Retailers"
+    ]
+];
+function ProductPage() {
+    return /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+        className: "glass-page",
+        children: [
+            /*#__PURE__*/ (0, _jsxruntime.jsxs)("section", {
+                className: "page-hero centered wrap",
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)(_marketing.Eyebrow, {
+                        children: "CONNECTED OPERATIONS. AI INVOICE SCANNING."
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("h1", {
+                        children: [
+                            "Orders. Deliveries. Accounts. ",
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("br", {}),
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("em", {
+                                children: "Finally, connected."
+                            })
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                        className: "lead",
+                        children: "Inventory, orders, routes, invoices, accounts, and reporting. Bring the work into one platform, with a retailer portal, AI-assisted purchase-invoice scanning for inventory and costing, and dedicated tools for regulated goods."
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)(_link.default, {
+                        href: "/book-a-demo",
+                        className: "button",
+                        children: [
+                            "Book a workflow demo ",
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.ArrowUpRight, {
+                                size: 18
+                            })
+                        ]
+                    })
+                ]
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("section", {
+                className: "platform-live-story wrap",
+                children: /*#__PURE__*/ (0, _jsxruntime.jsx)(_deliverydemo.DeliveryDemo, {})
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)(_featurecatalog.CapabilityStrip, {}),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)(_aispotlight.AISpotlight, {}),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("section", {
+                className: "section surface",
+                children: /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                    className: "wrap",
+                    children: [
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                            className: "section-heading",
+                            children: [
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)(_marketing.Eyebrow, {
+                                    children: "THE FEATURES BEHIND THE FLOW"
+                                }),
+                                /*#__PURE__*/ (0, _jsxruntime.jsxs)("h2", {
+                                    children: [
+                                        "Every part of the operation.",
+                                        /*#__PURE__*/ (0, _jsxruntime.jsx)("br", {}),
+                                        "More of it connected."
+                                    ]
+                                })
+                            ]
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)(_featurecatalog.FeatureCatalog, {})
+                    ]
+                })
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsxs)("section", {
+                className: "section wrap connected-section",
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)(_marketing.Eyebrow, {
+                                children: "KEEP YOUR TEAM CONNECTED"
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("h2", {
+                                children: [
+                                    "Shared context.",
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("br", {}),
+                                    "Clearer handoffs."
+                                ]
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                className: "lead",
+                                children: "Your office, warehouse, and drivers work on different parts of the day. Help them work from the same order and customer details."
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)(_marketing.CheckList, {
+                                items: [
+                                    "Find the record behind a customer question",
+                                    "Follow an order from preparation through delivery"
+                                ]
+                            })
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                        className: "connection-diagram",
+                        "aria-label": "Distributor workspace connects office, warehouse, drivers, and retailers",
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                className: "connection-center",
+                                children: [
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)(_brand.BrandSignature, {}),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                        children: "Your distribution workspace"
+                                    })
+                                ]
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("div", {
+                                className: "connection-nodes",
+                                children: CONNECTION_NODES.map(([Icon, label])=>/*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)(Icon, {
+                                                size: 22
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                children: label
+                                            })
+                                        ]
+                                    }, label))
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                children: "Orders \xb7 Delivery details \xb7 Customer records"
+                            })
+                        ]
+                    })
+                ]
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("section", {
+                className: "section wrap",
+                children: /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                    className: "split-panel",
+                    children: [
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                            children: [
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)(_marketing.Eyebrow, {
+                                    children: "WHOLESALE DETAILS"
+                                }),
+                                /*#__PURE__*/ (0, _jsxruntime.jsxs)("h2", {
+                                    children: [
+                                        "Handle repeat orders",
+                                        /*#__PURE__*/ (0, _jsxruntime.jsx)("br", {}),
+                                        "and changes after a sale."
+                                    ]
+                                }),
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                    children: "Discuss customer-specific pricing, standing orders, supplier bills, returns, credit notes, sales-agent commissions, and data imports."
+                                }),
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                    children: "For regulated goods, review the inventory and reporting requirements for your operation. Reporting tools do not guarantee regulatory compliance."
+                                })
+                            ]
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("figure", {
+                            className: "split-panel-photo",
+                            children: /*#__PURE__*/ (0, _jsxruntime.jsx)("img", {
+                                src: "/marketing/warehouse.webp",
+                                alt: "Two warehouse workers carrying stock through an aisle.",
+                                width: 1400,
+                                height: 933,
+                                loading: "lazy",
+                                decoding: "async"
+                            })
+                        })
+                    ]
+                })
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)(_marketing.CTA, {})
+        ]
+    });
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8obWFya2V0aW5nKS9wcm9kdWN0L3BhZ2UudHN4Il0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCB0eXBlIHsgTWV0YWRhdGEgfSBmcm9tIFwibmV4dFwiO1xuaW1wb3J0IExpbmsgZnJvbSBcIm5leHQvbGlua1wiO1xuaW1wb3J0IHsgQXJyb3dVcFJpZ2h0LCBSb3V0ZSwgVXNlcnMsIFdhcmVob3VzZSwgU3RvcmUgfSBmcm9tIFwibHVjaWRlLXJlYWN0XCI7XG5pbXBvcnQgeyByb3V0ZXMsIHNpdGUgfSBmcm9tIFwiLi4vbGliL3NpdGVcIjtcbmltcG9ydCB7IENUQSwgRXllYnJvdywgQ2hlY2tMaXN0IH0gZnJvbSBcIi4uL2NvbXBvbmVudHMvbWFya2V0aW5nXCI7XG5pbXBvcnQgeyBEZWxpdmVyeURlbW8gfSBmcm9tIFwiLi4vY29tcG9uZW50cy9kZWxpdmVyeS1kZW1vXCI7XG5pbXBvcnQgeyBGZWF0dXJlQ2F0YWxvZywgQ2FwYWJpbGl0eVN0cmlwIH0gZnJvbSBcIi4uL2NvbXBvbmVudHMvZmVhdHVyZS1jYXRhbG9nXCI7XG5pbXBvcnQgeyBBSVNwb3RsaWdodCB9IGZyb20gXCIuLi9jb21wb25lbnRzL2FpLXNwb3RsaWdodFwiO1xuaW1wb3J0IHsgQnJhbmRTaWduYXR1cmUgfSBmcm9tIFwiQC9jb21wb25lbnRzL2JyYW5kXCI7XG5cbi8vIENvcHkgdmVyYmF0aW0gZnJvbSB0aGUgcmVkZXNpZ24ncyBhcHAvW3BhZ2VdL3BhZ2UudHN4IGBQcm9kdWN0KClgIChNMSDCpzJhKS5cbi8vXG4vLyBMYXlvdXQgcnVsaW5nIChvd25lciwgMjAyNi0wOS0xNiwgUFItMyk6IGFkZCB0aGUgcmVmZXJlbmNlIHN0dWR5J3Ncbi8vIFwid2hvbGVzYWxlIGRldGFpbHMgKyBwaG90b1wiIHNwbGl0LXBhbmVsIChpdHMgYHBsYXRmb3JtKClgIOKAlCBXSE9MRVNBTEVcbi8vIERFVEFJTFMgZXllYnJvdywgY3VzdG9tZXIgcHJpY2luZy9zdGFuZGluZyBvcmRlcnMvc3VwcGxpZXIgYmlsbHMvcmV0dXJucy9cbi8vIGNyZWRpdCBub3Rlcy9jb21taXNzaW9ucy9pbXBvcnRzIGNvcHksIHJlZ3VsYXRlZC1nb29kcyBub3RlLCBhIHBob3RvKS5cbi8vIERpZmZlcmVuY2VTZWN0aW9uL0J1eWluZ0NvbmZpZGVuY2UvRkFRIGRyb3BwZWQgYXMgZHVwbGljYXRpdmUg4oCUIEhvbWVcbi8vIGNhcnJpZXMgdGhlIHNhbWUgRGlmZmVyZW5jZVNlY3Rpb24vQnV5aW5nQ29uZmlkZW5jZSBjb250ZW50IChtZXJnZWQpIGFuZFxuLy8gdGhlIHNhbWUgZ2VuZXJhbCBGQVEsIGFuZCB0aGUgcmVmZXJlbmNlJ3Mgb3duIHBsYXRmb3JtKCkgbmV2ZXIgaGFkIGEgRkFRXG4vLyBzZWN0aW9uIGF0IGFsbC4gY29ubmVjdGlvbi1kaWFncmFtIGlzIHVuaXF1ZSB0byB0aGlzIHBhZ2UgKG5vIGVxdWl2YWxlbnRcbi8vIGFueXdoZXJlIGVsc2UgaW4gdGhlIHBvcnQpIGFuZCBpcyBrZXB0LlxuLy9cbi8vIFBob3RvOiByZXVzZXMgcHVibGljL21hcmtldGluZy93YXJlaG91c2Uud2VicCDigJQgbm8gbmV3IGJpbmFyeS4gVGhlXG4vLyByZWZlcmVuY2UncyBvd24gcGhvdG8gaGVyZSAoZGVsaXZlcnktZWRpdG9yaWFsLnBuZykgaXNuJ3QgYSBwcm9kdWN0aW9uXG4vLyBhc3NldDsgd2FyZWhvdXNlLndlYnAgaXMgdGhlIGNsb3Nlc3QgZXhpc3RpbmcgdGhlbWUgbWF0Y2ggYW5kIGlzIGFscmVhZHlcbi8vIGVzdGFibGlzaGVkIGFzIFwid2hvbGVzYWxlIG9wZXJhdGlvbnNcIiBpbWFnZXJ5IHZpYSB0aGUgY29tcGFueSBwYWdlLlxuXG5jb25zdCByb3V0ZSA9IHJvdXRlcy5maW5kKChyKSA9PiByLnNsdWcgPT09IFwicHJvZHVjdFwiKSE7XG5cbmV4cG9ydCBjb25zdCBtZXRhZGF0YTogTWV0YWRhdGEgPSB7XG4gIHRpdGxlOiByb3V0ZS50aXRsZSxcbiAgZGVzY3JpcHRpb246IHJvdXRlLmRlc2NyaXB0aW9uLFxuICBhbHRlcm5hdGVzOiB7IGNhbm9uaWNhbDogXCIvcHJvZHVjdFwiIH0sXG4gIG9wZW5HcmFwaDoge1xuICAgIHRpdGxlOiByb3V0ZS50aXRsZSxcbiAgICBkZXNjcmlwdGlvbjogcm91dGUuZGVzY3JpcHRpb24sXG4gICAgdXJsOiBcIi9wcm9kdWN0XCIsXG4gICAgc2l0ZU5hbWU6IHNpdGUubmFtZSxcbiAgICB0eXBlOiBcIndlYnNpdGVcIixcbiAgfSxcbn07XG5cbmNvbnN0IENPTk5FQ1RJT05fTk9ERVM6IEFycmF5PFt0eXBlb2YgVXNlcnMsIHN0cmluZ10+ID0gW1xuICBbVXNlcnMsIFwiT2ZmaWNlXCJdLFxuICBbV2FyZWhvdXNlLCBcIldhcmVob3VzZVwiXSxcbiAgW1JvdXRlLCBcIkRyaXZlcnNcIl0sXG4gIFtTdG9yZSwgXCJSZXRhaWxlcnNcIl0sXG5dO1xuXG5leHBvcnQgZGVmYXVsdCBmdW5jdGlvbiBQcm9kdWN0UGFnZSgpIHtcbiAgcmV0dXJuIChcbiAgICA8ZGl2IGNsYXNzTmFtZT1cImdsYXNzLXBhZ2VcIj5cbiAgICAgIDxzZWN0aW9uIGNsYXNzTmFtZT1cInBhZ2UtaGVybyBjZW50ZXJlZCB3cmFwXCI+XG4gICAgICAgIDxFeWVicm93PkNPTk5FQ1RFRCBPUEVSQVRJT05TLiBBSSBJTlZPSUNFIFNDQU5OSU5HLjwvRXllYnJvdz5cbiAgICAgICAgPGgxPlxuICAgICAgICAgIE9yZGVycy4gRGVsaXZlcmllcy4gQWNjb3VudHMuIDxiciAvPlxuICAgICAgICAgIDxlbT5GaW5hbGx5LCBjb25uZWN0ZWQuPC9lbT5cbiAgICAgICAgPC9oMT5cbiAgICAgICAgPHAgY2xhc3NOYW1lPVwibGVhZFwiPlxuICAgICAgICAgIEludmVudG9yeSwgb3JkZXJzLCByb3V0ZXMsIGludm9pY2VzLCBhY2NvdW50cywgYW5kIHJlcG9ydGluZy4gQnJpbmcgdGhlIHdvcmsgaW50byBvbmVcbiAgICAgICAgICBwbGF0Zm9ybSwgd2l0aCBhIHJldGFpbGVyIHBvcnRhbCwgQUktYXNzaXN0ZWQgcHVyY2hhc2UtaW52b2ljZSBzY2FubmluZyBmb3IgaW52ZW50b3J5IGFuZFxuICAgICAgICAgIGNvc3RpbmcsIGFuZCBkZWRpY2F0ZWQgdG9vbHMgZm9yIHJlZ3VsYXRlZCBnb29kcy5cbiAgICAgICAgPC9wPlxuICAgICAgICA8TGluayBocmVmPVwiL2Jvb2stYS1kZW1vXCIgY2xhc3NOYW1lPVwiYnV0dG9uXCI+XG4gICAgICAgICAgQm9vayBhIHdvcmtmbG93IGRlbW8gPEFycm93VXBSaWdodCBzaXplPXsxOH0gLz5cbiAgICAgICAgPC9MaW5rPlxuICAgICAgPC9zZWN0aW9uPlxuICAgICAgPHNlY3Rpb24gY2xhc3NOYW1lPVwicGxhdGZvcm0tbGl2ZS1zdG9yeSB3cmFwXCI+XG4gICAgICAgIDxEZWxpdmVyeURlbW8gLz5cbiAgICAgIDwvc2VjdGlvbj5cbiAgICAgIDxDYXBhYmlsaXR5U3RyaXAgLz5cbiAgICAgIDxBSVNwb3RsaWdodCAvPlxuICAgICAgPHNlY3Rpb24gY2xhc3NOYW1lPVwic2VjdGlvbiBzdXJmYWNlXCI+XG4gICAgICAgIDxkaXYgY2xhc3NOYW1lPVwid3JhcFwiPlxuICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwic2VjdGlvbi1oZWFkaW5nXCI+XG4gICAgICAgICAgICA8RXllYnJvdz5USEUgRkVBVFVSRVMgQkVISU5EIFRIRSBGTE9XPC9FeWVicm93PlxuICAgICAgICAgICAgPGgyPlxuICAgICAgICAgICAgICBFdmVyeSBwYXJ0IG9mIHRoZSBvcGVyYXRpb24uXG4gICAgICAgICAgICAgIDxiciAvPlxuICAgICAgICAgICAgICBNb3JlIG9mIGl0IGNvbm5lY3RlZC5cbiAgICAgICAgICAgIDwvaDI+XG4gICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgPEZlYXR1cmVDYXRhbG9nIC8+XG4gICAgICAgIDwvZGl2PlxuICAgICAgPC9zZWN0aW9uPlxuICAgICAgPHNlY3Rpb24gY2xhc3NOYW1lPVwic2VjdGlvbiB3cmFwIGNvbm5lY3RlZC1zZWN0aW9uXCI+XG4gICAgICAgIDxkaXY+XG4gICAgICAgICAgPEV5ZWJyb3c+S0VFUCBZT1VSIFRFQU0gQ09OTkVDVEVEPC9FeWVicm93PlxuICAgICAgICAgIDxoMj5cbiAgICAgICAgICAgIFNoYXJlZCBjb250ZXh0LlxuICAgICAgICAgICAgPGJyIC8+XG4gICAgICAgICAgICBDbGVhcmVyIGhhbmRvZmZzLlxuICAgICAgICAgIDwvaDI+XG4gICAgICAgICAgPHAgY2xhc3NOYW1lPVwibGVhZFwiPlxuICAgICAgICAgICAgWW91ciBvZmZpY2UsIHdhcmVob3VzZSwgYW5kIGRyaXZlcnMgd29yayBvbiBkaWZmZXJlbnQgcGFydHMgb2YgdGhlIGRheS4gSGVscCB0aGVtIHdvcmtcbiAgICAgICAgICAgIGZyb20gdGhlIHNhbWUgb3JkZXIgYW5kIGN1c3RvbWVyIGRldGFpbHMuXG4gICAgICAgICAgPC9wPlxuICAgICAgICAgIDxDaGVja0xpc3RcbiAgICAgICAgICAgIGl0ZW1zPXtbXG4gICAgICAgICAgICAgIFwiRmluZCB0aGUgcmVjb3JkIGJlaGluZCBhIGN1c3RvbWVyIHF1ZXN0aW9uXCIsXG4gICAgICAgICAgICAgIFwiRm9sbG93IGFuIG9yZGVyIGZyb20gcHJlcGFyYXRpb24gdGhyb3VnaCBkZWxpdmVyeVwiLFxuICAgICAgICAgICAgXX1cbiAgICAgICAgICAvPlxuICAgICAgICA8L2Rpdj5cbiAgICAgICAgPGRpdlxuICAgICAgICAgIGNsYXNzTmFtZT1cImNvbm5lY3Rpb24tZGlhZ3JhbVwiXG4gICAgICAgICAgYXJpYS1sYWJlbD1cIkRpc3RyaWJ1dG9yIHdvcmtzcGFjZSBjb25uZWN0cyBvZmZpY2UsIHdhcmVob3VzZSwgZHJpdmVycywgYW5kIHJldGFpbGVyc1wiXG4gICAgICAgID5cbiAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cImNvbm5lY3Rpb24tY2VudGVyXCI+XG4gICAgICAgICAgICA8QnJhbmRTaWduYXR1cmUgLz5cbiAgICAgICAgICAgIDxzcGFuPllvdXIgZGlzdHJpYnV0aW9uIHdvcmtzcGFjZTwvc3Bhbj5cbiAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cImNvbm5lY3Rpb24tbm9kZXNcIj5cbiAgICAgICAgICAgIHtDT05ORUNUSU9OX05PREVTLm1hcCgoW0ljb24sIGxhYmVsXSkgPT4gKFxuICAgICAgICAgICAgICA8ZGl2IGtleT17bGFiZWx9PlxuICAgICAgICAgICAgICAgIDxJY29uIHNpemU9ezIyfSAvPlxuICAgICAgICAgICAgICAgIDxzcGFuPntsYWJlbH08L3NwYW4+XG4gICAgICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgICAgKSl9XG4gICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgPHA+T3JkZXJzIMK3IERlbGl2ZXJ5IGRldGFpbHMgwrcgQ3VzdG9tZXIgcmVjb3JkczwvcD5cbiAgICAgICAgPC9kaXY+XG4gICAgICA8L3NlY3Rpb24+XG4gICAgICA8c2VjdGlvbiBjbGFzc05hbWU9XCJzZWN0aW9uIHdyYXBcIj5cbiAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJzcGxpdC1wYW5lbFwiPlxuICAgICAgICAgIDxkaXY+XG4gICAgICAgICAgICA8RXllYnJvdz5XSE9MRVNBTEUgREVUQUlMUzwvRXllYnJvdz5cbiAgICAgICAgICAgIDxoMj5cbiAgICAgICAgICAgICAgSGFuZGxlIHJlcGVhdCBvcmRlcnNcbiAgICAgICAgICAgICAgPGJyIC8+XG4gICAgICAgICAgICAgIGFuZCBjaGFuZ2VzIGFmdGVyIGEgc2FsZS5cbiAgICAgICAgICAgIDwvaDI+XG4gICAgICAgICAgICA8cD5cbiAgICAgICAgICAgICAgRGlzY3VzcyBjdXN0b21lci1zcGVjaWZpYyBwcmljaW5nLCBzdGFuZGluZyBvcmRlcnMsIHN1cHBsaWVyIGJpbGxzLCByZXR1cm5zLCBjcmVkaXRcbiAgICAgICAgICAgICAgbm90ZXMsIHNhbGVzLWFnZW50IGNvbW1pc3Npb25zLCBhbmQgZGF0YSBpbXBvcnRzLlxuICAgICAgICAgICAgPC9wPlxuICAgICAgICAgICAgPHA+XG4gICAgICAgICAgICAgIEZvciByZWd1bGF0ZWQgZ29vZHMsIHJldmlldyB0aGUgaW52ZW50b3J5IGFuZCByZXBvcnRpbmcgcmVxdWlyZW1lbnRzIGZvciB5b3VyXG4gICAgICAgICAgICAgIG9wZXJhdGlvbi4gUmVwb3J0aW5nIHRvb2xzIGRvIG5vdCBndWFyYW50ZWUgcmVndWxhdG9yeSBjb21wbGlhbmNlLlxuICAgICAgICAgICAgPC9wPlxuICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgIDxmaWd1cmUgY2xhc3NOYW1lPVwic3BsaXQtcGFuZWwtcGhvdG9cIj5cbiAgICAgICAgICAgIHsvKiBQbGFpbiA8aW1nPiwgbm90IG5leHQvaW1hZ2UgKHJ1bGluZyBCMSk7IGJlbG93IHRoZSBmb2xkLCBzbyBsYXp5LiAqL31cbiAgICAgICAgICAgIHsvKiBlc2xpbnQtZGlzYWJsZS1uZXh0LWxpbmUgQG5leHQvbmV4dC9uby1pbWctZWxlbWVudCAtLSBzZWUgYWJvdmUgKi99XG4gICAgICAgICAgICA8aW1nXG4gICAgICAgICAgICAgIHNyYz1cIi9tYXJrZXRpbmcvd2FyZWhvdXNlLndlYnBcIlxuICAgICAgICAgICAgICBhbHQ9XCJUd28gd2FyZWhvdXNlIHdvcmtlcnMgY2Fycnlpbmcgc3RvY2sgdGhyb3VnaCBhbiBhaXNsZS5cIlxuICAgICAgICAgICAgICB3aWR0aD17MTQwMH1cbiAgICAgICAgICAgICAgaGVpZ2h0PXs5MzN9XG4gICAgICAgICAgICAgIGxvYWRpbmc9XCJsYXp5XCJcbiAgICAgICAgICAgICAgZGVjb2Rpbmc9XCJhc3luY1wiXG4gICAgICAgICAgICAvPlxuICAgICAgICAgIDwvZmlndXJlPlxuICAgICAgICA8L2Rpdj5cbiAgICAgIDwvc2VjdGlvbj5cbiAgICAgIDxDVEEgLz5cbiAgICA8L2Rpdj5cbiAgKTtcbn1cbiJdLCJuYW1lcyI6WyJQcm9kdWN0UGFnZSIsIm1ldGFkYXRhIiwicm91dGUiLCJyb3V0ZXMiLCJmaW5kIiwiciIsInNsdWciLCJ0aXRsZSIsImRlc2NyaXB0aW9uIiwiYWx0ZXJuYXRlcyIsImNhbm9uaWNhbCIsIm9wZW5HcmFwaCIsInVybCIsInNpdGVOYW1lIiwic2l0ZSIsIm5hbWUiLCJ0eXBlIiwiQ09OTkVDVElPTl9OT0RFUyIsIlVzZXJzIiwiV2FyZWhvdXNlIiwiUm91dGUiLCJTdG9yZSIsImRpdiIsImNsYXNzTmFtZSIsInNlY3Rpb24iLCJFeWVicm93IiwiaDEiLCJiciIsImVtIiwicCIsIkxpbmsiLCJocmVmIiwiQXJyb3dVcFJpZ2h0Iiwic2l6ZSIsIkRlbGl2ZXJ5RGVtbyIsIkNhcGFiaWxpdHlTdHJpcCIsIkFJU3BvdGxpZ2h0IiwiaDIiLCJGZWF0dXJlQ2F0YWxvZyIsIkNoZWNrTGlzdCIsIml0ZW1zIiwiYXJpYS1sYWJlbCIsIkJyYW5kU2lnbmF0dXJlIiwic3BhbiIsIm1hcCIsIkljb24iLCJsYWJlbCIsImZpZ3VyZSIsImltZyIsInNyYyIsImFsdCIsIndpZHRoIiwiaGVpZ2h0IiwibG9hZGluZyIsImRlY29kaW5nIiwiQ1RBIl0sIm1hcHBpbmdzIjoiOzs7Ozs7Ozs7OztRQWlEQTtlQUF3QkE7O1FBcEJYQztlQUFBQTs7Ozs2REE1Qkk7NkJBQzRDO3NCQUNoQzsyQkFDVzs4QkFDWDtnQ0FDbUI7NkJBQ3BCO3VCQUNHOzs7Ozs7QUFFL0IsOEVBQThFO0FBQzlFLEVBQUU7QUFDRixxRUFBcUU7QUFDckUsd0VBQXdFO0FBQ3hFLDRFQUE0RTtBQUM1RSx5RUFBeUU7QUFDekUsdUVBQXVFO0FBQ3ZFLDJFQUEyRTtBQUMzRSwyRUFBMkU7QUFDM0UsMkVBQTJFO0FBQzNFLDBDQUEwQztBQUMxQyxFQUFFO0FBQ0YscUVBQXFFO0FBQ3JFLHlFQUF5RTtBQUN6RSwyRUFBMkU7QUFDM0Usc0VBQXNFO0FBRXRFLE1BQU1DLFFBQVFDLFlBQU0sQ0FBQ0MsSUFBSSxDQUFDLENBQUNDLElBQU1BLEVBQUVDLElBQUksS0FBSztBQUVyQyxNQUFNTCxXQUFx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

@@ -1,0 +1,34 @@
+3413d78c533c032fd678fca26202f498
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _fs = /*#__PURE__*/ _interop_require_default(require("fs"));
+const _path = /*#__PURE__*/ _interop_require_default(require("path"));
+function _interop_require_default(obj) {
+    return obj && obj.__esModule ? obj : {
+        default: obj
+    };
+}
+/**
+ * B744 wiring (vendor-bills family). The bill scan handler re-arms its scan input after an
+ * AWAITED lookup — on the add path and on the item-not-found path. Both re-arms must route through
+ * the shared `scheduleScannerRefocus`, which never takes focus from a text-entry field (a line's
+ * qty / cost / description, the notes textarea). The behavior itself is unit-tested in
+ * lib/refocus-scanner.test.ts; this page has no render harness (a full one is a follow-up), so
+ * this pins the WIRING: the helper is used, and no bare unconditional re-arm survives.
+ */ const src = _fs.default.readFileSync(_path.default.join(__dirname, "page.tsx"), "utf8");
+const BARE_REARM = /setTimeout\(\s*\(\)\s*=>\s*\w+\.current\?\.(focus|select)\(\)/g;
+describe("B744 — vendor-bills scanner re-arm wiring (REG-B744)", ()=>{
+    it("imports the shared guarded re-arm", ()=>{
+        expect(src).toMatch(/import\s*\{[^}]*\bscheduleScannerRefocus\b[^}]*\}\s*from\s*"@\/lib\/refocus-scanner"/);
+    });
+    it("leaves no bare, unconditional setTimeout re-arm of a ref", ()=>{
+        expect(src.match(BARE_REARM) ?? []).toEqual([]);
+    });
+    it("routes both scan-handler re-arms (not-found and after-add) through the helper at 50 ms", ()=>{
+        expect(src.match(/scheduleScannerRefocus\(\s*scanInputRef\s*,\s*50\s*\)/g) ?? []).toHaveLength(2);
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS92ZW5kb3ItYmlsbHMvc2Nhbm5lci1yZWZvY3VzLXdpcmluZy1iNzQ0LnRlc3QudHMiXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IGZzIGZyb20gXCJmc1wiO1xuaW1wb3J0IHBhdGggZnJvbSBcInBhdGhcIjtcblxuLyoqXG4gKiBCNzQ0IHdpcmluZyAodmVuZG9yLWJpbGxzIGZhbWlseSkuIFRoZSBiaWxsIHNjYW4gaGFuZGxlciByZS1hcm1zIGl0cyBzY2FuIGlucHV0IGFmdGVyIGFuXG4gKiBBV0FJVEVEIGxvb2t1cCDigJQgb24gdGhlIGFkZCBwYXRoIGFuZCBvbiB0aGUgaXRlbS1ub3QtZm91bmQgcGF0aC4gQm90aCByZS1hcm1zIG11c3Qgcm91dGUgdGhyb3VnaFxuICogdGhlIHNoYXJlZCBgc2NoZWR1bGVTY2FubmVyUmVmb2N1c2AsIHdoaWNoIG5ldmVyIHRha2VzIGZvY3VzIGZyb20gYSB0ZXh0LWVudHJ5IGZpZWxkIChhIGxpbmUnc1xuICogcXR5IC8gY29zdCAvIGRlc2NyaXB0aW9uLCB0aGUgbm90ZXMgdGV4dGFyZWEpLiBUaGUgYmVoYXZpb3IgaXRzZWxmIGlzIHVuaXQtdGVzdGVkIGluXG4gKiBsaWIvcmVmb2N1cy1zY2FubmVyLnRlc3QudHM7IHRoaXMgcGFnZSBoYXMgbm8gcmVuZGVyIGhhcm5lc3MgKGEgZnVsbCBvbmUgaXMgYSBmb2xsb3ctdXApLCBzb1xuICogdGhpcyBwaW5zIHRoZSBXSVJJTkc6IHRoZSBoZWxwZXIgaXMgdXNlZCwgYW5kIG5vIGJhcmUgdW5jb25kaXRpb25hbCByZS1hcm0gc3Vydml2ZXMuXG4gKi9cbmNvbnN0IHNyYyA9IGZzLnJlYWRGaWxlU3luYyhwYXRoLmpvaW4oX19kaXJuYW1lLCBcInBhZ2UudHN4XCIpLCBcInV0ZjhcIik7XG5cbmNvbnN0IEJBUkVfUkVBUk0gPSAvc2V0VGltZW91dFxcKFxccypcXChcXClcXHMqPT5cXHMqXFx3K1xcLmN1cnJlbnRcXD9cXC4oZm9jdXN8c2VsZWN0KVxcKFxcKS9nO1xuXG5kZXNjcmliZShcIkI3NDQg4oCUIHZlbmRvci1iaWxscyBzY2FubmVyIHJlLWFybSB3aXJpbmcgKFJFRy1CNzQ0KVwiLCAoKSA9PiB7XG4gIGl0KFwiaW1wb3J0cyB0aGUgc2hhcmVkIGd1YXJkZWQgcmUtYXJtXCIsICgpID0+IHtcbiAgICBleHBlY3Qoc3JjKS50b01hdGNoKFxuICAgICAgL2ltcG9ydFxccypcXHtbXn1dKlxcYnNjaGVkdWxlU2Nhbm5lclJlZm9jdXNcXGJbXn1dKlxcfVxccypmcm9tXFxzKlwiQFxcL2xpYlxcL3JlZm9jdXMtc2Nhbm5lclwiLyxcbiAgICApO1xuICB9KTtcblxuICBpdChcImxlYXZlcyBubyBiYXJlLCB1bmNvbmRpdGlvbmFsIHNldFRpbWVvdXQgcmUtYXJtIG9mIGEgcmVmXCIsICgpID0+IHtcbiAgICBleHBlY3Qoc3JjLm1hdGNoKEJBUkVfUkVBUk0pID8/IFtdKS50b0VxdWFsKFtdKTtcbiAgfSk7XG5cbiAgaXQoXCJyb3V0ZXMgYm90aCBzY2FuLWhhbmRsZXIgcmUtYXJtcyAobm90LWZvdW5kIGFuZCBhZnRlci1hZGQpIHRocm91Z2ggdGhlIGhlbHBlciBhdCA1MCBtc1wiLCAoKSA9PiB7XG4gICAgZXhwZWN0KHNyYy5tYXRjaCgvc2NoZWR1bGVTY2FubmVyUmVmb2N1c1xcKFxccypzY2FuSW5wdXRSZWZcXHMqLFxccyo1MFxccypcXCkvZykgPz8gW10pLnRvSGF2ZUxlbmd0aChcbiAgICAgIDIsXG4gICAgKTtcbiAgfSk7XG59KTtcbiJdLCJuYW1lcyI6WyJzcmMiLCJmcyIsInJlYWRGaWxlU3luYyIsInBhdGgiLCJqb2luIiwiX19kaXJuYW1lIiwiQkFSRV9SRUFSTSIsImRlc2NyaWJlIiwiaXQiLCJleHBlY3QiLCJ0b01hdGNoIiwibWF0Y2giLCJ0b0VxdWFsIiwidG9IYXZlTGVuZ3RoIl0sIm1hcHBpbmdzIjoiOzs7OzJEQUFlOzZEQUNFOzs7Ozs7QUFFakI7Ozs7Ozs7Q0FPQyxHQUNELE1BQU1BLE1BQU1DLFdBQUUsQ0FBQ0MsWUFBWSxDQUFDQyxhQUFJLENBQUNDLElBQUksQ0FBQ0MsV0FBVyxhQUFhO0FBRTlELE1BQU1DLGFBQWE7QUFFbkJDLFNBQVMsd0RBQXdEO0lBQy9EQyxHQUFHLHFDQUFxQztRQUN0Q0MsT0FBT1QsS0FBS1UsT0FBTyxDQUNqQjtJQUVKO0lBRUFGLEdBQUcsNERBQTREO1FBQzdEQyxPQUFPVCxJQUFJVyxLQUFLLENBQUNMLGVBQWUsRUFBRSxFQUFFTSxPQUFPLENBQUMsRUFBRTtJQUNoRDtJQUVBSixHQUFHLDBGQUEwRjtRQUMzRkMsT0FBT1QsSUFBSVcsS0FBSyxDQUFDLDZEQUE2RCxFQUFFLEVBQUVFLFlBQVksQ0FDNUY7SUFFSjtBQUNGIn0=

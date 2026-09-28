@@ -1,0 +1,44 @@
+a0ead852b394d574376ab5984f04bcbf
+/**
+ * Namespaced localStorage keys for per-role token isolation.
+ * NEW-m2-1 / RF-077: operator, driver, and buyer tokens live under separate
+ * keys so concurrent same-origin tabs cannot overwrite each other's sessions.
+ *
+ * Imported by both auth.ts and api-client.ts — kept in a separate file to
+ * avoid a circular dependency between those two modules.
+ */ "use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, {
+        enumerable: true,
+        get: Object.getOwnPropertyDescriptor(all, name).get
+    });
+}
+_export(exports, {
+    get BUYER_KEYS () {
+        return BUYER_KEYS;
+    },
+    get DRIVER_KEYS () {
+        return DRIVER_KEYS;
+    },
+    get OP_KEYS () {
+        return OP_KEYS;
+    }
+});
+const OP_KEYS = {
+    accessToken: "rf:op:accessToken",
+    refreshToken: "rf:op:refreshToken"
+};
+const BUYER_KEYS = {
+    accessToken: "rf:buyer:accessToken",
+    refreshToken: "rf:buyer:refreshToken",
+    activeSeller: "rf:buyer:activeSeller"
+};
+const DRIVER_KEYS = {
+    accessToken: "rf:driver:accessToken",
+    refreshToken: "rf:driver:refreshToken"
+};
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2xpYi9hdXRoLWtleXMudHMiXSwic291cmNlc0NvbnRlbnQiOlsiLyoqXG4gKiBOYW1lc3BhY2VkIGxvY2FsU3RvcmFnZSBrZXlzIGZvciBwZXItcm9sZSB0b2tlbiBpc29sYXRpb24uXG4gKiBORVctbTItMSAvIFJGLTA3Nzogb3BlcmF0b3IsIGRyaXZlciwgYW5kIGJ1eWVyIHRva2VucyBsaXZlIHVuZGVyIHNlcGFyYXRlXG4gKiBrZXlzIHNvIGNvbmN1cnJlbnQgc2FtZS1vcmlnaW4gdGFicyBjYW5ub3Qgb3ZlcndyaXRlIGVhY2ggb3RoZXIncyBzZXNzaW9ucy5cbiAqXG4gKiBJbXBvcnRlZCBieSBib3RoIGF1dGgudHMgYW5kIGFwaS1jbGllbnQudHMg4oCUIGtlcHQgaW4gYSBzZXBhcmF0ZSBmaWxlIHRvXG4gKiBhdm9pZCBhIGNpcmN1bGFyIGRlcGVuZGVuY3kgYmV0d2VlbiB0aG9zZSB0d28gbW9kdWxlcy5cbiAqL1xuXG5leHBvcnQgY29uc3QgT1BfS0VZUyA9IHtcbiAgYWNjZXNzVG9rZW46IFwicmY6b3A6YWNjZXNzVG9rZW5cIixcbiAgcmVmcmVzaFRva2VuOiBcInJmOm9wOnJlZnJlc2hUb2tlblwiLFxufSBhcyBjb25zdDtcblxuZXhwb3J0IGNvbnN0IEJVWUVSX0tFWVMgPSB7XG4gIGFjY2Vzc1Rva2VuOiBcInJmOmJ1eWVyOmFjY2Vzc1Rva2VuXCIsXG4gIHJlZnJlc2hUb2tlbjogXCJyZjpidXllcjpyZWZyZXNoVG9rZW5cIixcbiAgYWN0aXZlU2VsbGVyOiBcInJmOmJ1eWVyOmFjdGl2ZVNlbGxlclwiLFxufSBhcyBjb25zdDtcblxuLy8gTW9iaWxlL2RyaXZlciBrZXlzIOKAlCBhbHNvIHVzZWQgYnkgYXBwcy9tb2JpbGUvbGliL2F1dGgudHNcbmV4cG9ydCBjb25zdCBEUklWRVJfS0VZUyA9IHtcbiAgYWNjZXNzVG9rZW46IFwicmY6ZHJpdmVyOmFjY2Vzc1Rva2VuXCIsXG4gIHJlZnJlc2hUb2tlbjogXCJyZjpkcml2ZXI6cmVmcmVzaFRva2VuXCIsXG59IGFzIGNvbnN0O1xuIl0sIm5hbWVzIjpbIkJVWUVSX0tFWVMiLCJEUklWRVJfS0VZUyIsIk9QX0tFWVMiLCJhY2Nlc3NUb2tlbiIsInJlZnJlc2hUb2tlbiIsImFjdGl2ZVNlbGxlciJdLCJtYXBwaW5ncyI6IkFBQUE7Ozs7Ozs7Q0FPQzs7Ozs7Ozs7Ozs7UUFPWUE7ZUFBQUE7O1FBT0FDO2VBQUFBOztRQVpBQztlQUFBQTs7O0FBQU4sTUFBTUEsVUFBVTtJQUNyQkMsYUFBYTtJQUNiQyxjQUFjO0FBQ2hCO0FBRU8sTUFBTUosYUFBYTtJQUN4QkcsYUFBYTtJQUNiQyxjQUFjO0lBQ2RDLGNBQWM7QUFDaEI7QUFHTyxNQUFNSixjQUFjO0lBQ3pCRSxhQUFhO0lBQ2JDLGNBQWM7QUFDaEIifQ==

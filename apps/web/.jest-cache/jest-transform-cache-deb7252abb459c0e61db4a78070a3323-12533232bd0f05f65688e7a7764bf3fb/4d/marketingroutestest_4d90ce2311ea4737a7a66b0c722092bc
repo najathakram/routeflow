@@ -1,0 +1,75 @@
+e46cef010c9a3c0e8e8f829fbc56098e
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _fs = /*#__PURE__*/ _interop_require_wildcard(require("fs"));
+const _path = /*#__PURE__*/ _interop_require_wildcard(require("path"));
+const _marketingroutes = require("./marketing-routes");
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+// R-MKT — the public-route allow-lists that keep an expired-token visitor from
+// being punted to /login must all come from MARKETING_PAGE_PATHS. Hand-typed
+// copies in api-client.ts / auth-context.tsx are exactly how /privacy and
+// /terms shipped missing from both sets (lesson L-072).
+describe("R-MKT marketing route allow-lists", ()=>{
+    it("MARKETING_PAGE_PATHS covers the legal pages (/privacy, /terms)", ()=>{
+        expect(_marketingroutes.MARKETING_PAGE_PATHS).toContain("/privacy");
+        expect(_marketingroutes.MARKETING_PAGE_PATHS).toContain("/terms");
+    });
+    // Static source read: importing api-client.ts / auth-context.tsx would pull
+    // in axios + React and run module-level side effects for a text assertion.
+    it.each([
+        [
+            "api-client.ts"
+        ],
+        [
+            "auth-context.tsx"
+        ]
+    ])("%s derives its marketing allow-list from MARKETING_PAGE_PATHS, not a literal", (file)=>{
+        const src = _fs.readFileSync(_path.join(__dirname, file), "utf8");
+        expect(src).toContain("MARKETING_PAGE_PATHS");
+        expect(src).not.toContain('"/retailers"');
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2xpYi9tYXJrZXRpbmctcm91dGVzLnRlc3QudHMiXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0ICogYXMgZnMgZnJvbSBcImZzXCI7XG5pbXBvcnQgKiBhcyBwYXRoIGZyb20gXCJwYXRoXCI7XG5pbXBvcnQgeyBNQVJLRVRJTkdfUEFHRV9QQVRIUyB9IGZyb20gXCIuL21hcmtldGluZy1yb3V0ZXNcIjtcblxuLy8gUi1NS1Qg4oCUIHRoZSBwdWJsaWMtcm91dGUgYWxsb3ctbGlzdHMgdGhhdCBrZWVwIGFuIGV4cGlyZWQtdG9rZW4gdmlzaXRvciBmcm9tXG4vLyBiZWluZyBwdW50ZWQgdG8gL2xvZ2luIG11c3QgYWxsIGNvbWUgZnJvbSBNQVJLRVRJTkdfUEFHRV9QQVRIUy4gSGFuZC10eXBlZFxuLy8gY29waWVzIGluIGFwaS1jbGllbnQudHMgLyBhdXRoLWNvbnRleHQudHN4IGFyZSBleGFjdGx5IGhvdyAvcHJpdmFjeSBhbmRcbi8vIC90ZXJtcyBzaGlwcGVkIG1pc3NpbmcgZnJvbSBib3RoIHNldHMgKGxlc3NvbiBMLTA3MikuXG5kZXNjcmliZShcIlItTUtUIG1hcmtldGluZyByb3V0ZSBhbGxvdy1saXN0c1wiLCAoKSA9PiB7XG4gIGl0KFwiTUFSS0VUSU5HX1BBR0VfUEFUSFMgY292ZXJzIHRoZSBsZWdhbCBwYWdlcyAoL3ByaXZhY3ksIC90ZXJtcylcIiwgKCkgPT4ge1xuICAgIGV4cGVjdChNQVJLRVRJTkdfUEFHRV9QQVRIUykudG9Db250YWluKFwiL3ByaXZhY3lcIik7XG4gICAgZXhwZWN0KE1BUktFVElOR19QQUdFX1BBVEhTKS50b0NvbnRhaW4oXCIvdGVybXNcIik7XG4gIH0pO1xuXG4gIC8vIFN0YXRpYyBzb3VyY2UgcmVhZDogaW1wb3J0aW5nIGFwaS1jbGllbnQudHMgLyBhdXRoLWNvbnRleHQudHN4IHdvdWxkIHB1bGxcbiAgLy8gaW4gYXhpb3MgKyBSZWFjdCBhbmQgcnVuIG1vZHVsZS1sZXZlbCBzaWRlIGVmZmVjdHMgZm9yIGEgdGV4dCBhc3NlcnRpb24uXG4gIGl0LmVhY2goW1tcImFwaS1jbGllbnQudHNcIl0sIFtcImF1dGgtY29udGV4dC50c3hcIl1dKShcbiAgICBcIiVzIGRlcml2ZXMgaXRzIG1hcmtldGluZyBhbGxvdy1saXN0IGZyb20gTUFSS0VUSU5HX1BBR0VfUEFUSFMsIG5vdCBhIGxpdGVyYWxcIixcbiAgICAoZmlsZSkgPT4ge1xuICAgICAgY29uc3Qgc3JjID0gZnMucmVhZEZpbGVTeW5jKHBhdGguam9pbihfX2Rpcm5hbWUsIGZpbGUpLCBcInV0ZjhcIik7XG4gICAgICBleHBlY3Qoc3JjKS50b0NvbnRhaW4oXCJNQVJLRVRJTkdfUEFHRV9QQVRIU1wiKTtcbiAgICAgIGV4cGVjdChzcmMpLm5vdC50b0NvbnRhaW4oJ1wiL3JldGFpbGVyc1wiJyk7XG4gICAgfSxcbiAgKTtcbn0pO1xuIl0sIm5hbWVzIjpbImRlc2NyaWJlIiwiaXQiLCJleHBlY3QiLCJNQVJLRVRJTkdfUEFHRV9QQVRIUyIsInRvQ29udGFpbiIsImVhY2giLCJmaWxlIiwic3JjIiwiZnMiLCJyZWFkRmlsZVN5bmMiLCJwYXRoIiwiam9pbiIsIl9fZGlybmFtZSIsIm5vdCJdLCJtYXBwaW5ncyI6Ijs7Ozs0REFBb0I7OERBQ0U7aUNBQ2U7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7OztBQUVyQywrRUFBK0U7QUFDL0UsNkVBQTZFO0FBQzdFLDBFQUEwRTtBQUMxRSx3REFBd0Q7QUFDeERBLFNBQVMscUNBQXFDO0lBQzVDQyxHQUFHLGtFQUFrRTtRQUNuRUMsT0FBT0MscUNBQW9CLEVBQUVDLFNBQVMsQ0FBQztRQUN2Q0YsT0FBT0MscUNBQW9CLEVBQUVDLFNBQVMsQ0FBQztJQUN6QztJQUVBLDRFQUE0RTtJQUM1RSwyRUFBMkU7SUFDM0VILEdBQUdJLElBQUksQ0FBQztRQUFDO1lBQUM7U0FBZ0I7UUFBRTtZQUFDO1NBQW1CO0tBQUMsRUFDL0MsZ0ZBQ0EsQ0FBQ0M7UUFDQyxNQUFNQyxNQUFNQyxJQUFHQyxZQUFZLENBQUNDLE1BQUtDLElBQUksQ0FBQ0MsV0FBV04sT0FBTztRQUN4REosT0FBT0ssS0FBS0gsU0FBUyxDQUFDO1FBQ3RCRixPQUFPSyxLQUFLTSxHQUFHLENBQUNULFNBQVMsQ0FBQztJQUM1QjtBQUVKIn0=

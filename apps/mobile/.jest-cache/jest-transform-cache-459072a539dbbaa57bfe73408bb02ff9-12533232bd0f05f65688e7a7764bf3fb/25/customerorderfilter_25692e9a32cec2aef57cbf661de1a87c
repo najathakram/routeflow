@@ -1,0 +1,47 @@
+cf41c160dd0a17443af940e0fce328ed
+"use strict";
+/**
+ * Pure logic for the entity-scoped filter chips on the operator Orders list
+ * (A3 cross-link: the customer detail screen's "View orders" pushes
+ * `?customerId=`, which the orders list must read, forward to `useAdminOrders`,
+ * and surface as a dismissible chip). Extracted so the derive/dismiss rules are
+ * tested without mounting the screen — mirrors lib/product-search-params.ts.
+ *
+ * PR-B (2026-08-19) extends the same pattern for `?productId=` (the product
+ * detail Sales card's "View orders" link) rather than inventing a second
+ * mechanism — the two filters are independent: each has its own state, its
+ * own route param, and its own dismiss, and both chips can be active at once.
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.resolveCustomerIdParam = resolveCustomerIdParam;
+exports.customerFilterChipLabel = customerFilterChipLabel;
+exports.resolveProductIdParam = resolveProductIdParam;
+exports.productFilterChipLabel = productFilterChipLabel;
+/** Read the `customerId` search param into filter state. Blank/whitespace → no filter. */
+function resolveCustomerIdParam(customerId) {
+    const trimmed = customerId?.trim();
+    return trimmed ? trimmed : null;
+}
+/**
+ * Label for the dismissible "Customer: X" chip. The customer record can still be
+ * loading (or, for a stale/deleted id, missing) when the chip first renders, so
+ * it falls back to a neutral placeholder rather than showing "Customer: undefined".
+ */
+function customerFilterChipLabel(customerName) {
+    const trimmed = customerName?.trim();
+    return `Customer: ${trimmed || "…"}`;
+}
+/** Read the `productId` search param into filter state. Blank/whitespace → no filter. */
+function resolveProductIdParam(productId) {
+    const trimmed = productId?.trim();
+    return trimmed ? trimmed : null;
+}
+/**
+ * Label for the dismissible "Product: X" chip — same loading/missing fallback
+ * as `customerFilterChipLabel`.
+ */
+function productFilterChipLabel(productName) {
+    const trimmed = productName?.trim();
+    return `Product: ${trimmed || "…"}`;
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL2N1c3RvbWVyLW9yZGVyLWZpbHRlci50cyIsIm1hcHBpbmdzIjoiO0FBQUE7Ozs7Ozs7Ozs7O0dBV0c7O0FBR0gsd0RBR0M7QUFPRCwwREFHQztBQUdELHNEQUdDO0FBTUQsd0RBR0M7QUE3QkQsMEZBQTBGO0FBQzFGLFNBQWdCLHNCQUFzQixDQUFDLFVBQTBCO0lBQy9ELE1BQU0sT0FBTyxHQUFHLFVBQVUsRUFBRSxJQUFJLEVBQUUsQ0FBQztJQUNuQyxPQUFPLE9BQU8sQ0FBQyxDQUFDLENBQUMsT0FBTyxDQUFDLENBQUMsQ0FBQyxJQUFJLENBQUM7QUFDbEMsQ0FBQztBQUVEOzs7O0dBSUc7QUFDSCxTQUFnQix1QkFBdUIsQ0FBQyxZQUE0QjtJQUNsRSxNQUFNLE9BQU8sR0FBRyxZQUFZLEVBQUUsSUFBSSxFQUFFLENBQUM7SUFDckMsT0FBTyxhQUFhLE9BQU8sSUFBSSxHQUFHLEVBQUUsQ0FBQztBQUN2QyxDQUFDO0FBRUQseUZBQXlGO0FBQ3pGLFNBQWdCLHFCQUFxQixDQUFDLFNBQXlCO0lBQzdELE1BQU0sT0FBTyxHQUFHLFNBQVMsRUFBRSxJQUFJLEVBQUUsQ0FBQztJQUNsQyxPQUFPLE9BQU8sQ0FBQyxDQUFDLENBQUMsT0FBTyxDQUFDLENBQUMsQ0FBQyxJQUFJLENBQUM7QUFDbEMsQ0FBQztBQUVEOzs7R0FHRztBQUNILFNBQWdCLHNCQUFzQixDQUFDLFdBQTJCO0lBQ2hFLE1BQU0sT0FBTyxHQUFHLFdBQVcsRUFBRSxJQUFJLEVBQUUsQ0FBQztJQUNwQyxPQUFPLFlBQVksT0FBTyxJQUFJLEdBQUcsRUFBRSxDQUFDO0FBQ3RDLENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL2N1c3RvbWVyLW9yZGVyLWZpbHRlci50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqIFB1cmUgbG9naWMgZm9yIHRoZSBlbnRpdHktc2NvcGVkIGZpbHRlciBjaGlwcyBvbiB0aGUgb3BlcmF0b3IgT3JkZXJzIGxpc3RcbiAqIChBMyBjcm9zcy1saW5rOiB0aGUgY3VzdG9tZXIgZGV0YWlsIHNjcmVlbidzIFwiVmlldyBvcmRlcnNcIiBwdXNoZXNcbiAqIGA/Y3VzdG9tZXJJZD1gLCB3aGljaCB0aGUgb3JkZXJzIGxpc3QgbXVzdCByZWFkLCBmb3J3YXJkIHRvIGB1c2VBZG1pbk9yZGVyc2AsXG4gKiBhbmQgc3VyZmFjZSBhcyBhIGRpc21pc3NpYmxlIGNoaXApLiBFeHRyYWN0ZWQgc28gdGhlIGRlcml2ZS9kaXNtaXNzIHJ1bGVzIGFyZVxuICogdGVzdGVkIHdpdGhvdXQgbW91bnRpbmcgdGhlIHNjcmVlbiDigJQgbWlycm9ycyBsaWIvcHJvZHVjdC1zZWFyY2gtcGFyYW1zLnRzLlxuICpcbiAqIFBSLUIgKDIwMjYtMDgtMTkpIGV4dGVuZHMgdGhlIHNhbWUgcGF0dGVybiBmb3IgYD9wcm9kdWN0SWQ9YCAodGhlIHByb2R1Y3RcbiAqIGRldGFpbCBTYWxlcyBjYXJkJ3MgXCJWaWV3IG9yZGVyc1wiIGxpbmspIHJhdGhlciB0aGFuIGludmVudGluZyBhIHNlY29uZFxuICogbWVjaGFuaXNtIOKAlCB0aGUgdHdvIGZpbHRlcnMgYXJlIGluZGVwZW5kZW50OiBlYWNoIGhhcyBpdHMgb3duIHN0YXRlLCBpdHNcbiAqIG93biByb3V0ZSBwYXJhbSwgYW5kIGl0cyBvd24gZGlzbWlzcywgYW5kIGJvdGggY2hpcHMgY2FuIGJlIGFjdGl2ZSBhdCBvbmNlLlxuICovXG5cbi8qKiBSZWFkIHRoZSBgY3VzdG9tZXJJZGAgc2VhcmNoIHBhcmFtIGludG8gZmlsdGVyIHN0YXRlLiBCbGFuay93aGl0ZXNwYWNlIOKGkiBubyBmaWx0ZXIuICovXG5leHBvcnQgZnVuY3Rpb24gcmVzb2x2ZUN1c3RvbWVySWRQYXJhbShjdXN0b21lcklkPzogc3RyaW5nIHwgbnVsbCk6IHN0cmluZyB8IG51bGwge1xuICBjb25zdCB0cmltbWVkID0gY3VzdG9tZXJJZD8udHJpbSgpO1xuICByZXR1cm4gdHJpbW1lZCA/IHRyaW1tZWQgOiBudWxsO1xufVxuXG4vKipcbiAqIExhYmVsIGZvciB0aGUgZGlzbWlzc2libGUgXCJDdXN0b21lcjogWFwiIGNoaXAuIFRoZSBjdXN0b21lciByZWNvcmQgY2FuIHN0aWxsIGJlXG4gKiBsb2FkaW5nIChvciwgZm9yIGEgc3RhbGUvZGVsZXRlZCBpZCwgbWlzc2luZykgd2hlbiB0aGUgY2hpcCBmaXJzdCByZW5kZXJzLCBzb1xuICogaXQgZmFsbHMgYmFjayB0byBhIG5ldXRyYWwgcGxhY2Vob2xkZXIgcmF0aGVyIHRoYW4gc2hvd2luZyBcIkN1c3RvbWVyOiB1bmRlZmluZWRcIi5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIGN1c3RvbWVyRmlsdGVyQ2hpcExhYmVsKGN1c3RvbWVyTmFtZT86IHN0cmluZyB8IG51bGwpOiBzdHJpbmcge1xuICBjb25zdCB0cmltbWVkID0gY3VzdG9tZXJOYW1lPy50cmltKCk7XG4gIHJldHVybiBgQ3VzdG9tZXI6ICR7dHJpbW1lZCB8fCBcIuKAplwifWA7XG59XG5cbi8qKiBSZWFkIHRoZSBgcHJvZHVjdElkYCBzZWFyY2ggcGFyYW0gaW50byBmaWx0ZXIgc3RhdGUuIEJsYW5rL3doaXRlc3BhY2Ug4oaSIG5vIGZpbHRlci4gKi9cbmV4cG9ydCBmdW5jdGlvbiByZXNvbHZlUHJvZHVjdElkUGFyYW0ocHJvZHVjdElkPzogc3RyaW5nIHwgbnVsbCk6IHN0cmluZyB8IG51bGwge1xuICBjb25zdCB0cmltbWVkID0gcHJvZHVjdElkPy50cmltKCk7XG4gIHJldHVybiB0cmltbWVkID8gdHJpbW1lZCA6IG51bGw7XG59XG5cbi8qKlxuICogTGFiZWwgZm9yIHRoZSBkaXNtaXNzaWJsZSBcIlByb2R1Y3Q6IFhcIiBjaGlwIOKAlCBzYW1lIGxvYWRpbmcvbWlzc2luZyBmYWxsYmFja1xuICogYXMgYGN1c3RvbWVyRmlsdGVyQ2hpcExhYmVsYC5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIHByb2R1Y3RGaWx0ZXJDaGlwTGFiZWwocHJvZHVjdE5hbWU/OiBzdHJpbmcgfCBudWxsKTogc3RyaW5nIHtcbiAgY29uc3QgdHJpbW1lZCA9IHByb2R1Y3ROYW1lPy50cmltKCk7XG4gIHJldHVybiBgUHJvZHVjdDogJHt0cmltbWVkIHx8IFwi4oCmXCJ9YDtcbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

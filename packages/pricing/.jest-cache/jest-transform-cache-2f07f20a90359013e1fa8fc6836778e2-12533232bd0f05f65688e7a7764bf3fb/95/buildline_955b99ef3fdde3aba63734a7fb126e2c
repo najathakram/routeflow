@@ -1,0 +1,186 @@
+3a69f63aef859d9ae9301d299d299d2b
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.buildLine = buildLine;
+/**
+ * The line-builder choke point for a NEW write (design doc
+ * `.claude/handoffs/2026-09-21-money-helper-refuses-ambiguity-PROPOSAL.md`, posted on #938
+ * 2026-09-21 — the "refuse ambiguity" proposal against the owner's ruling to retire the
+ * box-unaware convention for new writes).
+ *
+ * Two axes, matching what a line can actually be sold by:
+ *   - `pack`: the product's own box/piece split — mirrors `buildInvoiceItemData` /
+ *     `orders.service.ts`'s pack branch. A boxed product (`unitsPerBox > 1`) must supply
+ *     boxes/pieces on the RAW input — `buildLine` itself throws otherwise (the B644 shape),
+ *     before ever normalizing. A non-boxed product's `qty` is never truncated (it is
+ *     `Decimal(10,3)` in the schema, so a fractional value is legitimate) but must be positive
+ *     and finite (G1); boxes/pieces sent on a non-boxed axis are refused, never silently dropped
+ *     (G1); a split given alongside a qty that disagrees with it is refused, never resolved by
+ *     picking the split (G3).
+ *   - `unit`: a named denomination off the product's unit ladder — mirrors
+ *     `apps/api/src/orders/unit-line-build.ts`'s `buildUnitLine`: `boxes = count`,
+ *     `qty = count x factorToBase`, `unitsPerBox = factorToBase` (the snapshot), EXCEPT a
+ *     factor-1 unit (a Piece off a boxed pack), which is `boxes: null, pieces: null, qty: count`
+ *     — a plain per-piece line that still snapshots its factor. `count` must be a whole number
+ *     (G2) — 1.5 Cases is not a real quantity.
+ *
+ * NO CALLERS YET (PR-1 of the proposal). The three existing builders
+ * (`orders/unit-line-build.ts`, `invoices/invoice-unit-line.ts`, `invoices.service.ts`'s
+ * `buildInvoiceItemData`) keep calling `computeLineSubtotal`/`normalizeBoxesPieces` directly and
+ * get re-pointed at this one at a time, checked against the copier-contract registry
+ * (`apps/api/src/common/testing/copier-contract/`, #1163) per site. Existing ROWS are never
+ * rewritten — this only shapes a new write.
+ */
+const pricing_1 = require("./pricing");
+function buildLine(input) {
+    const { axis, unitPrice, freeUnits } = input;
+    if (axis.kind === "unit") {
+        const label = axis.label.trim();
+        if (!label)
+            throw new pricing_1.AmbiguousLineError("buildLine: a unit axis needs a non-blank label");
+        // G2 (R-ui review, 2026-09-21): a unit count is a COUNT of whole units (3 Cases) — Math.trunc
+        // alone silently billed 1.5 Cases as 1. Refuse a non-integer instead of rounding it away.
+        const rawCount = Number(axis.count);
+        if (!Number.isInteger(rawCount)) {
+            throw new pricing_1.AmbiguousLineError(`buildLine: unit count must be an integer, got ${axis.count}`);
+        }
+        const count = rawCount;
+        if (!(count > 0)) {
+            throw new pricing_1.AmbiguousLineError(`buildLine: unit count must be > 0 (got ${axis.count})`);
+        }
+        // N2 (R-ui review, optional — factorToBase is integer upstream anyway, but the same guard
+        // is one line): a fractional factor has no meaning (pieces per unit is always whole).
+        const factor = Number(axis.factorToBase);
+        if (!Number.isInteger(factor) || !(factor > 0)) {
+            throw new pricing_1.AmbiguousLineError(`buildLine: "${label}" needs a positive integer factorToBase (got ${axis.factorToBase})`);
+        }
+        const split = factor === 1
+            ? { boxes: null, pieces: null, qty: count }
+            : (0, pricing_1.normalizeBoxesPieces)({ boxes: count, pieces: 0, unitsPerBox: factor });
+        const subtotal = (0, pricing_1.computeLineSubtotalStrict)({
+            unitPrice,
+            qty: split.qty,
+            boxes: split.boxes,
+            pieces: split.pieces,
+            unitsPerBox: factor,
+            freeUnits,
+        });
+        return {
+            qty: split.qty,
+            boxes: split.boxes,
+            pieces: split.pieces,
+            unitsPerBox: factor,
+            unitLabel: label,
+            unitPrice,
+            subtotal,
+        };
+    }
+    const upb = Number(axis.unitsPerBox ?? 0);
+    if (!(upb > 1)) {
+        // Non-boxed: qty is the operator's raw value (OrderItem.qty is Decimal(10,3) — a fractional
+        // selling quantity, e.g. 1.5 kg, is legitimate). normalizeBoxesPieces' non-boxed branch does
+        // Math.trunc, which would silently drop 1.5 -> 1 — never truncate here (Senior Architect
+        // review, HOLD 1, 2026-09-21). computeLineSubtotalStrict's own integer check is boxed-only
+        // (see lineAmbiguity), so a fractional qty passes through unmolested.
+        //
+        // G1 (R-ui review, 2026-09-21): a caller that sends boxes/pieces here (this axis resolved
+        // non-boxed — unitsPerBox <= 1 — so they're silently IGNORED below) almost certainly meant
+        // the boxed branch and has a bug (a product misreported as not boxed, or a stale
+        // unitsPerBox). Refuse rather than quietly drop them. And qty itself must be a positive,
+        // finite number — `Number(undefined ?? 0)` defaulting to 0 used to price the line at $0
+        // instead of refusing (the same "silent wrong money" shape as the B644 family).
+        if (axis.boxes != null || axis.pieces != null) {
+            throw new pricing_1.AmbiguousLineError("buildLine: boxes/pieces given but this axis is non-boxed (unitsPerBox <= 1) — they would be silently dropped");
+        }
+        const qty = Number(axis.qty);
+        if (!Number.isFinite(qty) || qty <= 0) {
+            throw new pricing_1.AmbiguousLineError(`buildLine: qty must be a positive, finite number, got ${axis.qty}`);
+        }
+        const subtotal = (0, pricing_1.computeLineSubtotalStrict)({
+            unitPrice,
+            qty,
+            boxes: null,
+            pieces: null,
+            unitsPerBox: axis.unitsPerBox,
+            freeUnits,
+        });
+        return {
+            qty,
+            boxes: null,
+            pieces: null,
+            unitsPerBox: null,
+            unitLabel: null,
+            unitPrice,
+            subtotal,
+        };
+    }
+    // Boxed: a raw qty alone is ambiguous (per-box vs per-piece — the B644 shape). Checked on the
+    // RAW input, before normalizing (HOLD 2) — normalizeBoxesPieces' qty-only branch would happily
+    // (and wrongly) treat a bare qty as already-expanded pieces here.
+    if (axis.boxes == null && axis.pieces == null) {
+        throw new pricing_1.AmbiguousLineError("buildLine: unitsPerBox > 1 with neither boxes nor pieces given — qty alone is ambiguous (per-box vs per-piece); the B644 shape");
+    }
+    // A real physical box/piece count is never fractional — checked here, on the RAW input, for
+    // the same reason as the "neither given" check above: normalizeBoxesPieces silently
+    // Math.trunc's boxes/pieces, which would otherwise make this unreachable through buildLine
+    // (the same "unreachable guard" shape HOLD 2 already flagged for the stale-split case).
+    for (const [name, v] of [
+        ["boxes", axis.boxes],
+        ["pieces", axis.pieces],
+    ]) {
+        if (v != null && !Number.isInteger(Number(v))) {
+            throw new pricing_1.AmbiguousLineError(`buildLine: ${name} must be an integer, got ${v}`);
+        }
+    }
+    // G3 (R-ui review, 2026-09-21): a split AND a qty that disagrees with it (boxes:1, pieces:0,
+    // qty:5, upb:12 — implies 12, not 5) used to silently drop the caller's qty, since
+    // normalizeBoxesPieces ignores qty whenever a split is given. Refuse rather than pick a
+    // winner — a caller sending both has a bug. Compared against the RAW (unrolled) split, so an
+    // unrolled-but-otherwise-consistent qty (matching the split before rollover) is still fine.
+    if (axis.qty != null) {
+        const rawQty = Number(axis.qty);
+        const impliedQty = Number(axis.boxes ?? 0) * upb + Number(axis.pieces ?? 0);
+        if (Number.isFinite(rawQty) && rawQty !== impliedQty) {
+            throw new pricing_1.AmbiguousLineError(`buildLine: qty (${axis.qty}) disagrees with boxes*unitsPerBox+pieces (${impliedQty}) — the split and the qty must agree`);
+        }
+    }
+    // A split WAS given (however stale — e.g. pieces >= unitsPerBox): normalize it here, then hand
+    // strict the NORMALIZED split, never the raw one. Strict's own "pieces >= unitsPerBox" guard
+    // exists only to protect a caller that skips buildLine entirely — routed through buildLine it
+    // never fires, because buildLine always resolves the split before strict ever sees it (HOLD 2;
+    // the previous doc comment claiming this was aspirational, not true — passing the raw split
+    // made a merely-unrolled-but-valid split [e.g. 1 box + 14 of a 12-pack] throw instead of
+    // rolling over to 2 boxes + 2).
+    const normalized = (0, pricing_1.normalizeBoxesPieces)({
+        boxes: axis.boxes,
+        pieces: axis.pieces,
+        qty: axis.qty,
+        unitsPerBox: axis.unitsPerBox,
+    });
+    // N1 (R-ui review, 2026-09-21): boxes:0, pieces:0 passes every check above (both given, so
+    // "neither given" doesn't fire; 0 is an integer; 0 disagrees with nothing) and used to mint a
+    // $0 line — matches G1, the unit axis and create()'s own "> 0" requirement.
+    if (!(normalized.qty > 0)) {
+        throw new pricing_1.AmbiguousLineError(`buildLine: qty must be > 0, got boxes:${axis.boxes} pieces:${axis.pieces} (${normalized.qty} total)`);
+    }
+    const subtotal = (0, pricing_1.computeLineSubtotalStrict)({
+        unitPrice,
+        qty: normalized.qty,
+        boxes: normalized.boxes,
+        pieces: normalized.pieces,
+        unitsPerBox: axis.unitsPerBox,
+        freeUnits,
+    });
+    return {
+        qty: normalized.qty,
+        boxes: normalized.boxes,
+        pieces: normalized.pieces,
+        // normalizeBoxesPieces' boxed branch always returns non-null boxes/pieces, so this is
+        // unconditional — mirrors `products/line-units.ts`'s `lineUnitsPerBoxSnapshot` "boxed" rule.
+        unitsPerBox: upb,
+        unitLabel: null,
+        unitPrice,
+        subtotal,
+    };
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvcGFja2FnZXMvcHJpY2luZy9zcmMvYnVpbGQtbGluZS50cyIsIm1hcHBpbmdzIjoiOztBQW9FQSw4QkFzS0M7QUExT0Q7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7R0E0Qkc7QUFDSCx1Q0FBZ0c7QUF1Q2hHLFNBQWdCLFNBQVMsQ0FBQyxLQUFxQjtJQUM3QyxNQUFNLEVBQUUsSUFBSSxFQUFFLFNBQVMsRUFBRSxTQUFTLEVBQUUsR0FBRyxLQUFLLENBQUM7SUFFN0MsSUFBSSxJQUFJLENBQUMsSUFBSSxLQUFLLE1BQU0sRUFBRSxDQUFDO1FBQ3pCLE1BQU0sS0FBSyxHQUFHLElBQUksQ0FBQyxLQUFLLENBQUMsSUFBSSxFQUFFLENBQUM7UUFDaEMsSUFBSSxDQUFDLEtBQUs7WUFBRSxNQUFNLElBQUksNEJBQWtCLENBQUMsZ0RBQWdELENBQUMsQ0FBQztRQUMzRiw4RkFBOEY7UUFDOUYsMEZBQTBGO1FBQzFGLE1BQU0sUUFBUSxHQUFHLE1BQU0sQ0FBQyxJQUFJLENBQUMsS0FBSyxDQUFDLENBQUM7UUFDcEMsSUFBSSxDQUFDLE1BQU0sQ0FBQyxTQUFTLENBQUMsUUFBUSxDQUFDLEVBQUUsQ0FBQztZQUNoQyxNQUFNLElBQUksNEJBQWtCLENBQUMsaURBQWlELElBQUksQ0FBQyxLQUFLLEVBQUUsQ0FBQyxDQUFDO1FBQzlGLENBQUM7UUFDRCxNQUFNLEtBQUssR0FBRyxRQUFRLENBQUM7UUFDdkIsSUFBSSxDQUFDLENBQUMsS0FBSyxHQUFHLENBQUMsQ0FBQyxFQUFFLENBQUM7WUFDakIsTUFBTSxJQUFJLDRCQUFrQixDQUFDLDBDQUEwQyxJQUFJLENBQUMsS0FBSyxHQUFHLENBQUMsQ0FBQztRQUN4RixDQUFDO1FBQ0QsMEZBQTBGO1FBQzFGLHNGQUFzRjtRQUN0RixNQUFNLE1BQU0sR0FBRyxNQUFNLENBQUMsSUFBSSxDQUFDLFlBQVksQ0FBQyxDQUFDO1FBQ3pDLElBQUksQ0FBQyxNQUFNLENBQUMsU0FB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cGFja2FnZXMvcHJpY2luZy9zcmMvYnVpbGQtbGluZS50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqIFRoZSBsaW5lLWJ1aWxkZXIgY2hva2UgcG9pbnQgZm9yIGEgTkVXIHdyaXRlIChkZXNpZ24gZG9jXG4gKiBgLmNsYXVkZS9oYW5kb2Zmcy8yMDI2LTA5LTIxLW1vbmV5LWhlbHBlci1yZWZ1c2VzLWFtYmlndWl0eS1QUk9QT1NBTC5tZGAsIHBvc3RlZCBvbiAjOTM4XG4gKiAyMDI2LTA5LTIxIOKAlCB0aGUgXCJyZWZ1c2UgYW1iaWd1aXR5XCIgcHJvcG9zYWwgYWdhaW5zdCB0aGUgb3duZXIncyBydWxpbmcgdG8gcmV0aXJlIHRoZVxuICogYm94LXVuYXdhcmUgY29udmVudGlvbiBmb3IgbmV3IHdyaXRlcykuXG4gKlxuICogVHdvIGF4ZXMsIG1hdGNoaW5nIHdoYXQgYSBsaW5lIGNhbiBhY3R1YWxseSBiZSBzb2xkIGJ5OlxuICogICAtIGBwYWNrYDogdGhlIHByb2R1Y3QncyBvd24gYm94L3BpZWNlIHNwbGl0IOKAlCBtaXJyb3JzIGBidWlsZEludm9pY2VJdGVtRGF0YWAgL1xuICogICAgIGBvcmRlcnMuc2VydmljZS50c2AncyBwYWNrIGJyYW5jaC4gQSBib3hlZCBwcm9kdWN0IChgdW5pdHNQZXJCb3ggPiAxYCkgbXVzdCBzdXBwbHlcbiAqICAgICBib3hlcy9waWVjZXMgb24gdGhlIFJBVyBpbnB1dCDigJQgYGJ1aWxkTGluZWAgaXRzZWxmIHRocm93cyBvdGhlcndpc2UgKHRoZSBCNjQ0IHNoYXBlKSxcbiAqICAgICBiZWZvcmUgZXZlciBub3JtYWxpemluZy4gQSBub24tYm94ZWQgcHJvZHVjdCdzIGBxdHlgIGlzIG5ldmVyIHRydW5jYXRlZCAoaXQgaXNcbiAqICAgICBgRGVjaW1hbCgxMCwzKWAgaW4gdGhlIHNjaGVtYSwgc28gYSBmcmFjdGlvbmFsIHZhbHVlIGlzIGxlZ2l0aW1hdGUpIGJ1dCBtdXN0IGJlIHBvc2l0aXZlXG4gKiAgICAgYW5kIGZpbml0ZSAoRzEpOyBib3hlcy9waWVjZXMgc2VudCBvbiBhIG5vbi1ib3hlZCBheGlzIGFyZSByZWZ1c2VkLCBuZXZlciBzaWxlbnRseSBkcm9wcGVkXG4gKiAgICAgKEcxKTsgYSBzcGxpdCBnaXZlbiBhbG9uZ3NpZGUgYSBxdHkgdGhhdCBkaXNhZ3JlZXMgd2l0aCBpdCBpcyByZWZ1c2VkLCBuZXZlciByZXNvbHZlZCBieVxuICogICAgIHBpY2tpbmcgdGhlIHNwbGl0IChHMykuXG4gKiAgIC0gYHVuaXRgOiBhIG5hbWVkIGRlbm9taW5hdGlvbiBvZmYgdGhlIHByb2R1Y3QncyB1bml0IGxhZGRlciDigJQgbWlycm9yc1xuICogICAgIGBhcHBzL2FwaS9zcmMvb3JkZXJzL3VuaXQtbGluZS1idWlsZC50c2AncyBgYnVpbGRVbml0TGluZWA6IGBib3hlcyA9IGNvdW50YCxcbiAqICAgICBgcXR5ID0gY291bnQgeCBmYWN0b3JUb0Jhc2VgLCBgdW5pdHNQZXJCb3ggPSBmYWN0b3JUb0Jhc2VgICh0aGUgc25hcHNob3QpLCBFWENFUFQgYVxuICogICAgIGZhY3Rvci0xIHVuaXQgKGEgUGllY2Ugb2ZmIGEgYm94ZWQgcGFjayksIHdoaWNoIGlzIGBib3hlczogbnVsbCwgcGllY2VzOiBudWxsLCBxdHk6IGNvdW50YFxuICogICAgIOKAlCBhIHBsYWluIHBlci1waWVjZSBsaW5lIHRoYXQgc3RpbGwgc25hcHNob3RzIGl0cyBmYWN0b3IuIGBjb3VudGAgbXVzdCBiZSBhIHdob2xlIG51bWJlclxuICogICAgIChHMikg4oCUIDEuNSBDYXNlcyBpcyBub3QgYSByZWFsIHF1YW50aXR5LlxuICpcbiAqIE5PIENBTExFUlMgWUVUIChQUi0xIG9mIHRoZSBwcm9wb3NhbCkuIFRoZSB0aHJlZSBleGlzdGluZyBidWlsZGVyc1xuICogKGBvcmRlcnMvdW5pdC1saW5lLWJ1aWxkLnRzYCwgYGludm9pY2VzL2ludm9pY2UtdW5pdC1saW5lLnRzYCwgYGludm9pY2VzLnNlcnZpY2UudHNgJ3NcbiAqIGBidWlsZEludm9pY2VJdGVtRGF0YWApIGtlZXAgY2FsbGluZyBgY29tcHV0ZUxpbmVTdWJ0b3RhbGAvYG5vcm1hbGl6ZUJveGVzUGllY2VzYCBkaXJlY3RseSBhbmRcbiAqIGdldCByZS1wb2ludGVkIGF0IHRoaXMgb25lIGF0IGEgdGltZSwgY2hlY2tlZCBhZ2FpbnN0IHRoZSBjb3BpZXItY29udHJhY3QgcmVnaXN0cnlcbiAqIChgYXBwcy9hcGkvc3JjL2NvbW1vbi90ZXN0aW5nL2NvcGllci1jb250cmFjdC9gLCAjMTE2MykgcGVyIHNpdGUuIEV4aXN0aW5nIFJPV1MgYXJlIG5ldmVyXG4gKiByZXdyaXR0ZW4g4oCUIHRoaXMgb25seSBzaGFwZXMgYSBuZXcgd3JpdGUuXG4gKi9cbmltcG9ydCB7IEFtYmlndW91c0xpbmVFcnJvciwgY29tcHV0ZUxpbmVTdWJ0b3RhbFN0cmljdCwgbm9ybWFsaXplQm94ZXNQaWVjZXMgfSBmcm9tIFwiLi9wcmljaW5nXCI7XG5cbmV4cG9ydCBpbnRlcmZhY2UgUGFja0F4aXMge1xuICBraW5kOiBcInBhY2tcIjtcbiAgLyoqIEEgYm94L3BpZWNlIHNwbGl0IChyZXF1aXJlZCB3aGVuIHRoZSBwcm9kdWN0IGlzIGJveGVkKSBvciBhIHJhdyBxdHkgKG5vbi1ib3hlZCBvbmx5KS4gKi9cbiAgYm94ZXM/OiBudW1iZXIgfCBudWxsO1xuICBwaWVjZXM/OiBudW1iZXIgfCBudWxsO1xuICBxdHk/OiBudW1iZXIgfCBudWxsO1xuICAvKiogVGhlIHByb2R1Y3QncyBib3ggc2l6ZTsgbnVsbC8xID0gbm90IGJveGVkLiAqL1xuICB1bml0c1BlckJveD86IG51bWJlciB8IG51bGw7XG59XG5cbmV4cG9ydCBpbnRlcmZhY2UgVW5pdEF4aXMge1xuICBraW5kOiBcInVuaXRcIjtcbiAgLyoqIFRoZSBkZW5vbWluYXRpb24sIGUuZy4gXCJDYXNlXCIg4oCUIG5ldmVyIHRoZSBwYWNrJ3Mgb3duIGxhYmVsICh0aGUgY2FsbGVyJ3MgcGFjayBicmFuY2ggb3ducyB0aGF0KS4gKi9cbiAgbGFiZWw6IHN0cmluZztcbiAgLyoqIEhvdyBtYW55IG9mIGBsYWJlbGAgdGhpcyBsaW5lIHNlbGxzICgzIENhc2VzID0gMykuICovXG4gIGNvdW50OiBudW1iZXI7XG4gIC8qKiBQaWVjZXMgcGVyIE9ORSBgbGFiZWxgIOKAlCBgcmVzb2x2ZUxpbmVVbml0c2AncyByZXN1bHQsIHNuYXBzaG90dGVkIHZlcmJhdGltIGV2ZW4gd2hlbiAxLiAqL1xuICBmYWN0b3JUb0Jhc2U6IG51bWJlcjtcbn1cblxuZXhwb3J0IGludGVyZmFjZSBCdWlsZExpbmVJbnB1dCB7XG4gIGF4aXM6IFBhY2tBeGlzIHwgVW5pdEF4aXM7XG4gIC8qKiBQcmljZSBwZXIgU0VMTElORyB1bml0OiBwZXIgYm94IG9uIHRoZSBwYWNrIGF4aXMsIHBlciBgbGFiZWxgIG9uIHRoZSB1bml0IGF4aXMuICovXG4gIHVuaXRQcmljZTogbnVtYmVyO1xuICBmcmVlVW5pdHM/OiBudW1iZXI7XG59XG5cbmV4cG9ydCBpbnRlcmZhY2UgQnVpbHRMaW5lIHtcbiAgcXR5OiBudW1iZXI7XG4gIGJveGVzOiBudW1iZXIgfCBudWxsO1xuICBwaWVjZXM6IG51bWJlciB8IG51bGw7XG4gIHVuaXRzUGVyQm94OiBudW1iZXIgfCBudWxsO1xuICB1bml0TGFiZWw6IHN0cmluZyB8IG51bGw7XG4gIHVuaXRQcmljZTogbnVtYmVyO1xuICBzdWJ0b3RhbDogbnVtYmVyO1xufVxuXG5leHBvcnQgZnVuY3Rpb24gYnVpbGRMaW5lKGlucHV0OiBCdWlsZExpbmVJbnB1dCk6IEJ1aWx0TGluZSB7XG4gIGNvbnN0IHsgYXhpcywgdW5pdFByaWNlLCBmcmVlVW5pdHMgfSA9IGlucHV0O1xuXG4gIGlmIChheGlzLmtpbmQgPT09IFwidW5pdFwiKSB7XG4gICAgY29uc3QgbGFiZWwgPSBheGlzLmxhYmVsLnRyaW0oKTtcbiAgICBpZiAoIWxhYmVsKSB0aHJvdyBuZXcgQW1iaWd1b3VzTGluZUVycm9yKFwiYnVpbGRMaW5lOiBhIHVuaXQgYXhpcyBuZWVkcyBhIG5vbi1ibGFuayBsYWJlbFwiKTtcbiAgICAvLyBHMiAoUi11aSByZXZpZXcsIDIwMjYtMDktMjEpOiBhIHVuaXQgY291bnQgaXMgYSBDT1VOVCBvZiB3aG9sZSB1bml0cyAoMyBDYXNlcykg4oCUIE1hdGgudHJ1bmNcbiAgICAvLyBhbG9uZSBzaWxlbnRseSBiaWxsZWQgMS41IENhc2VzIGFzIDEuIFJlZnVzZSBhIG5vbi1pbnRlZ2VyIGluc3RlYWQgb2Ygcm91bmRpbmcgaXQgYXdheS5cbiAgICBjb25zdCByYXdDb3VudCA9IE51bWJlcihheGlzLmNvdW50KTtcbiAgICBpZiAoIU51bWJlci5pc0ludGVnZXIocmF3Q291bnQpKSB7XG4gICAgICB0aHJvdyBuZXcgQW1iaWd1b3VzTGluZUVycm9yKGBidWlsZExpbmU6IHVuaXQgY291bnQgbXVzdCBiZSBhbiBpbnRlZ2VyLCBnb3QgJHtheGlzLmNvdW50fWApO1xuICAgIH1cbiAgICBjb25zdCBjb3VudCA9IHJhd0NvdW50O1xuICAgIGlmICghKGNvdW50ID4gMCkpIHtcbiAgICAgIHRocm93IG5ldyBBbWJpZ3VvdXNMaW5lRXJyb3IoYGJ1aWxkTGluZTogdW5pdCBjb3VudCBtdXN0IGJlID4gMCAoZ290ICR7YXhpcy5jb3VudH0pYCk7XG4gICAgfVxuICAgIC8vIE4yIChSLXVpIHJldmlldywgb3B0aW9uYWwg4oCUIGZhY3RvclRvQmFzZSBpcyBpbnRlZ2VyIHVwc3RyZWFtIGFueXdheSwgYnV0IHRoZSBzYW1lIGd1YXJkXG4gICAgLy8gaXMgb25lIGxpbmUpOiBhIGZyYWN0aW9uYWwgZmFjdG9yIGhhcyBubyBtZWFuaW5nIChwaWVjZXMgcGVyIHVuaXQgaXMgYWx3YXlzIHdob2xlKS5cbiAgICBjb25zdCBmYWN0b3IgPSBOdW1iZXIoYXhpcy5mYWN0b3JUb0Jhc2UpO1xuICAgIGlmICghTnVtYmVyLmlzSW50ZWdlcihmYWN0b3IpIHx8ICEoZmFjdG9yID4gMCkpIHtcbiAgICAgIHRocm93IG5ldyBBbWJpZ3VvdXNMaW5lRXJyb3IoXG4gICAgICAgIGBidWlsZExpbmU6IFwiJHtsYWJlbH1cIiBuZWVkcyBhIHBvc2l0aXZlIGludGVnZXIgZmFjdG9yVG9CYXNlIChnb3QgJHtheGlzLmZhY3RvclRvQmFzZX0pYCxcbiAgICAgICk7XG4gICAgfVxuICAgIGNvbnN0IHNwbGl0ID1cbiAgICAgIGZhY3RvciA9PT0gMVxuICAgICAgICA/IHsgYm94ZXM6IG51bGwsIHBpZWNlczogbnVsbCwgcXR5OiBjb3VudCB9XG4gICAgICAgIDogbm9ybWFsaXplQm94ZXNQaWVjZXMoeyBib3hlczogY291bnQsIHBpZWNlczogMCwgdW5pdHNQZXJCb3g6IGZhY3RvciB9KTtcbiAgICBjb25zdCBzdWJ0b3RhbCA9IGNvbXB1dGVMaW5lU3VidG90YWxTdHJpY3Qoe1xuICAgICAgdW5pdFByaWNlLFxuICAgICAgcXR5OiBzcGxpdC5xdHksXG4gICAgICBib3hlczogc3BsaXQuYm94ZXMsXG4gICAgICBwaWVjZXM6IHNwbGl0LnBpZWNlcyxcbiAgICAgIHVuaXRzUGVyQm94OiBmYWN0b3IsXG4gICAgICBmcmVlVW5pdHMsXG4gICAgfSk7XG4gICAgcmV0dXJuIHtcbiAgICAgIHF0eTogc3BsaXQucXR5LFxuICAgICAgYm94ZXM6IHNwbGl0LmJveGVzLFxuICAgICAgcGllY2VzOiBzcGxpdC5waWVjZXMsXG4gICAgICB1bml0c1BlckJveDogZmFjdG9yLFxuICAgICAgdW5pdExhYmVsOiBsYWJlbCxcbiAgICAgIHVuaXRQcmljZSxcbiAgICAgIHN1YnRvdGFsLFxuICAgIH07XG4gIH1cblxuICBjb25zdCB1cGIgPSBOdW1iZXIoYXhpcy51bml0c1BlckJveCA/PyAwKTtcblxuICBpZiAoISh1cGIgPiAxKSkge1xuICAgIC8vIE5vbi1ib3hlZDogcXR5IGlzIHRoZSBvcGVyYXRvcidzIHJhdyB2YWx1ZSAoT3JkZXJJdGVtLnF0eSBpcyBEZWNpbWFsKDEwLDMpIOKAlCBhIGZyYWN0aW9uYWxcbiAgICAvLyBzZWxsaW5nIHF1YW50aXR5LCBlLmcuIDEuNSBrZywgaXMgbGVnaXRpbWF0ZSkuIG5vcm1hbGl6ZUJveGVzUGllY2VzJyBub24tYm94ZWQgYnJhbmNoIGRvZXNcbiAgICAvLyBNYXRoLnRydW5jLCB3aGljaCB3b3VsZCBzaWxlbnRseSBkcm9wIDEuNSAtPiAxIOKAlCBuZXZlciB0cnVuY2F0ZSBoZXJlIChTZW5pb3IgQXJjaGl0ZWN0XG4gICAgLy8gcmV2aWV3LCBIT0xEIDEsIDIwMjYtMDktMjEpLiBjb21wdXRlTGluZVN1YnRvdGFsU3RyaWN0J3Mgb3duIGludGVnZXIgY2hlY2sgaXMgYm94ZWQtb25seVxuICAgIC8vIChzZWUgbGluZUFtYmlndWl0eSksIHNvIGEgZnJhY3Rpb25hbCBxdHkgcGFzc2VzIHRocm91Z2ggdW5tb2xlc3RlZC5cbiAgICAvL1xuICAgIC8vIEcxIChSLXVpIHJldmlldywgMjAyNi0wOS0yMSk6IGEgY2FsbGVyIHRoYXQgc2VuZHMgYm94ZXMvcGllY2VzIGhlcmUgKHRoaXMgYXhpcyByZXNvbHZlZFxuICAgIC8vIG5vbi1ib3hlZCDigJQgdW5pdHNQZXJCb3ggPD0gMSDigJQgc28gdGhleSdyZSBzaWxlbnRseSBJR05PUkVEIGJlbG93KSBhbG1vc3QgY2VydGFpbmx5IG1lYW50XG4gICAgLy8gdGhlIGJveGVkIGJyYW5jaCBhbmQgaGFzIGEgYnVnIChhIHByb2R1Y3QgbWlzcmVwb3J0ZWQgYXMgbm90IGJveGVkLCBvciBhIHN0YWxlXG4gICAgLy8gdW5pdHNQZXJCb3gpLiBSZWZ1c2UgcmF0aGVyIHRoYW4gcXVpZXRseSBkcm9wIHRoZW0uIEFuZCBxdHkgaXRzZWxmIG11c3QgYmUgYSBwb3NpdGl2ZSxcbiAgICAvLyBmaW5pdGUgbnVtYmVyIOKAlCBgTnVtYmVyKHVuZGVmaW5lZCA/PyAwKWAgZGVmYXVsdGluZyB0byAwIHVzZWQgdG8gcHJpY2UgdGhlIGxpbmUgYXQgJDBcbiAgICAvLyBpbnN0ZWFkIG9mIHJlZnVzaW5nICh0aGUgc2FtZSBcInNpbGVudCB3cm9uZyBtb25leVwiIHNoYXBlIGFzIHRoZSBCNjQ0IGZhbWlseSkuXG4gICAgaWYgKGF4aXMuYm94ZXMgIT0gbnVsbCB8fCBheGlzLnBpZWNlcyAhPSBudWxsKSB7XG4gICAgICB0aHJvdyBuZXcgQW1iaWd1b3VzTGluZUVycm9yKFxuICAgICAgICBcImJ1aWxkTGluZTogYm94ZXMvcGllY2VzIGdpdmVuIGJ1dCB0aGlzIGF4aXMgaXMgbm9uLWJveGVkICh1bml0c1BlckJveCA8PSAxKSDigJQgdGhleSB3b3VsZCBiZSBzaWxlbnRseSBkcm9wcGVkXCIsXG4gICAgICApO1xuICAgIH1cbiAgICBjb25zdCBxdHkgPSBOdW1iZXIoYXhpcy5xdHkpO1xuICAgIGlmICghTnVtYmVyLmlzRmluaXRlKHF0eSkgfHwgcXR5IDw9IDApIHtcbiAgICAgIHRocm93IG5ldyBBbWJpZ3VvdXNMaW5lRXJyb3IoXG4gICAgICAgIGBidWlsZExpbmU6IHF0eSBtdXN0IGJlIGEgcG9zaXRpdmUsIGZpbml0ZSBudW1iZXIsIGdvdCAke2F4aXMucXR5fWAsXG4gICAgICApO1xuICAgIH1cbiAgICBjb25zdCBzdWJ0b3RhbCA9IGNvbXB1dGVMaW5lU3VidG90YWxTdHJpY3Qoe1xuICAgICAgdW5pdFByaWNlLFxuICAgICAgcXR5LFxuICAgICAgYm94ZXM6IG51bGwsXG4gICAgICBwaWVjZXM6IG51bGwsXG4gICAgICB1bml0c1BlckJveDogYXhpcy51bml0c1BlckJveCxcbiAgICAgIGZyZWVVbml0cyxcbiAgICB9KTtcbiAgICByZXR1cm4ge1xuICAgICAgcXR5LFxuICAgICAgYm94ZXM6IG51bGwsXG4gICAgICBwaWVjZXM6IG51bGwsXG4gICAgICB1bml0c1BlckJveDogbnVsbCxcbiAgICAgIHVuaXRMYWJlbDogbnVsbCxcbiAgICAgIHVuaXRQcmljZSxcbiAgICAgIHN1YnRvdGFsLFxuICAgIH07XG4gIH1cblxuICAvLyBCb3hlZDogYSByYXcgcXR5IGFsb25lIGlzIGFtYmlndW91cyAocGVyLWJveCB2cyBwZXItcGllY2Ug4oCUIHRoZSBCNjQ0IHNoYXBlKS4gQ2hlY2tlZCBvbiB0aGVcbiAgLy8gUkFXIGlucHV0LCBiZWZvcmUgbm9ybWFsaXppbmcgKEhPTEQgMikg4oCUIG5vcm1hbGl6ZUJveGVzUGllY2VzJyBxdHktb25seSBicmFuY2ggd291bGQgaGFwcGlseVxuICAvLyAoYW5kIHdyb25nbHkpIHRyZWF0IGEgYmFyZSBxdHkgYXMgYWxyZWFkeS1leHBhbmRlZCBwaWVjZXMgaGVyZS5cbiAgaWYgKGF4aXMuYm94ZXMgPT0gbnVsbCAmJiBheGlzLnBpZWNlcyA9PSBudWxsKSB7XG4gICAgdGhyb3cgbmV3IEFtYmlndW91c0xpbmVFcnJvcihcbiAgICAgIFwiYnVpbGRMaW5lOiB1bml0c1BlckJveCA+IDEgd2l0aCBuZWl0aGVyIGJveGVzIG5vciBwaWVjZXMgZ2l2ZW4g4oCUIHF0eSBhbG9uZSBpcyBhbWJpZ3VvdXMgKHBlci1ib3ggdnMgcGVyLXBpZWNlKTsgdGhlIEI2NDQgc2hhcGVcIixcbiAgICApO1xuICB9XG4gIC8vIEEgcmVhbCBwaHlzaWNhbCBib3gvcGllY2UgY291bnQgaXMgbmV2ZXIgZnJhY3Rpb25hbCDigJQgY2hlY2tlZCBoZXJlLCBvbiB0aGUgUkFXIGlucHV0LCBmb3JcbiAgLy8gdGhlIHNhbWUgcmVhc29uIGFzIHRoZSBcIm5laXRoZXIgZ2l2ZW5cIiBjaGVjayBhYm92ZTogbm9ybWFsaXplQm94ZXNQaWVjZXMgc2lsZW50bHlcbiAgLy8gTWF0aC50cnVuYydzIGJveGVzL3BpZWNlcywgd2hpY2ggd291bGQgb3RoZXJ3aXNlIG1ha2UgdGhpcyB1bnJlYWNoYWJsZSB0aHJvdWdoIGJ1aWxkTGluZVxuICAvLyAodGhlIHNhbWUgXCJ1bnJlYWNoYWJsZSBndWFyZFwiIHNoYXBlIEhPTEQgMiBhbHJlYWR5IGZsYWdnZWQgZm9yIHRoZSBzdGFsZS1zcGxpdCBjYXNlKS5cbiAgZm9yIChjb25zdCBbbmFtZSwgdl0gb2YgW1xuICAgIFtcImJveGVzXCIsIGF4aXMuYm94ZXNdLFxuICAgIFtcInBpZWNlc1wiLCBheGlzLnBpZWNlc10sXG4gIF0gYXMgY29uc3QpIHtcbiAgICBpZiAodiAhPSBudWxsICYmICFOdW1iZXIuaXNJbnRlZ2VyKE51bWJlcih2KSkpIHtcbiAgICAgIHRocm93IG5ldyBBbWJpZ3VvdXNMaW5lRXJyb3IoYGJ1aWxkTGluZTogJHtuYW1lfSBtdXN0IGJlIGFuIGludGVnZXIsIGdvdCAke3Z9YCk7XG4gICAgfVxuICB9XG4gIC8vIEczIChSLXVpIHJldmlldywgMjAyNi0wOS0yMSk6IGEgc3BsaXQgQU5EIGEgcXR5IHRoYXQgZGlzYWdyZWVzIHdpdGggaXQgKGJveGVzOjEsIHBpZWNlczowLFxuICAvLyBxdHk6NSwgdXBiOjEyIOKAlCBpbXBsaWVzIDEyLCBub3QgNSkgdXNlZCB0byBzaWxlbnRseSBkcm9wIHRoZSBjYWxsZXIncyBxdHksIHNpbmNlXG4gIC8vIG5vcm1hbGl6ZUJveGVzUGllY2VzIGlnbm9yZXMgcXR5IHdoZW5ldmVyIGEgc3BsaXQgaXMgZ2l2ZW4uIFJlZnVzZSByYXRoZXIgdGhhbiBwaWNrIGFcbiAgLy8gd2lubmVyIOKAlCBhIGNhbGxlciBzZW5kaW5nIGJvdGggaGFzIGEgYnVnLiBDb21wYXJlZCBhZ2FpbnN0IHRoZSBSQVcgKHVucm9sbGVkKSBzcGxpdCwgc28gYW5cbiAgLy8gdW5yb2xsZWQtYnV0LW90aGVyd2lzZS1jb25zaXN0ZW50IHF0eSAobWF0Y2hpbmcgdGhlIHNwbGl0IGJlZm9yZSByb2xsb3ZlcikgaXMgc3RpbGwgZmluZS5cbiAgaWYgKGF4aXMucXR5ICE9IG51bGwpIHtcbiAgICBjb25zdCByYXdRdHkgPSBOdW1iZXIoYXhpcy5xdHkpO1xuICAgIGNvbnN0IGltcGxpZWRRdHkgPSBOdW1iZXIoYXhpcy5ib3hlcyA/PyAwKSAqIHVwYiArIE51bWJlcihheGlzLnBpZWNlcyA/PyAwKTtcbiAgICBpZiAoTnVtYmVyLmlzRmluaXRlKHJhd1F0eSkgJiYgcmF3UXR5ICE9PSBpbXBsaWVkUXR5KSB7XG4gICAgICB0aHJvdyBuZXcgQW1iaWd1b3VzTGluZUVycm9yKFxuICAgICAgICBgYnVpbGRMaW5lOiBxdHkgKCR7YXhpcy5xdHl9KSBkaXNhZ3JlZXMgd2l0aCBib3hlcyp1bml0c1BlckJveCtwaWVjZXMgKCR7aW1wbGllZFF0eX0pIOKAlCB0aGUgc3BsaXQgYW5kIHRoZSBxdHkgbXVzdCBhZ3JlZWAsXG4gICAgICApO1xuICAgIH1cbiAgfVxuICAvLyBBIHNwbGl0IFdBUyBnaXZlbiAoaG93ZXZlciBzdGFsZSDigJQgZS5nLiBwaWVjZXMgPj0gdW5pdHNQZXJCb3gpOiBub3JtYWxpemUgaXQgaGVyZSwgdGhlbiBoYW5kXG4gIC8vIHN0cmljdCB0aGUgTk9STUFMSVpFRCBzcGxpdCwgbmV2ZXIgdGhlIHJhdyBvbmUuIFN0cmljdCdzIG93biBcInBpZWNlcyA+PSB1bml0c1BlckJveFwiIGd1YXJkXG4gIC8vIGV4aXN0cyBvbmx5IHRvIHByb3RlY3QgYSBjYWxsZXIgdGhhdCBza2lwcyBidWlsZExpbmUgZW50aXJlbHkg4oCUIHJvdXRlZCB0aHJvdWdoIGJ1aWxkTGluZSBpdFxuICAvLyBuZXZlciBmaXJlcywgYmVjYXVzZSBidWlsZExpbmUgYWx3YXlzIHJlc29sdmVzIHRoZSBzcGxpdCBiZWZvcmUgc3RyaWN0IGV2ZXIgc2VlcyBpdCAoSE9MRCAyO1xuICAvLyB0aGUgcHJldmlvdXMgZG9jIGNvbW1lbnQgY2xhaW1pbmcgdGhpcyB3YXMgYXNwaXJhdGlvbmFsLCBub3QgdHJ1ZSDigJQgcGFzc2luZyB0aGUgcmF3IHNwbGl0XG4gIC8vIG1hZGUgYSBtZXJlbHktdW5yb2xsZWQtYnV0LXZhbGlkIHNwbGl0IFtlLmcuIDEgYm94ICsgMTQgb2YgYSAxMi1wYWNrXSB0aHJvdyBpbnN0ZWFkIG9mXG4gIC8vIHJvbGxpbmcgb3ZlciB0byAyIGJveGVzICsgMikuXG4gIGNvbnN0IG5vcm1hbGl6ZWQgPSBub3JtYWxpemVCb3hlc1BpZWNlcyh7XG4gICAgYm94ZXM6IGF4aXMuYm94ZXMsXG4gICAgcGllY2VzOiBheGlzLnBpZWNlcyxcbiAgICBxdHk6IGF4aXMucXR5LFxuICAgIHVuaXRzUGVyQm94OiBheGlzLnVuaXRzUGVyQm94LFxuICB9KTtcbiAgLy8gTjEgKFItdWkgcmV2aWV3LCAyMDI2LTA5LTIxKTogYm94ZXM6MCwgcGllY2VzOjAgcGFzc2VzIGV2ZXJ5IGNoZWNrIGFib3ZlIChib3RoIGdpdmVuLCBzb1xuICAvLyBcIm5laXRoZXIgZ2l2ZW5cIiBkb2Vzbid0IGZpcmU7IDAgaXMgYW4gaW50ZWdlcjsgMCBkaXNhZ3JlZXMgd2l0aCBub3RoaW5nKSBhbmQgdXNlZCB0byBtaW50IGFcbiAgLy8gJDAgbGluZSDigJQgbWF0Y2hlcyBHMSwgdGhlIHVuaXQgYXhpcyBhbmQgY3JlYXRlKCkncyBvd24gXCI+IDBcIiByZXF1aXJlbWVudC5cbiAgaWYgKCEobm9ybWFsaXplZC5xdHkgPiAwKSkge1xuICAgIHRocm93IG5ldyBBbWJpZ3VvdXNMaW5lRXJyb3IoXG4gICAgICBgYnVpbGRMaW5lOiBxdHkgbXVzdCBiZSA+IDAsIGdvdCBib3hlczoke2F4aXMuYm94ZXN9IHBpZWNlczoke2F4aXMucGllY2VzfSAoJHtub3JtYWxpemVkLnF0eX0gdG90YWwpYCxcbiAgICApO1xuICB9XG4gIGNvbnN0IHN1YnRvdGFsID0gY29tcHV0ZUxpbmVTdWJ0b3RhbFN0cmljdCh7XG4gICAgdW5pdFByaWNlLFxuICAgIHF0eTogbm9ybWFsaXplZC5xdHksXG4gICAgYm94ZXM6IG5vcm1hbGl6ZWQuYm94ZXMsXG4gICAgcGllY2VzOiBub3JtYWxpemVkLnBpZWNlcyxcbiAgICB1bml0c1BlckJveDogYXhpcy51bml0c1BlckJveCxcbiAgICBmcmVlVW5pdHMsXG4gIH0pO1xuICByZXR1cm4ge1xuICAgIHF0eTogbm9ybWFsaXplZC5xdHksXG4gICAgYm94ZXM6IG5vcm1hbGl6ZWQuYm94ZXMsXG4gICAgcGllY2VzOiBub3JtYWxpemVkLnBpZWNlcyxcbiAgICAvLyBub3JtYWxpemVCb3hlc1BpZWNlcycgYm94ZWQgYnJhbmNoIGFsd2F5cyByZXR1cm5zIG5vbi1udWxsIGJveGVzL3BpZWNlcywgc28gdGhpcyBpc1xuICAgIC8vIHVuY29uZGl0aW9uYWwg4oCUIG1pcnJvcnMgYHByb2R1Y3RzL2xpbmUtdW5pdHMudHNgJ3MgYGxpbmVVbml0c1BlckJveFNuYXBzaG90YCBcImJveGVkXCIgcnVsZS5cbiAgICB1bml0c1BlckJveDogdXBiLFxuICAgIHVuaXRMYWJlbDogbnVsbCxcbiAgICB1bml0UHJpY2UsXG4gICAgc3VidG90YWwsXG4gIH07XG59XG4iXSwidmVyc2lvbiI6M30=

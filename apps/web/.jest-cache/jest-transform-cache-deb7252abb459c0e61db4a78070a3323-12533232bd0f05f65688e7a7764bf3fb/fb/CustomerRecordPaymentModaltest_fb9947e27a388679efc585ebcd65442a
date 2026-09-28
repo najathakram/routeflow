@@ -1,0 +1,41 @@
+a32f5a133e0553df2ba886dc4667f9bc
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _CustomerRecordPaymentModal = require("./CustomerRecordPaymentModal");
+// B313: mobile's payments/record.tsx caps each allocation row at the invoice's balance
+// ("Cap at the invoice's balance — the server would happily over-pay it"), but this web
+// modal edited the raw string with no cap at all — an operator could allocate past an
+// invoice's amountDue here while mobile silently clamped the identical input.
+describe("REG-B313 clampAllocationInput", ()=>{
+    it("caps an over-allocation at the invoice's amountDue", ()=>{
+        // Before the fix, updateAlloc stored the raw string verbatim — "500" past a $100 balance.
+        expect((0, _CustomerRecordPaymentModal.clampAllocationInput)("500", 100)).toBe("100");
+    });
+    it("clamps a negative value up to 0", ()=>{
+        expect((0, _CustomerRecordPaymentModal.clampAllocationInput)("-20", 100)).toBe("0");
+    });
+    it("leaves an in-range value completely untouched", ()=>{
+        expect((0, _CustomerRecordPaymentModal.clampAllocationInput)("40", 100)).toBe("40");
+    });
+    it("passes blank input through so the field stays editable while typing", ()=>{
+        expect((0, _CustomerRecordPaymentModal.clampAllocationInput)("", 100)).toBe("");
+    });
+    it("passes unparseable input through rather than coercing to a number", ()=>{
+        expect((0, _CustomerRecordPaymentModal.clampAllocationInput)("abc", 100)).toBe("abc");
+    });
+    it("rounds an OUT-OF-RANGE value to cents when capping it (@routeflow/pricing roundMoney)", ()=>{
+        expect((0, _CustomerRecordPaymentModal.clampAllocationInput)("133.3339", 100)).toBe("100");
+    });
+    // Opus review (F39): an earlier version reformatted every keystroke through
+    // roundMoney/String, which rewrote "12.50" to "12.5" mid-type and made a cents-ending-in-0
+    // value impossible to type. An in-range decimal-in-progress must survive verbatim.
+    it("does NOT reformat an in-range value — a decimal in progress (or a trailing zero) survives every keystroke", ()=>{
+        expect((0, _CustomerRecordPaymentModal.clampAllocationInput)("12.50", 100)).toBe("12.50");
+        expect((0, _CustomerRecordPaymentModal.clampAllocationInput)("33.3339", 100)).toBe("33.3339");
+        expect((0, _CustomerRecordPaymentModal.clampAllocationInput)("12.", 100)).toBe("12.");
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2NvbXBvbmVudHMvQ3VzdG9tZXJSZWNvcmRQYXltZW50TW9kYWwudGVzdC50c3giXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IHsgY2xhbXBBbGxvY2F0aW9uSW5wdXQgfSBmcm9tIFwiLi9DdXN0b21lclJlY29yZFBheW1lbnRNb2RhbFwiO1xuXG4vLyBCMzEzOiBtb2JpbGUncyBwYXltZW50cy9yZWNvcmQudHN4IGNhcHMgZWFjaCBhbGxvY2F0aW9uIHJvdyBhdCB0aGUgaW52b2ljZSdzIGJhbGFuY2Vcbi8vIChcIkNhcCBhdCB0aGUgaW52b2ljZSdzIGJhbGFuY2Ug4oCUIHRoZSBzZXJ2ZXIgd291bGQgaGFwcGlseSBvdmVyLXBheSBpdFwiKSwgYnV0IHRoaXMgd2ViXG4vLyBtb2RhbCBlZGl0ZWQgdGhlIHJhdyBzdHJpbmcgd2l0aCBubyBjYXAgYXQgYWxsIOKAlCBhbiBvcGVyYXRvciBjb3VsZCBhbGxvY2F0ZSBwYXN0IGFuXG4vLyBpbnZvaWNlJ3MgYW1vdW50RHVlIGhlcmUgd2hpbGUgbW9iaWxlIHNpbGVudGx5IGNsYW1wZWQgdGhlIGlkZW50aWNhbCBpbnB1dC5cbmRlc2NyaWJlKFwiUkVHLUIzMTMgY2xhbXBBbGxvY2F0aW9uSW5wdXRcIiwgKCkgPT4ge1xuICBpdChcImNhcHMgYW4gb3Zlci1hbGxvY2F0aW9uIGF0IHRoZSBpbnZvaWNlJ3MgYW1vdW50RHVlXCIsICgpID0+IHtcbiAgICAvLyBCZWZvcmUgdGhlIGZpeCwgdXBkYXRlQWxsb2Mgc3RvcmVkIHRoZSByYXcgc3RyaW5nIHZlcmJhdGltIOKAlCBcIjUwMFwiIHBhc3QgYSAkMTAwIGJhbGFuY2UuXG4gICAgZXhwZWN0KGNsYW1wQWxsb2NhdGlvbklucHV0KFwiNTAwXCIsIDEwMCkpLnRvQmUoXCIxMDBcIik7XG4gIH0pO1xuXG4gIGl0KFwiY2xhbXBzIGEgbmVnYXRpdmUgdmFsdWUgdXAgdG8gMFwiLCAoKSA9PiB7XG4gICAgZXhwZWN0KGNsYW1wQWxsb2NhdGlvbklucHV0KFwiLTIwXCIsIDEwMCkpLnRvQmUoXCIwXCIpO1xuICB9KTtcblxuICBpdChcImxlYXZlcyBhbiBpbi1yYW5nZSB2YWx1ZSBjb21wbGV0ZWx5IHVudG91Y2hlZFwiLCAoKSA9PiB7XG4gICAgZXhwZWN0KGNsYW1wQWxsb2NhdGlvbklucHV0KFwiNDBcIiwgMTAwKSkudG9CZShcIjQwXCIpO1xuICB9KTtcblxuICBpdChcInBhc3NlcyBibGFuayBpbnB1dCB0aHJvdWdoIHNvIHRoZSBmaWVsZCBzdGF5cyBlZGl0YWJsZSB3aGlsZSB0eXBpbmdcIiwgKCkgPT4ge1xuICAgIGV4cGVjdChjbGFtcEFsbG9jYXRpb25JbnB1dChcIlwiLCAxMDApKS50b0JlKFwiXCIpO1xuICB9KTtcblxuICBpdChcInBhc3NlcyB1bnBhcnNlYWJsZSBpbnB1dCB0aHJvdWdoIHJhdGhlciB0aGFuIGNvZXJjaW5nIHRvIGEgbnVtYmVyXCIsICgpID0+IHtcbiAgICBleHBlY3QoY2xhbXBBbGxvY2F0aW9uSW5wdXQoXCJhYmNcIiwgMTAwKSkudG9CZShcImFiY1wiKTtcbiAgfSk7XG5cbiAgaXQoXCJyb3VuZHMgYW4gT1VULU9GLVJBTkdFIHZhbHVlIHRvIGNlbnRzIHdoZW4gY2FwcGluZyBpdCAoQHJvdXRlZmxvdy9wcmljaW5nIHJvdW5kTW9uZXkpXCIsICgpID0+IHtcbiAgICBleHBlY3QoY2xhbXBBbGxvY2F0aW9uSW5wdXQoXCIxMzMuMzMzOVwiLCAxMDApKS50b0JlKFwiMTAwXCIpO1xuICB9KTtcblxuICAvLyBPcHVzIHJldmlldyAoRjM5KTogYW4gZWFybGllciB2ZXJzaW9uIHJlZm9ybWF0dGVkIGV2ZXJ5IGtleXN0cm9rZSB0aHJvdWdoXG4gIC8vIHJvdW5kTW9uZXkvU3RyaW5nLCB3aGljaCByZXdyb3RlIFwiMTIuNTBcIiB0byBcIjEyLjVcIiBtaWQtdHlwZSBhbmQgbWFkZSBhIGNlbnRzLWVuZGluZy1pbi0wXG4gIC8vIHZhbHVlIGltcG9zc2libGUgdG8gdHlwZS4gQW4gaW4tcmFuZ2UgZGVjaW1hbC1pbi1wcm9ncmVzcyBtdXN0IHN1cnZpdmUgdmVyYmF0aW0uXG4gIGl0KFwiZG9lcyBOT1QgcmVmb3JtYXQgYW4gaW4tcmFuZ2UgdmFsdWUg4oCUIGEgZGVjaW1hbCBpbiBwcm9ncmVzcyAob3IgYSB0cmFpbGluZyB6ZXJvKSBzdXJ2aXZlcyBldmVyeSBrZXlzdHJva2VcIiwgKCkgPT4ge1xuICAgIGV4cGVjdChjbGFtcEFsbG9jYXRpb25JbnB1dChcIjEyLjUwXCIsIDEwMCkpLnRvQmUoXCIxMi41MFwiKTtcbiAgICBleHBlY3QoY2xhbXBBbGxvY2F0aW9uSW5wdXQoXCIzMy4zMzM5XCIsIDEwMCkpLnRvQmUoXCIzMy4zMzM5XCIpO1xuICAgIGV4cGVjdChjbGFtcEFsbG9jYXRpb25JbnB1dChcIjEyLlwiLCAxMDApKS50b0JlKFwiMTIuXCIpO1xuICB9KTtcbn0pO1xuIl0sIm5hbWVzIjpbImRlc2NyaWJlIiwiaXQiLCJleHBlY3QiLCJjbGFtcEFsbG9jYXRpb25JbnB1dCIsInRvQmUiXSwibWFwcGluZ3MiOiI7Ozs7NENBQXFDO0FBRXJDLHVGQUF1RjtBQUN2Rix3RkFBd0Y7QUFDeEYsc0ZBQXNGO0FBQ3RGLDhFQUE4RTtBQUM5RUEsU0FBUyxpQ0FBaUM7SUFDeENDLEdBQUcsc0RBQXNEO1FBQ3ZELDBGQUEwRjtRQUMxRkMsT0FBT0MsSUFBQUEsZ0RBQW9CLEVBQUMsT0FBTyxNQUFNQyxJQUFJLENBQUM7SUFDaEQ7SUFFQUgsR0FBRyxtQ0FBbUM7UUFDcENDLE9BQU9DLElBQUFBLGdEQUFvQixFQUFDLE9BQU8sTUFBTUMsSUFBSSxDQUFDO0lBQ2hEO0lBRUFILEdBQUcsaURBQWlEO1FBQ2xEQyxPQUFPQyxJQUFBQSxnREFBb0IsRUFBQyxNQUFNLE1BQU1DLElBQUksQ0FBQztJQUMvQztJQUVBSCxHQUFHLHVFQUF1RTtRQUN4RUMsT0FBT0MsSUFBQUEsZ0RBQW9CLEVBQUMsSUFBSSxNQUFNQyxJQUFJLENBQUM7SUFDN0M7SUFFQUgsR0FBRyxxRUFBcUU7UUFDdEVDLE9BQU9DLElBQUFBLGdEQUFvQixFQUFDLE9BQU8sTUFBTUMsSUFBSSxDQUFDO0lBQ2hEO0lBRUFILEdBQUcseUZBQXlGO1FBQzFGQyxPQUFPQyxJQUFBQSxnREFBb0IsRUFBQyxZQUFZLE1BQU1DLElBQUksQ0FBQztJQUNyRDtJQUVBLDRFQUE0RTtJQUM1RSwyRkFBMkY7SUFDM0YsbUZBQW1GO0lBQ25GSCxHQUFHLDZHQUE2RztRQUM5R0MsT0FBT0MsSUFBQUEsZ0RBQW9CLEVBQUMsU0FBUyxNQUFNQyxJQUFJLENBQUM7UUFDaERGLE9BQU9DLElBQUFBLGdEQUFvQixFQUFDLFdBQVcsTUFBTUMsSUFBSSxDQUFDO1FBQ2xERixPQUFPQyxJQUFBQSxnREFBb0IsRUFBQyxPQUFPLE1BQU1DLElBQUksQ0FBQztJQUNoRDtBQUNGIn0=

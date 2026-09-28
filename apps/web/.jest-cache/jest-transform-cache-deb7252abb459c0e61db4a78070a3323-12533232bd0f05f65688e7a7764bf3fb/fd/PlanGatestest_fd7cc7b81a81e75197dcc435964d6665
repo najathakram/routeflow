@@ -1,0 +1,84 @@
+391bd310b64decad8e02b2264f2bb695
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+const _react1 = require("@testing-library/react");
+const _PlanGates = require("./PlanGates");
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+const gate = {
+    code: "PLAN_GATE",
+    flag: "flag.estimates",
+    message: "This feature isn't included in the Lite plan.",
+    upgrade: {
+        planKey: null,
+        planMonthlyPrice: null,
+        addonSku: null,
+        addonMonthlyPrice: null
+    }
+};
+describe("LockedPage — secondary prop (Lite-L2 addition)", ()=>{
+    it("renders exactly as before when secondary is omitted (regression pin)", ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_PlanGates.LockedPage, {
+            gate: gate
+        }));
+        expect(_react1.screen.getByText("Not on your plan")).toBeInTheDocument();
+        expect(_react1.screen.getByText(gate.message)).toBeInTheDocument();
+        expect(_react1.screen.getByRole("button", {
+            name: /see plans/i
+        })).toBeInTheDocument();
+        // No secondary line — the paragraph it would render must not exist at all.
+        expect(_react1.screen.queryByText(/contact us to upgrade/i)).not.toBeInTheDocument();
+    });
+    it("renders the secondary line under the CTA when provided", ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_PlanGates.LockedPage, {
+            gate: gate,
+            secondary: "Want it? Contact us to upgrade."
+        }));
+        expect(_react1.screen.getByText("Want it? Contact us to upgrade.")).toBeInTheDocument();
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS9fY29tcG9uZW50cy9nYXRlcy9QbGFuR2F0ZXMudGVzdC50c3giXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0ICogYXMgUmVhY3QgZnJvbSBcInJlYWN0XCI7XG5pbXBvcnQgeyByZW5kZXIsIHNjcmVlbiB9IGZyb20gXCJAdGVzdGluZy1saWJyYXJ5L3JlYWN0XCI7XG5pbXBvcnQgeyBMb2NrZWRQYWdlIH0gZnJvbSBcIi4vUGxhbkdhdGVzXCI7XG5pbXBvcnQgdHlwZSB7IFBsYW5HYXRlQm9keSB9IGZyb20gXCJAL2xpYi9wbGFuLWdhdGVcIjtcblxuY29uc3QgZ2F0ZTogUGxhbkdhdGVCb2R5ID0ge1xuICBjb2RlOiBcIlBMQU5fR0FURVwiLFxuICBmbGFnOiBcImZsYWcuZXN0aW1hdGVzXCIsXG4gIG1lc3NhZ2U6IFwiVGhpcyBmZWF0dXJlIGlzbid0IGluY2x1ZGVkIGluIHRoZSBMaXRlIHBsYW4uXCIsXG4gIHVwZ3JhZGU6IHsgcGxhbktleTogbnVsbCwgcGxhbk1vbnRobHlQcmljZTogbnVsbCwgYWRkb25Ta3U6IG51bGwsIGFkZG9uTW9udGhseVByaWNlOiBudWxsIH0sXG59O1xuXG5kZXNjcmliZShcIkxvY2tlZFBhZ2Ug4oCUIHNlY29uZGFyeSBwcm9wIChMaXRlLUwyIGFkZGl0aW9uKVwiLCAoKSA9PiB7XG4gIGl0KFwicmVuZGVycyBleGFjdGx5IGFzIGJlZm9yZSB3aGVuIHNlY29uZGFyeSBpcyBvbWl0dGVkIChyZWdyZXNzaW9uIHBpbilcIiwgKCkgPT4ge1xuICAgIHJlbmRlcig8TG9ja2VkUGFnZSBnYXRlPXtnYXRlfSAvPik7XG4gICAgZXhwZWN0KHNjcmVlbi5nZXRCeVRleHQoXCJOb3Qgb24geW91ciBwbGFuXCIpKS50b0JlSW5UaGVEb2N1bWVudCgpO1xuICAgIGV4cGVjdChzY3JlZW4uZ2V0QnlUZXh0KGdhdGUubWVzc2FnZSkpLnRvQmVJblRoZURvY3VtZW50KCk7XG4gICAgZXhwZWN0KHNjcmVlbi5nZXRCeVJvbGUoXCJidXR0b25cIiwgeyBuYW1lOiAvc2VlIHBsYW5zL2kgfSkpLnRvQmVJblRoZURvY3VtZW50KCk7XG4gICAgLy8gTm8gc2Vjb25kYXJ5IGxpbmUg4oCUIHRoZSBwYXJhZ3JhcGggaXQgd291bGQgcmVuZGVyIG11c3Qgbm90IGV4aXN0IGF0IGFsbC5cbiAgICBleHBlY3Qoc2NyZWVuLnF1ZXJ5QnlUZXh0KC9jb250YWN0IHVzIHRvIHVwZ3JhZGUvaSkpLm5vdC50b0JlSW5UaGVEb2N1bWVudCgpO1xuICB9KTtcblxuICBpdChcInJlbmRlcnMgdGhlIHNlY29uZGFyeSBsaW5lIHVuZGVyIHRoZSBDVEEgd2hlbiBwcm92aWRlZFwiLCAoKSA9PiB7XG4gICAgcmVuZGVyKDxMb2NrZWRQYWdlIGdhdGU9e2dhdGV9IHNlY29uZGFyeT1cIldhbnQgaXQ/IENvbnRhY3QgdXMgdG8gdXBncmFkZS5cIiAvPik7XG4gICAgZXhwZWN0KHNjcmVlbi5nZXRCeVRleHQoXCJXYW50IGl0PyBDb250YWN0IHVzIHRvIHVwZ3JhZGUuXCIpKS50b0JlSW5UaGVEb2N1bWVudCgpO1xuICB9KTtcbn0pO1xuIl0sIm5hbWVzIjpbImdhdGUiLCJjb2RlIiwiZmxhZyIsIm1lc3NhZ2UiLCJ1cGdyYWRlIiwicGxhbktleSIsInBsYW5Nb250aGx5UHJpY2UiLCJhZGRvblNrdSIsImFkZG9uTW9udGhseVByaWNlIiwiZGVzY3JpYmUiLCJpdCIsInJlbmRlciIsIkxvY2tlZFBhZ2UiLCJleHBlY3QiLCJzY3JlZW4iLCJnZXRCeVRleHQiLCJ0b0JlSW5UaGVEb2N1bWVudCIsImdldEJ5Um9sZSIsIm5hbWUiLCJxdWVyeUJ5VGV4dCIsIm5vdCIsInNlY29uZGFyeSJdLCJtYXBwaW5ncyI6Ijs7Ozs7K0RBQXVCO3dCQUNROzJCQUNKOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7QUFHM0IsTUFBTUEsT0FBcUI7SUFDekJDLE1BQU07SUFDTkMsTUFBTTtJQUNOQyxTQUFTO0lBQ1RDLFNBQVM7UUFBRUMsU0FBUztRQUFNQyxrQkFBa0I7UUFBTUMsVUFBVTtRQUFNQyxtQkFBbUI7SUFBSztBQUM1RjtBQUVBQyxTQUFTLGtEQUFrRDtJQUN6REMsR0FBRyx3RUFBd0U7UUFDekVDLElBQUFBLGNBQU0sZ0JBQUMscUJBQUNDLHFCQUFVO1lBQUNaLE1BQU1BOztRQUN6QmEsT0FBT0MsY0FBTSxDQUFDQyxTQUFTLENBQUMscUJBQXFCQyxpQkFBaUI7UUFDOURILE9BQU9DLGNBQU0sQ0FBQ0MsU0FBUyxDQUFDZixLQUFLRyxPQUFPLEdBQUdhLGlCQUFpQjtRQUN4REgsT0FBT0MsY0FBTSxDQUFDRyxTQUFTLENBQUMsVUFBVTtZQUFFQyxNQUFNO1FBQWEsSUFBSUYsaUJBQWlCO1FBQzVFLDJFQUEyRTtRQUMzRUgsT0FBT0MsY0FBTSxDQUFDSyxXQUFXLENBQUMsMkJBQTJCQyxHQUFHLENBQUNKLGlCQUFpQjtJQUM1RTtJQUVBTixHQUFHLDBEQUEwRDtRQUMzREMsSUFBQUEsY0FBTSxnQkFBQyxxQkFBQ0MscUJBQVU7WUFBQ1osTUFBTUE7WUFBTXFCLFdBQVU7O1FBQ3pDUixPQUFPQyxjQUFNLENBQUNDLFNBQVMsQ0FBQyxvQ0FBb0NDLGlCQUFpQjtJQUMvRTtBQUNGIn0=

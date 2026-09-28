@@ -1,0 +1,47 @@
+e1e195cd8d1951b615f8d90e4e975462
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _creditlimit = require("./credit-limit");
+const api = (status, data)=>({
+        response: {
+            status,
+            data
+        }
+    });
+describe("parseCreditLimitError", ()=>{
+    it("returns the server's numbers and sentence for the 409, verbatim", ()=>{
+        expect((0, _creditlimit.parseCreditLimitError)(api(409, {
+            code: "CREDIT_LIMIT_EXCEEDED",
+            limit: 100,
+            exposure: 110,
+            message: "Over."
+        }))).toEqual({
+            limit: 100,
+            exposure: 110,
+            message: "Over."
+        });
+    });
+    it("defaults a missing message and numbers", ()=>{
+        expect((0, _creditlimit.parseCreditLimitError)(api(409, {
+            code: "CREDIT_LIMIT_EXCEEDED"
+        }))).toEqual({
+            limit: 0,
+            exposure: 0,
+            message: "This would exceed the customer's credit limit."
+        });
+    });
+    it("is null for other codes, non-409s and non-axios errors", ()=>{
+        expect((0, _creditlimit.parseCreditLimitError)(api(409, {
+            code: "SELLING_RESTRICTED"
+        }))).toBeNull();
+        expect((0, _creditlimit.parseCreditLimitError)(api(400, {
+            code: "CREDIT_LIMIT_EXCEEDED"
+        }))).toBeNull();
+        expect((0, _creditlimit.parseCreditLimitError)(new Error("network"))).toBeNull();
+        expect((0, _creditlimit.parseCreditLimitError)(undefined)).toBeNull();
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2xpYi9hcGkvY3JlZGl0LWxpbWl0LnRlc3QudHMiXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IHsgcGFyc2VDcmVkaXRMaW1pdEVycm9yIH0gZnJvbSBcIi4vY3JlZGl0LWxpbWl0XCI7XG5cbmNvbnN0IGFwaSA9IChzdGF0dXM6IG51bWJlciwgZGF0YTogb2JqZWN0KSA9PiAoeyByZXNwb25zZTogeyBzdGF0dXMsIGRhdGEgfSB9KTtcblxuZGVzY3JpYmUoXCJwYXJzZUNyZWRpdExpbWl0RXJyb3JcIiwgKCkgPT4ge1xuICBpdChcInJldHVybnMgdGhlIHNlcnZlcidzIG51bWJlcnMgYW5kIHNlbnRlbmNlIGZvciB0aGUgNDA5LCB2ZXJiYXRpbVwiLCAoKSA9PiB7XG4gICAgZXhwZWN0KFxuICAgICAgcGFyc2VDcmVkaXRMaW1pdEVycm9yKFxuICAgICAgICBhcGkoNDA5LCB7IGNvZGU6IFwiQ1JFRElUX0xJTUlUX0VYQ0VFREVEXCIsIGxpbWl0OiAxMDAsIGV4cG9zdXJlOiAxMTAsIG1lc3NhZ2U6IFwiT3Zlci5cIiB9KSxcbiAgICAgICksXG4gICAgKS50b0VxdWFsKHsgbGltaXQ6IDEwMCwgZXhwb3N1cmU6IDExMCwgbWVzc2FnZTogXCJPdmVyLlwiIH0pO1xuICB9KTtcblxuICBpdChcImRlZmF1bHRzIGEgbWlzc2luZyBtZXNzYWdlIGFuZCBudW1iZXJzXCIsICgpID0+IHtcbiAgICBleHBlY3QocGFyc2VDcmVkaXRMaW1pdEVycm9yKGFwaSg0MDksIHsgY29kZTogXCJDUkVESVRfTElNSVRfRVhDRUVERURcIiB9KSkpLnRvRXF1YWwoe1xuICAgICAgbGltaXQ6IDAsXG4gICAgICBleHBvc3VyZTogMCxcbiAgICAgIG1lc3NhZ2U6IFwiVGhpcyB3b3VsZCBleGNlZWQgdGhlIGN1c3RvbWVyJ3MgY3JlZGl0IGxpbWl0LlwiLFxuICAgIH0pO1xuICB9KTtcblxuICBpdChcImlzIG51bGwgZm9yIG90aGVyIGNvZGVzLCBub24tNDA5cyBhbmQgbm9uLWF4aW9zIGVycm9yc1wiLCAoKSA9PiB7XG4gICAgZXhwZWN0KHBhcnNlQ3JlZGl0TGltaXRFcnJvcihhcGkoNDA5LCB7IGNvZGU6IFwiU0VMTElOR19SRVNUUklDVEVEXCIgfSkpKS50b0JlTnVsbCgpO1xuICAgIGV4cGVjdChwYXJzZUNyZWRpdExpbWl0RXJyb3IoYXBpKDQwMCwgeyBjb2RlOiBcIkNSRURJVF9MSU1JVF9FWENFRURFRFwiIH0pKSkudG9CZU51bGwoKTtcbiAgICBleHBlY3QocGFyc2VDcmVkaXRMaW1pdEVycm9yKG5ldyBFcnJvcihcIm5ldHdvcmtcIikpKS50b0JlTnVsbCgpO1xuICAgIGV4cGVjdChwYXJzZUNyZWRpdExpbWl0RXJyb3IodW5kZWZpbmVkKSkudG9CZU51bGwoKTtcbiAgfSk7XG59KTtcbiJdLCJuYW1lcyI6WyJhcGkiLCJzdGF0dXMiLCJkYXRhIiwicmVzcG9uc2UiLCJkZXNjcmliZSIsIml0IiwiZXhwZWN0IiwicGFyc2VDcmVkaXRMaW1pdEVycm9yIiwiY29kZSIsImxpbWl0IiwiZXhwb3N1cmUiLCJtZXNzYWdlIiwidG9FcXVhbCIsInRvQmVOdWxsIiwiRXJyb3IiLCJ1bmRlZmluZWQiXSwibWFwcGluZ3MiOiI7Ozs7NkJBQXNDO0FBRXRDLE1BQU1BLE1BQU0sQ0FBQ0MsUUFBZ0JDLE9BQWtCLENBQUE7UUFBRUMsVUFBVTtZQUFFRjtZQUFRQztRQUFLO0lBQUUsQ0FBQTtBQUU1RUUsU0FBUyx5QkFBeUI7SUFDaENDLEdBQUcsbUVBQW1FO1FBQ3BFQyxPQUNFQyxJQUFBQSxrQ0FBcUIsRUFDbkJQLElBQUksS0FBSztZQUFFUSxNQUFNO1lBQXlCQyxPQUFPO1lBQUtDLFVBQVU7WUFBS0MsU0FBUztRQUFRLEtBRXhGQyxPQUFPLENBQUM7WUFBRUgsT0FBTztZQUFLQyxVQUFVO1lBQUtDLFNBQVM7UUFBUTtJQUMxRDtJQUVBTixHQUFHLDBDQUEwQztRQUMzQ0MsT0FBT0MsSUFBQUEsa0NBQXFCLEVBQUNQLElBQUksS0FBSztZQUFFUSxNQUFNO1FBQXdCLEtBQUtJLE9BQU8sQ0FBQztZQUNqRkgsT0FBTztZQUNQQyxVQUFVO1lBQ1ZDLFNBQVM7UUFDWDtJQUNGO0lBRUFOLEdBQUcsMERBQTBEO1FBQzNEQyxPQUFPQyxJQUFBQSxrQ0FBcUIsRUFBQ1AsSUFBSSxLQUFLO1lBQUVRLE1BQU07UUFBcUIsS0FBS0ssUUFBUTtRQUNoRlAsT0FBT0MsSUFBQUEsa0NBQXFCLEVBQUNQLElBQUksS0FBSztZQUFFUSxNQUFNO1FBQXdCLEtBQUtLLFFBQVE7UUFDbkZQLE9BQU9DLElBQUFBLGtDQUFxQixFQUFDLElBQUlPLE1BQU0sYUFBYUQsUUFBUTtRQUM1RFAsT0FBT0MsSUFBQUEsa0NBQXFCLEVBQUNRLFlBQVlGLFFBQVE7SUFDbkQ7QUFDRiJ9

@@ -1,0 +1,162 @@
+696e93ab8ab3f62b384f61f743373712
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, {
+        enumerable: true,
+        get: Object.getOwnPropertyDescriptor(all, name).get
+    });
+}
+_export(exports, {
+    get default () {
+        return WholesalersPage;
+    },
+    get metadata () {
+        return metadata;
+    }
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _link = /*#__PURE__*/ _interop_require_default(require("next/link"));
+const _lucidereact = require("lucide-react");
+const _site = require("../lib/site");
+const _marketing = require("../components/marketing");
+const _orderlifecycle = require("../components/order-lifecycle");
+const _workflowtour = require("../components/workflow-tour");
+const _deliverydemo = require("../components/delivery-demo");
+const _faq = require("../components/faq");
+function _interop_require_default(obj) {
+    return obj && obj.__esModule ? obj : {
+        default: obj
+    };
+}
+// Copy verbatim from the redesign's app/[page]/page.tsx `Wholesalers()` (M1 §2b).
+const route = _site.routes.find((r)=>r.slug === "wholesalers");
+const metadata = {
+    title: route.title,
+    description: route.description,
+    alternates: {
+        canonical: "/wholesalers"
+    },
+    openGraph: {
+        title: route.title,
+        description: route.description,
+        url: "/wholesalers",
+        siteName: _site.site.name,
+        type: "website"
+    }
+};
+function WholesalersPage() {
+    return /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+        className: "glass-page",
+        children: [
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("section", {
+                className: "distributor-hero",
+                children: /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                    className: "wrap split-hero",
+                    children: [
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                            children: [
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)(_marketing.Eyebrow, {
+                                    children: "FOR WHOLESALERS & DISTRIBUTORS"
+                                }),
+                                /*#__PURE__*/ (0, _jsxruntime.jsxs)("h1", {
+                                    children: [
+                                        "One order, priced right, ",
+                                        /*#__PURE__*/ (0, _jsxruntime.jsx)("br", {}),
+                                        "on the right ",
+                                        /*#__PURE__*/ (0, _jsxruntime.jsx)("em", {
+                                            children: "truck, invoiced automatically."
+                                        })
+                                    ]
+                                }),
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                    className: "lead",
+                                    children: "RouteFlow runs your order lifecycle in one system, so nothing gets re-typed, re-priced, or re-checked by hand between the phone call and the invoice."
+                                }),
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("div", {
+                                    className: "hero-actions",
+                                    children: /*#__PURE__*/ (0, _jsxruntime.jsxs)(_link.default, {
+                                        href: "/book-a-demo",
+                                        className: "button button-lime",
+                                        children: [
+                                            "Book a distributor demo ",
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.ArrowUpRight, {
+                                                size: 18
+                                            })
+                                        ]
+                                    })
+                                }),
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                    className: "hero-note",
+                                    children: "Orders, routes, and customer accounts in one workspace."
+                                })
+                            ]
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)(_deliverydemo.DeliveryDemo, {
+                            compact: true
+                        })
+                    ]
+                })
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)(_orderlifecycle.OrderLifecycle, {}),
+            /*#__PURE__*/ (0, _jsxruntime.jsxs)("section", {
+                className: "section wrap",
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                        className: "section-heading split-heading",
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                children: [
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)(_marketing.Eyebrow, {
+                                        children: "THE PART SPREADSHEETS GET WRONG"
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("h2", {
+                                        children: [
+                                            "Pricing and payment,",
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("br", {}),
+                                            "handled the way you actually work."
+                                        ]
+                                    })
+                                ]
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                children: "Boxed pricing, customer-tier rates, standing orders, and driver settlement — the details that make or lose money on a wholesale order."
+                            })
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)(_orderlifecycle.WholesalerCapabilities, {})
+                ]
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("section", {
+                className: "section surface",
+                children: /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                    className: "wrap",
+                    children: [
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                            className: "section-heading",
+                            children: [
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)(_marketing.Eyebrow, {
+                                    children: "SEE YOUR WORKFLOW IN ROUTEFLOW"
+                                }),
+                                /*#__PURE__*/ (0, _jsxruntime.jsxs)("h2", {
+                                    children: [
+                                        "Follow an order",
+                                        /*#__PURE__*/ (0, _jsxruntime.jsx)("br", {}),
+                                        "through the day."
+                                    ]
+                                })
+                            ]
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)(_workflowtour.WorkflowTour, {})
+                    ]
+                })
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)(_faq.FAQ, {}),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)(_marketing.CTA, {})
+        ]
+    });
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8obWFya2V0aW5nKS93aG9sZXNhbGVycy9wYWdlLnRzeCJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgdHlwZSB7IE1ldGFkYXRhIH0gZnJvbSBcIm5leHRcIjtcbmltcG9ydCBMaW5rIGZyb20gXCJuZXh0L2xpbmtcIjtcbmltcG9ydCB7IEFycm93VXBSaWdodCB9IGZyb20gXCJsdWNpZGUtcmVhY3RcIjtcbmltcG9ydCB7IHJvdXRlcywgc2l0ZSB9IGZyb20gXCIuLi9saWIvc2l0ZVwiO1xuaW1wb3J0IHsgQ1RBLCBFeWVicm93IH0gZnJvbSBcIi4uL2NvbXBvbmVudHMvbWFya2V0aW5nXCI7XG5pbXBvcnQgeyBPcmRlckxpZmVjeWNsZSwgV2hvbGVzYWxlckNhcGFiaWxpdGllcyB9IGZyb20gXCIuLi9jb21wb25lbnRzL29yZGVyLWxpZmVjeWNsZVwiO1xuaW1wb3J0IHsgV29ya2Zsb3dUb3VyIH0gZnJvbSBcIi4uL2NvbXBvbmVudHMvd29ya2Zsb3ctdG91clwiO1xuaW1wb3J0IHsgRGVsaXZlcnlEZW1vIH0gZnJvbSBcIi4uL2NvbXBvbmVudHMvZGVsaXZlcnktZGVtb1wiO1xuaW1wb3J0IHsgRkFRIH0gZnJvbSBcIi4uL2NvbXBvbmVudHMvZmFxXCI7XG5cbi8vIENvcHkgdmVyYmF0aW0gZnJvbSB0aGUgcmVkZXNpZ24ncyBhcHAvW3BhZ2VdL3BhZ2UudHN4IGBXaG9sZXNhbGVycygpYCAoTTEgwqcyYikuXG5cbmNvbnN0IHJvdXRlID0gcm91dGVzLmZpbmQoKHIpID0+IHIuc2x1ZyA9PT0gXCJ3aG9sZXNhbGVyc1wiKSE7XG5cbmV4cG9ydCBjb25zdCBtZXRhZGF0YTogTWV0YWRhdGEgPSB7XG4gIHRpdGxlOiByb3V0ZS50aXRsZSxcbiAgZGVzY3JpcHRpb246IHJvdXRlLmRlc2NyaXB0aW9uLFxuICBhbHRlcm5hdGVzOiB7IGNhbm9uaWNhbDogXCIvd2hvbGVzYWxlcnNcIiB9LFxuICBvcGVuR3JhcGg6IHtcbiAgICB0aXRsZTogcm91dGUudGl0bGUsXG4gICAgZGVzY3JpcHRpb246IHJvdXRlLmRlc2NyaXB0aW9uLFxuICAgIHVybDogXCIvd2hvbGVzYWxlcnNcIixcbiAgICBzaXRlTmFtZTogc2l0ZS5uYW1lLFxuICAgIHR5cGU6IFwid2Vic2l0ZVwiLFxuICB9LFxufTtcblxuZXhwb3J0IGRlZmF1bHQgZnVuY3Rpb24gV2hvbGVzYWxlcnNQYWdlKCkge1xuICByZXR1cm4gKFxuICAgIDxkaXYgY2xhc3NOYW1lPVwiZ2xhc3MtcGFnZVwiPlxuICAgICAgPHNlY3Rpb24gY2xhc3NOYW1lPVwiZGlzdHJpYnV0b3ItaGVyb1wiPlxuICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cIndyYXAgc3BsaXQtaGVyb1wiPlxuICAgICAgICAgIDxkaXY+XG4gICAgICAgICAgICA8RXllYnJvdz5GT1IgV0hPTEVTQUxFUlMgJiBESVNUUklCVVRPUlM8L0V5ZWJyb3c+XG4gICAgICAgICAgICA8aDE+XG4gICAgICAgICAgICAgIE9uZSBvcmRlciwgcHJpY2VkIHJpZ2h0LCA8YnIgLz5cbiAgICAgICAgICAgICAgb24gdGhlIHJpZ2h0IDxlbT50cnVjaywgaW52b2ljZWQgYXV0b21hdGljYWxseS48L2VtPlxuICAgICAgICAgICAgPC9oMT5cbiAgICAgICAgICAgIDxwIGNsYXNzTmFtZT1cImxlYWRcIj5cbiAgICAgICAgICAgICAgUm91dGVGbG93IHJ1bnMgeW91ciBvcmRlciBsaWZlY3ljbGUgaW4gb25lIHN5c3RlbSwgc28gbm90aGluZyBnZXRzIHJlLXR5cGVkLFxuICAgICAgICAgICAgICByZS1wcmljZWQsIG9yIHJlLWNoZWNrZWQgYnkgaGFuZCBiZXR3ZWVuIHRoZSBwaG9uZSBjYWxsIGFuZCB0aGUgaW52b2ljZS5cbiAgICAgICAgICAgIDwvcD5cbiAgICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwiaGVyby1hY3Rpb25zXCI+XG4gICAgICAgICAgICAgIDxMaW5rIGhyZWY9XCIvYm9vay1hLWRlbW9cIiBjbGFzc05hbWU9XCJidXR0b24gYnV0dG9uLWxpbWVcIj5cbiAgICAgICAgICAgICAgICBCb29rIGEgZGlzdHJpYnV0b3IgZGVtbyA8QXJyb3dVcFJpZ2h0IHNpemU9ezE4fSAvPlxuICAgICAgICAgICAgICA8L0xpbms+XG4gICAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgICAgIDxwIGNsYXNzTmFtZT1cImhlcm8tbm90ZVwiPk9yZGVycywgcm91dGVzLCBhbmQgY3VzdG9tZXIgYWNjb3VudHMgaW4gb25lIHdvcmtzcGFjZS48L3A+XG4gICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgPERlbGl2ZXJ5RGVtbyBjb21wYWN0IC8+XG4gICAgICAgIDwvZGl2PlxuICAgICAgPC9zZWN0aW9uPlxuICAgICAgPE9yZGVyTGlmZWN5Y2xlIC8+XG4gICAgICA8c2VjdGlvbiBjbGFzc05hbWU9XCJzZWN0aW9uIHdyYXBcIj5cbiAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJzZWN0aW9uLWhlYWRpbmcgc3BsaXQtaGVhZGluZ1wiPlxuICAgICAgICAgIDxkaXY+XG4gICAgICAgICAgICA8RXllYnJvdz5USEUgUEFSVCBTUFJFQURTSEVFVFMgR0VUIFdST05HPC9FeWVicm93PlxuICAgICAgICAgICAgPGgyPlxuICAgICAgICAgICAgICBQcmljaW5nIGFuZCBwYXltZW50LFxuICAgICAgICAgICAgICA8YnIgLz5cbiAgICAgICAgICAgICAgaGFuZGxlZCB0aGUgd2F5IHlvdSBhY3R1YWxseSB3b3JrLlxuICAgICAgICAgICAgPC9oMj5cbiAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgICA8cD5cbiAgICAgICAgICAgIEJveGVkIHByaWNpbmcsIGN1c3RvbWVyLXRpZXIgcmF0ZXMsIHN0YW5kaW5nIG9yZGVycywgYW5kIGRyaXZlciBzZXR0bGVtZW50IOKAlCB0aGUgZGV0YWlsc1xuICAgICAgICAgICAgdGhhdCBtYWtlIG9yIGxvc2UgbW9uZXkgb24gYSB3aG9sZXNhbGUgb3JkZXIuXG4gICAgICAgICAgPC9wPlxuICAgICAgICA8L2Rpdj5cbiAgICAgICAgPFdob2xlc2FsZXJDYXBhYmlsaXRpZXMgLz5cbiAgICAgIDwvc2VjdGlvbj5cbiAgICAgIDxzZWN0aW9uIGNsYXNzTmFtZT1cInNlY3Rpb24gc3VyZmFjZVwiPlxuICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cIndyYXBcIj5cbiAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cInNlY3Rpb24taGVhZGluZ1wiPlxuICAgICAgICAgICAgPEV5ZWJyb3c+U0VFIFlPVVIgV09SS0ZMT1cgSU4gUk9VVEVGTE9XPC9FeWVicm93PlxuICAgICAgICAgICAgPGgyPlxuICAgICAgICAgICAgICBGb2xsb3cgYW4gb3JkZXJcbiAgICAgICAgICAgICAgPGJyIC8+XG4gICAgICAgICAgICAgIHRocm91Z2ggdGhlIGRheS5cbiAgICAgICAgICAgIDwvaDI+XG4gICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgPFdvcmtmbG93VG91ciAvPlxuICAgICAgICA8L2Rpdj5cbiAgICAgIDwvc2VjdGlvbj5cbiAgICAgIDxGQVEgLz5cbiAgICAgIDxDVEEgLz5cbiAgICA8L2Rpdj5cbiAgKTtcbn1cbiJdLCJuYW1lcyI6WyJXaG9sZXNhbGVyc1BhZ2UiLCJtZXRhZGF0YSIsInJvdXRlIiwicm91dGVzIiwiZmluZCIsInIiLCJzbHVnIiwidGl0bGUiLCJkZXNjcmlwdGlvbiIsImFsdGVybmF0ZXMiLCJjYW5vbmljYWwiLCJvcGVuR3JhcGgiLCJ1cmwiLCJzaXRlTmFtZSIsInNpdGUiLCJuYW1lIiwidHlwZSIsImRpdiIsImNsYXNzTmFtZSIsInNlY3Rpb24iLCJFeWVicm93IiwiaDEiLCJiciIsImVtIiwicCIsIkxpbmsiLCJocmVmIiwiQXJyb3dVcFJpZ2h0Iiwic2l6ZSIsIkRlbGl2ZXJ5RGVtbyIsImNvbXBhY3QiLCJPcmRlckxpZmVjeWNsZSIsImgyIiwiV2hvbGVzYWxlckNhcGFiaWxpdGllcyIsIldvcmtmbG93VG91ciIsIkZBUSIsIkNUQSJdLCJtYXBwaW5ncyI6Ijs7Ozs7Ozs7Ozs7UUEyQkE7ZUFBd0JBOztRQWJYQztlQUFBQTs7Ozs2REFiSTs2QkFDWTtzQkFDQTsyQkFDQTtnQ0FDMEI7OEJBQzFCOzhCQUNBO3FCQUNUOzs7Ozs7QUFFcEIsa0ZBQWtGO0FBRWxGLE1BQU1DLFFBQVFDLFlBQU0sQ0FBQ0MsSUFBSSxDQUFDLENBQUNDLElBQU1BLEVBQUVDLElBQUksS0FBSztBQUVyQyxNQUFNTCxXQUFxQjtJQUNoQ00sT0FBT0wsTUFBTUssS0FBSztJQUNsQkMsYUFBYU4sTUFBTU0sV0FBVztJQUM5QkMsWUFBWTtRQUFFQyxXQUFXO0lBQWU7SUFDeENDLFdBQVc7UUFDVEosT0FBT0wsTUFBTUssS0FBSztRQUNsQkMsYUFBYU4sTUFBTU0sV0FBVztRQUM5QkksS0FBSztRQUNMQyxVQUFVQyxVQUFJLENBQUNDLElBQUk7UUFDbkJDLE1BQU07SUFDUjtBQUNGO0FBRWUsU0FBU2hCO0lBQ3RCLHFCQUNFLHNCQUFDaUI7UUFBSUMsV0FBVTs7MEJBQ2IscUJBQUNDO2dCQUFRRCxXQUFVOzBCQUNqQixjQUFBLHNCQUFDRDtvQkFBSUMsV0FBVTs7c0NBQ2Isc0JBQUNEOzs4Q0FDQyxxQkFBQ0csa0JBQU87OENBQUM7OzhDQUNULHNCQUFDQzs7d0NBQUc7c0RBQ3VCLHFCQUFDQzt3Q0FBSztzREFDbEIscUJBQUNDO3NEQUFHOzs7OzhDQUVuQixxQkFBQ0M7b0NBQUVOLFdBQVU7OENBQU87OzhDQUlwQixxQkFBQ0Q7b0NBQUlDLFdBQVU7OENBQ2IsY0FBQSxzQkFBQ08sYUFBSTt3Q0FBQ0MsTUFBSzt3Q0FBZVIsV0FBVTs7NENBQXFCOzBEQUMvQixxQkFBQ1MseUJBQVk7Z0RBQUNDLE1BQU07Ozs7OzhDQUdoRCxxQkFBQ0o7b0NBQUVOLFdBQVU7OENBQVk7Ozs7c0NBRTNCLHFCQUFDVywwQkFBWTs0QkFBQ0MsT0FBTzs7Ozs7MEJBR3pCLHFCQUFDQyw4QkFBYzswQkFDZixzQkFBQ1o7Z0JBQVFELFdBQVU7O2tDQUNqQixzQkFBQ0Q7d0JBQUlDLFdBQVU7OzBDQUNiLHNCQUFDRDs7a0RBQ0MscUJBQUNHLGtCQUFPO2tEQUFDOztrREFDVCxzQkFBQ1k7OzRDQUFHOzBEQUVGLHFCQUFDVjs0Q0FBSzs7Ozs7MENBSVYscUJBQUNFOzBDQUFFOzs7O2tDQUtMLHFCQUFDUyxzQ0FBc0I7OzswQkFFekIscUJBQUNkO2dCQUFRRCxXQUFVOzBCQUNqQixjQUFBLHNCQUFDRDtvQkFBSUMsV0FBVTs7c0NBQ2Isc0JBQUNEOzRCQUFJQyxXQUFVOzs4Q0FDYixxQkFBQ0Usa0JBQU87OENBQUM7OzhDQUNULHNCQUFDWTs7d0NBQUc7c0RBRUYscUJBQUNWO3dDQUFLOzs7OztzQ0FJVixxQkFBQ1ksMEJBQVk7Ozs7MEJBR2pCLHFCQUFDQyxRQUFHOzBCQUNKLHFCQUFDQyxjQUFHOzs7QUFHViJ9

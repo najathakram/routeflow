@@ -1,0 +1,40 @@
+0144e4b33da3eb0050c6a787f0bc6382
+/**
+ * Feature grants v2 brief C (PR-5) — pure selectors over a tenant's `modes` record (the shape
+ * brief A's `TenantFeaturesResponse.modes` / `/tenants/me/features` hook will expose, once that
+ * lands — see `packages/types/api/features.ts`). Deliberately data-in/data-out and NOT wired
+ * into a page yet: brief A's authority/resolver + `/tenants/me/features` endpoint are not on
+ * this base (only its schema + shared contract, commit f6985746) — the routes pages this brief
+ * owns (`apps/web/app/(dashboard)/routes/**`) are left untouched so the HARD INVARIANT ("unset"
+ * before == after) holds trivially, by construction, rather than by re-testing an unwired call
+ * site. Once A's hook exists, a page calls `getRoutesDispatchVisibility(hookResult?.modes)` and
+ * branches on the result — see feature-modes.test.ts for the exact contract every mode value
+ * resolves to.
+ */ "use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+Object.defineProperty(exports, "getRoutesDispatchVisibility", {
+    enumerable: true,
+    get: function() {
+        return getRoutesDispatchVisibility;
+    }
+});
+const ROUTES_DISPATCH_KEY = "routes_dispatch";
+function getRoutesDispatchVisibility(modes) {
+    const mode = modes?.[ROUTES_DISPATCH_KEY] ?? "unset";
+    if (mode === "scheduled") return {
+        showScheduledEntry: true,
+        showAdhocEntry: false
+    };
+    if (mode === "adhoc") return {
+        showScheduledEntry: false,
+        showAdhocEntry: true
+    };
+    return {
+        showScheduledEntry: true,
+        showAdhocEntry: true
+    };
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2xpYi9mZWF0dXJlLW1vZGVzLnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogRmVhdHVyZSBncmFudHMgdjIgYnJpZWYgQyAoUFItNSkg4oCUIHB1cmUgc2VsZWN0b3JzIG92ZXIgYSB0ZW5hbnQncyBgbW9kZXNgIHJlY29yZCAodGhlIHNoYXBlXG4gKiBicmllZiBBJ3MgYFRlbmFudEZlYXR1cmVzUmVzcG9uc2UubW9kZXNgIC8gYC90ZW5hbnRzL21lL2ZlYXR1cmVzYCBob29rIHdpbGwgZXhwb3NlLCBvbmNlIHRoYXRcbiAqIGxhbmRzIOKAlCBzZWUgYHBhY2thZ2VzL3R5cGVzL2FwaS9mZWF0dXJlcy50c2ApLiBEZWxpYmVyYXRlbHkgZGF0YS1pbi9kYXRhLW91dCBhbmQgTk9UIHdpcmVkXG4gKiBpbnRvIGEgcGFnZSB5ZXQ6IGJyaWVmIEEncyBhdXRob3JpdHkvcmVzb2x2ZXIgKyBgL3RlbmFudHMvbWUvZmVhdHVyZXNgIGVuZHBvaW50IGFyZSBub3Qgb25cbiAqIHRoaXMgYmFzZSAob25seSBpdHMgc2NoZW1hICsgc2hhcmVkIGNvbnRyYWN0LCBjb21taXQgZjY5ODU3NDYpIOKAlCB0aGUgcm91dGVzIHBhZ2VzIHRoaXMgYnJpZWZcbiAqIG93bnMgKGBhcHBzL3dlYi9hcHAvKGRhc2hib2FyZCkvcm91dGVzLyoqYCkgYXJlIGxlZnQgdW50b3VjaGVkIHNvIHRoZSBIQVJEIElOVkFSSUFOVCAoXCJ1bnNldFwiXG4gKiBiZWZvcmUgPT0gYWZ0ZXIpIGhvbGRzIHRyaXZpYWxseSwgYnkgY29uc3RydWN0aW9uLCByYXRoZXIgdGhhbiBieSByZS10ZXN0aW5nIGFuIHVud2lyZWQgY2FsbFxuICogc2l0ZS4gT25jZSBBJ3MgaG9vayBleGlzdHMsIGEgcGFnZSBjYWxscyBgZ2V0Um91dGVzRGlzcGF0Y2hWaXNpYmlsaXR5KGhvb2tSZXN1bHQ/Lm1vZGVzKWAgYW5kXG4gKiBicmFuY2hlcyBvbiB0aGUgcmVzdWx0IOKAlCBzZWUgZmVhdHVyZS1tb2Rlcy50ZXN0LnRzIGZvciB0aGUgZXhhY3QgY29udHJhY3QgZXZlcnkgbW9kZSB2YWx1ZVxuICogcmVzb2x2ZXMgdG8uXG4gKi9cblxuZXhwb3J0IGludGVyZmFjZSBSb3V0ZXNEaXNwYXRjaFZpc2liaWxpdHkge1xuICAvKiogU2hvdyB0aGUgXCJDcmVhdGUgUm91dGVcIiAvIHBsYW5uZWQtcm91dGUgZW50cnkgcG9pbnRzLiAqL1xuICBzaG93U2NoZWR1bGVkRW50cnk6IGJvb2xlYW47XG4gIC8qKiBTaG93IHRoZSBhZC1ob2MgdHJpcC9kaXNwYXRjaCBlbnRyeSBwb2ludHMuICovXG4gIHNob3dBZGhvY0VudHJ5OiBib29sZWFuO1xufVxuXG5jb25zdCBST1VURVNfRElTUEFUQ0hfS0VZID0gXCJyb3V0ZXNfZGlzcGF0Y2hcIjtcblxuLyoqXG4gKiBgbW9kZXNgIGlzIHRoZSB0ZW5hbnQncyBgVGVuYW50RmVhdHVyZXNSZXNwb25zZS5tb2Rlc2AgcmVjb3JkIChvciBgdW5kZWZpbmVkYC9gbnVsbGAgYmVmb3JlXG4gKiB0aGF0IGRhdGEgaGFzIGxvYWRlZCwgb3IgZm9yIGEgdGVuYW50IHdpdGggbm8gY29uZmlnIHJvdyBhdCBhbGwg4oCUIHRoZSBjb21tb24gY2FzZSB0b2RheSkuXG4gKiBBIG1pc3NpbmcvdW5yZWNvZ25pemVkIHZhbHVlIHJlc29sdmVzIHRoZSBzYW1lIGFzIGBcInVuc2V0XCJgL2BcIm1peGVkXCJgOiBzaG93IGV2ZXJ5dGhpbmcsXG4gKiBtYXRjaGluZyB0b2RheSdzIHVucmVzdHJpY3RlZCBiZWhhdmlvciDigJQgbmV2ZXIgbmFycm93ZXIgb24gYW4gdW5yZWNvZ25pemVkIG1vZGUgc3RyaW5nLlxuICovXG5leHBvcnQgZnVuY3Rpb24gZ2V0Um91dGVzRGlzcGF0Y2hWaXNpYmlsaXR5KFxuICBtb2Rlcz86IFJlY29yZDxzdHJpbmcsIHN0cmluZz4gfCBudWxsLFxuKTogUm91dGVzRGlzcGF0Y2hWaXNpYmlsaXR5IHtcbiAgY29uc3QgbW9kZSA9IG1vZGVzPy5bUk9VVEVTX0RJU1BBVENIX0tFWV0gPz8gXCJ1bnNldFwiO1xuICBpZiAobW9kZSA9PT0gXCJzY2hlZHVsZWRcIikgcmV0dXJuIHsgc2hvd1NjaGVkdWxlZEVudHJ5OiB0cnVlLCBzaG93QWRob2NFbnRyeTogZmFsc2UgfTtcbiAgaWYgKG1vZGUgPT09IFwiYWRob2NcIikgcmV0dXJuIHsgc2hvd1NjaGVkdWxlZEVudHJ5OiBmYWxzZSwgc2hvd0FkaG9jRW50cnk6IHRydWUgfTtcbiAgcmV0dXJuIHsgc2hvd1NjaGVkdWxlZEVudHJ5OiB0cnVlLCBzaG93QWRob2NFbnRyeTogdHJ1ZSB9O1xufVxuIl0sIm5hbWVzIjpbImdldFJvdXRlc0Rpc3BhdGNoVmlzaWJpbGl0eSIsIlJPVVRFU19ESVNQQVRDSF9LRVkiLCJtb2RlcyIsIm1vZGUiLCJzaG93U2NoZWR1bGVkRW50cnkiLCJzaG93QWRob2NFbnRyeSJdLCJtYXBwaW5ncyI6IkFBQUE7Ozs7Ozs7Ozs7O0NBV0M7Ozs7K0JBaUJlQTs7O2VBQUFBOzs7QUFSaEIsTUFBTUMsc0JBQXNCO0FBUXJCLFNBQVNELDRCQUNkRSxLQUFxQztJQUVyQyxNQUFNQyxPQUFPRCxPQUFPLENBQUNELG9CQUFvQixJQUFJO0lBQzdDLElBQUlFLFNBQVMsYUFBYSxPQUFPO1FBQUVDLG9CQUFvQjtRQUFNQyxnQkFBZ0I7SUFBTTtJQUNuRixJQUFJRixTQUFTLFNBQVMsT0FBTztRQUFFQyxvQkFBb0I7UUFBT0MsZ0JBQWdCO0lBQUs7SUFDL0UsT0FBTztRQUFFRCxvQkFBb0I7UUFBTUMsZ0JBQWdCO0lBQUs7QUFDMUQifQ==

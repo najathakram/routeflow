@@ -1,0 +1,268 @@
+e23ed6af89464df637e01f6b55936fbf
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+const _react1 = require("@testing-library/react");
+const _creditlimitpanel = require("./credit-limit-panel");
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+/**
+ * D6 / B462 + B576. The panel shows the figure the server's hard credit block is checked against
+ * (`creditExposure`), never `customer.receivables` (which GET /customers/:id does not return —
+ * the old bar always read $0.00), and surfaces unissued DRAFT invoices as `pendingExposure`
+ * WITHOUT adding them into the bar (only drafts with no open/delivered order behind them; a
+ * draft on a real order is already counted in `creditExposure`).
+ */ const bar = ()=>_react1.screen.getByRole("progressbar", {
+        name: /credit limit used/i
+    });
+const fill = ()=>bar().firstElementChild;
+describe("CreditLimitPanel — visibility", ()=>{
+    it.each([
+        [
+            null
+        ],
+        [
+            undefined
+        ],
+        [
+            0
+        ],
+        [
+            -5
+        ]
+    ])("renders nothing when there is no limit (%p)", (limit)=>{
+        const { container } = (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_creditlimitpanel.CreditLimitPanel, {
+            creditLimit: limit,
+            creditExposure: 100
+        }));
+        expect(container).toBeEmptyDOMElement();
+    });
+});
+describe("CreditLimitPanel — exposure figures", ()=>{
+    it("B576: while the statement is loading it shows an em dash, NEVER a misleading $0.00", ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_creditlimitpanel.CreditLimitPanel, {
+            creditLimit: 1000
+        }));
+        expect(_react1.screen.getByTestId("credit-limit-figures")).toHaveTextContent("— / $1,000.00");
+        expect(_react1.screen.queryByText(/\$0\.00 \//)).not.toBeInTheDocument();
+        expect(_react1.screen.getByTestId("credit-limit-caption")).toHaveTextContent("—");
+        expect(bar()).toHaveAttribute("aria-busy", "true");
+        expect(bar()).not.toHaveAttribute("aria-valuenow");
+        expect(fill().style.width).toBe("0%");
+    });
+    it("says the figure is exposure incl. unbilled open orders — so it never reads as contradicting 'Outstanding'", ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_creditlimitpanel.CreditLimitPanel, {
+            creditLimit: 1000,
+            creditExposure: 700
+        }));
+        expect(_react1.screen.getByTestId("credit-limit-basis")).toHaveTextContent(/credit block checks.*unbilled open orders/i);
+    });
+    it("gives screen readers the money, not just a percentage (aria-valuetext)", ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_creditlimitpanel.CreditLimitPanel, {
+            creditLimit: 1000,
+            creditExposure: 200
+        }));
+        expect(bar()).toHaveAttribute("aria-valuetext", "$200.00 of $1,000.00 used");
+    });
+    it("a FAILED statement request says so — not an endless loading state (no aria-busy)", ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_creditlimitpanel.CreditLimitPanel, {
+            creditLimit: 1000,
+            statementUnavailable: true
+        }));
+        expect(_react1.screen.getByTestId("credit-limit-figures")).toHaveTextContent("— / $1,000.00");
+        expect(_react1.screen.getByTestId("credit-limit-caption")).toHaveTextContent("Exposure unavailable");
+        expect(bar()).toHaveAttribute("aria-busy", "false");
+        expect(bar()).not.toHaveAttribute("aria-valuetext");
+        expect(_react1.screen.queryByText(/\$0\.00 \//)).not.toBeInTheDocument();
+    });
+    it("a known exposure wins over a stale error flag", ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_creditlimitpanel.CreditLimitPanel, {
+            creditLimit: 1000,
+            creditExposure: 200,
+            statementUnavailable: true
+        }));
+        expect(_react1.screen.getByTestId("credit-limit-caption")).toHaveTextContent("20% used");
+    });
+    it("shows used / limit, the percentage and what is available", ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_creditlimitpanel.CreditLimitPanel, {
+            creditLimit: 1000,
+            creditExposure: 200
+        }));
+        expect(_react1.screen.getByTestId("credit-limit-figures")).toHaveTextContent("$200.00 / $1,000.00");
+        expect(_react1.screen.getByTestId("credit-limit-caption")).toHaveTextContent("20% used · $800.00 available");
+        expect(bar()).toHaveAttribute("aria-valuenow", "20");
+        expect(bar()).toHaveAttribute("aria-busy", "false");
+        expect(fill().style.width).toBe("20%");
+    });
+    it("a genuine $0.00 exposure is shown as $0.00 (known and zero is not the loading state)", ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_creditlimitpanel.CreditLimitPanel, {
+            creditLimit: 1000,
+            creditExposure: 0
+        }));
+        expect(_react1.screen.getByTestId("credit-limit-figures")).toHaveTextContent("$0.00 / $1,000.00");
+        expect(_react1.screen.getByTestId("credit-limit-caption")).toHaveTextContent("0% used · $1,000.00 available");
+    });
+    it.each([
+        [
+            200,
+            "bg-brand-500"
+        ],
+        [
+            700,
+            "bg-brand-500"
+        ],
+        [
+            710,
+            "bg-warning"
+        ],
+        [
+            750,
+            "bg-warning"
+        ],
+        [
+            900,
+            "bg-warning"
+        ],
+        [
+            910,
+            "bg-danger"
+        ],
+        [
+            950,
+            "bg-danger"
+        ]
+    ])("colours the bar by usage: %p → %s", (exposure, cls)=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_creditlimitpanel.CreditLimitPanel, {
+            creditLimit: 1000,
+            creditExposure: exposure
+        }));
+        expect(fill().className).toContain(cls);
+    });
+    it("exactly at the limit: 100% used, nothing available, NOT over", ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_creditlimitpanel.CreditLimitPanel, {
+            creditLimit: 1000,
+            creditExposure: 1000
+        }));
+        const caption = _react1.screen.getByTestId("credit-limit-caption");
+        expect(caption).toHaveTextContent("100% used");
+        expect(caption).not.toHaveTextContent(/available/);
+        expect(caption).not.toHaveTextContent(/over the limit/i);
+    });
+    it("over the limit: says by how much, in the danger style, with the bar capped at 100%", ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_creditlimitpanel.CreditLimitPanel, {
+            creditLimit: 1000,
+            creditExposure: 1250
+        }));
+        const caption = _react1.screen.getByTestId("credit-limit-caption");
+        expect(caption).toHaveTextContent("Over the limit by $250.00");
+        expect(caption.className).toContain("text-danger");
+        expect(fill().style.width).toBe("100%");
+        expect(bar()).toHaveAttribute("aria-valuenow", "100");
+    });
+    it("float dust below a cent never flips the panel to 'over' (roundMoney before the comparison)", ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_creditlimitpanel.CreditLimitPanel, {
+            creditLimit: 1000,
+            creditExposure: 1000.004
+        }));
+        expect(_react1.screen.getByTestId("credit-limit-caption")).not.toHaveTextContent(/over the limit/i);
+    });
+    it("a negative exposure is clamped to zero", ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_creditlimitpanel.CreditLimitPanel, {
+            creditLimit: 1000,
+            creditExposure: -40
+        }));
+        expect(_react1.screen.getByTestId("credit-limit-figures")).toHaveTextContent("$0.00 / $1,000.00");
+    });
+});
+describe("CreditLimitPanel — pending exposure (unissued DRAFT invoices)", ()=>{
+    it("shows the pending line with the amount and what it means", ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_creditlimitpanel.CreditLimitPanel, {
+            creditLimit: 1000,
+            creditExposure: 200,
+            pendingExposure: 340.5
+        }));
+        const line = _react1.screen.getByTestId("credit-pending-exposure");
+        expect(line).toHaveTextContent("Pending exposure $340.50");
+        expect(line).toHaveTextContent(/draft invoices with no order behind them/i);
+        expect(line).toHaveTextContent(/counted toward the limit once issued/i);
+    });
+    it("is NOT added into the bar: used stays the server's creditExposure", ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_creditlimitpanel.CreditLimitPanel, {
+            creditLimit: 1000,
+            creditExposure: 200,
+            pendingExposure: 900
+        }));
+        expect(_react1.screen.getByTestId("credit-limit-figures")).toHaveTextContent("$200.00 / $1,000.00");
+        expect(fill().style.width).toBe("20%");
+        expect(_react1.screen.getByTestId("credit-limit-caption")).not.toHaveTextContent(/over the limit/i);
+    });
+    it.each([
+        [
+            undefined
+        ],
+        [
+            0
+        ],
+        [
+            -3
+        ]
+    ])("is hidden when there is nothing pending (%p)", (pending)=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_creditlimitpanel.CreditLimitPanel, {
+            creditLimit: 1000,
+            creditExposure: 200,
+            pendingExposure: pending
+        }));
+        expect(_react1.screen.queryByTestId("credit-pending-exposure")).not.toBeInTheDocument();
+    });
+    it("is still shown while the exposure figure itself is unavailable", ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_creditlimitpanel.CreditLimitPanel, {
+            creditLimit: 1000,
+            pendingExposure: 50
+        }));
+        expect(_react1.screen.getByTestId("credit-pending-exposure")).toHaveTextContent("$50.00");
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS9jdXN0b21lcnMvW2lkXS9jcmVkaXQtbGltaXQtcGFuZWwudGVzdC50c3giXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0ICogYXMgUmVhY3QgZnJvbSBcInJlYWN0XCI7XG5pbXBvcnQgeyByZW5kZXIsIHNjcmVlbiB9IGZyb20gXCJAdGVzdGluZy1saWJyYXJ5L3JlYWN0XCI7XG5pbXBvcnQgeyBDcmVkaXRMaW1pdFBhbmVsIH0gZnJvbSBcIi4vY3JlZGl0LWxpbWl0LXBhbmVsXCI7XG5cbi8qKlxuICogRDYgLyBCNDYyICsgQjU3Ni4gVGhlIHBhbmVsIHNob3dzIHRoZSBmaWd1cmUgdGhlIHNlcnZlcidzIGhhcmQgY3JlZGl0IGJsb2NrIGlzIGNoZWNrZWQgYWdhaW5zdFxuICogKGBjcmVkaXRFeHBvc3VyZWApLCBuZXZlciBgY3VzdG9tZXIucmVjZWl2YWJsZXNgICh3aGljaCBHRVQgL2N1c3RvbWVycy86aWQgZG9lcyBub3QgcmV0dXJuIOKAlFxuICogdGhlIG9sZCBiYXIgYWx3YXlzIHJlYWQgJDAuMDApLCBhbmQgc3VyZmFjZXMgdW5pc3N1ZWQgRFJBRlQgaW52b2ljZXMgYXMgYHBlbmRpbmdFeHBvc3VyZWBcbiAqIFdJVEhPVVQgYWRkaW5nIHRoZW0gaW50byB0aGUgYmFyIChvbmx5IGRyYWZ0cyB3aXRoIG5vIG9wZW4vZGVsaXZlcmVkIG9yZGVyIGJlaGluZCB0aGVtOyBhXG4gKiBkcmFmdCBvbiBhIHJlYWwgb3JkZXIgaXMgYWxyZWFkeSBjb3VudGVkIGluIGBjcmVkaXRFeHBvc3VyZWApLlxuICovXG5jb25zdCBiYXIgPSAoKSA9PiBzY3JlZW4uZ2V0QnlSb2xlKFwicHJvZ3Jlc3NiYXJcIiwgeyBuYW1lOiAvY3JlZGl0IGxpbWl0IHVzZWQvaSB9KTtcbmNvbnN0IGZpbGwgPSAoKSA9PiBiYXIoKS5maXJzdEVsZW1lbnRDaGlsZCBhcyBIVE1MRWxlbWVudDtcblxuZGVzY3JpYmUoXCJDcmVkaXRMaW1pdFBhbmVsIOKAlCB2aXNpYmlsaXR5XCIsICgpID0+IHtcbiAgaXQuZWFjaChbW251bGxdLCBbdW5kZWZpbmVkXSwgWzBdLCBbLTVdXSkoXG4gICAgXCJyZW5kZXJzIG5vdGhpbmcgd2hlbiB0aGVyZSBpcyBubyBsaW1pdCAoJXApXCIsXG4gICAgKGxpbWl0KSA9PiB7XG4gICAgICBjb25zdCB7IGNvbnRhaW5lciB9ID0gcmVuZGVyKDxDcmVkaXRMaW1pdFBhbmVsIGNyZWRpdExpbWl0PXtsaW1pdH0gY3JlZGl0RXhwb3N1cmU9ezEwMH0gLz4pO1xuICAgICAgZXhwZWN0KGNvbnRhaW5lcikudG9CZUVtcHR5RE9NRWxlbWVudCgpO1xuICAgIH0sXG4gICk7XG59KTtcblxuZGVzY3JpYmUoXCJDcmVkaXRMaW1pdFBhbmVsIOKAlCBleHBvc3VyZSBmaWd1cmVzXCIsICgpID0+IHtcbiAgaXQoXCJCNTc2OiB3aGlsZSB0aGUgc3RhdGVtZW50IGlzIGxvYWRpbmcgaXQgc2hvd3MgYW4gZW0gZGFzaCwgTkVWRVIgYSBtaXNsZWFkaW5nICQwLjAwXCIsICgpID0+IHtcbiAgICByZW5kZXIoPENyZWRpdExpbWl0UGFuZWwgY3JlZGl0TGltaXQ9ezEwMDB9IC8+KTtcbiAgICBleHBlY3Qoc2NyZWVuLmdldEJ5VGVzdElkKFwiY3JlZGl0LWxpbWl0LWZpZ3VyZXNcIikpLnRvSGF2ZVRleHRDb250ZW50KFwi4oCUIC8gJDEsMDAwLjAwXCIpO1xuICAgIGV4cGVjdChzY3JlZW4ucXVlcnlCeVRleHQoL1xcJDBcXC4wMCBcXC8vKSkubm90LnRvQmVJblRoZURvY3VtZW50KCk7XG4gICAgZXhwZWN0KHNjcmVlbi5nZXRCeVRlc3RJZChcImNyZWRpdC1saW1pdC1jYXB0aW9uXCIpKS50b0hhdmVUZXh0Q29udGVudChcIuKAlFwiKTtcbiAgICBleHBlY3QoYmFyKCkpLnRvSGF2ZUF0dHJpYnV0ZShcImFyaWEtYnVzeVwiLCBcInRydWVcIik7XG4gICAgZXhwZWN0KGJhcigpKS5ub3QudG9IYXZlQXR0cmlidXRlKFwiYXJpYS12YWx1ZW5vd1wiKTtcbiAgICBleHBlY3QoZmlsbCgpLnN0eWxlLndpZHRoKS50b0JlKFwiMCVcIik7XG4gIH0pO1xuXG4gIGl0KFwic2F5cyB0aGUgZmlndXJlIGlzIGV4cG9zdXJlIGluY2wuIHVuYmlsbGVkIG9wZW4gb3JkZXJzIOKAlCBzbyBpdCBuZXZlciByZWFkcyBhcyBjb250cmFkaWN0aW5nICdPdXRzdGFuZGluZydcIiwgKCkgPT4ge1xuICAgIHJlbmRlcig8Q3JlZGl0TGltaXRQYW5lbCBjcmVkaXRMaW1pdD17MTAwMH0gY3JlZGl0RXhwb3N1cmU9ezcwMH0gLz4pO1xuICAgIGV4cGVjdChzY3JlZW4uZ2V0QnlUZXN0SWQoXCJjcmVkaXQtbGltaXQtYmFzaXNcIikpLnRvSGF2ZVRleHRDb250ZW50KFxuICAgICAgL2NyZWRpdCBibG9jayBjaGVja3MuKnVuYmlsbGVkIG9wZW4gb3JkZXJzL2ksXG4gICAgKTtcbiAgfSk7XG5cbiAgaXQoXCJnaXZlcyBzY3JlZW4gcmVhZGVycyB0aGUgbW9uZXksIG5vdCBqdXN0IGEgcGVyY2VudGFnZSAoYXJpYS12YWx1ZXRleHQpXCIsICgpID0+IHtcbiAgICByZW5kZXIoPENyZWRpdExpbWl0UGFuZWwgY3JlZGl0TGltaXQ9ezEwMDB9IGNyZWRpdEV4cG9zdXJlPXsyMDB9IC8+KTtcbiAgICBleHBlY3QoYmFyKCkpLnRvSGF2ZUF0dHJpYnV0ZShcImFyaWEtdmFsdWV0ZXh0XCIsIFwiJDIwMC4wMCBvZiAkMSwwMDAuMDAgdXNlZFwiKTtcbiAgfSk7XG5cbiAgaXQoXCJhIEZBSUxFRCBzdGF0ZW1lbnQgcmVxdWVzdCBzYXlzIHNvIOKAlCBub3QgYW4gZW5kbGVzcyBsb2FkaW5nIHN0YXRlIChubyBhcmlhLWJ1c3kpXCIsICgpID0+IHtcbiAgICByZW5kZXIoPENyZWRpdExpbWl0UGFuZWwgY3JlZGl0TGltaXQ9ezEwMDB9IHN0YXRlbWVudFVuYXZhaWxhYmxlIC8+KTtcbiAgICBleHBlY3Qoc2NyZWVuLmdldEJ5VGVzdElkKFwiY3JlZGl0LWxpbWl0LWZpZ3VyZXNcIikpLnRvSGF2ZVRleHRDb250ZW50KFwi4oCUIC8gJDEsMDAwLjAwXCIpO1xuICAgIGV4cGVjdChzY3JlZW4uZ2V0QnlUZXN0SWQoXCJjcmVkaXQtbGltaXQtY2FwdGlvblwiKSkudG9IYXZlVGV4dENvbnRlbnQoXCJFeHBvc3VyZSB1bmF2YWlsYWJsZVwiKTtcbiAgICBleHBlY3QoYmFyKCkpLnRvSGF2ZUF0dHJpYnV0ZShcImFyaWEtYnVzeVwiLCBcImZhbHNlXCIpO1xuICAgIGV4cGVjdChiYXIoKSkubm90LnRvSGF2ZUF0dHJpYnV0ZShcImFyaWEtdmFsdWV0ZXh0XCIpO1xuICAgIGV4cGVjdChzY3JlZW4ucXVlcnlCeVRleHQoL1xcJDBcXC4wMCBcXC8vKSkubm90LnRvQmVJblRoZURvY3VtZW50KCk7XG4gIH0pO1xuXG4gIGl0KFwiYSBrbm93biBleHBvc3VyZSB3aW5zIG92ZXIgYSBzdGFsZSBlcnJvciBmbGFnXCIsICgpID0+IHtcbiAgICByZW5kZXIoPENyZWRpdExpbWl0UGFuZWwgY3JlZGl0TGltaXQ9ezEwMDB9IGNyZWRpdEV4cG9zdXJlPXsyMDB9IHN0YXRlbWVudFVuYXZhaWxhYmxlIC8+KTtcbiAgICBleHBlY3Qoc2NyZWVuLmdldEJ5VGVzdElkKFwiY3JlZGl0LWxpbWl0LWNhcHRpb25cIikpLnRvSGF2ZVRleHRDb250ZW50KFwiMjAlIHVzZWRcIik7XG4gIH0pO1xuXG4gIGl0KFwic2hvd3MgdXNlZCAvIGxpbWl0LCB0aGUgcGVyY2VudGFnZSBhbmQgd2hhdCBpcyBhdmFpbGFibGVcIiwgKCkgPT4ge1xuICAgIHJlbmRlcig8Q3JlZGl0TGltaXRQYW5lbCBjcmVkaXRMaW1pdD17MTAwMH0gY3JlZGl0RXhwb3N1cmU9ezIwMH0gLz4pO1xuICAgIGV4cGVjdChzY3JlZW4uZ2V0QnlUZXN0SWQoXCJjcmVkaXQtbGltaXQtZmlndXJlc1wiKSkudG9IYXZlVGV4dENvbnRlbnQoXCIkMjAwLjAwIC8gJDEsMDAwLjAwXCIpO1xuICAgIGV4cGVjdChzY3JlZW4uZ2V0QnlUZXN0SWQoXCJjcmVkaXQtbGltaXQtY2FwdGlvblwiKSkudG9IYXZlVGV4dENvbnRlbnQoXG4gICAgICBcIjIwJSB1c2VkIMK3ICQ4MDAuMDAgYXZhaWxhYmxlXCIsXG4gICAgKTtcbiAgICBleHBlY3QoYmFyKCkpLnRvSGF2ZUF0dHJpYnV0ZShcImFyaWEtdmFsdWVub3dcIiwgXCIyMFwiKTtcbiAgICBleHBlY3QoYmFyKCkpLnRvSGF2ZUF0dHJpYnV0ZShcImFyaWEtYnVzeVwiLCBcImZhbHNlXCIpO1xuICAgIGV4cGVjdChmaWxsKCkuc3R5bGUud2lkdGgpLnRvQmUoXCIyMCVcIik7XG4gIH0pO1xuXG4gIGl0KFwiYSBnZW51aW5lICQwLjAwIGV4cG9zdXJlIGlzIHNob3duIGFzICQwLjAwIChrbm93biBhbmQgemVybyBpcyBub3QgdGhlIGxvYWRpbmcgc3RhdGUpXCIsICgpID0+IHtcbiAgICByZW5kZXIoPENyZWRpdExpbWl0UGFuZWwgY3JlZGl0TGltaXQ9ezEwMDB9IGNyZWRpdEV4cG9zdXJlPXswfSAvPik7XG4gICAgZXhwZWN0KHNjcmVlbi5nZXRCeVRlc3RJZChcImNyZWRpdC1saW1pdC1maWd1cmVzXCIpKS50b0hhdmVUZXh0Q29udGVudChcIiQwLjAwIC8gJDEsMDAwLjAwXCIpO1xuICAgIGV4cGVjdChzY3JlZW4uZ2V0QnlUZXN0SWQoXCJjcmVkaXQtbGltaXQtY2FwdGlvblwiKSkudG9IYXZlVGV4dENvbnRlbnQoXG4gICAgICBcIjAlIHVzZWQgwrcgJDEsMDAwLjAwIGF2YWlsYWJsZVwiLFxuICAgICk7XG4gIH0pO1xuXG4gIGl0LmVhY2goW1xuICAgIFsyMDAsIFwiYmctYnJhbmQtNTAwXCJdLFxuICAgIFs3MDAsIFwiYmctYnJhbmQtNTAwXCJdLCAvLyBleGFjdGx5IDcwJSBpcyBOT1QgcGFzdCB0aGUgd2FybiB0aHJlc2hvbGQgKHN0cmljdCA+KVxuICAgIFs3MTAsIFwiYmctd2FybmluZ1wiXSxcbiAgICBbNzUwLCBcImJnLXdhcm5pbmdcIl0sXG4gICAgWzkwMCwgXCJiZy13YXJuaW5nXCJdLCAvLyBleGFjdGx5IDkwJSBpcyBOT1QgcGFzdCB0aGUgZGFuZ2VyIHRocmVzaG9sZCAoc3RyaWN0ID4pXG4gICAgWzkxMCwgXCJiZy1kYW5nZXJcIl0sXG4gICAgWzk1MCwgXCJiZy1kYW5nZXJcIl0sXG4gIF0pKFwiY29sb3VycyB0aGUgYmFyIGJ5IHVzYWdlOiAlcCDihpIgJXNcIiwgKGV4cG9zdXJlLCBjbHMpID0+IHtcbiAgICByZW5kZXIoPENyZWRpdExpbWl0UGFuZWwgY3JlZGl0TGltaXQ9ezEwMDB9IGNyZWRpdEV4cG9zdXJlPXtleHBvc3VyZX0gLz4pO1xuICAgIGV4cGVjdChmaWxsKCkuY2xhc3NOYW1lKS50b0NvbnRhaW4oY2xzKTtcbiAgfSk7XG5cbiAgaXQoXCJleGFjdGx5IGF0IHRoZSBsaW1pdDogMTAwJSB1c2VkLCBub3RoaW5nIGF2YWlsYWJsZSwgTk9UIG92ZXJcIiwgKCkgPT4ge1xuICAgIHJlbmRlcig8Q3JlZGl0TGltaXRQYW5lbCBjcmVkaXRMaW1pdD17MTAwMH0gY3JlZGl0RXhwb3N1cmU9ezEwMDB9IC8+KTtcbiAgICBjb25zdCBjYXB0aW9uID0gc2NyZWVuLmdldEJ5VGVzdElkKFwiY3JlZGl0LWxpbWl0LWNhcHRpb25cIik7XG4gICAgZXhwZWN0KGNhcHRpb24pLnRvSGF2ZVRleHRDb250ZW50KFwiMTAwJSB1c2VkXCIpO1xuICAgIGV4cGVjdChjYXB0aW9uKS5ub3QudG9IYXZlVGV4dENvbnRlbnQoL2F2YWlsYWJsZS8pO1xuICAgIGV4cGVjdChjYXB0aW9uKS5ub3QudG9IYXZlVGV4dENvbnRlbnQoL292ZXIgdGhlIGxpbWl0L2kpO1xuICB9KTtcblxuICBpdChcIm92ZXIgdGhlIGxpbWl0OiBzYXlzIGJ5IGhvdyBtdWNoLCBpbiB0aGUgZGFuZ2VyIHN0eWxlLCB3aXRoIHRoZSBiYXIgY2FwcGVkIGF0IDEwMCVcIiwgKCkgPT4ge1xuICAgIHJlbmRlcig8Q3JlZGl0TGltaXRQYW5lbCBjcmVkaXRMaW1pdD17MTAwMH0gY3JlZGl0RXhwb3N1cmU9ezEyNTB9IC8+KTtcbiAgICBjb25zdCBjYXB0aW9uID0gc2NyZWVuLmdldEJ5VGVzdElkKFwiY3JlZGl0LWxpbWl0LWNhcHRpb25cIik7XG4gICAgZXhwZWN0KGNhcHRpb24pLnRvSGF2ZVRleHRDb250ZW50KFwiT3ZlciB0aGUgbGltaXQgYnkgJDI1MC4wMFwiKTtcbiAgICBleHBlY3QoY2FwdGlvbi5jbGFzc05hbWUpLnRvQ29udGFpbihcInRleHQtZGFuZ2VyXCIpO1xuICAgIGV4cGVjdChmaWxsKCkuc3R5bGUud2lkdGgpLnRvQmUoXCIxMDAlXCIpO1xuICAgIGV4cGVjdChiYXIoKSkudG9IYXZlQXR0cmlidXRlKFwiYXJpYS12YWx1ZW5vd1wiLCBcIjEwMFwiKTtcbiAgfSk7XG5cbiAgaXQoXCJmbG9hdCBkdXN0IGJlbG93IGEgY2VudCBuZXZlciBmbGlwcyB0aGUgcGFuZWwgdG8gJ292ZXInIChyb3VuZE1vbmV5IGJlZm9yZSB0aGUgY29tcGFyaXNvbilcIiwgKCkgPT4ge1xuICAgIHJlbmRlcig8Q3JlZGl0TGltaXRQYW5lbCBjcmVkaXRMaW1pdD17MTAwMH0gY3JlZGl0RXhwb3N1cmU9ezEwMDAuMDA0fSAvPik7XG4gICAgZXhwZWN0KHNjcmVlbi5nZXRCeVRlc3RJZChcImNyZWRpdC1saW1pdC1jYXB0aW9uXCIpKS5ub3QudG9IYXZlVGV4dENvbnRlbnQoL292ZXIgdGhlIGxpbWl0L2kpO1xuICB9KTtcblxuICBpdChcImEgbmVnYXRpdmUgZXhwb3N1cmUgaXMgY2xhbXBlZCB0byB6ZXJvXCIsICgpID0+IHtcbiAgICByZW5kZXIoPENyZWRpdExpbWl0UGFuZWwgY3JlZGl0TGltaXQ9ezEwMDB9IGNyZWRpdEV4cG9zdXJlPXstNDB9IC8+KTtcbiAgICBleHBlY3Qoc2NyZWVuLmdldEJ5VGVzdElkKFwiY3JlZGl0LWxpbWl0LWZpZ3VyZXNcIikpLnRvSGF2ZVRleHRDb250ZW50KFwiJDAuMDAgLyAkMSwwMDAuMDBcIik7XG4gIH0pO1xufSk7XG5cbmRlc2NyaWJlKFwiQ3JlZGl0TGltaXRQYW5lbCDigJQgcGVuZGluZyBleHBvc3VyZSAodW5pc3N1ZWQgRFJBRlQgaW52b2ljZXMpXCIsICgpID0+IHtcbiAgaXQoXCJzaG93cyB0aGUgcGVuZGluZyBsaW5lIHdpdGggdGhlIGFtb3VudCBhbmQgd2hhdCBpdCBtZWFuc1wiLCAoKSA9PiB7XG4gICAgcmVuZGVyKDxDcmVkaXRMaW1pdFBhbmVsIGNyZWRpdExpbWl0PXsxMDAwfSBjcmVkaXRFeHBvc3VyZT17MjAwfSBwZW5kaW5nRXhwb3N1cmU9ezM0MC41fSAvPik7XG4gICAgY29uc3QgbGluZSA9IHNjcmVlbi5nZXRCeVRlc3RJZChcImNyZWRpdC1wZW5kaW5nLWV4cG9zdXJlXCIpO1xuICAgIGV4cGVjdChsaW5lKS50b0hhdmVUZXh0Q29udGVudChcIlBlbmRpbmcgZXhwb3N1cmUgJDM0MC41MFwiKTtcbiAgICBleHBlY3QobGluZSkudG9IYXZlVGV4dENvbnRlbnQoL2RyYWZ0IGludm9pY2VzIHdpdGggbm8gb3JkZXIgYmVoaW5kIHRoZW0vaSk7XG4gICAgZXhwZWN0KGxpbmUpLnRvSGF2ZVRleHRDb250ZW50KC9jb3VudGVkIHRvd2FyZCB0aGUgbGltaXQgb25jZSBpc3N1ZWQvaSk7XG4gIH0pO1xuXG4gIGl0KFwiaXMgTk9UIGFkZGVkIGludG8gdGhlIGJhcjogdXNlZCBzdGF5cyB0aGUgc2VydmVyJ3MgY3JlZGl0RXhwb3N1cmVcIiwgKCkgPT4ge1xuICAgIHJlbmRlcig8Q3JlZGl0TGltaXRQYW5lbCBjcmVkaXRMaW1pdD17MTAwMH0gY3JlZGl0RXhwb3N1cmU9ezIwMH0gcGVuZGluZ0V4cG9zdXJlPXs5MDB9IC8+KTtcbiAgICBleHBlY3Qoc2NyZWVuLmdldEJ5VGVzdElkKFwiY3JlZGl0LWxpbWl0LWZpZ3VyZXNcIikpLnRvSGF2ZVRleHRDb250ZW50KFwiJDIwMC4wMCAvICQxLDAwMC4wMFwiKTtcbiAgICBleHBlY3QoZmlsbCgpLnN0eWxlLndpZHRoKS50b0JlKFwiMjAlXCIpO1xuICAgIGV4cGVjdChzY3JlZW4uZ2V0QnlUZXN0SWQoXCJjcmVkaXQtbGltaXQtY2FwdGlvblwiKSkubm90LnRvSGF2ZVRleHRDb250ZW50KC9vdmVyIHRoZSBsaW1pdC9pKTtcbiAgfSk7XG5cbiAgaXQuZWFjaChbW3VuZGVmaW5lZF0sIFswXSwgWy0zXV0pKFwiaXMgaGlkZGVuIHdoZW4gdGhlcmUgaXMgbm90aGluZyBwZW5kaW5nICglcClcIiwgKHBlbmRpbmcpID0+IHtcbiAgICByZW5kZXIoPENyZWRpdExpbWl0UGFuZWwgY3JlZGl0TGltaXQ9ezEwMDB9IGNyZWRpdEV4cG9zdXJlPXsyMDB9IHBlbmRpbmdFeHBvc3VyZT17cGVuZGluZ30gLz4pO1xuICAgIGV4cGVjdChzY3JlZW4ucXVlcnlCeVRlc3RJZChcImNyZWRpdC1wZW5kaW5nLWV4cG9zdXJlXCIpKS5ub3QudG9CZUluVGhlRG9jdW1lbnQoKTtcbiAgfSk7XG5cbiAgaXQoXCJpcyBzdGlsbCBzaG93biB3aGlsZSB0aGUgZXhwb3N1cmUgZmlndXJlIGl0c2VsZiBpcyB1bmF2YWlsYWJsZVwiLCAoKSA9PiB7XG4gICAgcmVuZGVyKDxDcmVkaXRMaW1pdFBhbmVsIGNyZWRpdExpbWl0PXsxMDAwfSBwZW5kaW5nRXhwb3N1cmU9ezUwfSAvPik7XG4gICAgZXhwZWN0KHNjcmVlbi5nZXRCeVRlc3RJZChcImNyZWRpdC1wZW5kaW5nLWV4cG9zdXJlXCIpKS50b0hhdmVUZXh0Q29udGVudChcIiQ1MC4wMFwiKTtcbiAgfSk7XG59KTtcbiJdLCJuYW1lcyI6WyJiYXIiLCJzY3JlZW4iLCJnZXRCeVJvbGUiLCJuYW1lIiwiZmlsbCIsImZpcnN0RWxlbWVudENoaWxkIiwiZGVzY3JpYmUiLCJpdCIsImVhY2giLCJ1bmRlZmluZWQiLCJsaW1pdCIsImNvbnRhaW5lciIsInJlbmRlciIsIkNyZWRpdExpbWl0UGFuZWwiLCJjcmVkaXRMaW1pdCIsImNyZWRpdEV4cG9zdXJlIiwiZXhwZWN0IiwidG9CZUVtcHR5RE9NRWxlbWVudCIsImdldEJ5VGVzdElkIiwidG9IYXZlVGV4dENvbnRlbnQiLCJxdWVyeUJ5VGV4dCIsIm5vdCIsInRvQmVJblRoZURvY3VtZW50IiwidG9IYXZlQXR0cmlidXRlIiwic3R5bGUiLCJ3aWR0aCIsInRvQmUiLCJzdGF0ZW1lbnRVbmF2YWlsYWJsZSIsImV4cG9zdXJlIiwiY2xzIiwiY2xhc3NOYW1lIiwidG9Db250YWluIiwiY2FwdGlvbiIsInBlbmRpbmdFeHBvc3VyZSIsImxpbmUiLCJwZW5kaW5nIiwicXVlcnlCeVRlc3RJZCJdLCJtYXBwaW5ncyI6Ijs7Ozs7K0RBQXVCO3dCQUNRO2tDQUNFOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7QUFFakM7Ozs7OztDQU1DLEdBQ0QsTUFBTUEsTUFBTSxJQUFNQyxjQUFNLENBQUNDLFNBQVMsQ0FBQyxlQUFlO1FBQUVDLE1BQU07SUFBcUI7QUFDL0UsTUFBTUMsT0FBTyxJQUFNSixNQUFNSyxpQkFBaUI7QUFFMUNDLFNBQVMsaUNBQWlDO0lBQ3hDQyxHQUFHQyxJQUFJLENBQUM7UUFBQztZQUFDO1NBQUs7UUFBRTtZQUFDQztTQUFVO1FBQUU7WUFBQztTQUFFO1FBQUU7WUFBQyxDQUFDO1NBQUU7S0FBQyxFQUN0QywrQ0FDQSxDQUFDQztRQUNDLE1BQU0sRUFBRUMsU0FBUyxFQUFFLEdBQUdDLElBQUFBLGNBQU0sZ0JBQUMscUJBQUNDLGtDQUFnQjtZQUFDQyxhQUFhSjtZQUFPSyxnQkFBZ0I7O1FBQ25GQyxPQUFPTCxXQUFXTSxtQkFBbUI7SUFDdkM7QUFFSjtBQUVBWCxTQUFTLHVDQUF1QztJQUM5Q0MsR0FBRyxzRkFBc0Y7UUFDdkZLLElBQUFBLGNBQU0sZ0JBQUMscUJBQUNDLGtDQUFnQjtZQUFDQyxhQUFhOztRQUN0Q0UsT0FBT2YsY0FBTSxDQUFDaUIsV0FBVyxDQUFDLHlCQUF5QkMsaUJBQWlCLENBQUM7UUFDckVILE9BQU9mLGNBQU0sQ0FBQ21CLFdBQVcsQ0FBQyxlQUFlQyxHQUFHLENBQUNDLGlCQUFpQjtRQUM5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

@@ -1,0 +1,98 @@
+9a2803e613fe05809c80f3aa463deecb
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+const fs_1 = require("fs");
+const path_1 = require("path");
+const ts = __importStar(require("typescript"));
+/**
+ * #2257 (P1): the mobile-web driver STOP SCREEN crashed with React #310 ("Rendered more hooks
+ * than during the previous render"). `useMemo(() => itemsFromStop(stop))` sat AFTER the
+ * `if (activeLoading || runLoading) return …` and `if (!stop) return …` early returns, so the
+ * loading render ran N hooks and the loaded render N+1.
+ *
+ * The render-toggle this guards: loading (early return) → loaded (full render) must call the
+ * SAME hooks. This jest lane runs in plain node and cannot mount an RN screen, so the pin
+ * checks the rule that makes the toggle safe, on the real source via the TypeScript AST: no
+ * hook call at the component's top level after its first early return. (ESLint's
+ * react-hooks/rules-of-hooks is an ERROR for mobile now too — see eslint.config.mjs.)
+ */
+const FILE = (0, path_1.join)(__dirname, "..", "app/(driver)/route/stop/[stopId]/index.tsx");
+function hookCallsAfterFirstEarlyReturn(source, component) {
+    const sf = ts.createSourceFile(FILE, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const fn = sf.statements.find((s) => ts.isFunctionDeclaration(s) && s.name?.text === component);
+    if (!fn?.body)
+        throw new Error(`${component} not found`);
+    const returns = (n) => ts.isReturnStatement(n) || (!ts.isFunctionLike(n) && ts.forEachChild(n, returns) === true);
+    const isHook = (e) => (ts.isIdentifier(e) && /^use[A-Z]/.test(e.text)) ||
+        (ts.isPropertyAccessExpression(e) && /^use[A-Z]/.test(e.name.text));
+    const found = [];
+    const collect = (n) => {
+        if (ts.isFunctionLike(n))
+            return; // callbacks declared here don't run during render
+        if (ts.isCallExpression(n) && isHook(n.expression)) {
+            const { line } = sf.getLineAndCharacterOfPosition(n.getStart());
+            found.push(`${n.expression.getText()} @ line ${line + 1}`);
+        }
+        ts.forEachChild(n, collect);
+    };
+    let afterReturn = false;
+    for (const stmt of fn.body.statements) {
+        if (afterReturn)
+            collect(stmt);
+        else if (ts.isIfStatement(stmt) && returns(stmt))
+            afterReturn = true;
+    }
+    return found;
+}
+describe("driver stop screen: hooks never follow an early return (#2257, React #310)", () => {
+    const src = (0, fs_1.readFileSync)(FILE, "utf8");
+    it("StopDetailScreen calls every hook before its first early return", () => {
+        expect(hookCallsAfterFirstEarlyReturn(src, "StopDetailScreen")).toEqual([]);
+    });
+    it("the checker itself catches a hook after an early return", () => {
+        const bad = `function StopDetailScreen() {
+      const a = useA();
+      if (!a) { return null; }
+      const b = React.useMemo(() => 1, []);
+      const cb = () => useNotDuringRender();
+      return b;
+    }`;
+        expect(hookCallsAfterFirstEarlyReturn(bad, "StopDetailScreen")).toEqual([
+            "React.useMemo @ line 4",
+        ]);
+    });
+});
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvX190ZXN0c19fL2RyaXZlci1zdG9wLWhvb2tzLW9yZGVyLnRlc3QudHMiLCJtYXBwaW5ncyI6Ijs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7QUFBQSwyQkFBa0M7QUFDbEMsK0JBQTRCO0FBQzVCLCtDQUFpQztBQUVqQzs7Ozs7Ozs7Ozs7R0FXRztBQUNILE1BQU0sSUFBSSxHQUFHLElBQUEsV0FBSSxFQUFDLFNBQVMsRUFBRSxJQUFJLEVBQUUsNENBQTRDLENBQUMsQ0FBQztBQUVqRixTQUFTLDhCQUE4QixDQUFDLE1BQWMsRUFBRSxTQUFpQjtJQUN2RSxNQUFNLEVBQUUsR0FBRyxFQUFFLENBQUMsZ0JBQWdCLENBQUMsSUFBSSxFQUFFLE1BQU0sRUFBRSxFQUFFLENBQUMsWUFBWSxDQUFDLE1BQU0sRUFBRSxJQUFJLEVBQUUsRUFBRSxDQUFDLFVBQVUsQ0FBQyxHQUFHLENBQUMsQ0FBQztJQUM5RixNQUFNLEVBQUUsR0FBRyxFQUFFLENBQUMsVUFBVSxDQUFDLElBQUksQ0FDM0IsQ0FBQyxDQUFDLEVBQStCLEVBQUUsQ0FBQyxFQUFFLENBQUMscUJBQXFCLENBQUMsQ0FBQyxDQUFDLElBQUksQ0FBQyxDQUFDLElBQUksRUFBRSxJQUFJLEtBQUssU0FBUyxDQUM5RixDQUFDO0lBQ0YsSUFBSSxDQUFDLEVBQUUsRUFBRSxJQUFJO1FBQUUsTUFBTSxJQUFJLEtBQUssQ0FBQyxHQUFHLFNBQVMsWUFBWSxDQUFDLENBQUM7SUFFekQsTUFBTSxPQUFPLEdBQUcsQ0FBQyxDQUFVLEVBQVcsRUFBRSxDQUN0QyxFQUFFLENBQUMsaUJBQWlCLENBQUMsQ0FBQyxDQUFDLElBQUksQ0FBQyxDQUFDLEVBQUUsQ0FBQyxjQUFjLENBQUMsQ0FBQyxDQUFDLElBQUksRUFBRSxDQUFDLFlBQVksQ0FBQyxDQUFDLEVBQUUsT0FBTyxDQUFDLEtBQUssSUFBSSxDQUFDLENBQUM7SUFDN0YsTUFBTSxNQUFNLEdBQUcsQ0FBQyxDQUFnQixFQUFFLEVBQUUsQ0FDbEMsQ0FBQyxFQUFFLENBQUMsWUFBWSxDQUFDLENBQUMsQ0FBQyxJQUFJLFdBQVcsQ0FBQyxJQUFJLENBQUMsQ0FBQyxDQUFDLElBQUksQ0FBQyxDQUFDO1FBQ2hELENBQUMsRUFBRSxDQUFDLDBCQUEwQixDQUFDLENBQUMsQ0FBQyxJQUFJLFdBQVcsQ0FBQyxJQUFJLENBQUMsQ0FBQyxDQUFDLElBQUksQ0FBQyxJQUFJLENBQUMsQ0FBQyxDQUFDO0lBRXRFLE1BQU0sS0FBSyxHQUFhLEVBQUUsQ0FBQztJQUMzQixNQUFNLE9BQU8sR0FBRyxDQUFDLENBQVUsRUFBRSxFQUFFO1FBQzdCLElBQUksRUFBRSxDQUFDLGNBQWMsQ0FBQyxDQUFDLENBQUM7WUFBRSxPQUFPLENBQUMsa0RBQWtEO1FBQ3BGLElBQUksRUFBRSxDQUFDLGdCQUFnQixDQUFDLENBQUMsQ0FBQyxJQUFJLE1BQU0sQ0FBQyxDQUFDLENBQUMsVUFBVSxDQUFDLEVBQUUsQ0FBQztZQUNuRCxNQUFNLEVBQUUsSUFBSSxFQUFFLEdBQUcsRUFBRSxDQUFDLDZCQUE2QixDQUFDLENBQUMsQ0FBQyxRQUFRLEVBQUUsQ0FBQyxDQUFDO1lBQ2hFLEtBQUssQ0FBQyxJQUFJLENBQUMsR0FBRyxDQUFDLENBQUMsVUFBVSxDQUFDLE9BQU8sRUFBRSxXQUFXLElBQUksR0FBRyxDQUFDLEVBQUUsQ0FBQyxDQUFDO1FBQzdELENBQUM7UUFDRCxFQUFFLENBQUMsWUFBWSxDQUFDLENBQUMsRUFBRSxPQUFPLENBQUMsQ0FBQztJQUM5QixDQUFDLENBQUM7SUFFRixJQUFJLFdBQVcsR0FBRyxLQUFLLENBQUM7SUFDeEIsS0FBSyxNQUFNLElBQUksSUFBSSxFQUFFLENBQUMsSUFBSSxDQUFDLFVBQVUsRUFBRSxDQUFDO1FBQ3RDLElBQUksV0FBVztZQUFFLE9BQU8sQ0FBQyxJQUFJLENBQUMsQ0FBQzthQUMxQixJQUFJLEVBQUUsQ0FBQyxhQUFhLENBQUMsSUFBSSxDQUFDLElBQUksT0FBTyxDQUFDLElBQUksQ0FBQztZQUFFLFdBQVcsR0FBRyxJQUFJLENBQUM7SUFDdkUsQ0FBQztJQUNELE9BQU8sS0FBSyxDQUFDO0FBQ2YsQ0FBQztBQUVELFFBQVEsQ0FBQyw0RUFBNEUsRUFBRSxHQUFHLEVBQUU7SUFDMUYsTUFBTSxHQUFHLEdBQUcsSUFBQSxpQkFBWSxFQUFDLElBQUksRUFBRSxNQUFNLENBQUMsQ0FBQztJQUV2QyxFQUFFLENBQUMsaUVBQWlFLEVBQUUsR0FBRyxFQUFFO1FBQ3pFLE1BQU0sQ0FBQyw4QkFBOEIsQ0FBQyxHQUFHLEVBQUUsa0JBQWtCLENBQUMsQ0FBQyxDQUFDLE9BQU8sQ0FBQyxFQUFFLENBQUMsQ0FBQztJQUM5RSxDQUFDLENBQUMsQ0FBQztJQUVILEVBQUUsQ0FBQyx5REFBeUQsRUFBRSxHQUFHLEVBQUU7UUFDakUsTUFBTSxHQUFHLEdBQUc7Ozs7OztNQU1WLENBQUM7UUFDSCxNQUFNLENBQUMsOEJBQThCLENBQUMsR0FBRyxFQUFFLGtCQUFrQixDQUFDLENBQUMsQ0FBQyxPQUFPLENBQUM7WUFDdEUsd0JBQXdCO1NBQ3pCLENBQUMsQ0FBQztJQUNMLENBQUMsQ0FBQyxDQUFDO0FBQ0wsQ0FBQyxDQUFDLENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvX190ZXN0c19fL2RyaXZlci1zdG9wLWhvb2tzLW9yZGVyLnRlc3QudHMiXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IHsgcmVhZEZpbGVTeW5jIH0gZnJvbSBcImZzXCI7XG5pbXBvcnQgeyBqb2luIH0gZnJvbSBcInBhdGhcIjtcbmltcG9ydCAqIGFzIHRzIGZyb20gXCJ0eXBlc2NyaXB0XCI7XG5cbi8qKlxuICogIzIyNTcgKFAxKTogdGhlIG1vYmlsZS13ZWIgZHJpdmVyIFNUT1AgU0NSRUVOIGNyYXNoZWQgd2l0aCBSZWFjdCAjMzEwIChcIlJlbmRlcmVkIG1vcmUgaG9va3NcbiAqIHRoYW4gZHVyaW5nIHRoZSBwcmV2aW91cyByZW5kZXJcIikuIGB1c2VNZW1vKCgpID0+IGl0ZW1zRnJvbVN0b3Aoc3RvcCkpYCBzYXQgQUZURVIgdGhlXG4gKiBgaWYgKGFjdGl2ZUxvYWRpbmcgfHwgcnVuTG9hZGluZykgcmV0dXJuIOKApmAgYW5kIGBpZiAoIXN0b3ApIHJldHVybiDigKZgIGVhcmx5IHJldHVybnMsIHNvIHRoZVxuICogbG9hZGluZyByZW5kZXIgcmFuIE4gaG9va3MgYW5kIHRoZSBsb2FkZWQgcmVuZGVyIE4rMS5cbiAqXG4gKiBUaGUgcmVuZGVyLXRvZ2dsZSB0aGlzIGd1YXJkczogbG9hZGluZyAoZWFybHkgcmV0dXJuKSDihpIgbG9hZGVkIChmdWxsIHJlbmRlcikgbXVzdCBjYWxsIHRoZVxuICogU0FNRSBob29rcy4gVGhpcyBqZXN0IGxhbmUgcnVucyBpbiBwbGFpbiBub2RlIGFuZCBjYW5ub3QgbW91bnQgYW4gUk4gc2NyZWVuLCBzbyB0aGUgcGluXG4gKiBjaGVja3MgdGhlIHJ1bGUgdGhhdCBtYWtlcyB0aGUgdG9nZ2xlIHNhZmUsIG9uIHRoZSByZWFsIHNvdXJjZSB2aWEgdGhlIFR5cGVTY3JpcHQgQVNUOiBub1xuICogaG9vayBjYWxsIGF0IHRoZSBjb21wb25lbnQncyB0b3AgbGV2ZWwgYWZ0ZXIgaXRzIGZpcnN0IGVhcmx5IHJldHVybi4gKEVTTGludCdzXG4gKiByZWFjdC1ob29rcy9ydWxlcy1vZi1ob29rcyBpcyBhbiBFUlJPUiBmb3IgbW9iaWxlIG5vdyB0b28g4oCUIHNlZSBlc2xpbnQuY29uZmlnLm1qcy4pXG4gKi9cbmNvbnN0IEZJTEUgPSBqb2luKF9fZGlybmFtZSwgXCIuLlwiLCBcImFwcC8oZHJpdmVyKS9yb3V0ZS9zdG9wL1tzdG9wSWRdL2luZGV4LnRzeFwiKTtcblxuZnVuY3Rpb24gaG9va0NhbGxzQWZ0ZXJGaXJzdEVhcmx5UmV0dXJuKHNvdXJjZTogc3RyaW5nLCBjb21wb25lbnQ6IHN0cmluZyk6IHN0cmluZ1tdIHtcbiAgY29uc3Qgc2YgPSB0cy5jcmVhdGVTb3VyY2VGaWxlKEZJTEUsIHNvdXJjZSwgdHMuU2NyaXB0VGFyZ2V0LkxhdGVzdCwgdHJ1ZSwgdHMuU2NyaXB0S2luZC5UU1gpO1xuICBjb25zdCBmbiA9IHNmLnN0YXRlbWVudHMuZmluZChcbiAgICAocyk6IHMgaXMgdHMuRnVuY3Rpb25EZWNsYXJhdGlvbiA9PiB0cy5pc0Z1bmN0aW9uRGVjbGFyYXRpb24ocykgJiYgcy5uYW1lPy50ZXh0ID09PSBjb21wb25lbnQsXG4gICk7XG4gIGlmICghZm4/LmJvZHkpIHRocm93IG5ldyBFcnJvcihgJHtjb21wb25lbnR9IG5vdCBmb3VuZGApO1xuXG4gIGNvbnN0IHJldHVybnMgPSAobjogdHMuTm9kZSk6IGJvb2xlYW4gPT5cbiAgICB0cy5pc1JldHVyblN0YXRlbWVudChuKSB8fCAoIXRzLmlzRnVuY3Rpb25MaWtlKG4pICYmIHRzLmZvckVhY2hDaGlsZChuLCByZXR1cm5zKSA9PT0gdHJ1ZSk7XG4gIGNvbnN0IGlzSG9vayA9IChlOiB0cy5FeHByZXNzaW9uKSA9PlxuICAgICh0cy5pc0lkZW50aWZpZXIoZSkgJiYgL151c2VbQS1aXS8udGVzdChlLnRleHQpKSB8fFxuICAgICh0cy5pc1Byb3BlcnR5QWNjZXNzRXhwcmVzc2lvbihlKSAmJiAvXnVzZVtBLVpdLy50ZXN0KGUubmFtZS50ZXh0KSk7XG5cbiAgY29uc3QgZm91bmQ6IHN0cmluZ1tdID0gW107XG4gIGNvbnN0IGNvbGxlY3QgPSAobjogdHMuTm9kZSkgPT4ge1xuICAgIGlmICh0cy5pc0Z1bmN0aW9uTGlrZShuKSkgcmV0dXJuOyAvLyBjYWxsYmFja3MgZGVjbGFyZWQgaGVyZSBkb24ndCBydW4gZHVyaW5nIHJlbmRlclxuICAgIGlmICh0cy5pc0NhbGxFeHByZXNzaW9uKG4pICYmIGlzSG9vayhuLmV4cHJlc3Npb24pKSB7XG4gICAgICBjb25zdCB7IGxpbmUgfSA9IHNmLmdldExpbmVBbmRDaGFyYWN0ZXJPZlBvc2l0aW9uKG4uZ2V0U3RhcnQoKSk7XG4gICAgICBmb3VuZC5wdXNoKGAke24uZXhwcmVzc2lvbi5nZXRUZXh0KCl9IEAgbGluZSAke2xpbmUgKyAxfWApO1xuICAgIH1cbiAgICB0cy5mb3JFYWNoQ2hpbGQobiwgY29sbGVjdCk7XG4gIH07XG5cbiAgbGV0IGFmdGVyUmV0dXJuID0gZmFsc2U7XG4gIGZvciAoY29uc3Qgc3RtdCBvZiBmbi5ib2R5LnN0YXRlbWVudHMpIHtcbiAgICBpZiAoYWZ0ZXJSZXR1cm4pIGNvbGxlY3Qoc3RtdCk7XG4gICAgZWxzZSBpZiAodHMuaXNJZlN0YXRlbWVudChzdG10KSAmJiByZXR1cm5zKHN0bXQpKSBhZnRlclJldHVybiA9IHRydWU7XG4gIH1cbiAgcmV0dXJuIGZvdW5kO1xufVxuXG5kZXNjcmliZShcImRyaXZlciBzdG9wIHNjcmVlbjogaG9va3MgbmV2ZXIgZm9sbG93IGFuIGVhcmx5IHJldHVybiAoIzIyNTcsIFJlYWN0ICMzMTApXCIsICgpID0+IHtcbiAgY29uc3Qgc3JjID0gcmVhZEZpbGVTeW5jKEZJTEUsIFwidXRmOFwiKTtcblxuICBpdChcIlN0b3BEZXRhaWxTY3JlZW4gY2FsbHMgZXZlcnkgaG9vayBiZWZvcmUgaXRzIGZpcnN0IGVhcmx5IHJldHVyblwiLCAoKSA9PiB7XG4gICAgZXhwZWN0KGhvb2tDYWxsc0FmdGVyRmlyc3RFYXJseVJldHVybihzcmMsIFwiU3RvcERldGFpbFNjcmVlblwiKSkudG9FcXVhbChbXSk7XG4gIH0pO1xuXG4gIGl0KFwidGhlIGNoZWNrZXIgaXRzZWxmIGNhdGNoZXMgYSBob29rIGFmdGVyIGFuIGVhcmx5IHJldHVyblwiLCAoKSA9PiB7XG4gICAgY29uc3QgYmFkID0gYGZ1bmN0aW9uIFN0b3BEZXRhaWxTY3JlZW4oKSB7XG4gICAgICBjb25zdCBhID0gdXNlQSgpO1xuICAgICAgaWYgKCFhKSB7IHJldHVybiBudWxsOyB9XG4gICAgICBjb25zdCBiID0gUmVhY3QudXNlTWVtbygoKSA9PiAxLCBbXSk7XG4gICAgICBjb25zdCBjYiA9ICgpID0+IHVzZU5vdER1cmluZ1JlbmRlcigpO1xuICAgICAgcmV0dXJuIGI7XG4gICAgfWA7XG4gICAgZXhwZWN0KGhvb2tDYWxsc0FmdGVyRmlyc3RFYXJseVJldHVybihiYWQsIFwiU3RvcERldGFpbFNjcmVlblwiKSkudG9FcXVhbChbXG4gICAgICBcIlJlYWN0LnVzZU1lbW8gQCBsaW5lIDRcIixcbiAgICBdKTtcbiAgfSk7XG59KTtcbiJdLCJ2ZXJzaW9uIjozfQ==

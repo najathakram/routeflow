@@ -1,0 +1,44 @@
+f0b4a97d3065018cc3b3a030ec89a952
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, {
+        enumerable: true,
+        get: Object.getOwnPropertyDescriptor(all, name).get
+    });
+}
+_export(exports, {
+    get PLAN_GATED_NAV () {
+        return PLAN_GATED_NAV;
+    },
+    get matchPlanGatedRoute () {
+        return matchPlanGatedRoute;
+    },
+    get planFlagVisible () {
+        return planFlagVisible;
+    }
+});
+const PLAN_GATED_NAV = {
+    "/returns": "flag.returns",
+    "/suppliers": "flag.suppliers",
+    "/vendor-bills": "flag.ap_bills",
+    "/estimates": "flag.estimates",
+    "/credit-notes": "flag.credit_notes",
+    "/finance/reports": "flag.reports",
+    "/analytics": "flag.analytics",
+    // P0 lock-mirror hotfix: recurring invoices has no sidebar entry (it's reached from
+    // within Invoices, not its own nav item) but IS its own route and its own
+    // @RequirePlanFlag("flag.recurring_invoices") gate server-side — PLAN_GATED_NAV had
+    // no entry for it at all, so a denied tenant deep-linking to /invoices/recurring got
+    // an unhandled 403 instead of the graceful lock every other plan-gated route shows.
+    "/invoices/recurring": "flag.recurring_invoices"
+};
+const planFlagVisible = (s)=>s.resolved ? s.enabled : s.failed;
+function matchPlanGatedRoute(pathname) {
+    for (const [prefix, key] of Object.entries(PLAN_GATED_NAV))if (pathname === prefix || pathname.startsWith(prefix + "/")) return key;
+    return null;
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2xpYi9wbGFuLWdhdGVkLW5hdi50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgdHlwZSB7IEZsYWdLZXkgfSBmcm9tIFwiQHJvdXRlZmxvdy90eXBlc1wiO1xuXG4vKipcbiAqIExpdGUtTDIgKFdQNyk6IHRoZSB3ZWIgc2lkZWJhciBocmVmcyBnYXRlZCBiZWhpbmQgYSBwbGFuIGZlYXR1cmUgZmxhZyDigJQgYSBzdWJzZXQgb2ZcbiAqIE9QRVJBVE9SX05BViAoYXBwcy93ZWIvYXBwLyhkYXNoYm9hcmQpL2xheW91dC50c3g6OTAtMTUzKSwgbGltaXRlZCB0byBocmVmcyB0aGF0IGFjdHVhbGx5XG4gKiBleGlzdCB0aGVyZSB0b2RheS4gYC9zYWxlcy1hZ2VudHNgLCBgL2ZpbmFuY2UvY29tbWlzc2lvbnNgLCBhbmQgdGhlIGRpc3BhdGNoL3JvdXRlcy9cbiAqIGRlbGl2ZXJpZXMvZHJpdmVycyBzdXJmYWNlcyBzdGF5IG9uIHRoZWlyIGV4aXN0aW5nIGFkZG9uIGhvb2tzICh1c2VIYXNBZGRvbi91c2VSb3V0ZXNBY2Nlc3MvXG4gKiB1c2VEZWxpdmVyeUFjY2Vzcykg4oCUIHRoZXkgYXJlIE5PVCBhZGRlZCBoZXJlLlxuICovXG5leHBvcnQgY29uc3QgUExBTl9HQVRFRF9OQVY6IFJlYWRvbmx5PFJlY29yZDxzdHJpbmcsIEZsYWdLZXk+PiA9IHtcbiAgXCIvcmV0dXJuc1wiOiBcImZsYWcucmV0dXJuc1wiLFxuICBcIi9zdXBwbGllcnNcIjogXCJmbGFnLnN1cHBsaWVyc1wiLFxuICBcIi92ZW5kb3ItYmlsbHNcIjogXCJmbGFnLmFwX2JpbGxzXCIsXG4gIFwiL2VzdGltYXRlc1wiOiBcImZsYWcuZXN0aW1hdGVzXCIsXG4gIFwiL2NyZWRpdC1ub3Rlc1wiOiBcImZsYWcuY3JlZGl0X25vdGVzXCIsXG4gIFwiL2ZpbmFuY2UvcmVwb3J0c1wiOiBcImZsYWcucmVwb3J0c1wiLFxuICBcIi9hbmFseXRpY3NcIjogXCJmbGFnLmFuYWx5dGljc1wiLFxuICAvLyBQMCBsb2NrLW1pcnJvciBob3RmaXg6IHJlY3VycmluZyBpbnZvaWNlcyBoYXMgbm8gc2lkZWJhciBlbnRyeSAoaXQncyByZWFjaGVkIGZyb21cbiAgLy8gd2l0aGluIEludm9pY2VzLCBub3QgaXRzIG93biBuYXYgaXRlbSkgYnV0IElTIGl0cyBvd24gcm91dGUgYW5kIGl0cyBvd25cbiAgLy8gQFJlcXVpcmVQbGFuRmxhZyhcImZsYWcucmVjdXJyaW5nX2ludm9pY2VzXCIpIGdhdGUgc2VydmVyLXNpZGUg4oCUIFBMQU5fR0FURURfTkFWIGhhZFxuICAvLyBubyBlbnRyeSBmb3IgaXQgYXQgYWxsLCBzbyBhIGRlbmllZCB0ZW5hbnQgZGVlcC1saW5raW5nIHRvIC9pbnZvaWNlcy9yZWN1cnJpbmcgZ290XG4gIC8vIGFuIHVuaGFuZGxlZCA0MDMgaW5zdGVhZCBvZiB0aGUgZ3JhY2VmdWwgbG9jayBldmVyeSBvdGhlciBwbGFuLWdhdGVkIHJvdXRlIHNob3dzLlxuICBcIi9pbnZvaWNlcy9yZWN1cnJpbmdcIjogXCJmbGFnLnJlY3VycmluZ19pbnZvaWNlc1wiLFxufTtcblxuZXhwb3J0IHR5cGUgUGxhbkZsYWdTdGF0ZSA9IHsgZW5hYmxlZDogYm9vbGVhbjsgcmVzb2x2ZWQ6IGJvb2xlYW47IGZhaWxlZDogYm9vbGVhbiB9O1xuXG4vKiogVGhyZWUtdmFsdWVkIHZpc2liaWxpdHkgcnVsZSAobWlycm9ycyBsaWIvYXBpL2FkZG9ucy50cyk6IHJlc29sdmVkIOKHkiBnbyBieSB0aGUgZmxhZztcbiAqICB1bnJlc29sdmVkIChzdGlsbCBsb2FkaW5nKSDih5IgaGlkZGVuIChubyBmbGFzaCBvZiBhIHNvb24tdG8tdmFuaXNoIGl0ZW0pOyB0aGUgZmV0Y2hcbiAqICBpdHNlbGYgZmFpbGVkIOKHkiBzaG93biAoY2xpZW50IGZhaWxzIE9QRU4g4oCUIHRoZSBzZXJ2ZXIgZ3VhcmQgcmVtYWlucyB0aGUgYXV0aG9yaXR5IGFuZFxuICogIGZhaWxzIENMT1NFRCwgc28gYSB0cmFuc2llbnQgNXh4IG5ldmVyIHN0YWxscyBhIHBheWluZyB0ZW5hbnQgb3V0IG9mIHRoZWlyIG93biBuYXYpLiAqL1xuZXhwb3J0IGNvbnN0IHBsYW5GbGFnVmlzaWJsZSA9IChzOiBQbGFuRmxhZ1N0YXRlKSA9PiAocy5yZXNvbHZlZCA/IHMuZW5hYmxlZCA6IHMuZmFpbGVkKTtcblxuLyoqIFRoZSBQTEFOX0dBVEVEX05BViBlbnRyeSBtYXRjaGluZyBgcGF0aG5hbWVgIChleGFjdCBvciBwcmVmaXgpLCBpZiBhbnkuICovXG5leHBvcnQgZnVuY3Rpb24gbWF0Y2hQbGFuR2F0ZWRSb3V0ZShwYXRobmFtZTogc3RyaW5nKTogRmxhZ0tleSB8IG51bGwge1xuICBmb3IgKGNvbnN0IFtwcmVmaXgsIGtleV0gb2YgT2JqZWN0LmVudHJpZXMoUExBTl9HQVRFRF9OQVYpKVxuICAgIGlmIChwYXRobmFtZSA9PT0gcHJlZml4IHx8IHBhdGhuYW1lLnN0YXJ0c1dpdGgocHJlZml4ICsgXCIvXCIpKSByZXR1cm4ga2V5O1xuICByZXR1cm4gbnVsbDtcbn1cbiJdLCJuYW1lcyI6WyJQTEFOX0dBVEVEX05BViIsIm1hdGNoUGxhbkdhdGVkUm91dGUiLCJwbGFuRmxhZ1Zpc2libGUiLCJzIiwicmVzb2x2ZWQiLCJlbmFibGVkIiwiZmFpbGVkIiwicGF0aG5hbWUiLCJwcmVmaXgiLCJrZXkiLCJPYmplY3QiLCJlbnRyaWVzIiwic3RhcnRzV2l0aCJdLCJtYXBwaW5ncyI6Ijs7Ozs7Ozs7Ozs7UUFTYUE7ZUFBQUE7O1FBeUJHQztlQUFBQTs7UUFISEM7ZUFBQUE7OztBQXRCTixNQUFNRixpQkFBb0Q7SUFDL0QsWUFBWTtJQUNaLGNBQWM7SUFDZCxpQkFBaUI7SUFDakIsY0FBYztJQUNkLGlCQUFpQjtJQUNqQixvQkFBb0I7SUFDcEIsY0FBYztJQUNkLG9GQUFvRjtJQUNwRiwwRUFBMEU7SUFDMUUsb0ZBQW9GO0lBQ3BGLHFGQUFxRjtJQUNyRixvRkFBb0Y7SUFDcEYsdUJBQXVCO0FBQ3pCO0FBUU8sTUFBTUUsa0JBQWtCLENBQUNDLElBQXNCQSxFQUFFQyxRQUFRLEdBQUdELEVBQUVFLE9BQU8sR0FBR0YsRUFBRUcsTUFBTTtBQUdoRixTQUFTTCxvQkFBb0JNLFFBQWdCO0lBQ2xELEtBQUssTUFBTSxDQUFDQyxRQUFRQyxJQUFJLElBQUlDLE9BQU9DLE9BQU8sQ0FBQ1gsZ0JBQ3pDLElBQUlPLGFBQWFDLFVBQVVELFNBQVNLLFVBQVUsQ0FBQ0osU0FBUyxNQUFNLE9BQU9DO0lBQ3ZFLE9BQU87QUFDVCJ9

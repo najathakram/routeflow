@@ -1,0 +1,49 @@
+309f2b6334fe49c13d6a6db9cc1db8fa
+"use strict";
+/**
+ * Byte-for-byte mirror of `packages/types/trip-grouping.ts`. Mobile Jest's
+ * `moduleNameMapper` stubs `@routeflow/types` (see `jest.config.js`), so this
+ * module — like `lib/shipping.ts` — is duplicated locally rather than
+ * imported, and must be changed in lockstep with the shared original so the
+ * web trip builder, the API's `TripsService`, and this mobile copy all agree
+ * on which orders become which stop.
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.groupOrdersForTrip = groupOrdersForTrip;
+/**
+ * Groups orders into one delivery stop per distinct customer, preserving
+ * first-seen order. Pure and deterministic — consumed by the web trip builder
+ * (client preview) and mirrored verbatim in the API
+ * (apps/api/src/common/trip-grouping.ts — server truth) and mobile
+ * (apps/mobile/lib/trip-grouping.ts), so all three agree. Change all three
+ * together.
+ */
+function groupOrdersForTrip(orders) {
+    const groups = [];
+    const byCustomer = new Map();
+    const skipped = [];
+    for (const order of orders) {
+        if (!order.customerId) {
+            skipped.push({
+                orderId: order.id,
+                orderNumber: order.orderNumber ?? null,
+                reason: "NO_CUSTOMER",
+            });
+            continue;
+        }
+        let group = byCustomer.get(order.customerId);
+        if (!group) {
+            group = {
+                customerId: order.customerId,
+                customerName: order.customerName ?? null,
+                orderIds: [],
+            };
+            byCustomer.set(order.customerId, group);
+            groups.push(group);
+        }
+        if (!group.orderIds.includes(order.id))
+            group.orderIds.push(order.id);
+    }
+    return { groups, skipped };
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3RyaXAtZ3JvdXBpbmcudHMiLCJtYXBwaW5ncyI6IjtBQUFBOzs7Ozs7O0dBT0c7O0FBa0NILGdEQTBCQztBQWxDRDs7Ozs7OztHQU9HO0FBQ0gsU0FBZ0Isa0JBQWtCLENBQUMsTUFBNEI7SUFDN0QsTUFBTSxNQUFNLEdBQW9CLEVBQUUsQ0FBQztJQUNuQyxNQUFNLFVBQVUsR0FBRyxJQUFJLEdBQUcsRUFBeUIsQ0FBQztJQUNwRCxNQUFNLE9BQU8sR0FBdUIsRUFBRSxDQUFDO0lBQ3ZDLEtBQUssTUFBTSxLQUFLLElBQUksTUFBTSxFQUFFLENBQUM7UUFDM0IsSUFBSSxDQUFDLEtBQUssQ0FBQyxVQUFVLEVBQUUsQ0FBQztZQUN0QixPQUFPLENBQUMsSUFBSSxDQUFDO2dCQUNYLE9BQU8sRUFBRSxLQUFLLENBQUMsRUFBRTtnQkFDakIsV0FBVyxFQUFFLEtBQUssQ0FBQyxXQUFXLElBQUksSUFBSTtnQkFDdEMsTUFBTSxFQUFFLGFBQWE7YUFDdEIsQ0FBQyxDQUFDO1lBQ0gsU0FBUztRQUNYLENBQUM7UUFDRCxJQUFJLEtBQUssR0FBRyxVQUFVLENBQUMsR0FBRyxDQUFDLEtBQUssQ0FBQyxVQUFVLENBQUMsQ0FBQztRQUM3QyxJQUFJLENBQUMsS0FBSyxFQUFFLENBQUM7WUFDWCxLQUFLLEdBQUc7Z0JBQ04sVUFBVSxFQUFFLEtBQUssQ0FBQyxVQUFVO2dCQUM1QixZQUFZLEVBQUUsS0FBSyxDQUFDLFlBQVksSUFBSSxJQUFJO2dCQUN4QyxRQUFRLEVBQUUsRUFBRTthQUNiLENBQUM7WUFDRixVQUFVLENBQUMsR0FBRyxDQUFDLEtBQUssQ0FBQyxVQUFVLEVBQUUsS0FBSyxDQUFDLENBQUM7WUFDeEMsTUFBTSxDQUFDLElBQUksQ0FBQyxLQUFLLENBQUMsQ0FBQztRQUNyQixDQUFDO1FBQ0QsSUFBSSxDQUFDLEtBQUssQ0FBQyxRQUFRLENBQUMsUUFBUSxDQUFDLEtBQUssQ0FBQyxFQUFFLENBQUM7WUFBRSxLQUFLLENBQUMsUUFBUSxDQUFDLElBQUksQ0FBQyxLQUFLLENBQUMsRUFBRSxDQUFDLENBQUM7SUFDeEUsQ0FBQztJQUNELE9BQU8sRUFBRSxNQUFNLEVBQUUsT0FBTyxFQUFFLENBQUM7QUFDN0IsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9hcHBzL21vYmlsZS9saWIvdHJpcC1ncm91cGluZy50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqIEJ5dGUtZm9yLWJ5dGUgbWlycm9yIG9mIGBwYWNrYWdlcy90eXBlcy90cmlwLWdyb3VwaW5nLnRzYC4gTW9iaWxlIEplc3Qnc1xuICogYG1vZHVsZU5hbWVNYXBwZXJgIHN0dWJzIGBAcm91dGVmbG93L3R5cGVzYCAoc2VlIGBqZXN0LmNvbmZpZy5qc2ApLCBzbyB0aGlzXG4gKiBtb2R1bGUg4oCUIGxpa2UgYGxpYi9zaGlwcGluZy50c2Ag4oCUIGlzIGR1cGxpY2F0ZWQgbG9jYWxseSByYXRoZXIgdGhhblxuICogaW1wb3J0ZWQsIGFuZCBtdXN0IGJlIGNoYW5nZWQgaW4gbG9ja3N0ZXAgd2l0aCB0aGUgc2hhcmVkIG9yaWdpbmFsIHNvIHRoZVxuICogd2ViIHRyaXAgYnVpbGRlciwgdGhlIEFQSSdzIGBUcmlwc1NlcnZpY2VgLCBhbmQgdGhpcyBtb2JpbGUgY29weSBhbGwgYWdyZWVcbiAqIG9uIHdoaWNoIG9yZGVycyBiZWNvbWUgd2hpY2ggc3RvcC5cbiAqL1xuXG5leHBvcnQgaW50ZXJmYWNlIFRyaXBHcm91cGFibGVPcmRlciB7XG4gIGlkOiBzdHJpbmc7XG4gIG9yZGVyTnVtYmVyPzogc3RyaW5nIHwgbnVsbDtcbiAgY3VzdG9tZXJJZD86IHN0cmluZyB8IG51bGw7XG4gIGN1c3RvbWVyTmFtZT86IHN0cmluZyB8IG51bGw7XG59XG5cbmV4cG9ydCBpbnRlcmZhY2UgVHJpcFN0b3BHcm91cCB7XG4gIGN1c3RvbWVySWQ6IHN0cmluZztcbiAgY3VzdG9tZXJOYW1lOiBzdHJpbmcgfCBudWxsO1xuICBvcmRlcklkczogc3RyaW5nW107XG59XG5cbmV4cG9ydCBpbnRlcmZhY2UgVHJpcFNraXBwZWRPcmRlciB7XG4gIG9yZGVySWQ6IHN0cmluZztcbiAgb3JkZXJOdW1iZXI6IHN0cmluZyB8IG51bGw7XG4gIHJlYXNvbjogXCJOT19DVVNUT01FUlwiO1xufVxuXG5leHBvcnQgaW50ZXJmYWNlIFRyaXBHcm91cGluZ1Jlc3VsdCB7XG4gIGdyb3VwczogVHJpcFN0b3BHcm91cFtdO1xuICBza2lwcGVkOiBUcmlwU2tpcHBlZE9yZGVyW107XG59XG5cbi8qKlxuICogR3JvdXBzIG9yZGVycyBpbnRvIG9uZSBkZWxpdmVyeSBzdG9wIHBlciBkaXN0aW5jdCBjdXN0b21lciwgcHJlc2VydmluZ1xuICogZmlyc3Qtc2VlbiBvcmRlci4gUHVyZSBhbmQgZGV0ZXJtaW5pc3RpYyDigJQgY29uc3VtZWQgYnkgdGhlIHdlYiB0cmlwIGJ1aWxkZXJcbiAqIChjbGllbnQgcHJldmlldykgYW5kIG1pcnJvcmVkIHZlcmJhdGltIGluIHRoZSBBUElcbiAqIChhcHBzL2FwaS9zcmMvY29tbW9uL3RyaXAtZ3JvdXBpbmcudHMg4oCUIHNlcnZlciB0cnV0aCkgYW5kIG1vYmlsZVxuICogKGFwcHMvbW9iaWxlL2xpYi90cmlwLWdyb3VwaW5nLnRzKSwgc28gYWxsIHRocmVlIGFncmVlLiBDaGFuZ2UgYWxsIHRocmVlXG4gKiB0b2dldGhlci5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIGdyb3VwT3JkZXJzRm9yVHJpcChvcmRlcnM6IFRyaXBHcm91cGFibGVPcmRlcltdKTogVHJpcEdyb3VwaW5nUmVzdWx0IHtcbiAgY29uc3QgZ3JvdXBzOiBUcmlwU3RvcEdyb3VwW10gPSBbXTtcbiAgY29uc3QgYnlDdXN0b21lciA9IG5ldyBNYXA8c3RyaW5nLCBUcmlwU3RvcEdyb3VwPigpO1xuICBjb25zdCBza2lwcGVkOiBUcmlwU2tpcHBlZE9yZGVyW10gPSBbXTtcbiAgZm9yIChjb25zdCBvcmRlciBvZiBvcmRlcnMpIHtcbiAgICBpZiAoIW9yZGVyLmN1c3RvbWVySWQpIHtcbiAgICAgIHNraXBwZWQucHVzaCh7XG4gICAgICAgIG9yZGVySWQ6IG9yZGVyLmlkLFxuICAgICAgICBvcmRlck51bWJlcjogb3JkZXIub3JkZXJOdW1iZXIgPz8gbnVsbCxcbiAgICAgICAgcmVhc29uOiBcIk5PX0NVU1RPTUVSXCIsXG4gICAgICB9KTtcbiAgICAgIGNvbnRpbnVlO1xuICAgIH1cbiAgICBsZXQgZ3JvdXAgPSBieUN1c3RvbWVyLmdldChvcmRlci5jdXN0b21lcklkKTtcbiAgICBpZiAoIWdyb3VwKSB7XG4gICAgICBncm91cCA9IHtcbiAgICAgICAgY3VzdG9tZXJJZDogb3JkZXIuY3VzdG9tZXJJZCxcbiAgICAgICAgY3VzdG9tZXJOYW1lOiBvcmRlci5jdXN0b21lck5hbWUgPz8gbnVsbCxcbiAgICAgICAgb3JkZXJJZHM6IFtdLFxuICAgICAgfTtcbiAgICAgIGJ5Q3VzdG9tZXIuc2V0KG9yZGVyLmN1c3RvbWVySWQsIGdyb3VwKTtcbiAgICAgIGdyb3Vwcy5wdXNoKGdyb3VwKTtcbiAgICB9XG4gICAgaWYgKCFncm91cC5vcmRlcklkcy5pbmNsdWRlcyhvcmRlci5pZCkpIGdyb3VwLm9yZGVySWRzLnB1c2gob3JkZXIuaWQpO1xuICB9XG4gIHJldHVybiB7IGdyb3Vwcywgc2tpcHBlZCB9O1xufVxuIl0sInZlcnNpb24iOjN9

@@ -1,0 +1,29 @@
+6205d50baa6ff16f611ed23f602aa0f2
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+/**
+ * WP3 (R6.8) — `expo-print` must be pinned via `npx expo install expo-print`,
+ * not hand-typed: the SDK-line pin only means something (see B203,
+ * expo-file-system-pin.test.ts) if the resolved version actually came from
+ * `expo install` against the SDK 55 line this app runs. Source-text pin — no
+ * native module can be loaded under Jest.
+ */
+const fs_1 = require("fs");
+const path_1 = require("path");
+describe("expo-print is pinned to the SDK 55 line (R6.8)", () => {
+    it("apps/mobile/package.json pins expo-print to the same major as expo", () => {
+        const pkg = JSON.parse((0, fs_1.readFileSync)((0, path_1.join)(__dirname, "..", "package.json"), "utf8"));
+        const printRange = pkg.dependencies["expo-print"];
+        const expoRange = pkg.dependencies["expo"];
+        expect(printRange).toBeDefined();
+        expect(expoRange).toBeDefined();
+        const majorOf = (range) => range.match(/(\d+)\.\d+\.\d+/)?.[1];
+        expect(majorOf(printRange)).toBe(majorOf(expoRange));
+        expect(majorOf(printRange)).toBe("55");
+    });
+    it("the root package-lock.json carries a resolved expo-print entry (proof it went through npm install)", () => {
+        const lock = (0, fs_1.readFileSync)((0, path_1.join)(__dirname, "..", "..", "..", "package-lock.json"), "utf8");
+        expect(lock).toMatch(/"node_modules\/expo-print":/);
+    });
+});
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvX190ZXN0c19fL2V4cG8tcHJpbnQtcGluLnRlc3QudHMiLCJtYXBwaW5ncyI6Ijs7QUFBQTs7Ozs7O0dBTUc7QUFDSCwyQkFBa0M7QUFDbEMsK0JBQTRCO0FBRTVCLFFBQVEsQ0FBQyxnREFBZ0QsRUFBRSxHQUFHLEVBQUU7SUFDOUQsRUFBRSxDQUFDLG9FQUFvRSxFQUFFLEdBQUcsRUFBRTtRQUM1RSxNQUFNLEdBQUcsR0FBRyxJQUFJLENBQUMsS0FBSyxDQUFDLElBQUEsaUJBQVksRUFBQyxJQUFBLFdBQUksRUFBQyxTQUFTLEVBQUUsSUFBSSxFQUFFLGNBQWMsQ0FBQyxFQUFFLE1BQU0sQ0FBQyxDQUVqRixDQUFDO1FBRUYsTUFBTSxVQUFVLEdBQUcsR0FBRyxDQUFDLFlBQVksQ0FBQyxZQUFZLENBQUMsQ0FBQztRQUNsRCxNQUFNLFNBQVMsR0FBRyxHQUFHLENBQUMsWUFBWSxDQUFDLE1BQU0sQ0FBQyxDQUFDO1FBRTNDLE1BQU0sQ0FBQyxVQUFVLENBQUMsQ0FBQyxXQUFXLEVBQUUsQ0FBQztRQUNqQyxNQUFNLENBQUMsU0FBUyxDQUFDLENBQUMsV0FBVyxFQUFFLENBQUM7UUFFaEMsTUFBTSxPQUFPLEdBQUcsQ0FBQyxLQUFhLEVBQUUsRUFBRSxDQUFDLEtBQUssQ0FBQyxLQUFLLENBQUMsaUJBQWlCLENBQUMsRUFBRSxDQUFDLENBQUMsQ0FBQyxDQUFDO1FBQ3ZFLE1BQU0sQ0FBQyxPQUFPLENBQUMsVUFBVSxDQUFDLENBQUMsQ0FBQyxJQUFJLENBQUMsT0FBTyxDQUFDLFNBQVMsQ0FBQyxDQUFDLENBQUM7UUFDckQsTUFBTSxDQUFDLE9BQU8sQ0FBQyxVQUFVLENBQUMsQ0FBQyxDQUFDLElBQUksQ0FBQyxJQUFJLENBQUMsQ0FBQztJQUN6QyxDQUFDLENBQUMsQ0FBQztJQUVILEVBQUUsQ0FBQyxvR0FBb0csRUFBRSxHQUFHLEVBQUU7UUFDNUcsTUFBTSxJQUFJLEdBQUcsSUFBQSxpQkFBWSxFQUFDLElBQUEsV0FBSSxFQUFDLFNBQVMsRUFBRSxJQUFJLEVBQUUsSUFBSSxFQUFFLElBQUksRUFBRSxtQkFBbUIsQ0FBQyxFQUFFLE1BQU0sQ0FBQyxDQUFDO1FBQzFGLE1BQU0sQ0FBQyxJQUFJLENBQUMsQ0FBQyxPQUFPLENBQUMsNkJBQTZCLENBQUMsQ0FBQztJQUN0RCxDQUFDLENBQUMsQ0FBQztBQUNMLENBQUMsQ0FBQyxDQUFDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvbW9iaWxlL19fdGVzdHNfXy9leHBvLXByaW50LXBpbi50ZXN0LnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogV1AzIChSNi44KSDigJQgYGV4cG8tcHJpbnRgIG11c3QgYmUgcGlubmVkIHZpYSBgbnB4IGV4cG8gaW5zdGFsbCBleHBvLXByaW50YCxcbiAqIG5vdCBoYW5kLXR5cGVkOiB0aGUgU0RLLWxpbmUgcGluIG9ubHkgbWVhbnMgc29tZXRoaW5nIChzZWUgQjIwMyxcbiAqIGV4cG8tZmlsZS1zeXN0ZW0tcGluLnRlc3QudHMpIGlmIHRoZSByZXNvbHZlZCB2ZXJzaW9uIGFjdHVhbGx5IGNhbWUgZnJvbVxuICogYGV4cG8gaW5zdGFsbGAgYWdhaW5zdCB0aGUgU0RLIDU1IGxpbmUgdGhpcyBhcHAgcnVucy4gU291cmNlLXRleHQgcGluIOKAlCBub1xuICogbmF0aXZlIG1vZHVsZSBjYW4gYmUgbG9hZGVkIHVuZGVyIEplc3QuXG4gKi9cbmltcG9ydCB7IHJlYWRGaWxlU3luYyB9IGZyb20gXCJmc1wiO1xuaW1wb3J0IHsgam9pbiB9IGZyb20gXCJwYXRoXCI7XG5cbmRlc2NyaWJlKFwiZXhwby1wcmludCBpcyBwaW5uZWQgdG8gdGhlIFNESyA1NSBsaW5lIChSNi44KVwiLCAoKSA9PiB7XG4gIGl0KFwiYXBwcy9tb2JpbGUvcGFja2FnZS5qc29uIHBpbnMgZXhwby1wcmludCB0byB0aGUgc2FtZSBtYWpvciBhcyBleHBvXCIsICgpID0+IHtcbiAgICBjb25zdCBwa2cgPSBKU09OLnBhcnNlKHJlYWRGaWxlU3luYyhqb2luKF9fZGlybmFtZSwgXCIuLlwiLCBcInBhY2thZ2UuanNvblwiKSwgXCJ1dGY4XCIpKSBhcyB7XG4gICAgICBkZXBlbmRlbmNpZXM6IFJlY29yZDxzdHJpbmcsIHN0cmluZz47XG4gICAgfTtcblxuICAgIGNvbnN0IHByaW50UmFuZ2UgPSBwa2cuZGVwZW5kZW5jaWVzW1wiZXhwby1wcmludFwiXTtcbiAgICBjb25zdCBleHBvUmFuZ2UgPSBwa2cuZGVwZW5kZW5jaWVzW1wiZXhwb1wiXTtcblxuICAgIGV4cGVjdChwcmludFJhbmdlKS50b0JlRGVmaW5lZCgpO1xuICAgIGV4cGVjdChleHBvUmFuZ2UpLnRvQmVEZWZpbmVkKCk7XG5cbiAgICBjb25zdCBtYWpvck9mID0gKHJhbmdlOiBzdHJpbmcpID0+IHJhbmdlLm1hdGNoKC8oXFxkKylcXC5cXGQrXFwuXFxkKy8pPy5bMV07XG4gICAgZXhwZWN0KG1ham9yT2YocHJpbnRSYW5nZSkpLnRvQmUobWFqb3JPZihleHBvUmFuZ2UpKTtcbiAgICBleHBlY3QobWFqb3JPZihwcmludFJhbmdlKSkudG9CZShcIjU1XCIpO1xuICB9KTtcblxuICBpdChcInRoZSByb290IHBhY2thZ2UtbG9jay5qc29uIGNhcnJpZXMgYSByZXNvbHZlZCBleHBvLXByaW50IGVudHJ5IChwcm9vZiBpdCB3ZW50IHRocm91Z2ggbnBtIGluc3RhbGwpXCIsICgpID0+IHtcbiAgICBjb25zdCBsb2NrID0gcmVhZEZpbGVTeW5jKGpvaW4oX19kaXJuYW1lLCBcIi4uXCIsIFwiLi5cIiwgXCIuLlwiLCBcInBhY2thZ2UtbG9jay5qc29uXCIpLCBcInV0ZjhcIik7XG4gICAgZXhwZWN0KGxvY2spLnRvTWF0Y2goL1wibm9kZV9tb2R1bGVzXFwvZXhwby1wcmludFwiOi8pO1xuICB9KTtcbn0pO1xuIl0sInZlcnNpb24iOjN9

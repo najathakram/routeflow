@@ -1,0 +1,934 @@
+844581e72a05a33f9bac0928103de555
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, {
+        enumerable: true,
+        get: Object.getOwnPropertyDescriptor(all, name).get
+    });
+}
+_export(exports, {
+    get default () {
+        return PrivacyPage;
+    },
+    get metadata () {
+        return metadata;
+    }
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _link = /*#__PURE__*/ _interop_require_default(require("next/link"));
+const _lucidereact = require("lucide-react");
+const _site = require("../lib/site");
+const _marketing = require("../components/marketing");
+function _interop_require_default(obj) {
+    return obj && obj.__esModule ? obj : {
+        default: obj
+    };
+}
+// Published privacy policy (R9 follow-up). Source draft:
+// local-assets/handoff/2026-09-17/legal/privacy-policy-DRAFT.md — this page carries the
+// full text, not the interim shell. `LAST_UPDATED` also feeds the visible "Last updated"
+// line below; bump both together when the policy changes.
+const LAST_UPDATED = "September 17, 2026";
+const route = _site.routes.find((r)=>r.slug === "privacy");
+const metadata = {
+    title: route.title,
+    description: route.description,
+    alternates: {
+        canonical: "/privacy"
+    },
+    openGraph: {
+        title: route.title,
+        description: route.description,
+        url: "/privacy",
+        siteName: _site.site.name,
+        type: "website"
+    }
+};
+function PrivacyPage() {
+    return /*#__PURE__*/ (0, _jsxruntime.jsx)("div", {
+        className: "glass-page",
+        children: /*#__PURE__*/ (0, _jsxruntime.jsxs)("section", {
+            className: "legal-page wrap",
+            children: [
+                /*#__PURE__*/ (0, _jsxruntime.jsx)(_marketing.Eyebrow, {
+                    children: "ROUTEFLOW"
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("h1", {
+                    children: "Privacy Policy"
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsxs)("p", {
+                    children: [
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                            children: "Effective date:"
+                        }),
+                        " ",
+                        LAST_UPDATED,
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("br", {}),
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                            children: "Last updated:"
+                        }),
+                        " ",
+                        LAST_UPDATED
+                    ]
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                    children: "RouteFlow (“RouteFlow,” “we,” “us,” or “our”) operates the RouteFlow platform — a multi-tenant software-as-a-service application for wholesale distributors that manages orders, delivery routes, invoices, payments, a buyer portal, and driver/operator mobile apps (collectively, the “Service”). This Privacy Policy explains what personal information we collect, how we use it, who we share it with, and the choices available to you."
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                    children: "This policy applies to the RouteFlow marketing website (routeflow.info), the RouteFlow web dashboard and buyer portal, and the RouteFlow mobile app for drivers and operators."
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsxs)("p", {
+                    children: [
+                        "If you are a customer, driver, or other end user of a business that uses RouteFlow (a “Tenant”), please also see",
+                        " ",
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("a", {
+                            href: "#controller-vs-processor",
+                            children: "“Our role: controller vs. processor”"
+                        }),
+                        " ",
+                        "below — in most cases the Tenant, not RouteFlow, controls how your information is used, and you should direct privacy requests to them first."
+                    ]
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("h2", {
+                    id: "who-we-are",
+                    children: "Who we are"
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsxs)("p", {
+                    children: [
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                            children: "Operator:"
+                        }),
+                        " Routeflow Solutions LLC, a Wyoming limited liability company (“RouteFlow”), 10701 Corporate Dr Ste 190, Stafford, TX 77477",
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("br", {}),
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                            children: "General contact:"
+                        }),
+                        " ",
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("a", {
+                            href: `mailto:${_site.site.email}`,
+                            children: _site.site.email
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("br", {}),
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                            children: "Security / vulnerability reports:"
+                        }),
+                        " ",
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("a", {
+                            href: "mailto:security@routeflow.info",
+                            children: "security@routeflow.info"
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("br", {}),
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                            children: "Website:"
+                        }),
+                        " ",
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("a", {
+                            href: _site.site.origin,
+                            children: _site.site.origin
+                        })
+                    ]
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("h2", {
+                    id: "controller-vs-processor",
+                    children: "Our role: controller vs. processor"
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsxs)("p", {
+                    children: [
+                        "RouteFlow is a ",
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                            children: "B2B platform"
+                        }),
+                        ". Businesses (“Tenants”) sign up for RouteFlow to run their own distribution operations, and their staff invite or add their own customers (buyers) and drivers into the system."
+                    ]
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsxs)("p", {
+                    children: [
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                            children: "Where RouteFlow is a processor."
+                        }),
+                        " For data that Tenants put into the Service about their own customers, buyers, drivers, orders, invoices, and deliveries, the",
+                        " ",
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                            children: "Tenant is the data controller"
+                        }),
+                        " and RouteFlow acts only as a",
+                        " ",
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                            children: "data processor"
+                        }),
+                        " (or “service provider”), processing that data solely to provide the Service under our agreement with the Tenant. If you are a customer, buyer, or driver of a RouteFlow Tenant and have a question or request about your personal data, please contact that business directly; we will assist them in responding as required by applicable law."
+                    ]
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsxs)("p", {
+                    children: [
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                            children: "Where RouteFlow is a controller."
+                        }),
+                        " For data about the Tenant’s own account — account holders, billing contacts, staff user accounts, subscription and payment records, support communications, and marketing-site visitors —",
+                        " ",
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                            children: "RouteFlow is the data controller"
+                        }),
+                        " and this policy describes our own practices directly."
+                    ]
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("h2", {
+                    id: "information-we-collect",
+                    children: "Information we collect"
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("h3", {
+                    children: "Information Tenants and their users provide"
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsxs)("ul", {
+                    children: [
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                            children: [
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                    children: "Account & staff data:"
+                                }),
+                                " name, email, phone, role, password (hashed), tenant/company name."
+                            ]
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                            children: [
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                    children: "Customer (buyer) records:"
+                                }),
+                                " business name, contact name, email, phone, delivery address, order history, pricing tier, and communications entered by the Tenant or by the buyer through the buyer portal."
+                            ]
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                            children: [
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                    children: "Driver data:"
+                                }),
+                                " name, contact info, assigned routes/vehicles, and — while an active delivery route is in progress — real-time and route-history",
+                                " ",
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                    children: "location data"
+                                }),
+                                " (see “Location data” below)."
+                            ]
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                            children: [
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                    children: "Order, route, and delivery data:"
+                                }),
+                                " orders, line items, delivery stops, route sequencing, proof-of-delivery (POD) photos, signatures, and delivery notes."
+                            ]
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                            children: [
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                    children: "Financial data:"
+                                }),
+                                " invoices, credit notes, vendor bills, payment records (including post-dated check details where a Tenant uses that feature), and billing history. Card payments are processed by ",
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                    children: "Stripe"
+                                }),
+                                "; RouteFlow does not store full card numbers."
+                            ]
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                            children: [
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                    children: "Uploaded files:"
+                                }),
+                                " product images, receipts, supplier statements/invoices, and other documents Tenants upload to the Service."
+                            ]
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                            children: [
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                    children: "Support & communications:"
+                                }),
+                                " messages sent to",
+                                " ",
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("a", {
+                                    href: `mailto:${_site.site.email}`,
+                                    children: _site.site.email
+                                }),
+                                " or",
+                                " ",
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("a", {
+                                    href: "mailto:security@routeflow.info",
+                                    children: "security@routeflow.info"
+                                }),
+                                ", or through in-app support/notification features."
+                            ]
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                            children: [
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                    children: "Demo booking requests:"
+                                }),
+                                " if you book a product walkthrough on routeflow.info, we collect your name, email, company, optional phone number and notes, your selected meeting time and time zone, and your IP address. See",
+                                " ",
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("a", {
+                                    href: "#demo-booking",
+                                    children: "“Demo booking requests”"
+                                }),
+                                " below for how this is stored and scheduled."
+                            ]
+                        })
+                    ]
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("h3", {
+                    children: "Information collected automatically"
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsxs)("ul", {
+                    children: [
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                            children: [
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                    children: "Usage & device data:"
+                                }),
+                                " IP address, browser/device type, pages viewed, and actions taken in the web dashboard and mobile app, collected for security, debugging, and service-reliability purposes."
+                            ]
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                            children: [
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                    children: "Cookies (web):"
+                                }),
+                                " RouteFlow’s web app uses a small number of",
+                                " ",
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                    children: "strictly necessary"
+                                }),
+                                " cookies to keep you signed in and route you to the correct portal (e.g., an authentication-presence cookie and a “last portal used” cookie). These cookies do not track you across other websites. We do not currently use third-party advertising or analytics cookies."
+                            ]
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                            children: [
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                    children: "Location data (mobile, drivers only):"
+                                }),
+                                " while a driver is actively running a delivery route, the RouteFlow mobile app collects device location — including in the background while the route is in progress — so dispatch/operators can see live route progress, sequence stops, and confirm deliveries. Location is not collected outside of an active route, and is not collected from customer/buyer or operator (non-driver) accounts. Drivers can disable location sharing in their device settings, which will prevent live tracking from functioning."
+                            ]
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                            children: [
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                    children: "Camera & photos (mobile):"
+                                }),
+                                " the mobile app requests camera access to scan product barcodes and to photograph receipts, supplier bills, product images, and proof-of-delivery. It requests photo-library access so users can attach existing photos (e.g., receipts) instead of taking a new one. Camera/photo access is used only for these in-app features; RouteFlow does not access your device’s photo library or camera outside of an explicit in-app action."
+                            ]
+                        })
+                    ]
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("h3", {
+                    children: "Information from third parties"
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsxs)("ul", {
+                    children: [
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                            children: [
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                    children: "Google Sign-In:"
+                                }),
+                                " if you sign in with Google, we receive your name, email address, and Google account ID from Google to create or authenticate your RouteFlow account."
+                            ]
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                            children: [
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                    children: "Optional CRM sync (per-Tenant):"
+                                }),
+                                " a Tenant may connect a third-party CRM — currently ",
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                    children: "GoHighLevel"
+                                }),
+                                " — to sync contact and opportunity records (name, email, phone, tags, notes, deal/opportunity status) between that CRM and RouteFlow. This is off by default and controlled entirely by the Tenant."
+                            ]
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                            children: [
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                    children: "Optional data import (per-Tenant):"
+                                }),
+                                " a Tenant may import historical business data from a source system (for example, ",
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                    children: "Zoho CRM"
+                                }),
+                                ") when onboarding onto RouteFlow."
+                            ]
+                        })
+                    ]
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("h2", {
+                    id: "how-we-use-information",
+                    children: "How we use information"
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                    children: "We use the information described above to:"
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsxs)("ul", {
+                    children: [
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("li", {
+                            children: "provide, operate, and maintain the Service (accounts, orders, routing, invoicing, payments, notifications);"
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("li", {
+                            children: "authenticate users and secure accounts;"
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                            children: [
+                                "optimize delivery routes (delivery stop addresses/coordinates are sent to our routing engine — see ",
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("a", {
+                                    href: "#sub-processors",
+                                    children: "“Sub-processors”"
+                                }),
+                                " — solely to compute route sequencing and ETAs);"
+                            ]
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("li", {
+                            children: "process payments and manage subscriptions and billing;"
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("li", {
+                            children: "send transactional communications (order confirmations, invoices, password resets, route notifications);"
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                            children: [
+                                "provide customer support and respond to inquiries sent to",
+                                " ",
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("a", {
+                                    href: `mailto:${_site.site.email}`,
+                                    children: _site.site.email
+                                }),
+                                " or",
+                                " ",
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("a", {
+                                    href: "mailto:security@routeflow.info",
+                                    children: "security@routeflow.info"
+                                }),
+                                ";"
+                            ]
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("li", {
+                            children: "detect, investigate, and prevent fraud, abuse, and security incidents;"
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("li", {
+                            children: "comply with legal obligations (e.g., tax and accounting records); and"
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("li", {
+                            children: "improve the reliability and performance of the Service."
+                        })
+                    ]
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsxs)("p", {
+                    children: [
+                        "We do ",
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                            children: "not"
+                        }),
+                        " sell personal information, and we do not use Tenant, customer, or driver data to serve third-party advertising."
+                    ]
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("h2", {
+                    id: "sub-processors",
+                    children: "Sub-processors and service providers"
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                    children: "We share information with the following categories of service providers, each of which processes data on our behalf and only as needed to provide the Service. This list reflects what the RouteFlow codebase and infrastructure actually use as of this document’s last-updated date above."
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("div", {
+                    className: "legal-table-wrap",
+                    children: /*#__PURE__*/ (0, _jsxruntime.jsxs)("table", {
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("thead", {
+                                children: /*#__PURE__*/ (0, _jsxruntime.jsxs)("tr", {
+                                    children: [
+                                        /*#__PURE__*/ (0, _jsxruntime.jsx)("th", {
+                                            children: "Provider"
+                                        }),
+                                        /*#__PURE__*/ (0, _jsxruntime.jsx)("th", {
+                                            children: "Purpose"
+                                        }),
+                                        /*#__PURE__*/ (0, _jsxruntime.jsx)("th", {
+                                            children: "Data involved"
+                                        })
+                                    ]
+                                })
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("tbody", {
+                                children: [
+                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("tr", {
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("td", {
+                                                children: "Railway (United States)"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("td", {
+                                                children: "Application hosting, PostgreSQL database, Redis cache"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("td", {
+                                                children: "All Service data described above"
+                                            })
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("tr", {
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("td", {
+                                                children: "Stripe"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("td", {
+                                                children: "Subscription billing and payment processing"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("td", {
+                                                children: "Billing contact info, subscription/plan data, payment tokens (not full card numbers)"
+                                            })
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("tr", {
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("td", {
+                                                children: "Google"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("td", {
+                                                children: "Sign-In authentication; Google Maps (route/map display); Firebase Cloud Messaging (push notifications); Google Calendar (internal scheduling of demo-booking meetings, via a RouteFlow-owned service account)"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("td", {
+                                                children: "Name/email/account ID (Sign-In); delivery addresses/coordinates (Maps); device push token (FCM); demo-booking contact details placed on RouteFlow’s internal calendar event"
+                                            })
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("tr", {
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("td", {
+                                                children: "Google Workspace (primary)"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("td", {
+                                                children: "RouteFlow’s primary platform transactional email delivery (order confirmations, invoices, password resets, demo-booking confirmations, etc.), sent through RouteFlow’s own Google Workspace mailbox via SMTP; also hosts RouteFlow’s own business inboxes"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("td", {
+                                                children: "Recipient email address, email content, and the contents of messages sent to our business inboxes"
+                                            })
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("tr", {
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("td", {
+                                                children: "Resend (fallback)"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("td", {
+                                                children: "Fallback platform transactional email delivery, used automatically only when RouteFlow’s Google Workspace SMTP is not configured"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("td", {
+                                                children: "Recipient email address and email content"
+                                            })
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("tr", {
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("td", {
+                                                children: "OpenRouteService (ORS)"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("td", {
+                                                children: "Route optimization engine"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("td", {
+                                                children: "Delivery stop addresses/coordinates, sent solely to compute optimized route sequencing"
+                                            })
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("tr", {
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("td", {
+                                                children: "Cloudflare R2 / Railway volume storage"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("td", {
+                                                children: "File storage for uploaded documents and images"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("td", {
+                                                children: "Product images, receipts, supplier statements, proof-of-delivery photos"
+                                            })
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("tr", {
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("td", {
+                                                children: "Anthropic (Claude API)"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("td", {
+                                                children: "Optional AI-assisted scanning of supplier statements/invoices, when a Tenant enables this feature"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("td", {
+                                                children: "Uploaded supplier statement/document images and extracted line-item data"
+                                            })
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("tr", {
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("td", {
+                                                children: "GoHighLevel"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("td", {
+                                                children: "Optional per-Tenant CRM sync (off by default)"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("td", {
+                                                children: "Contact/opportunity name, email, phone, tags, notes"
+                                            })
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("tr", {
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("td", {
+                                                children: "Zoho CRM"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("td", {
+                                                children: "Optional per-Tenant data import source during onboarding"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("td", {
+                                                children: "Historical business records imported by the Tenant"
+                                            })
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("tr", {
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("td", {
+                                                children: "Sentry"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("td", {
+                                                children: "Optional error monitoring, when configured"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("td", {
+                                                children: "Technical error/crash data; may incidentally include portions of application state at time of error"
+                                            })
+                                        ]
+                                    })
+                                ]
+                            })
+                        ]
+                    })
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                    children: "We may add or change sub-processors as the Service evolves; material changes will be reflected in an updated version of this policy."
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("h3", {
+                    id: "connect-mailbox",
+                    children: "Coming soon: connecting your own email account (“Connect Gmail/Outlook”)"
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsxs)("p", {
+                    children: [
+                        "RouteFlow is building an optional feature that lets a Tenant admin connect their own Gmail or Microsoft 365/Outlook mailbox so that customer-facing emails (like invoices and order notifications) are sent ",
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                            children: "from the Tenant’s own address"
+                        }),
+                        " instead of RouteFlow’s. When this feature is live and a Tenant chooses to use it:"
+                    ]
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsxs)("ul", {
+                    children: [
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                            children: [
+                                "RouteFlow requests only a ",
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                    children: "send-only"
+                                }),
+                                " permission — Google’s",
+                                " ",
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("code", {
+                                    children: "gmail.send"
+                                }),
+                                " scope or Microsoft Graph’s ",
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("code", {
+                                    children: "Mail.Send"
+                                }),
+                                " ",
+                                "permission.",
+                                " ",
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                    children: "RouteFlow cannot read, search, or otherwise access the contents of your mailbox, inbox, or any other email in your account."
+                                })
+                            ]
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("li", {
+                            children: "RouteFlow uses this permission only to send the specific transactional emails the Tenant’s business generates through RouteFlow (e.g., invoices, order confirmations)."
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                            children: [
+                                "The connection’s access/refresh tokens are stored",
+                                " ",
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                    children: "encrypted at rest"
+                                }),
+                                " and are never logged or displayed after the initial connection."
+                            ]
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                            children: [
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                    children: "Disconnecting"
+                                }),
+                                " the mailbox immediately and permanently deletes the stored tokens from RouteFlow’s systems."
+                            ]
+                        })
+                    ]
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("h3", {
+                    children: "Google API Services User Data Policy — Limited Use disclosure"
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsxs)("p", {
+                    children: [
+                        "RouteFlow’s use and transfer to any other app of information received from Google APIs will adhere to the",
+                        " ",
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("a", {
+                            href: "https://developers.google.com/terms/api-services-user-data-policy",
+                            target: "_blank",
+                            rel: "noreferrer",
+                            children: "Google API Services User Data Policy"
+                        }),
+                        ", including the ",
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                            children: "Limited Use requirements"
+                        }),
+                        ". In substance, this means RouteFlow:"
+                    ]
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsxs)("ul", {
+                    children: [
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("li", {
+                            children: "limits its use of data obtained through Google API scopes to providing or improving the user-facing features described above;"
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("li", {
+                            children: "does not transfer that data to third parties except as needed to provide or improve those features (with consent), for security purposes, to comply with law, or as part of a merger/acquisition (with notice);"
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("li", {
+                            children: "does not allow humans to read that data except with explicit user consent, for security purposes, to comply with law, or on an aggregated and anonymized basis for internal operations; and"
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("li", {
+                            children: "does not use that data to serve advertisements (including retargeting or interest-based advertising), and does not use it to determine creditworthiness or for lending purposes."
+                        })
+                    ]
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("h3", {
+                    id: "demo-booking",
+                    children: "Demo booking requests (marketing site)"
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsxs)("p", {
+                    children: [
+                        "The “Request a demo” scheduler on routeflow.info lets a visitor book a walkthrough meeting directly. When you submit a booking, we collect and",
+                        " ",
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                            children: "store in RouteFlow’s own database"
+                        }),
+                        ": your name, email address, company name, phone number (optional), notes on what you’d like covered (optional), your selected date/time and time zone, the marketing page you booked from, and your IP address (used to prevent abuse of the booking system)."
+                    ]
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsxs)("p", {
+                    children: [
+                        "To schedule the meeting internally, RouteFlow creates an event on",
+                        " ",
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                            children: "RouteFlow’s own Google Calendar"
+                        }),
+                        " (via a RouteFlow-owned service account, not your Google account), containing your name, company, contact email/phone, and notes so our team can prepare.",
+                        " ",
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                            children: "Your email address is not added as a Google Calendar attendee/invitee"
+                        }),
+                        " — Google does not send you a calendar invite, and no Google account of yours is involved. Your booking confirmation, and any reschedule/cancellation link, is emailed to you directly by RouteFlow."
+                    ]
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                    children: "The confirmation email contains a link that lets you reschedule or cancel your own booking; RouteFlow stores only a one-way cryptographic hash of that link’s token, not the token itself, so the token cannot be recovered from our database."
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                    children: "Demo booking records are retained for 12 months unless you become a RouteFlow Tenant, in which case ordinary account data retention applies (see “Data retention” below)."
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("h2", {
+                    id: "data-retention",
+                    children: "Data retention"
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsxs)("ul", {
+                    children: [
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("li", {
+                            children: "We retain Tenant account and operational data (orders, invoices, routes, uploaded documents, etc.) for as long as the Tenant’s subscription is active, plus 30 days to allow account recovery, and as needed to satisfy tax, accounting, and legal recordkeeping obligations."
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("li", {
+                            children: "Driver location data collected during a delivery route is retained for 90 days and used only for route history and delivery confirmation."
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("li", {
+                            children: "We retain marketing-site inquiries and support communications for up to 24 months."
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                            children: [
+                                "We delete or anonymize personal information when it is no longer needed for the purposes described in this policy, or sooner upon a valid deletion request (see",
+                                " ",
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("a", {
+                                    href: "#your-rights",
+                                    children: "“Your rights and choices”"
+                                }),
+                                " below)."
+                            ]
+                        })
+                    ]
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("h2", {
+                    id: "your-rights",
+                    children: "Your rights and choices"
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                    children: "Depending on your location and relationship to RouteFlow, you may have rights to access, correct, export, or delete your personal information, and to object to or restrict certain processing."
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsxs)("ul", {
+                    children: [
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                            children: [
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                    children: "If you are a customer, buyer, or driver of a Tenant:"
+                                }),
+                                " please contact that business directly — they control your data and are best positioned to fulfill your request. We will support them in doing so."
+                            ]
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                            children: [
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                    children: "If you are a Tenant account holder, staff user, or website visitor contacting RouteFlow directly:"
+                                }),
+                                " ",
+                                "email ",
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("a", {
+                                    href: `mailto:${_site.site.email}`,
+                                    children: _site.site.email
+                                }),
+                                " with your request. We will respond within 30 days and may need to verify your identity before acting on the request."
+                            ]
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("li", {
+                            children: "You can also access and update most of your account information directly within the RouteFlow web dashboard, buyer portal, or mobile app settings."
+                        })
+                    ]
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsxs)("p", {
+                    children: [
+                        "If you are located in the European Economic Area, the United Kingdom, Switzerland, California, or another jurisdiction with its own data-protection law, you may have additional rights under that law — for example, the right to lodge a complaint with your local data protection authority, or California’s right to know, delete, or opt out of the sale or sharing of personal information. As noted above, RouteFlow does not sell personal information. To exercise any of these rights, contact",
+                        " ",
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("a", {
+                            href: `mailto:${_site.site.email}`,
+                            children: _site.site.email
+                        }),
+                        "."
+                    ]
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("h2", {
+                    id: "data-security",
+                    children: "Data security"
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsxs)("p", {
+                    children: [
+                        "We use industry-standard safeguards to protect information, including encryption of sensitive data at rest (e.g., stored third-party credentials and connected-mailbox tokens), encrypted connections (TLS) in transit, and access controls scoped per Tenant. No method of transmission or storage is 100% secure. If you discover a potential security vulnerability, please report it to",
+                        " ",
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("a", {
+                            href: "mailto:security@routeflow.info",
+                            children: "security@routeflow.info"
+                        }),
+                        " — see our",
+                        " ",
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("a", {
+                            href: "https://github.com/najathakram/routeflow/blob/master/SECURITY.md",
+                            target: "_blank",
+                            rel: "noreferrer",
+                            children: "Security Policy"
+                        }),
+                        " ",
+                        "for our responsible-disclosure process."
+                    ]
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("h2", {
+                    id: "international-transfers",
+                    children: "International data transfers"
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                    children: "RouteFlow’s infrastructure is hosted in the United States (via Railway). If you access the Service from outside the United States, your information will be transferred to and processed in the United States. Where required, we rely on the European Commission’s Standard Contractual Clauses (or an equivalent lawful transfer mechanism) to safeguard personal information transferred from the EEA, UK, or Switzerland to the United States."
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("h2", {
+                    id: "childrens-privacy",
+                    children: "Children’s privacy"
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsxs)("p", {
+                    children: [
+                        "The Service is a business tool intended for use by adults acting on behalf of a business. RouteFlow is not directed to children, and we do not knowingly collect personal information from anyone under the age of 18. If you believe a child has provided us with personal information, please contact ",
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("a", {
+                            href: `mailto:${_site.site.email}`,
+                            children: _site.site.email
+                        }),
+                        " so we can delete it."
+                    ]
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("h2", {
+                    id: "changes",
+                    children: "Changes to this policy"
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                    children: "We may update this Privacy Policy from time to time. If we make material changes, we will update the “Last updated” date above and, where appropriate, provide additional notice (such as an in-app notice or email to Tenant account holders). Your continued use of the Service after a change takes effect constitutes acceptance of the updated policy."
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("h2", {
+                    id: "governing-law",
+                    children: "Governing law"
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                    children: "This Privacy Policy is governed by the laws of the State of Wyoming, USA, without regard to its conflict-of-laws principles. Any dispute arising out of or relating to this Privacy Policy will be brought exclusively in the state or federal courts located in Wyoming, USA, and you consent to the personal jurisdiction of those courts."
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("h2", {
+                    id: "contact",
+                    children: "Contact us"
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                    children: "Questions about this Privacy Policy or our data practices:"
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsxs)("ul", {
+                    children: [
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                            children: [
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                    children: "Email:"
+                                }),
+                                " ",
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("a", {
+                                    href: `mailto:${_site.site.email}`,
+                                    children: _site.site.email
+                                })
+                            ]
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                            children: [
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                    children: "Security reports:"
+                                }),
+                                " ",
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("a", {
+                                    href: "mailto:security@routeflow.info",
+                                    children: "security@routeflow.info"
+                                })
+                            ]
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                            children: [
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                    children: "Mail:"
+                                }),
+                                " 10701 Corporate Dr Ste 190, Stafford, TX 77477"
+                            ]
+                        })
+                    ]
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsxs)(_link.default, {
+                    href: "/",
+                    className: "text-link",
+                    children: [
+                        "Return to RouteFlow ",
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.ArrowRight, {
+                            size: 18
+                        })
+                    ]
+                })
+            ]
+        })
+    });
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8obWFya2V0aW5nKS9wcml2YWN5L3BhZ2UudHN4Il0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCB0eXBlIHsgTWV0YWRhdGEgfSBmcm9tIFwibmV4dFwiO1xuaW1wb3J0IExpbmsgZnJvbSBcIm5leHQvbGlua1wiO1xuaW1wb3J0IHsgQXJyb3dSaWdodCB9IGZyb20gXCJsdWNpZGUtcmVhY3RcIjtcbmltcG9ydCB7IHJvdXRlcywgc2l0ZSB9IGZyb20gXCIuLi9saWIvc2l0ZVwiO1xuaW1wb3J0IHsgRXllYnJvdyB9IGZyb20gXCIuLi9jb21wb25lbnRzL21hcmtldGluZ1wiO1xuXG4vLyBQdWJsaXNoZWQgcHJpdmFjeSBwb2xpY3kgKFI5IGZvbGxvdy11cCkuIFNvdXJjZSBkcmFmdDpcbi8vIGxvY2FsLWFzc2V0cy9oYW5kb2ZmLzIwMjYtMDktMTcvbGVnYWwvcHJpdmFjeS1wb2xpY3ktRFJBRlQubWQg4oCUIHRoaXMgcGFnZSBjYXJyaWVzIHRoZVxuLy8gZnVsbCB0ZXh0LCBub3QgdGhlIGludGVyaW0gc2hlbGwuIGBMQVNUX1VQREFURURgIGFsc28gZmVlZHMgdGhlIHZpc2libGUgXCJMYXN0IHVwZGF0ZWRcIlxuLy8gbGluZSBiZWxvdzsgYnVtcCBib3RoIHRvZ2V0aGVyIHdoZW4gdGhlIHBvbGljeSBjaGFuZ2VzLlxuY29uc3QgTEFTVF9VUERBVEVEID0gXCJTZXB0ZW1iZXIgMTcsIDIwMjZcIjtcblxuY29uc3Qgcm91dGUgPSByb3V0ZXMuZmluZCgocikgPT4gci5zbHVnID09PSBcInByaXZhY3lcIikhO1xuXG5leHBvcnQgY29uc3QgbWV0YWRhdGE6IE1ldGFkYXRhID0ge1xuICB0aXRsZTogcm91dGUudGl0bGUsXG4gIGRlc2NyaXB0aW9uOiByb3V0ZS5kZXNjcmlwdGlvbixcbiAgYWx0ZXJuYXRlczogeyBjYW5vbmljYWw6IFwiL3ByaXZhY3lcIiB9LFxuICBvcGVuR3JhcGg6IHtcbiAgICB0aXRsZTogcm91dGUudGl0bGUsXG4gICAgZGVzY3JpcHRpb246IHJvdXRlLmRlc2NyaXB0aW9uLFxuICAgIHVybDogXCIvcHJpdmFjeVwiLFxuICAgIHNpdGVOYW1lOiBzaXRlLm5hbWUsXG4gICAgdHlwZTogXCJ3ZWJzaXRlXCIsXG4gIH0sXG59O1xuXG5leHBvcnQgZGVmYXVsdCBmdW5jdGlvbiBQcml2YWN5UGFnZSgpIHtcbiAgcmV0dXJuIChcbiAgICA8ZGl2IGNsYXNzTmFtZT1cImdsYXNzLXBhZ2VcIj5cbiAgICAgIDxzZWN0aW9uIGNsYXNzTmFtZT1cImxlZ2FsLXBhZ2Ugd3JhcFwiPlxuICAgICAgICA8RXllYnJvdz5ST1VURUZMT1c8L0V5ZWJyb3c+XG4gICAgICAgIDxoMT5Qcml2YWN5IFBvbGljeTwvaDE+XG4gICAgICAgIDxwPlxuICAgICAgICAgIDxzdHJvbmc+RWZmZWN0aXZlIGRhdGU6PC9zdHJvbmc+IHtMQVNUX1VQREFURUR9XG4gICAgICAgICAgPGJyIC8+XG4gICAgICAgICAgPHN0cm9uZz5MYXN0IHVwZGF0ZWQ6PC9zdHJvbmc+IHtMQVNUX1VQREFURUR9XG4gICAgICAgIDwvcD5cblxuICAgICAgICA8cD5cbiAgICAgICAgICBSb3V0ZUZsb3cgKCZsZHF1bztSb3V0ZUZsb3csJnJkcXVvOyAmbGRxdW87d2UsJnJkcXVvOyAmbGRxdW87dXMsJnJkcXVvOyBvclxuICAgICAgICAgICZsZHF1bztvdXImcmRxdW87KSBvcGVyYXRlcyB0aGUgUm91dGVGbG93IHBsYXRmb3JtIOKAlCBhIG11bHRpLXRlbmFudCBzb2Z0d2FyZS1hcy1hLXNlcnZpY2VcbiAgICAgICAgICBhcHBsaWNhdGlvbiBmb3Igd2hvbGVzYWxlIGRpc3RyaWJ1dG9ycyB0aGF0IG1hbmFnZXMgb3JkZXJzLCBkZWxpdmVyeSByb3V0ZXMsIGludm9pY2VzLFxuICAgICAgICAgIHBheW1lbnRzLCBhIGJ1eWVyIHBvcnRhbCwgYW5kIGRyaXZlci9vcGVyYXRvciBtb2JpbGUgYXBwcyAoY29sbGVjdGl2ZWx5LCB0aGVcbiAgICAgICAgICAmbGRxdW87U2VydmljZSZyZHF1bzspLiBUaGlzIFByaXZhY3kgUG9saWN5IGV4cGxhaW5zIHdoYXQgcGVyc29uYWwgaW5mb3JtYXRpb24gd2UgY29sbGVjdCxcbiAgICAgICAgICBob3cgd2UgdXNlIGl0LCB3aG8gd2Ugc2hhcmUgaXQgd2l0aCwgYW5kIHRoZSBjaG9pY2VzIGF2YWlsYWJsZSB0byB5b3UuXG4gICAgICAgIDwvcD5cbiAgICAgICAgPHA+XG4gICAgICAgICAgVGhpcyBwb2xpY3kgYXBwbGllcyB0byB0aGUgUm91dGVGbG93IG1hcmtldGluZyB3ZWJzaXRlIChyb3V0ZWZsb3cuaW5mbyksIHRoZSBSb3V0ZUZsb3cgd2ViXG4gICAgICAgICAgZGFzaGJvYXJkIGFuZCBidXllciBwb3J0YWwsIGFuZCB0aGUgUm91dGVGbG93IG1vYmlsZSBhcHAgZm9yIGRyaXZlcnMgYW5kIG9wZXJhdG9ycy5cbiAgICAgICAgPC9wPlxuICAgICAgICA8cD5cbiAgICAgICAgICBJZiB5b3UgYXJlIGEgY3VzdG9tZXIsIGRyaXZlciwgb3Igb3RoZXIgZW5kIHVzZXIgb2YgYSBidXNpbmVzcyB0aGF0IHVzZXMgUm91dGVGbG93IChhXG4gICAgICAgICAgJmxkcXVvO1RlbmFudCZyZHF1bzspLCBwbGVhc2UgYWxzbyBzZWV7XCIgXCJ9XG4gICAgICAgICAgPGEgaHJlZj1cIiNjb250cm9sbGVyLXZzLXByb2Nlc3NvclwiPiZsZHF1bztPdXIgcm9sZTogY29udHJvbGxlciB2cy4gcHJvY2Vzc29yJnJkcXVvOzwvYT57XCIgXCJ9XG4gICAgICAgICAgYmVsb3cg4oCUIGluIG1vc3QgY2FzZXMgdGhlIFRlbmFudCwgbm90IFJvdXRlRmxvdywgY29udHJvbHMgaG93IHlvdXIgaW5mb3JtYXRpb24gaXMgdXNlZCxcbiAgICAgICAgICBhbmQgeW91IHNob3VsZCBkaXJlY3QgcHJpdmFjeSByZXF1ZXN0cyB0byB0aGVtIGZpcnN0LlxuICAgICAgICA8L3A+XG5cbiAgICAgICAgPGgyIGlkPVwid2hvLXdlLWFyZVwiPldobyB3ZSBhcmU8L2gyPlxuICAgICAgICA8cD5cbiAgICAgICAgICA8c3Ryb25nPk9wZXJhdG9yOjwvc3Ryb25nPiBSb3V0ZWZsb3cgU29sdXRpb25zIExMQywgYSBXeW9taW5nIGxpbWl0ZWQgbGlhYmlsaXR5IGNvbXBhbnlcbiAgICAgICAgICAoJmxkcXVvO1JvdXRlRmxvdyZyZHF1bzspLCAxMDcwMSBDb3Jwb3JhdGUgRHIgU3RlIDE5MCwgU3RhZmZvcmQsIFRYIDc3NDc3XG4gICAgICAgICAgPGJyIC8+XG4gICAgICAgICAgPHN0cm9uZz5HZW5lcmFsIGNvbnRhY3Q6PC9zdHJvbmc+IDxhIGhyZWY9e2BtYWlsdG86JHtzaXRlLmVtYWlsfWB9PntzaXRlLmVtYWlsfTwvYT5cbiAgICAgICAgICA8YnIgLz5cbiAgICAgICAgICA8c3Ryb25nPlNlY3VyaXR5IC8gdnVsbmVyYWJpbGl0eSByZXBvcnRzOjwvc3Ryb25nPntcIiBcIn1cbiAgICAgICAgICA8YSBocmVmPVwibWFpbHRvOnNlY3VyaXR5QHJvdXRlZmxvdy5pbmZvXCI+c2VjdXJpdHlAcm91dGVmbG93LmluZm88L2E+XG4gICAgICAgICAgPGJyIC8+XG4gICAgICAgICAgPHN0cm9uZz5XZWJzaXRlOjwvc3Ryb25nPiA8YSBocmVmPXtzaXRlLm9yaWdpbn0+e3NpdGUub3JpZ2lufTwvYT5cbiAgICAgICAgPC9wPlxuXG4gICAgICAgIDxoMiBpZD1cImNvbnRyb2xsZXItdnMtcHJvY2Vzc29yXCI+T3VyIHJvbGU6IGNvbnRyb2xsZXIgdnMuIHByb2Nlc3NvcjwvaDI+XG4gICAgICAgIDxwPlxuICAgICAgICAgIFJvdXRlRmxvdyBpcyBhIDxzdHJvbmc+QjJCIHBsYXRmb3JtPC9zdHJvbmc+LiBCdXNpbmVzc2VzICgmbGRxdW87VGVuYW50cyZyZHF1bzspIHNpZ24gdXBcbiAgICAgICAgICBmb3IgUm91dGVGbG93IHRvIHJ1biB0aGVpciBvd24gZGlzdHJpYnV0aW9uIG9wZXJhdGlvbnMsIGFuZCB0aGVpciBzdGFmZiBpbnZpdGUgb3IgYWRkXG4gICAgICAgICAgdGhlaXIgb3duIGN1c3RvbWVycyAoYnV5ZXJzKSBhbmQgZHJpdmVycyBpbnRvIHRoZSBzeXN0ZW0uXG4gICAgICAgIDwvcD5cbiAgICAgICAgPHA+XG4gICAgICAgICAgPHN0cm9uZz5XaGVyZSBSb3V0ZUZsb3cgaXMgYSBwcm9jZXNzb3IuPC9zdHJvbmc+IEZvciBkYXRhIHRoYXQgVGVuYW50cyBwdXQgaW50byB0aGVcbiAgICAgICAgICBTZXJ2aWNlIGFib3V0IHRoZWlyIG93biBjdXN0b21lcnMsIGJ1eWVycywgZHJpdmVycywgb3JkZXJzLCBpbnZvaWNlcywgYW5kIGRlbGl2ZXJpZXMsIHRoZXtcIiBcIn1cbiAgICAgICAgICA8c3Ryb25nPlRlbmFudCBpcyB0aGUgZGF0YSBjb250cm9sbGVyPC9zdHJvbmc+IGFuZCBSb3V0ZUZsb3cgYWN0cyBvbmx5IGFzIGF7XCIgXCJ9XG4gICAgICAgICAgPHN0cm9uZz5kYXRhIHByb2Nlc3Nvcjwvc3Ryb25nPiAob3IgJmxkcXVvO3NlcnZpY2UgcHJvdmlkZXImcmRxdW87KSwgcHJvY2Vzc2luZyB0aGF0IGRhdGFcbiAgICAgICAgICBzb2xlbHkgdG8gcHJvdmlkZSB0aGUgU2VydmljZSB1bmRlciBvdXIgYWdyZWVtZW50IHdpdGggdGhlIFRlbmFudC4gSWYgeW91IGFyZSBhIGN1c3RvbWVyLFxuICAgICAgICAgIGJ1eWVyLCBvciBkcml2ZXIgb2YgYSBSb3V0ZUZsb3cgVGVuYW50IGFuZCBoYXZlIGEgcXVlc3Rpb24gb3IgcmVxdWVzdCBhYm91dCB5b3VyIHBlcnNvbmFsXG4gICAgICAgICAgZGF0YSwgcGxlYXNlIGNvbnRhY3QgdGhhdCBidXNpbmVzcyBkaXJlY3RseTsgd2Ugd2lsbCBhc3Npc3QgdGhlbSBpbiByZXNwb25kaW5nIGFzIHJlcXVpcmVkXG4gICAgICAgICAgYnkgYXBwbGljYWJsZSBsYXcuXG4gICAgICAgIDwvcD5cbiAgICAgICAgPHA+XG4gICAgICAgICAgPHN0cm9uZz5XaGVyZSBSb3V0ZUZsb3cgaXMgYSBjb250cm9sbGVyLjwvc3Ryb25nPiBGb3IgZGF0YSBhYm91dCB0aGUgVGVuYW50JnJzcXVvO3Mgb3duXG4gICAgICAgICAgYWNjb3VudCDigJQgYWNjb3VudCBob2xkZXJzLCBiaWxsaW5nIGNvbnRhY3RzLCBzdGFmZiB1c2VyIGFjY291bnRzLCBzdWJzY3JpcHRpb24gYW5kIHBheW1lbnRcbiAgICAgICAgICByZWNvcmRzLCBzdXBwb3J0IGNvbW11bmljYXRpb25zLCBhbmQgbWFya2V0aW5nLXNpdGUgdmlzaXRvcnMg4oCUe1wiIFwifVxuICAgICAgICAgIDxzdHJvbmc+Um91dGVGbG93IGlzIHRoZSBkYXRhIGNvbnRyb2xsZXI8L3N0cm9uZz4gYW5kIHRoaXMgcG9saWN5IGRlc2NyaWJlcyBvdXIgb3duXG4gICAgICAgICAgcHJhY3RpY2VzIGRpcmVjdGx5LlxuICAgICAgICA8L3A+XG5cbiAgICAgICAgPGgyIGlkPVwiaW5mb3JtYXRpb24td2UtY29sbGVjdFwiPkluZm9ybWF0aW9uIHdlIGNvbGxlY3Q8L2gyPlxuXG4gICAgICAgIDxoMz5JbmZvcm1hdGlvbiBUZW5hbnRzIGFuZCB0aGVpciB1c2VycyBwcm92aWRlPC9oMz5cbiAgICAgICAgPHVsPlxuICAgICAgICAgIDxsaT5cbiAgICAgICAgICAgIDxzdHJvbmc+QWNjb3VudCAmYW1wOyBzdGFmZiBkYXRhOjwvc3Ryb25nPiBuYW1lLCBlbWFpbCwgcGhvbmUsIHJvbGUsIHBhc3N3b3JkIChoYXNoZWQpLFxuICAgICAgICAgICAgdGVuYW50L2NvbXBhbnkgbmFtZS5cbiAgICAgICAgICA8L2xpPlxuICAgICAgICAgIDxsaT5cbiAgICAgICAgICAgIDxzdHJvbmc+Q3VzdG9tZXIgKGJ1eWVyKSByZWNvcmRzOjwvc3Ryb25nPiBidXNpbmVzcyBuYW1lLCBjb250YWN0IG5hbWUsIGVtYWlsLCBwaG9uZSxcbiAgICAgICAgICAgIGRlbGl2ZXJ5IGFkZHJlc3MsIG9yZGVyIGhpc3RvcnksIHByaWNpbmcgdGllciwgYW5kIGNvbW11bmljYXRpb25zIGVudGVyZWQgYnkgdGhlIFRlbmFudFxuICAgICAgICAgICAgb3IgYnkgdGhlIGJ1eWVyIHRocm91Z2ggdGhlIGJ1eWVyIHBvcnRhbC5cbiAgICAgICAgICA8L2xpPlxuICAgICAgICAgIDxsaT5cbiAgICAgICAgICAgIDxzdHJvbmc+RHJpdmVyIGRhdGE6PC9zdHJvbmc+IG5hbWUsIGNvbnRhY3QgaW5mbywgYXNzaWduZWQgcm91dGVzL3ZlaGljbGVzLCBhbmQg4oCUIHdoaWxlXG4gICAgICAgICAgICBhbiBhY3RpdmUgZGVsaXZlcnkgcm91dGUgaXMgaW4gcHJvZ3Jlc3Mg4oCUIHJlYWwtdGltZSBhbmQgcm91dGUtaGlzdG9yeXtcIiBcIn1cbiAgICAgICAgICAgIDxzdHJvbmc+bG9jYXRpb24gZGF0YTwvc3Ryb25nPiAoc2VlICZsZHF1bztMb2NhdGlvbiBkYXRhJnJkcXVvOyBiZWxvdykuXG4gICAgICAgICAgPC9saT5cbiAgICAgICAgICA8bGk+XG4gICAgICAgICAgICA8c3Ryb25nPk9yZGVyLCByb3V0ZSwgYW5kIGRlbGl2ZXJ5IGRhdGE6PC9zdHJvbmc+IG9yZGVycywgbGluZSBpdGVtcywgZGVsaXZlcnkgc3RvcHMsXG4gICAgICAgICAgICByb3V0ZSBzZXF1ZW5jaW5nLCBwcm9vZi1vZi1kZWxpdmVyeSAoUE9EKSBwaG90b3MsIHNpZ25hdHVyZXMsIGFuZCBkZWxpdmVyeSBub3Rlcy5cbiAgICAgICAgICA8L2xpPlxuICAgICAgICAgIDxsaT5cbiAgICAgICAgICAgIDxzdHJvbmc+RmluYW5jaWFsIGRhdGE6PC9zdHJvbmc+IGludm9pY2VzLCBjcmVkaXQgbm90ZXMsIHZlbmRvciBiaWxscywgcGF5bWVudCByZWNvcmRzXG4gICAgICAgICAgICAoaW5jbHVkaW5nIHBvc3QtZGF0ZWQgY2hlY2sgZGV0YWlscyB3aGVyZSBhIFRlbmFudCB1c2VzIHRoYXQgZmVhdHVyZSksIGFuZCBiaWxsaW5nXG4gICAgICAgICAgICBoaXN0b3J5LiBDYXJkIHBheW1lbnRzIGFyZSBwcm9jZXNzZWQgYnkgPHN0cm9uZz5TdHJpcGU8L3N0cm9uZz47IFJvdXRlRmxvdyBkb2VzIG5vdFxuICAgICAgICAgICAgc3RvcmUgZnVsbCBjYXJkIG51bWJlcnMuXG4gICAgICAgICAgPC9saT5cbiAgICAgICAgICA8bGk+XG4gICAgICAgICAgICA8c3Ryb25nPlVwbG9hZGVkIGZpbGVzOjwvc3Ryb25nPiBwcm9kdWN0IGltYWdlcywgcmVjZWlwdHMsIHN1cHBsaWVyIHN0YXRlbWVudHMvaW52b2ljZXMsXG4gICAgICAgICAgICBhbmQgb3RoZXIgZG9jdW1lbnRzIFRlbmFudHMgdXBsb2FkIHRvIHRoZSBTZXJ2aWNlLlxuICAgICAgICAgIDwvbGk+XG4gICAgICAgICAgPGxpPlxuICAgICAgICAgICAgPHN0cm9uZz5TdXBwb3J0ICZhbXA7IGNvbW11bmljYXRpb25zOjwvc3Ryb25nPiBtZXNzYWdlcyBzZW50IHRve1wiIFwifVxuICAgICAgICAgICAgPGEgaHJlZj17YG1haWx0bzoke3NpdGUuZW1haWx9YH0+e3NpdGUuZW1haWx9PC9hPiBvcntcIiBcIn1cbiAgICAgICAgICAgIDxhIGhyZWY9XCJtYWlsdG86c2VjdXJpdHlAcm91dGVmbG93LmluZm9cIj5zZWN1cml0eUByb3V0ZWZsb3cuaW5mbzwvYT4sIG9yIHRocm91Z2ggaW4tYXBwXG4gICAgICAgICAgICBzdXBwb3J0L25vdGlmaWNhdGlvbiBmZWF0dXJlcy5cbiAgICAgICAgICA8L2xpPlxuICAgICAgICAgIDxsaT5cbiAgICAgICAgICAgIDxzdHJvbmc+RGVtbyBib29raW5nIHJlcXVlc3RzOjwvc3Ryb25nPiBpZiB5b3UgYm9vayBhIHByb2R1Y3Qgd2Fsa3Rocm91Z2ggb25cbiAgICAgICAgICAgIHJvdXRlZmxvdy5pbmZvLCB3ZSBjb2xsZWN0IHlvdXIgbmFtZSwgZW1haWwsIGNvbXBhbnksIG9wdGlvbmFsIHBob25lIG51bWJlciBhbmQgbm90ZXMsXG4gICAgICAgICAgICB5b3VyIHNlbGVjdGVkIG1lZXRpbmcgdGltZSBhbmQgdGltZSB6b25lLCBhbmQgeW91ciBJUCBhZGRyZXNzLiBTZWV7XCIgXCJ9XG4gICAgICAgICAgICA8YSBocmVmPVwiI2RlbW8tYm9va2luZ1wiPiZsZHF1bztEZW1vIGJvb2tpbmcgcmVxdWVzdHMmcmRxdW87PC9hPiBiZWxvdyBmb3IgaG93IHRoaXMgaXNcbiAgICAgICAgICAgIHN0b3JlZCBhbmQgc2NoZWR1bGVkLlxuICAgICAgICAgIDwvbGk+XG4gICAgICAgIDwvdWw+XG5cbiAgICAgICAgPGgzPkluZm9ybWF0aW9uIGNvbGxlY3RlZCBhdXRvbWF0aWNhbGx5PC9oMz5cbiAgICAgICAgPHVsPlxuICAgICAgICAgIDxsaT5cbiAgICAgICAgICAgIDxzdHJvbmc+VXNhZ2UgJmFtcDsgZGV2aWNlIGRhdGE6PC9zdHJvbmc+IElQIGFkZHJlc3MsIGJyb3dzZXIvZGV2aWNlIHR5cGUsIHBhZ2VzIHZpZXdlZCxcbiAgICAgICAgICAgIGFuZCBhY3Rpb25zIHRha2VuIGluIHRoZSB3ZWIgZGFzaGJvYXJkIGFuZCBtb2JpbGUgYXBwLCBjb2xsZWN0ZWQgZm9yIHNlY3VyaXR5LFxuICAgICAgICAgICAgZGVidWdnaW5nLCBhbmQgc2VydmljZS1yZWxpYWJpbGl0eSBwdXJwb3Nlcy5cbiAgICAgICAgICA8L2xpPlxuICAgICAgICAgIDxsaT5cbiAgICAgICAgICAgIDxzdHJvbmc+Q29va2llcyAod2ViKTo8L3N0cm9uZz4gUm91dGVGbG93JnJzcXVvO3Mgd2ViIGFwcCB1c2VzIGEgc21hbGwgbnVtYmVyIG9me1wiIFwifVxuICAgICAgICAgICAgPHN0cm9uZz5zdHJpY3RseSBuZWNlc3Nhcnk8L3N0cm9uZz4gY29va2llcyB0byBrZWVwIHlvdSBzaWduZWQgaW4gYW5kIHJvdXRlIHlvdSB0byB0aGVcbiAgICAgICAgICAgIGNvcnJlY3QgcG9ydGFsIChlLmcuLCBhbiBhdXRoZW50aWNhdGlvbi1wcmVzZW5jZSBjb29raWUgYW5kIGEgJmxkcXVvO2xhc3QgcG9ydGFsXG4gICAgICAgICAgICB1c2VkJnJkcXVvOyBjb29raWUpLiBUaGVzZSBjb29raWVzIGRvIG5vdCB0cmFjayB5b3UgYWNyb3NzIG90aGVyIHdlYnNpdGVzLiBXZSBkbyBub3RcbiAgICAgICAgICAgIGN1cnJlbnRseSB1c2UgdGhpcmQtcGFydHkgYWR2ZXJ0aXNpbmcgb3IgYW5hbHl0aWNzIGNvb2tpZXMuXG4gICAgICAgICAgPC9saT5cbiAgICAgICAgICA8bGk+XG4gICAgICAgICAgICA8c3Ryb25nPkxvY2F0aW9uIGRhdGEgKG1vYmlsZSwgZHJpdmVycyBvbmx5KTo8L3N0cm9uZz4gd2hpbGUgYSBkcml2ZXIgaXMgYWN0aXZlbHlcbiAgICAgICAgICAgIHJ1bm5pbmcgYSBkZWxpdmVyeSByb3V0ZSwgdGhlIFJvdXRlRmxvdyBtb2JpbGUgYXBwIGNvbGxlY3RzIGRldmljZSBsb2NhdGlvbiDigJQgaW5jbHVkaW5nXG4gICAgICAgICAgICBpbiB0aGUgYmFja2dyb3VuZCB3aGlsZSB0aGUgcm91dGUgaXMgaW4gcHJvZ3Jlc3Mg4oCUIHNvIGRpc3BhdGNoL29wZXJhdG9ycyBjYW4gc2VlIGxpdmVcbiAgICAgICAgICAgIHJvdXRlIHByb2dyZXNzLCBzZXF1ZW5jZSBzdG9wcywgYW5kIGNvbmZpcm0gZGVsaXZlcmllcy4gTG9jYXRpb24gaXMgbm90IGNvbGxlY3RlZFxuICAgICAgICAgICAgb3V0c2lkZSBvZiBhbiBhY3RpdmUgcm91dGUsIGFuZCBpcyBub3QgY29sbGVjdGVkIGZyb20gY3VzdG9tZXIvYnV5ZXIgb3Igb3BlcmF0b3JcbiAgICAgICAgICAgIChub24tZHJpdmVyKSBhY2NvdW50cy4gRHJpdmVycyBjYW4gZGlzYWJsZSBsb2NhdGlvbiBzaGFyaW5nIGluIHRoZWlyIGRldmljZSBzZXR0aW5ncyxcbiAgICAgICAgICAgIHdoaWNoIHdpbGwgcHJldmVudCBsaXZlIHRyYWNraW5nIGZyb20gZnVuY3Rpb25pbmcuXG4gICAgICAgICAgPC9saT5cbiAgICAgICAgICA8bGk+XG4gICAgICAgICAgICA8c3Ryb25nPkNhbWVyYSAmYW1wOyBwaG90b3MgKG1vYmlsZSk6PC9zdHJvbmc+IHRoZSBtb2JpbGUgYXBwIHJlcXVlc3RzIGNhbWVyYSBhY2Nlc3MgdG9cbiAgICAgICAgICAgIHNjYW4gcHJvZHVjdCBiYXJjb2RlcyBhbmQgdG8gcGhvdG9ncmFwaCByZWNlaXB0cywgc3VwcGxpZXIgYmlsbHMsIHByb2R1Y3QgaW1hZ2VzLCBhbmRcbiAgICAgICAgICAgIHByb29mLW9mLWRlbGl2ZXJ5LiBJdCByZXF1ZXN0cyBwaG90by1saWJyYXJ5IGFjY2VzcyBzbyB1c2VycyBjYW4gYXR0YWNoIGV4aXN0aW5nIHBob3Rvc1xuICAgICAgICAgICAgKGUuZy4sIHJlY2VpcHRzKSBpbnN0ZWFkIG9mIHRha2luZyBhIG5ldyBvbmUuIENhbWVyYS9waG90byBhY2Nlc3MgaXMgdXNlZCBvbmx5IGZvciB0aGVzZVxuICAgICAgICAgICAgaW4tYXBwIGZlYXR1cmVzOyBSb3V0ZUZsb3cgZG9lcyBub3QgYWNjZXNzIHlvdXIgZGV2aWNlJnJzcXVvO3MgcGhvdG8gbGlicmFyeSBvciBjYW1lcmFcbiAgICAgICAgICAgIG91dHNpZGUgb2YgYW4gZXhwbGljaXQgaW4tYXBwIGFjdGlvbi5cbiAgICAgICAgICA8L2xpPlxuICAgICAgICA8L3VsPlxuXG4gICAgICAgIDxoMz5JbmZvcm1hdGlvbiBmcm9tIHRoaXJkIHBhcnRpZXM8L2gzPlxuICAgICAgICA8dWw+XG4gICAgICAgICAgPGxpPlxuICAgICAgICAgICAgPHN0cm9uZz5Hb29nbGUgU2lnbi1Jbjo8L3N0cm9uZz4gaWYgeW91IHNpZ24gaW4gd2l0aCBHb29nbGUsIHdlIHJlY2VpdmUgeW91ciBuYW1lLCBlbWFpbFxuICAgICAgICAgICAgYWRkcmVzcywgYW5kIEdvb2dsZSBhY2NvdW50IElEIGZyb20gR29vZ2xlIHRvIGNyZWF0ZSBvciBhdXRoZW50aWNhdGUgeW91ciBSb3V0ZUZsb3dcbiAgICAgICAgICAgIGFjY291bnQuXG4gICAgICAgICAgPC9saT5cbiAgICAgICAgICA8bGk+XG4gICAgICAgICAgICA8c3Ryb25nPk9wdGlvbmFsIENSTSBzeW5jIChwZXItVGVuYW50KTo8L3N0cm9uZz4gYSBUZW5hbnQgbWF5IGNvbm5lY3QgYSB0aGlyZC1wYXJ0eSBDUk1cbiAgICAgICAgICAgIOKAlCBjdXJyZW50bHkgPHN0cm9uZz5Hb0hpZ2hMZXZlbDwvc3Ryb25nPiDigJQgdG8gc3luYyBjb250YWN0IGFuZCBvcHBvcnR1bml0eSByZWNvcmRzXG4gICAgICAgICAgICAobmFtZSwgZW1haWwsIHBob25lLCB0YWdzLCBub3RlcywgZGVhbC9vcHBvcnR1bml0eSBzdGF0dXMpIGJldHdlZW4gdGhhdCBDUk0gYW5kXG4gICAgICAgICAgICBSb3V0ZUZsb3cuIFRoaXMgaXMgb2ZmIGJ5IGRlZmF1bHQgYW5kIGNvbnRyb2xsZWQgZW50aXJlbHkgYnkgdGhlIFRlbmFudC5cbiAgICAgICAgICA8L2xpPlxuICAgICAgICAgIDxsaT5cbiAgICAgICAgICAgIDxzdHJvbmc+T3B0aW9uYWwgZGF0YSBpbXBvcnQgKHBlci1UZW5hbnQpOjwvc3Ryb25nPiBhIFRlbmFudCBtYXkgaW1wb3J0IGhpc3RvcmljYWxcbiAgICAgICAgICAgIGJ1c2luZXNzIGRhdGEgZnJvbSBhIHNvdXJjZSBzeXN0ZW0gKGZvciBleGFtcGxlLCA8c3Ryb25nPlpvaG8gQ1JNPC9zdHJvbmc+KSB3aGVuXG4gICAgICAgICAgICBvbmJvYXJkaW5nIG9udG8gUm91dGVGbG93LlxuICAgICAgICAgIDwvbGk+XG4gICAgICAgIDwvdWw+XG5cbiAgICAgICAgPGgyIGlkPVwiaG93LXdlLXVzZS1pbmZvcm1hdGlvblwiPkhvdyB3ZSB1c2UgaW5mb3JtYXRpb248L2gyPlxuICAgICAgICA8cD5XZSB1c2UgdGhlIGluZm9ybWF0aW9uIGRlc2NyaWJlZCBhYm92ZSB0bzo8L3A+XG4gICAgICAgIDx1bD5cbiAgICAgICAgICA8bGk+XG4gICAgICAgICAgICBwcm92aWRlLCBvcGVyYXRlLCBhbmQgbWFpbnRhaW4gdGhlIFNlcnZpY2UgKGFjY291bnRzLCBvcmRlcnMsIHJvdXRpbmcsIGludm9pY2luZyxcbiAgICAgICAgICAgIHBheW1lbnRzLCBub3RpZmljYXRpb25zKTtcbiAgICAgICAgICA8L2xpPlxuICAgICAgICAgIDxsaT5hdXRoZW50aWNhdGUgdXNlcnMgYW5kIHNlY3VyZSBhY2NvdW50czs8L2xpPlxuICAgICAgICAgIDxsaT5cbiAgICAgICAgICAgIG9wdGltaXplIGRlbGl2ZXJ5IHJvdXRlcyAoZGVsaXZlcnkgc3RvcCBhZGRyZXNzZXMvY29vcmRpbmF0ZXMgYXJlIHNlbnQgdG8gb3VyIHJvdXRpbmdcbiAgICAgICAgICAgIGVuZ2luZSDigJQgc2VlIDxhIGhyZWY9XCIjc3ViLXByb2Nlc3NvcnNcIj4mbGRxdW87U3ViLXByb2Nlc3NvcnMmcmRxdW87PC9hPiDigJQgc29sZWx5IHRvXG4gICAgICAgICAgICBjb21wdXRlIHJvdXRlIHNlcXVlbmNpbmcgYW5kIEVUQXMpO1xuICAgICAgICAgIDwvbGk+XG4gICAgICAgICAgPGxpPnByb2Nlc3MgcGF5bWVudHMgYW5kIG1hbmFnZSBzdWJzY3JpcHRpb25zIGFuZCBiaWxsaW5nOzwvbGk+XG4gICAgICAgICAgPGxpPlxuICAgICAgICAgICAgc2VuZCB0cmFuc2FjdGlvbmFsIGNvbW11bmljYXRpb25zIChvcmRlciBjb25maXJtYXRpb25zLCBpbnZvaWNlcywgcGFzc3dvcmQgcmVzZXRzLCByb3V0ZVxuICAgICAgICAgICAgbm90aWZpY2F0aW9ucyk7XG4gICAgICAgICAgPC9saT5cbiAgICAgICAgICA8bGk+XG4gICAgICAgICAgICBwcm92aWRlIGN1c3RvbWVyIHN1cHBvcnQgYW5kIHJlc3BvbmQgdG8gaW5xdWlyaWVzIHNlbnQgdG97XCIgXCJ9XG4gICAgICAgICAgICA8YSBocmVmPXtgbWFpbHRvOiR7c2l0ZS5lbWFpbH1gfT57c2l0ZS5lbWFpbH08L2E+IG9ye1wiIFwifVxuICAgICAgICAgICAgPGEgaHJlZj1cIm1haWx0bzpzZWN1cml0eUByb3V0ZWZsb3cuaW5mb1wiPnNlY3VyaXR5QHJvdXRlZmxvdy5pbmZvPC9hPjtcbiAgICAgICAgICA8L2xpPlxuICAgICAgICAgIDxsaT5kZXRlY3QsIGludmVzdGlnYXRlLCBhbmQgcHJldmVudCBmcmF1ZCwgYWJ1c2UsIGFuZCBzZWN1cml0eSBpbmNpZGVudHM7PC9saT5cbiAgICAgICAgICA8bGk+Y29tcGx5IHdpdGggbGVnYWwgb2JsaWdhdGlvbnMgKGUuZy4sIHRheCBhbmQgYWNjb3VudGluZyByZWNvcmRzKTsgYW5kPC9saT5cbiAgICAgICAgICA8bGk+aW1wcm92ZSB0aGUgcmVsaWFiaWxpdHkgYW5kIHBlcmZvcm1hbmNlIG9mIHRoZSBTZXJ2aWNlLjwvbGk+XG4gICAgICAgIDwvdWw+XG4gICAgICAgIDxwPlxuICAgICAgICAgIFdlIGRvIDxzdHJvbmc+bm90PC9zdHJvbmc+IHNlbGwgcGVyc29uYWwgaW5mb3JtYXRpb24sIGFuZCB3ZSBkbyBub3QgdXNlIFRlbmFudCwgY3VzdG9tZXIsXG4gICAgICAgICAgb3IgZHJpdmVyIGRhdGEgdG8gc2VydmUgdGhpcmQtcGFydHkgYWR2ZXJ0aXNpbmcuXG4gICAgICAgIDwvcD5cblxuICAgICAgICA8aDIgaWQ9XCJzdWItcHJvY2Vzc29yc1wiPlN1Yi1wcm9jZXNzb3JzIGFuZCBzZXJ2aWNlIHByb3ZpZGVyczwvaDI+XG4gICAgICAgIDxwPlxuICAgICAgICAgIFdlIHNoYXJlIGluZm9ybWF0aW9uIHdpdGggdGhlIGZvbGxvd2luZyBjYXRlZ29yaWVzIG9mIHNlcnZpY2UgcHJvdmlkZXJzLCBlYWNoIG9mIHdoaWNoXG4gICAgICAgICAgcHJvY2Vzc2VzIGRhdGEgb24gb3VyIGJlaGFsZiBhbmQgb25seSBhcyBuZWVkZWQgdG8gcHJvdmlkZSB0aGUgU2VydmljZS4gVGhpcyBsaXN0IHJlZmxlY3RzXG4gICAgICAgICAgd2hhdCB0aGUgUm91dGVGbG93IGNvZGViYXNlIGFuZCBpbmZyYXN0cnVjdHVyZSBhY3R1YWxseSB1c2UgYXMgb2YgdGhpcyBkb2N1bWVudCZyc3F1bztzXG4gICAgICAgICAgbGFzdC11cGRhdGVkIGRhdGUgYWJvdmUuXG4gICAgICAgIDwvcD5cbiAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJsZWdhbC10YWJsZS13cmFwXCI+XG4gICAgICAgICAgPHRhYmxlPlxuICAgICAgICAgICAgPHRoZWFkPlxuICAgICAgICAgICAgICA8dHI+XG4gICAgICAgICAgICAgICAgPHRoPlByb3ZpZGVyPC90aD5cbiAgICAgICAgICAgICAgICA8dGg+UHVycG9zZTwvdGg+XG4gICAgICAgICAgICAgICAgPHRoPkRhdGEgaW52b2x2ZWQ8L3RoPlxuICAgICAgICAgICAgICA8L3RyPlxuICAgICAgICAgICAgPC90aGVhZD5cbiAgICAgICAgICAgIDx0Ym9keT5cbiAgICAgICAgICAgICAgPHRyPlxuICAgICAgICAgICAgICAgIDx0ZD5SYWlsd2F5IChVbml0ZWQgU3RhdGVzKTwvdGQ+XG4gICAgICAgICAgICAgICAgPHRkPkFwcGxpY2F0aW9uIGhvc3RpbmcsIFBvc3RncmVTUUwgZGF0YWJhc2UsIFJlZGlzIGNhY2hlPC90ZD5cbiAgICAgICAgICAgICAgICA8dGQ+QWxsIFNlcnZpY2UgZGF0YSBkZXNjcmliZWQgYWJvdmU8L3RkPlxuICAgICAgICAgICAgICA8L3RyPlxuICAgICAgICAgICAgICA8dHI+XG4gICAgICAgICAgICAgICAgPHRkPlN0cmlwZTwvdGQ+XG4gICAgICAgICAgICAgICAgPHRkPlN1YnNjcmlwdGlvbiBiaWxsaW5nIGFuZCBwYXltZW50IHByb2Nlc3Npbmc8L3RkPlxuICAgICAgICAgICAgICAgIDx0ZD5cbiAgICAgICAgICAgICAgICAgIEJpbGxpbmcgY29udGFjdCBpbmZvLCBzdWJzY3JpcHRpb24vcGxhbiBkYXRhLCBwYXltZW50IHRva2VucyAobm90IGZ1bGwgY2FyZFxuICAgICAgICAgICAgICAgICAgbnVtYmVycylcbiAgICAgICAgICAgICAgICA8L3RkPlxuICAgICAgICAgICAgICA8L3RyPlxuICAgICAgICAgICAgICA8dHI+XG4gICAgICAgICAgICAgICAgPHRkPkdvb2dsZTwvdGQ+XG4gICAgICAgICAgICAgICAgPHRkPlxuICAgICAgICAgICAgICAgICAgU2lnbi1JbiBhdXRoZW50aWNhdGlvbjsgR29vZ2xlIE1hcHMgKHJvdXRlL21hcCBkaXNwbGF5KTsgRmlyZWJhc2UgQ2xvdWQgTWVzc2FnaW5nXG4gICAgICAgICAgICAgICAgICAocHVzaCBub3RpZmljYXRpb25zKTsgR29vZ2xlIENhbGVuZGFyIChpbnRlcm5hbCBzY2hlZHVsaW5nIG9mIGRlbW8tYm9va2luZ1xuICAgICAgICAgICAgICAgICAgbWVldGluZ3MsIHZpYSBhIFJvdXRlRmxvdy1vd25lZCBzZXJ2aWNlIGFjY291bnQpXG4gICAgICAgICAgICAgICAgPC90ZD5cbiAgICAgICAgICAgICAgICA8dGQ+XG4gICAgICAgICAgICAgICAgICBOYW1lL2VtYWlsL2FjY291bnQgSUQgKFNpZ24tSW4pOyBkZWxpdmVyeSBhZGRyZXNzZXMvY29vcmRpbmF0ZXMgKE1hcHMpOyBkZXZpY2VcbiAgICAgICAgICAgICAgICAgIHB1c2ggdG9rZW4gKEZDTSk7IGRlbW8tYm9va2luZyBjb250YWN0IGRldGFpbHMgcGxhY2VkIG9uIFJvdXRlRmxvdyZyc3F1bztzXG4gICAgICAgICAgICAgICAgICBpbnRlcm5hbCBjYWxlbmRhciBldmVudFxuICAgICAgICAgICAgICAgIDwvdGQ+XG4gICAgICAgICAgICAgIDwvdHI+XG4gICAgICAgICAgICAgIDx0cj5cbiAgICAgICAgICAgICAgICA8dGQ+R29vZ2xlIFdvcmtzcGFjZSAocHJpbWFyeSk8L3RkPlxuICAgICAgICAgICAgICAgIDx0ZD5cbiAgICAgICAgICAgICAgICAgIFJvdXRlRmxvdyZyc3F1bztzIHByaW1hcnkgcGxhdGZvcm0gdHJhbnNhY3Rpb25hbCBlbWFpbCBkZWxpdmVyeSAob3JkZXJcbiAgICAgICAgICAgICAgICAgIGNvbmZpcm1hdGlvbnMsIGludm9pY2VzLCBwYXNzd29yZCByZXNldHMsIGRlbW8tYm9va2luZyBjb25maXJtYXRpb25zLCBldGMuKSwgc2VudFxuICAgICAgICAgICAgICAgICAgdGhyb3VnaCBSb3V0ZUZsb3cmcnNxdW87cyBvd24gR29vZ2xlIFdvcmtzcGFjZSBtYWlsYm94IHZpYSBTTVRQOyBhbHNvIGhvc3RzXG4gICAgICAgICAgICAgICAgICBSb3V0ZUZsb3cmcnNxdW87cyBvd24gYnVzaW5lc3MgaW5ib3hlc1xuICAgICAgICAgICAgICAgIDwvdGQ+XG4gICAgICAgICAgICAgICAgPHRkPlxuICAgICAgICAgICAgICAgICAgUmVjaXBpZW50IGVtYWlsIGFkZHJlc3MsIGVtYWlsIGNvbnRlbnQsIGFuZCB0aGUgY29udGVudHMgb2YgbWVzc2FnZXMgc2VudCB0byBvdXJcbiAgICAgICAgICAgICAgICAgIGJ1c2luZXNzIGluYm94ZXNcbiAgICAgICAgICAgICAgICA8L3RkPlxuICAgICAgICAgICAgICA8L3RyPlxuICAgICAgICAgICAgICA8dHI+XG4gICAgICAgICAgICAgICAgPHRkPlJlc2VuZCAoZmFsbGJhY2spPC90ZD5cbiAgICAgICAgICAgICAgICA8dGQ+XG4gICAgICAgICAgICAgICAgICBGYWxsYmFjayBwbGF0Zm9ybSB0cmFuc2FjdGlvbmFsIGVtYWlsIGRlbGl2ZXJ5LCB1c2VkIGF1dG9tYXRpY2FsbHkgb25seSB3aGVuXG4gICAgICAgICAgICAgICAgICBSb3V0ZUZsb3cmcnNxdW87cyBHb29nbGUgV29ya3NwYWNlIFNNVFAgaXMgbm90IGNvbmZpZ3VyZWRcbiAgICAgICAgICAgICAgICA8L3RkPlxuICAgICAgICAgICAgICAgIDx0ZD5SZWNpcGllbnQgZW1haWwgYWRkcmVzcyBhbmQgZW1haWwgY29udGVudDwvdGQ+XG4gICAgICAgICAgICAgIDwvdHI+XG4gICAgICAgICAgICAgIDx0cj5cbiAgICAgICAgICAgICAgICA8dGQ+T3BlblJvdXRlU2VydmljZSAoT1JTKTwvdGQ+XG4gICAgICAgICAgICAgICAgPHRkPlJvdXRlIG9wdGltaXphdGlvbiBlbmdpbmU8L3RkPlxuICAgICAgICAgICAgICAgIDx0ZD5cbiAgICAgICAgICAgICAgICAgIERlbGl2ZXJ5IHN0b3AgYWRkcmVzc2VzL2Nvb3JkaW5hdGVzLCBzZW50IHNvbGVseSB0byBjb21wdXRlIG9wdGltaXplZCByb3V0ZVxuICAgICAgICAgICAgICAgICAgc2VxdWVuY2luZ1xuICAgICAgICAgICAgICAgIDwvdGQ+XG4gICAgICAgICAgICAgIDwvdHI+XG4gICAgICAgICAgICAgIDx0cj5cbiAgICAgICAgICAgICAgICA8dGQ+Q2xvdWRmbGFyZSBSMiAvIFJhaWx3YXkgdm9sdW1lIHN0b3JhZ2U8L3RkPlxuICAgICAgICAgICAgICAgIDx0ZD5GaWxlIHN0b3JhZ2UgZm9yIHVwbG9hZGVkIGRvY3VtZW50cyBhbmQgaW1hZ2VzPC90ZD5cbiAgICAgICAgICAgICAgICA8dGQ+UHJvZHVjdCBpbWFnZXMsIHJlY2VpcHRzLCBzdXBwbGllciBzdGF0ZW1lbnRzLCBwcm9vZi1vZi1kZWxpdmVyeSBwaG90b3M8L3RkPlxuICAgICAgICAgICAgICA8L3RyPlxuICAgICAgICAgICAgICA8dHI+XG4gICAgICAgICAgICAgICAgPHRkPkFudGhyb3BpYyAoQ2xhdWRlIEFQSSk8L3RkPlxuICAgICAgICAgICAgICAgIDx0ZD5cbiAgICAgICAgICAgICAgICAgIE9wdGlvbmFsIEFJLWFzc2lzdGVkIHNjYW5uaW5nIG9mIHN1cHBsaWVyIHN0YXRlbWVudHMvaW52b2ljZXMsIHdoZW4gYSBUZW5hbnRcbiAgICAgICAgICAgICAgICAgIGVuYWJsZXMgdGhpcyBmZWF0dXJlXG4gICAgICAgICAgICAgICAgPC90ZD5cbiAgICAgICAgICAgICAgICA8dGQ+VXBsb2FkZWQgc3VwcGxpZXIgc3RhdGVtZW50L2RvY3VtZW50IGltYWdlcyBhbmQgZXh0cmFjdGVkIGxpbmUtaXRlbSBkYXRhPC90ZD5cbiAgICAgICAgICAgICAgPC90cj5cbiAgICAgICAgICAgICAgPHRyPlxuICAgICAgICAgICAgICAgIDx0ZD5Hb0hpZ2hMZXZlbDwvdGQ+XG4gICAgICAgICAgICAgICAgPHRkPk9wdGlvbmFsIHBlci1UZW5hbnQgQ1JNIHN5bmMgKG9mZiBieSBkZWZhdWx0KTwvdGQ+XG4gICAgICAgICAgICAgICAgPHRkPkNvbnRhY3Qvb3Bwb3J0dW5pdHkgbmFtZSwgZW1haWwsIHBob25lLCB0YWdzLCBub3RlczwvdGQ+XG4gICAgICAgICAgICAgIDwvdHI+XG4gICAgICAgICAgICAgIDx0cj5cbiAgICAgICAgICAgICAgICA8dGQ+Wm9obyBDUk08L3RkPlxuICAgICAgICAgICAgICAgIDx0ZD5PcHRpb25hbCBwZXItVGVuYW50IGRhdGEgaW1wb3J0IHNvdXJjZSBkdXJpbmcgb25ib2FyZGluZzwvdGQ+XG4gICAgICAgICAgICAgICAgPHRkPkhpc3RvcmljYWwgYnVzaW5lc3MgcmVjb3JkcyBpbXBvcnRlZCBieSB0aGUgVGVuYW50PC90ZD5cbiAgICAgICAgICAgICAgPC90cj5cbiAgICAgICAgICAgICAgPHRyPlxuICAgICAgICAgICAgICAgIDx0ZD5TZW50cnk8L3RkPlxuICAgICAgICAgICAgICAgIDx0ZD5PcHRpb25hbCBlcnJvciBtb25pdG9yaW5nLCB3aGVuIGNvbmZpZ3VyZWQ8L3RkPlxuICAgICAgICAgICAgICAgIDx0ZD5cbiAgICAgICAgICAgICAgICAgIFRlY2huaWNhbCBlcnJvci9jcmFzaCBkYXRhOyBtYXkgaW5jaWRlbnRhbGx5IGluY2x1ZGUgcG9ydGlvbnMgb2YgYXBwbGljYXRpb24gc3RhdGVcbiAgICAgICAgICAgICAgICAgIGF0IHRpbWUgb2YgZXJyb3JcbiAgICAgICAgICAgICAgICA8L3RkPlxuICAgICAgICAgICAgICA8L3RyPlxuICAgICAgICAgICAgPC90Ym9keT5cbiAgICAgICAgICA8L3RhYmxlPlxuICAgICAgICA8L2Rpdj5cbiAgICAgICAgPHA+XG4gICAgICAgICAgV2UgbWF5IGFkZCBvciBjaGFuZ2Ugc3ViLXByb2Nlc3NvcnMgYXMgdGhlIFNlcnZpY2UgZXZvbHZlczsgbWF0ZXJpYWwgY2hhbmdlcyB3aWxsIGJlXG4gICAgICAgICAgcmVmbGVjdGVkIGluIGFuIHVwZGF0ZWQgdmVyc2lvbiBvZiB0aGlzIHBvbGljeS5cbiAgICAgICAgPC9wPlxuXG4gICAgICAgIDxoMyBpZD1cImNvbm5lY3QtbWFpbGJveFwiPlxuICAgICAgICAgIENvbWluZyBzb29uOiBjb25uZWN0aW5nIHlvdXIgb3duIGVtYWlsIGFjY291bnQgKCZsZHF1bztDb25uZWN0IEdtYWlsL091dGxvb2smcmRxdW87KVxuICAgICAgICA8L2gzPlxuICAgICAgICA8cD5cbiAgICAgICAgICBSb3V0ZUZsb3cgaXMgYnVpbGRpbmcgYW4gb3B0aW9uYWwgZmVhdHVyZSB0aGF0IGxldHMgYSBUZW5hbnQgYWRtaW4gY29ubmVjdCB0aGVpciBvd24gR21haWxcbiAgICAgICAgICBvciBNaWNyb3NvZnQgMzY1L091dGxvb2sgbWFpbGJveCBzbyB0aGF0IGN1c3RvbWVyLWZhY2luZyBlbWFpbHMgKGxpa2UgaW52b2ljZXMgYW5kIG9yZGVyXG4gICAgICAgICAgbm90aWZpY2F0aW9ucykgYXJlIHNlbnQgPHN0cm9uZz5mcm9tIHRoZSBUZW5hbnQmcnNxdW87cyBvd24gYWRkcmVzczwvc3Ryb25nPiBpbnN0ZWFkIG9mXG4gICAgICAgICAgUm91dGVGbG93JnJzcXVvO3MuIFdoZW4gdGhpcyBmZWF0dXJlIGlzIGxpdmUgYW5kIGEgVGVuYW50IGNob29zZXMgdG8gdXNlIGl0OlxuICAgICAgICA8L3A+XG4gICAgICAgIDx1bD5cbiAgICAgICAgICA8bGk+XG4gICAgICAgICAgICBSb3V0ZUZsb3cgcmVxdWVzdHMgb25seSBhIDxzdHJvbmc+c2VuZC1vbmx5PC9zdHJvbmc+IHBlcm1pc3Npb24g4oCUIEdvb2dsZSZyc3F1bztze1wiIFwifVxuICAgICAgICAgICAgPGNvZGU+Z21haWwuc2VuZDwvY29kZT4gc2NvcGUgb3IgTWljcm9zb2Z0IEdyYXBoJnJzcXVvO3MgPGNvZGU+TWFpbC5TZW5kPC9jb2RlPntcIiBcIn1cbiAgICAgICAgICAgIHBlcm1pc3Npb24ue1wiIFwifVxuICAgICAgICAgICAgPHN0cm9uZz5cbiAgICAgICAgICAgICAgUm91dGVGbG93IGNhbm5vdCByZWFkLCBzZWFyY2gsIG9yIG90aGVyd2lzZSBhY2Nlc3MgdGhlIGNvbnRlbnRzIG9mIHlvdXIgbWFpbGJveCxcbiAgICAgICAgICAgICAgaW5ib3gsIG9yIGFueSBvdGhlciBlbWFpbCBpbiB5b3VyIGFjY291bnQuXG4gICAgICAgICAgICA8L3N0cm9uZz5cbiAgICAgICAgICA8L2xpPlxuICAgICAgICAgIDxsaT5cbiAgICAgICAgICAgIFJvdXRlRmxvdyB1c2VzIHRoaXMgcGVybWlzc2lvbiBvbmx5IHRvIHNlbmQgdGhlIHNwZWNpZmljIHRyYW5zYWN0aW9uYWwgZW1haWxzIHRoZVxuICAgICAgICAgICAgVGVuYW50JnJzcXVvO3MgYnVzaW5lc3MgZ2VuZXJhdGVzIHRocm91Z2ggUm91dGVGbG93IChlLmcuLCBpbnZvaWNlcywgb3JkZXJcbiAgICAgICAgICAgIGNvbmZpcm1hdGlvbnMpLlxuICAgICAgICAgIDwvbGk+XG4gICAgICAgICAgPGxpPlxuICAgICAgICAgICAgVGhlIGNvbm5lY3Rpb24mcnNxdW87cyBhY2Nlc3MvcmVmcmVzaCB0b2tlbnMgYXJlIHN0b3JlZHtcIiBcIn1cbiAgICAgICAgICAgIDxzdHJvbmc+ZW5jcnlwdGVkIGF0IHJlc3Q8L3N0cm9uZz4gYW5kIGFyZSBuZXZlciBsb2dnZWQgb3IgZGlzcGxheWVkIGFmdGVyIHRoZSBpbml0aWFsXG4gICAgICAgICAgICBjb25uZWN0aW9uLlxuICAgICAgICAgIDwvbGk+XG4gICAgICAgICAgPGxpPlxuICAgICAgICAgICAgPHN0cm9uZz5EaXNjb25uZWN0aW5nPC9zdHJvbmc+IHRoZSBtYWlsYm94IGltbWVkaWF0ZWx5IGFuZCBwZXJtYW5lbnRseSBkZWxldGVzIHRoZVxuICAgICAgICAgICAgc3RvcmVkIHRva2VucyBmcm9tIFJvdXRlRmxvdyZyc3F1bztzIHN5c3RlbXMuXG4gICAgICAgICAgPC9saT5cbiAgICAgICAgPC91bD5cblxuICAgICAgICA8aDM+R29vZ2xlIEFQSSBTZXJ2aWNlcyBVc2VyIERhdGEgUG9saWN5IOKAlCBMaW1pdGVkIFVzZSBkaXNjbG9zdXJlPC9oMz5cbiAgICAgICAgPHA+XG4gICAgICAgICAgUm91dGVGbG93JnJzcXVvO3MgdXNlIGFuZCB0cmFuc2ZlciB0byBhbnkgb3RoZXIgYXBwIG9mIGluZm9ybWF0aW9uIHJlY2VpdmVkIGZyb20gR29vZ2xlXG4gICAgICAgICAgQVBJcyB3aWxsIGFkaGVyZSB0byB0aGV7XCIgXCJ9XG4gICAgICAgICAgPGFcbiAgICAgICAgICAgIGhyZWY9XCJodHRwczovL2RldmVsb3BlcnMuZ29vZ2xlLmNvbS90ZXJtcy9hcGktc2VydmljZXMtdXNlci1kYXRhLXBvbGljeVwiXG4gICAgICAgICAgICB0YXJnZXQ9XCJfYmxhbmtcIlxuICAgICAgICAgICAgcmVsPVwibm9yZWZlcnJlclwiXG4gICAgICAgICAgPlxuICAgICAgICAgICAgR29vZ2xlIEFQSSBTZXJ2aWNlcyBVc2VyIERhdGEgUG9saWN5XG4gICAgICAgICAgPC9hPlxuICAgICAgICAgICwgaW5jbHVkaW5nIHRoZSA8c3Ryb25nPkxpbWl0ZWQgVXNlIHJlcXVpcmVtZW50czwvc3Ryb25nPi4gSW4gc3Vic3RhbmNlLCB0aGlzIG1lYW5zXG4gICAgICAgICAgUm91dGVGbG93OlxuICAgICAgICA8L3A+XG4gICAgICAgIDx1bD5cbiAgICAgICAgICA8bGk+XG4gICAgICAgICAgICBsaW1pdHMgaXRzIHVzZSBvZiBkYXRhIG9idGFpbmVkIHRocm91Z2ggR29vZ2xlIEFQSSBzY29wZXMgdG8gcHJvdmlkaW5nIG9yIGltcHJvdmluZyB0aGVcbiAgICAgICAgICAgIHVzZXItZmFjaW5nIGZlYXR1cmVzIGRlc2NyaWJlZCBhYm92ZTtcbiAgICAgICAgICA8L2xpPlxuICAgICAgICAgIDxsaT5cbiAgICAgICAgICAgIGRvZXMgbm90IHRyYW5zZmVyIHRoYXQgZGF0YSB0byB0aGlyZCBwYXJ0aWVzIGV4Y2VwdCBhcyBuZWVkZWQgdG8gcHJvdmlkZSBvciBpbXByb3ZlXG4gICAgICAgICAgICB0aG9zZSBmZWF0dXJlcyAod2l0aCBjb25zZW50KSwgZm9yIHNlY3VyaXR5IHB1cnBvc2VzLCB0byBjb21wbHkgd2l0aCBsYXcsIG9yIGFzIHBhcnQgb2ZcbiAgICAgICAgICAgIGEgbWVyZ2VyL2FjcXVpc2l0aW9uICh3aXRoIG5vdGljZSk7XG4gICAgICAgICAgPC9saT5cbiAgICAgICAgICA8bGk+XG4gICAgICAgICAgICBkb2VzIG5vdCBhbGxvdyBodW1hbnMgdG8gcmVhZCB0aGF0IGRhdGEgZXhjZXB0IHdpdGggZXhwbGljaXQgdXNlciBjb25zZW50LCBmb3Igc2VjdXJpdHlcbiAgICAgICAgICAgIHB1cnBvc2VzLCB0byBjb21wbHkgd2l0aCBsYXcsIG9yIG9uIGFuIGFnZ3JlZ2F0ZWQgYW5kIGFub255bWl6ZWQgYmFzaXMgZm9yIGludGVybmFsXG4gICAgICAgICAgICBvcGVyYXRpb25zOyBhbmRcbiAgICAgICAgICA8L2xpPlxuICAgICAgICAgIDxsaT5cbiAgICAgICAgICAgIGRvZXMgbm90IHVzZSB0aGF0IGRhdGEgdG8gc2VydmUgYWR2ZXJ0aXNlbWVudHMgKGluY2x1ZGluZyByZXRhcmdldGluZyBvciBpbnRlcmVzdC1iYXNlZFxuICAgICAgICAgICAgYWR2ZXJ0aXNpbmcpLCBhbmQgZG9lcyBub3QgdXNlIGl0IHRvIGRldGVybWluZSBjcmVkaXR3b3J0aGluZXNzIG9yIGZvciBsZW5kaW5nIHB1cnBvc2VzLlxuICAgICAgICAgIDwvbGk+XG4gICAgICAgIDwvdWw+XG5cbiAgICAgICAgPGgzIGlkPVwiZGVtby1ib29raW5nXCI+RGVtbyBib29raW5nIHJlcXVlc3RzIChtYXJrZXRpbmcgc2l0ZSk8L2gzPlxuICAgICAgICA8cD5cbiAgICAgICAgICBUaGUgJmxkcXVvO1JlcXVlc3QgYSBkZW1vJnJkcXVvOyBzY2hlZHVsZXIgb24gcm91dGVmbG93LmluZm8gbGV0cyBhIHZpc2l0b3IgYm9vayBhXG4gICAgICAgICAgd2Fsa3Rocm91Z2ggbWVldGluZyBkaXJlY3RseS4gV2hlbiB5b3Ugc3VibWl0IGEgYm9va2luZywgd2UgY29sbGVjdCBhbmR7XCIgXCJ9XG4gICAgICAgICAgPHN0cm9uZz5zdG9yZSBpbiBSb3V0ZUZsb3cmcnNxdW87cyBvd24gZGF0YWJhc2U8L3N0cm9uZz46IHlvdXIgbmFtZSwgZW1haWwgYWRkcmVzcyxcbiAgICAgICAgICBjb21wYW55IG5hbWUsIHBob25lIG51bWJlciAob3B0aW9uYWwpLCBub3RlcyBvbiB3aGF0IHlvdSZyc3F1bztkIGxpa2UgY292ZXJlZCAob3B0aW9uYWwpLFxuICAgICAgICAgIHlvdXIgc2VsZWN0ZWQgZGF0ZS90aW1lIGFuZCB0aW1lIHpvbmUsIHRoZSBtYXJrZXRpbmcgcGFnZSB5b3UgYm9va2VkIGZyb20sIGFuZCB5b3VyIElQXG4gICAgICAgICAgYWRkcmVzcyAodXNlZCB0byBwcmV2ZW50IGFidXNlIG9mIHRoZSBib29raW5nIHN5c3RlbSkuXG4gICAgICAgIDwvcD5cbiAgICAgICAgPHA+XG4gICAgICAgICAgVG8gc2NoZWR1bGUgdGhlIG1lZXRpbmcgaW50ZXJuYWxseSwgUm91dGVGbG93IGNyZWF0ZXMgYW4gZXZlbnQgb257XCIgXCJ9XG4gICAgICAgICAgPHN0cm9uZz5Sb3V0ZUZsb3cmcnNxdW87cyBvd24gR29vZ2xlIENhbGVuZGFyPC9zdHJvbmc+ICh2aWEgYSBSb3V0ZUZsb3ctb3duZWQgc2VydmljZVxuICAgICAgICAgIGFjY291bnQsIG5vdCB5b3VyIEdvb2dsZSBhY2NvdW50KSwgY29udGFpbmluZyB5b3VyIG5hbWUsIGNvbXBhbnksIGNvbnRhY3QgZW1haWwvcGhvbmUsIGFuZFxuICAgICAgICAgIG5vdGVzIHNvIG91ciB0ZWFtIGNhbiBwcmVwYXJlLntcIiBcIn1cbiAgICAgICAgICA8c3Ryb25nPllvdXIgZW1haWwgYWRkcmVzcyBpcyBub3QgYWRkZWQgYXMgYSBHb29nbGUgQ2FsZW5kYXIgYXR0ZW5kZWUvaW52aXRlZTwvc3Ryb25nPiDigJRcbiAgICAgICAgICBHb29nbGUgZG9lcyBub3Qgc2VuZCB5b3UgYSBjYWxlbmRhciBpbnZpdGUsIGFuZCBubyBHb29nbGUgYWNjb3VudCBvZiB5b3VycyBpcyBpbnZvbHZlZC5cbiAgICAgICAgICBZb3VyIGJvb2tpbmcgY29uZmlybWF0aW9uLCBhbmQgYW55IHJlc2NoZWR1bGUvY2FuY2VsbGF0aW9uIGxpbmssIGlzIGVtYWlsZWQgdG8geW91XG4gICAgICAgICAgZGlyZWN0bHkgYnkgUm91dGVGbG93LlxuICAgICAgICA8L3A+XG4gICAgICAgIDxwPlxuICAgICAgICAgIFRoZSBjb25maXJtYXRpb24gZW1haWwgY29udGFpbnMgYSBsaW5rIHRoYXQgbGV0cyB5b3UgcmVzY2hlZHVsZSBvciBjYW5jZWwgeW91ciBvd25cbiAgICAgICAgICBib29raW5nOyBSb3V0ZUZsb3cgc3RvcmVzIG9ubHkgYSBvbmUtd2F5IGNyeXB0b2dyYXBoaWMgaGFzaCBvZiB0aGF0IGxpbmsmcnNxdW87cyB0b2tlbixcbiAgICAgICAgICBub3QgdGhlIHRva2VuIGl0c2VsZiwgc28gdGhlIHRva2VuIGNhbm5vdCBiZSByZWNvdmVyZWQgZnJvbSBvdXIgZGF0YWJhc2UuXG4gICAgICAgIDwvcD5cbiAgICAgICAgPHA+XG4gICAgICAgICAgRGVtbyBib29raW5nIHJlY29yZHMgYXJlIHJldGFpbmVkIGZvciAxMiBtb250aHMgdW5sZXNzIHlvdSBiZWNvbWUgYSBSb3V0ZUZsb3cgVGVuYW50LCBpblxuICAgICAgICAgIHdoaWNoIGNhc2Ugb3JkaW5hcnkgYWNjb3VudCBkYXRhIHJldGVudGlvbiBhcHBsaWVzIChzZWUgJmxkcXVvO0RhdGEgcmV0ZW50aW9uJnJkcXVvO1xuICAgICAgICAgIGJlbG93KS5cbiAgICAgICAgPC9wPlxuXG4gICAgICAgIDxoMiBpZD1cImRhdGEtcmV0ZW50aW9uXCI+RGF0YSByZXRlbnRpb248L2gyPlxuICAgICAgICA8dWw+XG4gICAgICAgICAgPGxpPlxuICAgICAgICAgICAgV2UgcmV0YWluIFRlbmFudCBhY2NvdW50IGFuZCBvcGVyYXRpb25hbCBkYXRhIChvcmRlcnMsIGludm9pY2VzLCByb3V0ZXMsIHVwbG9hZGVkXG4gICAgICAgICAgICBkb2N1bWVudHMsIGV0Yy4pIGZvciBhcyBsb25nIGFzIHRoZSBUZW5hbnQmcnNxdW87cyBzdWJzY3JpcHRpb24gaXMgYWN0aXZlLCBwbHVzIDMwIGRheXNcbiAgICAgICAgICAgIHRvIGFsbG93IGFjY291bnQgcmVjb3ZlcnksIGFuZCBhcyBuZWVkZWQgdG8gc2F0aXNmeSB0YXgsIGFjY291bnRpbmcsIGFuZCBsZWdhbFxuICAgICAgICAgICAgcmVjb3Jka2VlcGluZyBvYmxpZ2F0aW9ucy5cbiAgICAgICAgICA8L2xpPlxuICAgICAgICAgIDxsaT5cbiAgICAgICAgICAgIERyaXZlciBsb2NhdGlvbiBkYXRhIGNvbGxlY3RlZCBkdXJpbmcgYSBkZWxpdmVyeSByb3V0ZSBpcyByZXRhaW5lZCBmb3IgOTAgZGF5cyBhbmQgdXNlZFxuICAgICAgICAgICAgb25seSBmb3Igcm91dGUgaGlzdG9yeSBhbmQgZGVsaXZlcnkgY29uZmlybWF0aW9uLlxuICAgICAgICAgIDwvbGk+XG4gICAgICAgICAgPGxpPlxuICAgICAgICAgICAgV2UgcmV0YWluIG1hcmtldGluZy1zaXRlIGlucXVpcmllcyBhbmQgc3VwcG9ydCBjb21tdW5pY2F0aW9ucyBmb3IgdXAgdG8gMjQgbW9udGhzLlxuICAgICAgICAgIDwvbGk+XG4gICAgICAgICAgPGxpPlxuICAgICAgICAgICAgV2UgZGVsZXRlIG9yIGFub255bWl6ZSBwZXJzb25hbCBpbmZvcm1hdGlvbiB3aGVuIGl0IGlzIG5vIGxvbmdlciBuZWVkZWQgZm9yIHRoZSBwdXJwb3Nlc1xuICAgICAgICAgICAgZGVzY3JpYmVkIGluIHRoaXMgcG9saWN5LCBvciBzb29uZXIgdXBvbiBhIHZhbGlkIGRlbGV0aW9uIHJlcXVlc3QgKHNlZXtcIiBcIn1cbiAgICAgICAgICAgIDxhIGhyZWY9XCIjeW91ci1yaWdodHNcIj4mbGRxdW87WW91ciByaWdodHMgYW5kIGNob2ljZXMmcmRxdW87PC9hPiBiZWxvdykuXG4gICAgICAgICAgPC9saT5cbiAgICAgICAgPC91bD5cblxuICAgICAgICA8aDIgaWQ9XCJ5b3VyLXJpZ2h0c1wiPllvdXIgcmlnaHRzIGFuZCBjaG9pY2VzPC9oMj5cbiAgICAgICAgPHA+XG4gICAgICAgICAgRGVwZW5kaW5nIG9uIHlvdXIgbG9jYXRpb24gYW5kIHJlbGF0aW9uc2hpcCB0byBSb3V0ZUZsb3csIHlvdSBtYXkgaGF2ZSByaWdodHMgdG8gYWNjZXNzLFxuICAgICAgICAgIGNvcnJlY3QsIGV4cG9ydCwgb3IgZGVsZXRlIHlvdXIgcGVyc29uYWwgaW5mb3JtYXRpb24sIGFuZCB0byBvYmplY3QgdG8gb3IgcmVzdHJpY3QgY2VydGFpblxuICAgICAgICAgIHByb2Nlc3NpbmcuXG4gICAgICAgIDwvcD5cbiAgICAgICAgPHVsPlxuICAgICAgICAgIDxsaT5cbiAgICAgICAgICAgIDxzdHJvbmc+SWYgeW91IGFyZSBhIGN1c3RvbWVyLCBidXllciwgb3IgZHJpdmVyIG9mIGEgVGVuYW50Ojwvc3Ryb25nPiBwbGVhc2UgY29udGFjdFxuICAgICAgICAgICAgdGhhdCBidXNpbmVzcyBkaXJlY3RseSDigJQgdGhleSBjb250cm9sIHlvdXIgZGF0YSBhbmQgYXJlIGJlc3QgcG9zaXRpb25lZCB0byBmdWxmaWxsIHlvdXJcbiAgICAgICAgICAgIHJlcXVlc3QuIFdlIHdpbGwgc3VwcG9ydCB0aGVtIGluIGRvaW5nIHNvLlxuICAgICAgICAgIDwvbGk+XG4gICAgICAgICAgPGxpPlxuICAgICAgICAgICAgPHN0cm9uZz5cbiAgICAgICAgICAgICAgSWYgeW91IGFyZSBhIFRlbmFudCBhY2NvdW50IGhvbGRlciwgc3RhZmYgdXNlciwgb3Igd2Vic2l0ZSB2aXNpdG9yIGNvbnRhY3RpbmdcbiAgICAgICAgICAgICAgUm91dGVGbG93IGRpcmVjdGx5OlxuICAgICAgICAgICAgPC9zdHJvbmc+e1wiIFwifVxuICAgICAgICAgICAgZW1haWwgPGEgaHJlZj17YG1haWx0bzoke3NpdGUuZW1haWx9YH0+e3NpdGUuZW1haWx9PC9hPiB3aXRoIHlvdXIgcmVxdWVzdC4gV2Ugd2lsbFxuICAgICAgICAgICAgcmVzcG9uZCB3aXRoaW4gMzAgZGF5cyBhbmQgbWF5IG5lZWQgdG8gdmVyaWZ5IHlvdXIgaWRlbnRpdHkgYmVmb3JlIGFjdGluZyBvbiB0aGVcbiAgICAgICAgICAgIHJlcXVlc3QuXG4gICAgICAgICAgPC9saT5cbiAgICAgICAgICA8bGk+XG4gICAgICAgICAgICBZb3UgY2FuIGFsc28gYWNjZXNzIGFuZCB1cGRhdGUgbW9zdCBvZiB5b3VyIGFjY291bnQgaW5mb3JtYXRpb24gZGlyZWN0bHkgd2l0aGluIHRoZVxuICAgICAgICAgICAgUm91dGVGbG93IHdlYiBkYXNoYm9hcmQsIGJ1eWVyIHBvcnRhbCwgb3IgbW9iaWxlIGFwcCBzZXR0aW5ncy5cbiAgICAgICAgICA8L2xpPlxuICAgICAgICA8L3VsPlxuICAgICAgICA8cD5cbiAgICAgICAgICBJZiB5b3UgYXJlIGxvY2F0ZWQgaW4gdGhlIEV1cm9wZWFuIEVjb25vbWljIEFyZWEsIHRoZSBVbml0ZWQgS2luZ2RvbSwgU3dpdHplcmxhbmQsXG4gICAgICAgICAgQ2FsaWZvcm5pYSwgb3IgYW5vdGhlciBqdXJpc2RpY3Rpb24gd2l0aCBpdHMgb3duIGRhdGEtcHJvdGVjdGlvbiBsYXcsIHlvdSBtYXkgaGF2ZVxuICAgICAgICAgIGFkZGl0aW9uYWwgcmlnaHRzIHVuZGVyIHRoYXQgbGF3IOKAlCBmb3IgZXhhbXBsZSwgdGhlIHJpZ2h0IHRvIGxvZGdlIGEgY29tcGxhaW50IHdpdGggeW91clxuICAgICAgICAgIGxvY2FsIGRhdGEgcHJvdGVjdGlvbiBhdXRob3JpdHksIG9yIENhbGlmb3JuaWEmcnNxdW87cyByaWdodCB0byBrbm93LCBkZWxldGUsIG9yIG9wdCBvdXRcbiAgICAgICAgICBvZiB0aGUgc2FsZSBvciBzaGFyaW5nIG9mIHBlcnNvbmFsIGluZm9ybWF0aW9uLiBBcyBub3RlZCBhYm92ZSwgUm91dGVGbG93IGRvZXMgbm90IHNlbGxcbiAgICAgICAgICBwZXJzb25hbCBpbmZvcm1hdGlvbi4gVG8gZXhlcmNpc2UgYW55IG9mIHRoZXNlIHJpZ2h0cywgY29udGFjdHtcIiBcIn1cbiAgICAgICAgICA8YSBocmVmPXtgbWFpbHRvOiR7c2l0ZS5lbWFpbH1gfT57c2l0ZS5lbWFpbH08L2E+LlxuICAgICAgICA8L3A+XG5cbiAgICAgICAgPGgyIGlkPVwiZGF0YS1zZWN1cml0eVwiPkRhdGEgc2VjdXJpdHk8L2gyPlxuICAgICAgICA8cD5cbiAgICAgICAgICBXZSB1c2UgaW5kdXN0cnktc3RhbmRhcmQgc2FmZWd1YXJkcyB0byBwcm90ZWN0IGluZm9ybWF0aW9uLCBpbmNsdWRpbmcgZW5jcnlwdGlvbiBvZlxuICAgICAgICAgIHNlbnNpdGl2ZSBkYXRhIGF0IHJlc3QgKGUuZy4sIHN0b3JlZCB0aGlyZC1wYXJ0eSBjcmVkZW50aWFscyBhbmQgY29ubmVjdGVkLW1haWxib3hcbiAgICAgICAgICB0b2tlbnMpLCBlbmNyeXB0ZWQgY29ubmVjdGlvbnMgKFRMUykgaW4gdHJhbnNpdCwgYW5kIGFjY2VzcyBjb250cm9scyBzY29wZWQgcGVyIFRlbmFudC4gTm9cbiAgICAgICAgICBtZXRob2Qgb2YgdHJhbnNtaXNzaW9uIG9yIHN0b3JhZ2UgaXMgMTAwJSBzZWN1cmUuIElmIHlvdSBkaXNjb3ZlciBhIHBvdGVudGlhbCBzZWN1cml0eVxuICAgICAgICAgIHZ1bG5lcmFiaWxpdHksIHBsZWFzZSByZXBvcnQgaXQgdG97XCIgXCJ9XG4gICAgICAgICAgPGEgaHJlZj1cIm1haWx0bzpzZWN1cml0eUByb3V0ZWZsb3cuaW5mb1wiPnNlY3VyaXR5QHJvdXRlZmxvdy5pbmZvPC9hPiDigJQgc2VlIG91cntcIiBcIn1cbiAgICAgICAgICA8YVxuICAgICAgICAgICAgaHJlZj1cImh0dHBzOi8vZ2l0aHViLmNvbS9uYWphdGhha3JhbS9yb3V0ZWZsb3cvYmxvYi9tYXN0ZXIvU0VDVVJJVFkubWRcIlxuICAgICAgICAgICAgdGFyZ2V0PVwiX2JsYW5rXCJcbiAgICAgICAgICAgIHJlbD1cIm5vcmVmZXJyZXJcIlxuICAgICAgICAgID5cbiAgICAgICAgICAgIFNlY3VyaXR5IFBvbGljeVxuICAgICAgICAgIDwvYT57XCIgXCJ9XG4gICAgICAgICAgZm9yIG91ciByZXNwb25zaWJsZS1kaXNjbG9zdXJlIHByb2Nlc3MuXG4gICAgICAgIDwvcD5cblxuICAgICAgICA8aDIgaWQ9XCJpbnRlcm5hdGlvbmFsLXRyYW5zZmVyc1wiPkludGVybmF0aW9uYWwgZGF0YSB0cmFuc2ZlcnM8L2gyPlxuICAgICAgICA8cD5cbiAgICAgICAgICBSb3V0ZUZsb3cmcnNxdW87cyBpbmZyYXN0cnVjdHVyZSBpcyBob3N0ZWQgaW4gdGhlIFVuaXRlZCBTdGF0ZXMgKHZpYSBSYWlsd2F5KS4gSWYgeW91XG4gICAgICAgICAgYWNjZXNzIHRoZSBTZXJ2aWNlIGZyb20gb3V0c2lkZSB0aGUgVW5pdGVkIFN0YXRlcywgeW91ciBpbmZvcm1hdGlvbiB3aWxsIGJlIHRyYW5zZmVycmVkIHRvXG4gICAgICAgICAgYW5kIHByb2Nlc3NlZCBpbiB0aGUgVW5pdGVkIFN0YXRlcy4gV2hlcmUgcmVxdWlyZWQsIHdlIHJlbHkgb24gdGhlIEV1cm9wZWFuXG4gICAgICAgICAgQ29tbWlzc2lvbiZyc3F1bztzIFN0YW5kYXJkIENvbnRyYWN0dWFsIENsYXVzZXMgKG9yIGFuIGVxdWl2YWxlbnQgbGF3ZnVsIHRyYW5zZmVyXG4gICAgICAgICAgbWVjaGFuaXNtKSB0byBzYWZlZ3VhcmQgcGVyc29uYWwgaW5mb3JtYXRpb24gdHJhbnNmZXJyZWQgZnJvbSB0aGUgRUVBLCBVSywgb3IgU3dpdHplcmxhbmRcbiAgICAgICAgICB0byB0aGUgVW5pdGVkIFN0YXRlcy5cbiAgICAgICAgPC9wPlxuXG4gICAgICAgIDxoMiBpZD1cImNoaWxkcmVucy1wcml2YWN5XCI+Q2hpbGRyZW4mcnNxdW87cyBwcml2YWN5PC9oMj5cbiAgICAgICAgPHA+XG4gICAgICAgICAgVGhlIFNlcnZpY2UgaXMgYSBidXNpbmVzcyB0b29sIGludGVuZGVkIGZvciB1c2UgYnkgYWR1bHRzIGFjdGluZyBvbiBiZWhhbGYgb2YgYSBidXNpbmVzcy5cbiAgICAgICAgICBSb3V0ZUZsb3cgaXMgbm90IGRpcmVjdGVkIHRvIGNoaWxkcmVuLCBhbmQgd2UgZG8gbm90IGtub3dpbmdseSBjb2xsZWN0IHBlcnNvbmFsXG4gICAgICAgICAgaW5mb3JtYXRpb24gZnJvbSBhbnlvbmUgdW5kZXIgdGhlIGFnZSBvZiAxOC4gSWYgeW91IGJlbGlldmUgYSBjaGlsZCBoYXMgcHJvdmlkZWQgdXMgd2l0aFxuICAgICAgICAgIHBlcnNvbmFsIGluZm9ybWF0aW9uLCBwbGVhc2UgY29udGFjdCA8YSBocmVmPXtgbWFpbHRvOiR7c2l0ZS5lbWFpbH1gfT57c2l0ZS5lbWFpbH08L2E+IHNvXG4gICAgICAgICAgd2UgY2FuIGRlbGV0ZSBpdC5cbiAgICAgICAgPC9wPlxuXG4gICAgICAgIDxoMiBpZD1cImNoYW5nZXNcIj5DaGFuZ2VzIHRvIHRoaXMgcG9saWN5PC9oMj5cbiAgICAgICAgPHA+XG4gICAgICAgICAgV2UgbWF5IHVwZGF0ZSB0aGlzIFByaXZhY3kgUG9saWN5IGZyb20gdGltZSB0byB0aW1lLiBJZiB3ZSBtYWtlIG1hdGVyaWFsIGNoYW5nZXMsIHdlIHdpbGxcbiAgICAgICAgICB1cGRhdGUgdGhlICZsZHF1bztMYXN0IHVwZGF0ZWQmcmRxdW87IGRhdGUgYWJvdmUgYW5kLCB3aGVyZSBhcHByb3ByaWF0ZSwgcHJvdmlkZVxuICAgICAgICAgIGFkZGl0aW9uYWwgbm90aWNlIChzdWNoIGFzIGFuIGluLWFwcCBub3RpY2Ugb3IgZW1haWwgdG8gVGVuYW50IGFjY291bnQgaG9sZGVycykuIFlvdXJcbiAgICAgICAgICBjb250aW51ZWQgdXNlIG9mIHRoZSBTZXJ2aWNlIGFmdGVyIGEgY2hhbmdlIHRha2VzIGVmZmVjdCBjb25zdGl0dXRlcyBhY2NlcHRhbmNlIG9mIHRoZVxuICAgICAgICAgIHVwZGF0ZWQgcG9saWN5LlxuICAgICAgICA8L3A+XG5cbiAgICAgICAgPGgyIGlkPVwiZ292ZXJuaW5nLWxhd1wiPkdvdmVybmluZyBsYXc8L2gyPlxuICAgICAgICA8cD5cbiAgICAgICAgICBUaGlzIFByaXZhY3kgUG9saWN5IGlzIGdvdmVybmVkIGJ5IHRoZSBsYXdzIG9mIHRoZSBTdGF0ZSBvZiBXeW9taW5nLCBVU0EsIHdpdGhvdXQgcmVnYXJkXG4gICAgICAgICAgdG8gaXRzIGNvbmZsaWN0LW9mLWxhd3MgcHJpbmNpcGxlcy4gQW55IGRpc3B1dGUgYXJpc2luZyBvdXQgb2Ygb3IgcmVsYXRpbmcgdG8gdGhpcyBQcml2YWN5XG4gICAgICAgICAgUG9saWN5IHdpbGwgYmUgYnJvdWdodCBleGNsdXNpdmVseSBpbiB0aGUgc3RhdGUgb3IgZmVkZXJhbCBjb3VydHMgbG9jYXRlZCBpbiBXeW9taW5nLCBVU0EsXG4gICAgICAgICAgYW5kIHlvdSBjb25zZW50IHRvIHRoZSBwZXJzb25hbCBqdXJpc2RpY3Rpb24gb2YgdGhvc2UgY291cnRzLlxuICAgICAgICA8L3A+XG5cbiAgICAgICAgPGgyIGlkPVwiY29udGFjdFwiPkNvbnRhY3QgdXM8L2gyPlxuICAgICAgICA8cD5RdWVzdGlvbnMgYWJvdXQgdGhpcyBQcml2YWN5IFBvbGljeSBvciBvdXIgZGF0YSBwcmFjdGljZXM6PC9wPlxuICAgICAgICA8dWw+XG4gICAgICAgICAgPGxpPlxuICAgICAgICAgICAgPHN0cm9uZz5FbWFpbDo8L3N0cm9uZz4gPGEgaHJlZj17YG1haWx0bzoke3NpdGUuZW1haWx9YH0+e3NpdGUuZW1haWx9PC9hPlxuICAgICAgICAgIDwvbGk+XG4gICAgICAgICAgPGxpPlxuICAgICAgICAgICAgPHN0cm9uZz5TZWN1cml0eSByZXBvcnRzOjwvc3Ryb25nPntcIiBcIn1cbiAgICAgICAgICAgIDxhIGhyZWY9XCJtYWlsdG86c2VjdXJpdHlAcm91dGVmbG93LmluZm9cIj5zZWN1cml0eUByb3V0ZWZsb3cuaW5mbzwvYT5cbiAgICAgICAgICA8L2xpPlxuICAgICAgICAgIDxsaT5cbiAgICAgICAgICAgIDxzdHJvbmc+TWFpbDo8L3N0cm9uZz4gMTA3MDEgQ29ycG9yYXRlIERyIFN0ZSAxOTAsIFN0YWZmb3JkLCBUWCA3NzQ3N1xuICAgICAgICAgIDwvbGk+XG4gICAgICAgIDwvdWw+XG5cbiAgICAgICAgPExpbmsgaHJlZj1cIi9cIiBjbGFzc05hbWU9XCJ0ZXh0LWxpbmtcIj5cbiAgICAgICAgICBSZXR1cm4gdG8gUm91dGVGbG93IDxBcnJvd1JpZ2h0IHNpemU9ezE4fSAvPlxuICAgICAgICA8L0xpbms+XG4gICAgICA8L3NlY3Rpb24+XG4gICAgPC9kaXY+XG4gICk7XG59XG4iXSwibmFtZXMiOlsiUHJpdmFjeVBhZ2UiLCJtZXRhZGF0YSIsIkxBU1RfVVBEQVRFRCIsInJvdXRlIiwicm91dGVzIiwiZmluZCIsInIiLCJzbHVnIiwidGl0bGUiLCJkZXNjcmlwdGlvbiIsImFsdGVybmF0ZXMiLCJjYW5vbmljYWwiLCJvcGVuR3JhcGgiLCJ1cmwiLCJzaXRlTmFtZSIsInNpdGUiLCJuYW1lIiwidHlwZSIsImRpdiIsImNsYXNzTmFtZSIsInNlY3Rpb24iLCJFeWVicm93IiwiaDEiLCJwIiwic3Ryb25nIiwiYnIiLCJhIiwiaHJlZiIsImgyIiwiaWQiLCJlbWFpbCIsIm9yaWdpbiIsImgzIiwidWwiLCJsaSIsInRhYmxlIiwidGhlYWQiLCJ0ciIsInRoIiwidGJvZHkiLCJ0ZCIsImNvZGUiLCJ0YXJnZXQiLCJyZWwiLCJMaW5rIiwiQXJyb3dSaWdodCIsInNpemUiXSwibWFwcGluZ3MiOiI7Ozs7Ozs7Ozs7O1FBMkJBO2VBQXdCQTs7UUFiWEM7ZUFBQUE7Ozs7NkRBYkk7NkJBQ1U7c0JBQ0U7MkJBQ0w7Ozs7OztBQUV4Qix5REFBeUQ7QUFDekQsd0ZBQXdGO0FBQ3hGLHlGQUF5RjtBQUN6RiwwREFBMEQ7QUFDMUQsTUFBTUMsZUFBZTtBQUVyQixNQUFNQyxRQUFRQyxZQUFNLENBQUNDLElBQUksQ0FBQyxDQUFDQyxJQUFNQSxFQUFFQyxJQUFJLEtBQUs7QUFFckMsTUFBTU4sV0FBcUI7SUFDaENPLE9BQU9MLE1BQU1LLEtBQUs7SUFDbEJDLGFBQWFOLE1BQU1NLFdBQVc7SUFDOUJDLFlBQVk7UUFBRUMsV0FBVztJQUFXO0lBQ3BDQyxXQUFXO1FBQ1RKLE9BQU9MLE1BQU1LLEtBQUs7UUFDbEJDLGFBQWFOLE1BQU1NLFdBQVc7UUFDOUJJLEtBQUs7UUFDTEMsVUFBVUMsVUFBSSxDQUFDQyxJQUFJO1FBQ25CQyxNQUFNO0lBQ1I7QUFDRjtBQUVlLFNBQVNqQjtJQUN0QixxQkFDRSxxQkFBQ2tCO1FBQUlDLFdBQVU7a0JBQ2IsY0FBQSxzQkFBQ0M7WUFBUUQsV0FBVTs7OEJBQ2pCLHFCQUFDRSxrQkFBTzs4QkFBQzs7OEJBQ1QscUJBQUNDOzhCQUFHOzs4QkFDSixzQkFBQ0M7O3NDQUNDLHFCQUFDQztzQ0FBTzs7d0JBQXdCO3dCQUFFdEI7c0NBQ2xDLHFCQUFDdUI7c0NBQ0QscUJBQUNEO3NDQUFPOzt3QkFBc0I7d0JBQUV0Qjs7OzhCQUdsQyxxQkFBQ3FCOzhCQUFFOzs4QkFRSCxxQkFBQ0E7OEJBQUU7OzhCQUlILHNCQUFDQTs7d0JBQUU7d0JBRXNDO3NDQUN2QyxxQkFBQ0c7NEJBQUVDLE1BQUs7c0NBQTJCOzt3QkFBcUQ7d0JBQUk7Ozs4QkFLOUYscUJBQUNDO29CQUFHQyxJQUFHOzhCQUFhOzs4QkFDcEIsc0JBQUNOOztzQ0FDQyxxQkFBQ0M7c0NBQU87O3dCQUFrQjtzQ0FFMUIscUJBQUNDO3NDQUNELHFCQUFDRDtzQ0FBTzs7d0JBQXlCO3NDQUFDLHFCQUFDRTs0QkFBRUMsTUFBTSxDQUFDLE9BQU8sRUFBRVosVUFBSSxDQUFDZSxLQUFLLEVBQUU7c0NBQUdmLFVBQUksQ0FBQ2UsS0FBSzs7c0NBQzlFLHFCQUFDTDtzQ0FDRCxxQkFBQ0Q7c0NBQU87O3dCQUEyQztzQ0FDbkQscUJBQUNFOzRCQUFFQyxNQUFLO3NDQUFpQzs7c0NBQ3pDLHFCQUFDRjtzQ0FDRCxxQkFBQ0Q7c0NBQU87O3dCQUFpQjtzQ0FBQyxxQkFBQ0U7NEJBQUVDLE1BQU1aLFVBQUksQ0FBQ2dCLE1BQU07c0NBQUdoQixVQUFJLENBQUNnQixNQUFNOzs7OzhCQUc5RCxxQkFBQ0g7b0JBQUdDLElBQUc7OEJBQTBCOzs4QkFDakMsc0JBQUNOOzt3QkFBRTtzQ0FDYyxxQkFBQ0M7c0NBQU87O3dCQUFxQjs7OzhCQUk5QyxzQkFBQ0Q7O3NDQUNDLHFCQUFDQztzQ0FBTzs7d0JBQXdDO3dCQUMwQztzQ0FDMUYscUJBQUNBO3NDQUFPOzt3QkFBc0M7d0JBQThCO3NDQUM1RSxxQkFBQ0E7c0NBQU87O3dCQUF1Qjs7OzhCQU1qQyxzQkFBQ0Q7O3NDQUNDLHFCQUFDQztzQ0FBTzs7d0JBQXlDO3dCQUVjO3NDQUMvRCxxQkFBQ0E7c0NBQU87O3dCQUF5Qzs7OzhCQUluRCxxQkFBQ0k7b0JBQUdDLElBQUc7OEJBQXlCOzs4QkFFaEMscUJBQUNHOzhCQUFHOzs4QkFDSixzQkFBQ0M7O3NDQUNDLHNCQUFDQzs7OENBQ0MscUJBQUNWOzhDQUFPOztnQ0FBa0M7OztzQ0FHNUMsc0JBQUNVOzs4Q0FDQyxxQkFBQ1Y7OENBQU87O2dDQUFrQzs7O3NDQUk1QyxzQkFBQ1U7OzhDQUNDLHFCQUFDVjs4Q0FBTzs7Z0NBQXFCO2dDQUN5Qzs4Q0FDdEUscUJBQUNBOzhDQUFPOztnQ0FBc0I7OztzQ0FFaEMsc0JBQUNVOzs4Q0FDQyxxQkFBQ1Y7OENBQU87O2dDQUF5Qzs7O3NDQUduRCxzQkFBQ1U7OzhDQUNDLHFCQUFDVjs4Q0FBTzs7Z0NBQXdCOzhDQUVRLHFCQUFDQTs4Q0FBTzs7Z0NBQWU7OztzQ0FHakUsc0JBQUNVOzs4Q0FDQyxxQkFBQ1Y7OENBQU87O2dDQUF3Qjs7O3NDQUdsQyxzQkFBQ1U7OzhDQUNDLHFCQUFDVjs4Q0FBTzs7Z0NBQXNDO2dDQUFrQjs4Q0FDaEUscUJBQUNFO29DQUFFQyxNQUFNLENBQUMsT0FBTyxFQUFFWixVQUFJLENBQUNlLEtBQUssRUFBRTs4Q0FBR2YsVUFBSSxDQUFDZSxLQUFLOztnQ0FBSztnQ0FBSTs4Q0FDckQscUJBQUNKO29DQUFFQyxNQUFLOzhDQUFpQzs7Z0NBQTJCOzs7c0NBR3RFLHNCQUFDTzs7OENBQ0MscUJBQUNWOzhDQUFPOztnQ0FBK0I7Z0NBRTRCOzhDQUNuRSxxQkFBQ0U7b0NBQUVDLE1BQUs7OENBQWdCOztnQ0FBdUM7Ozs7OzhCQUtuRSxxQkFBQ0s7OEJBQUc7OzhCQUNKLHNCQUFDQzs7c0NBQ0Msc0JBQUNDOzs4Q0FDQyxxQkFBQ1Y7OENBQU87O2dDQUFpQzs7O3NDQUkzQyxzQkFBQ1U7OzhDQUNDLHFCQUFDVjs4Q0FBTzs7Z0NBQXVCO2dDQUFrRDs4Q0FDakYscUJBQUNBOzhDQUFPOztnQ0FBMkI7OztzQ0FLckMsc0JBQUNVOzs4Q0FDQyxxQkFBQ1Y7OENBQU87O2dDQUE4Qzs7O3NDQVF4RCxzQkFBQ1U7OzhDQUNDLHFCQUFDVjs4Q0FBTzs7Z0NBQXNDOzs7Ozs4QkFTbEQscUJBQUNROzhCQUFHOzs4QkFDSixzQkFBQ0M7O3NDQUNDLHNCQUFDQzs7OENBQ0MscUJBQUNWOzhDQUFPOztnQ0FBd0I7OztzQ0FJbEMsc0JBQUNVOzs4Q0FDQyxxQkFBQ1Y7OENBQU87O2dDQUF3Qzs4Q0FDcEMscUJBQUNBOzhDQUFPOztnQ0FBb0I7OztzQ0FJMUMsc0JBQUNVOzs4Q0FDQyxxQkFBQ1Y7OENBQU87O2dDQUEyQzs4Q0FDRixxQkFBQ0E7OENBQU87O2dDQUFpQjs7Ozs7OEJBSzlFLHFCQUFDSTtvQkFBR0MsSUFBRzs4QkFBeUI7OzhCQUNoQyxxQkFBQ047OEJBQUU7OzhCQUNILHNCQUFDVTs7c0NBQ0MscUJBQUNDO3NDQUFHOztzQ0FJSixxQkFBQ0E7c0NBQUc7O3NDQUNKLHNCQUFDQTs7Z0NBQUc7OENBRVcscUJBQUNSO29DQUFFQyxNQUFLOzhDQUFrQjs7Z0NBQWdDOzs7c0NBR3pFLHFCQUFDTztzQ0FBRzs7c0NBQ0oscUJBQUNBO3NDQUFHOztzQ0FJSixzQkFBQ0E7O2dDQUFHO2dDQUN3RDs4Q0FDMUQscUJBQUNSO29DQUFFQyxNQUFNLENBQUMsT0FBTyxFQUFFWixVQUFJLENBQUNlLEtBQUssRUFBRTs4Q0FBR2YsVUFBSSxDQUFDZSxLQUFLOztnQ0FBSztnQ0FBSTs4Q0FDckQscUJBQUNKO29DQUFFQyxNQUFLOzhDQUFpQzs7Z0NBQTJCOzs7c0NBRXRFLHFCQUFDTztzQ0FBRzs7c0NBQ0oscUJBQUNBO3NDQUFHOztzQ0FDSixxQkFBQ0E7c0NBQUc7Ozs7OEJBRU4sc0JBQUNYOzt3QkFBRTtzQ0FDSyxxQkFBQ0M7c0NBQU87O3dCQUFZOzs7OEJBSTVCLHFCQUFDSTtvQkFBR0MsSUFBRzs4QkFBaUI7OzhCQUN4QixxQkFBQ047OEJBQUU7OzhCQU1ILHFCQUFDTDtvQkFBSUMsV0FBVTs4QkFDYixjQUFBLHNCQUFDZ0I7OzBDQUNDLHFCQUFDQzswQ0FDQyxjQUFBLHNCQUFDQzs7c0RBQ0MscUJBQUNDO3NEQUFHOztzREFDSixxQkFBQ0E7c0RBQUc7O3NEQUNKLHFCQUFDQTtzREFBRzs7Ozs7MENBR1Isc0JBQUNDOztrREFDQyxzQkFBQ0Y7OzBEQUNDLHFCQUFDRzswREFBRzs7MERBQ0oscUJBQUNBOzBEQUFHOzswREFDSixxQkFBQ0E7MERBQUc7Ozs7a0RBRU4sc0JBQUNIOzswREFDQyxxQkFBQ0c7MERBQUc7OzBEQUNKLHFCQUFDQTswREFBRzs7MERBQ0oscUJBQUNBOzBEQUFHOzs7O2tEQUtOLHNCQUFDSDs7MERBQ0MscUJBQUNHOzBEQUFHOzswREFDSixxQkFBQ0E7MERBQUc7OzBEQUtKLHFCQUFDQTswREFBRzs7OztrREFNTixzQkFBQ0g7OzBEQUNDLHFCQUFDRzswREFBRzs7MERBQ0oscUJBQUNBOzBEQUFHOzswREFNSixxQkFBQ0E7MERBQUc7Ozs7a0RBS04sc0JBQUNIOzswREFDQyxxQkFBQ0c7MERBQUc7OzBEQUNKLHFCQUFDQTswREFBRzs7MERBSUoscUJBQUNBOzBEQUFHOzs7O2tEQUVOLHNCQUFDSDs7MERBQ0MscUJBQUNHOzBEQUFHOzswREFDSixxQkFBQ0E7MERBQUc7OzBEQUNKLHFCQUFDQTswREFBRzs7OztrREFLTixzQkFBQ0g7OzBEQUNDLHFCQUFDRzswREFBRzs7MERBQ0oscUJBQUNBOzBEQUFHOzswREFDSixxQkFBQ0E7MERBQUc7Ozs7a0RBRU4sc0JBQUNIOzswREFDQyxxQkFBQ0c7MERBQUc7OzBEQUNKLHFCQUFDQTswREFBRzs7MERBSUoscUJBQUNBOzBEQUFHOzs7O2tEQUVOLHNCQUFDSDs7MERBQ0MscUJBQUNHOzBEQUFHOzswREFDSixxQkFBQ0E7MERBQUc7OzBEQUNKLHFCQUFDQTswREFBRzs7OztrREFFTixzQkFBQ0g7OzBEQUNDLHFCQUFDRzswREFBRzs7MERBQ0oscUJBQUNBOzBEQUFHOzswREFDSixxQkFBQ0E7MERBQUc7Ozs7a0RBRU4sc0JBQUNIOzswREFDQyxxQkFBQ0c7MERBQUc7OzBEQUNKLHFCQUFDQTswREFBRzs7MERBQ0oscUJBQUNBOzBEQUFHOzs7Ozs7Ozs7OEJBUVoscUJBQUNqQjs4QkFBRTs7OEJBS0gscUJBQUNTO29CQUFHSCxJQUFHOzhCQUFrQjs7OEJBR3pCLHNCQUFDTjs7d0JBQUU7c0NBR3VCLHFCQUFDQztzQ0FBTzs7d0JBQTRDOzs7OEJBRzlFLHNCQUFDUzs7c0NBQ0Msc0JBQUNDOztnQ0FBRzs4Q0FDd0IscUJBQUNWOzhDQUFPOztnQ0FBa0I7Z0NBQTZCOzhDQUNqRixxQkFBQ2lCOzhDQUFLOztnQ0FBaUI7OENBQWtDLHFCQUFDQTs4Q0FBSzs7Z0NBQWlCO2dDQUFJO2dDQUN4RTs4Q0FDWixxQkFBQ2pCOzhDQUFPOzs7O3NDQUtWLHFCQUFDVTtzQ0FBRzs7c0NBS0osc0JBQUNBOztnQ0FBRztnQ0FDc0Q7OENBQ3hELHFCQUFDVjs4Q0FBTzs7Z0NBQTBCOzs7c0NBR3BDLHNCQUFDVTs7OENBQ0MscUJBQUNWOzhDQUFPOztnQ0FBc0I7Ozs7OzhCQUtsQyxxQkFBQ1E7OEJBQUc7OzhCQUNKLHNCQUFDVDs7d0JBQUU7d0JBRXVCO3NDQUN4QixxQkFBQ0c7NEJBQ0NDLE1BQUs7NEJBQ0xlLFFBQU87NEJBQ1BDLEtBQUk7c0NBQ0w7O3dCQUVHO3NDQUNZLHFCQUFDbkI7c0NBQU87O3dCQUFpQzs7OzhCQUczRCxzQkFBQ1M7O3NDQUNDLHFCQUFDQztzQ0FBRzs7c0NBSUoscUJBQUNBO3NDQUFHOztzQ0FLSixxQkFBQ0E7c0NBQUc7O3NDQUtKLHFCQUFDQTtzQ0FBRzs7Ozs4QkFNTixxQkFBQ0Y7b0JBQUdILElBQUc7OEJBQWU7OzhCQUN0QixzQkFBQ047O3dCQUFFO3dCQUV1RTtzQ0FDeEUscUJBQUNDO3NDQUFPOzt3QkFBZ0Q7Ozs4QkFLMUQsc0JBQUNEOzt3QkFBRTt3QkFDaUU7c0NBQ2xFLHFCQUFDQztzQ0FBTzs7d0JBQThDO3dCQUV2QjtzQ0FDL0IscUJBQUNBO3NDQUFPOzt3QkFBOEU7Ozs4QkFLeEYscUJBQUNEOzhCQUFFOzs4QkFLSCxxQkFBQ0E7OEJBQUU7OzhCQU1ILHFCQUFDSztvQkFBR0MsSUFBRzs4QkFBaUI7OzhCQUN4QixzQkFBQ0k7O3NDQUNDLHFCQUFDQztzQ0FBRzs7c0NBTUoscUJBQUNBO3NDQUFHOztzQ0FJSixxQkFBQ0E7c0NBQUc7O3NDQUdKLHNCQUFDQTs7Z0NBQUc7Z0NBRXFFOzhDQUN2RSxxQkFBQ1I7b0NBQUVDLE1BQUs7OENBQWU7O2dDQUF5Qzs7Ozs7OEJBSXBFLHFCQUFDQztvQkFBR0MsSUFBRzs4QkFBYzs7OEJBQ3JCLHFCQUFDTjs4QkFBRTs7OEJBS0gsc0JBQUNVOztzQ0FDQyxzQkFBQ0M7OzhDQUNDLHFCQUFDVjs4Q0FBTzs7Z0NBQTZEOzs7c0NBSXZFLHNCQUFDVTs7OENBQ0MscUJBQUNWOzhDQUFPOztnQ0FHRTtnQ0FBSTs4Q0FDUixxQkFBQ0U7b0NBQUVDLE1BQU0sQ0FBQyxPQUFPLEVBQUVaLFVBQUksQ0FBQ2UsS0FBSyxFQUFFOzhDQUFHZixVQUFJLENBQUNlLEtBQUs7O2dDQUFLOzs7c0NBSXpELHFCQUFDSTtzQ0FBRzs7Ozs4QkFLTixzQkFBQ1g7O3dCQUFFO3dCQU04RDtzQ0FDL0QscUJBQUNHOzRCQUFFQyxNQUFNLENBQUMsT0FBTyxFQUFFWixVQUFJLENBQUNlLEtBQUssRUFBRTtzQ0FBR2YsVUFBSSxDQUFDZSxLQUFLOzt3QkFBSzs7OzhCQUduRCxxQkFBQ0Y7b0JBQUdDLElBQUc7OEJBQWdCOzs4QkFDdkIsc0JBQUNOOzt3QkFBRTt3QkFLa0M7c0NBQ25DLHFCQUFDRzs0QkFBRUMsTUFBSztzQ0FBaUM7O3dCQUEyQjt3QkFBVztzQ0FDL0UscUJBQUNEOzRCQUNDQyxNQUFLOzRCQUNMZSxRQUFPOzRCQUNQQyxLQUFJO3NDQUNMOzt3QkFFSTt3QkFBSTs7OzhCQUlYLHFCQUFDZjtvQkFBR0MsSUFBRzs4QkFBMEI7OzhCQUNqQyxxQkFBQ047OEJBQUU7OzhCQVNILHFCQUFDSztvQkFBR0MsSUFBRzs4QkFBb0I7OzhCQUMzQixzQkFBQ047O3dCQUFFO3NDQUlvQyxxQkFBQ0c7NEJBQUVDLE1BQU0sQ0FBQyxPQUFPLEVBQUVaLFVBQUksQ0FBQ2UsS0FBSyxFQUFFO3NDQUFHZixVQUFJLENBQUNlLEtBQUs7O3dCQUFLOzs7OEJBSXhGLHFCQUFDRjtvQkFBR0MsSUFBRzs4QkFBVTs7OEJBQ2pCLHFCQUFDTjs4QkFBRTs7OEJBUUgscUJBQUNLO29CQUFHQyxJQUFHOzhCQUFnQjs7OEJBQ3ZCLHFCQUFDTjs4QkFBRTs7OEJBT0gscUJBQUNLO29CQUFHQyxJQUFHOzhCQUFVOzs4QkFDakIscUJBQUNOOzhCQUFFOzs4QkFDSCxzQkFBQ1U7O3NDQUNDLHNCQUFDQzs7OENBQ0MscUJBQUNWOzhDQUFPOztnQ0FBZTs4Q0FBQyxxQkFBQ0U7b0NBQUVDLE1BQU0sQ0FBQyxPQUFPLEVBQUVaLFVBQUksQ0FBQ2UsS0FBSyxFQUFFOzhDQUFHZixVQUFJLENBQUNlLEtBQUs7Ozs7c0NBRXRFLHNCQUFDSTs7OENBQ0MscUJBQUNWOzhDQUFPOztnQ0FBMkI7OENBQ25DLHFCQUFDRTtvQ0FBRUMsTUFBSzs4Q0FBaUM7Ozs7c0NBRTNDLHNCQUFDTzs7OENBQ0MscUJBQUNWOzhDQUFPOztnQ0FBYzs7Ozs7OEJBSTFCLHNCQUFDb0IsYUFBSTtvQkFBQ2pCLE1BQUs7b0JBQUlSLFdBQVU7O3dCQUFZO3NDQUNmLHFCQUFDMEIsdUJBQVU7NEJBQUNDLE1BQU07Ozs7Ozs7QUFLaEQifQ==

@@ -1,0 +1,131 @@
+8a23458f6cee45ad0a86e5f0c52d60a9
+/**
+ * en/es message catalog (home-grown i18n — no runtime dependency).
+ *
+ * `en` is the source of truth and defines the key set; `es` must cover the same
+ * keys (enforced by the `Messages` type). Keys are dotted namespaces. Interpolate
+ * with `{name}` placeholders. Coverage grows as screens are rebuilt per phase;
+ * this is the Phase-1 foundation set (shell, command palette, undo, re-auth).
+ *
+ * Customer-facing copy uses each customer's own locale, independent of the
+ * operator's — see messaging spec. This catalog is the operator/app UI only.
+ */ "use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, {
+        enumerable: true,
+        get: Object.getOwnPropertyDescriptor(all, name).get
+    });
+}
+_export(exports, {
+    get LOCALES () {
+        return LOCALES;
+    },
+    get LOCALE_LABELS () {
+        return LOCALE_LABELS;
+    },
+    get MESSAGES () {
+        return MESSAGES;
+    }
+});
+const LOCALES = [
+    "en",
+    "es"
+];
+const LOCALE_LABELS = {
+    en: "English",
+    es: "Español"
+};
+const en = {
+    // Common
+    "common.save": "Save",
+    "common.cancel": "Cancel",
+    "common.close": "Close",
+    "common.undo": "Undo",
+    "common.restored": "Restored",
+    "common.search": "Search",
+    "common.delete": "Delete",
+    "common.loading": "Loading",
+    // Undo / re-auth (unified/ux-standards.html)
+    "reauth.title": "You've been signed out",
+    "reauth.body": "Your session timed out. Your work is safe and exactly where you left it. Enter your password to pick up where you left off.",
+    "reauth.passwordFor": "Password for {username}",
+    "reauth.switch": "Switch account",
+    "reauth.unlock": "Unlock and continue",
+    "reauth.badPassword": "That password did not match. Try again.",
+    "reauth.or": "or",
+    "reauth.continueGoogle": "Continue with Google",
+    "reauth.forgot": "Forgot password?",
+    "reauth.googleUnavailable": "Google sign-in is unavailable right now. Use your password instead.",
+    // Top bar / avatar menu
+    "topbar.searchPlaceholder": "Search or jump to…",
+    "menu.profile": "Profile & Settings",
+    "menu.language": "Language / Idioma",
+    "menu.signOut": "Sign out",
+    "menu.switchToBuyerPortal": "Switch to buyer portal",
+    "menu.buyerPortalSignIn": "Buyer portal sign-in",
+    "menu.exitImpersonation": "Exit impersonation",
+    "menu.returnToAdmin": "Return to admin",
+    // Command palette (unified/overlays.html)
+    "palette.placeholder": "Search pages, customers, orders, invoices…",
+    "palette.jumpTo": "Jump to",
+    "palette.actions": "Actions",
+    "palette.results": "Results",
+    "palette.noResults": "No results for “{query}”",
+    "palette.navigate": "navigate",
+    "palette.select": "select",
+    "palette.shortcuts": "shortcuts",
+    // Navigation
+    "nav.dashboard": "Dashboard",
+    "nav.orders": "Orders",
+    "nav.customers": "Customers",
+    "nav.settings": "Settings"
+};
+const es = {
+    "common.save": "Guardar",
+    "common.cancel": "Cancelar",
+    "common.close": "Cerrar",
+    "common.undo": "Deshacer",
+    "common.restored": "Restaurado",
+    "common.search": "Buscar",
+    "common.delete": "Eliminar",
+    "common.loading": "Cargando",
+    "reauth.title": "Se cerró tu sesión",
+    "reauth.body": "Tu sesión expiró. Tu trabajo está a salvo y justo donde lo dejaste. Escribe tu contraseña para continuar donde quedaste.",
+    "reauth.passwordFor": "Contraseña de {username}",
+    "reauth.switch": "Cambiar de cuenta",
+    "reauth.unlock": "Desbloquear y continuar",
+    "reauth.badPassword": "La contraseña no coincide. Inténtalo de nuevo.",
+    "reauth.or": "o",
+    "reauth.continueGoogle": "Continuar con Google",
+    "reauth.forgot": "¿Olvidaste tu contraseña?",
+    "reauth.googleUnavailable": "Google no está disponible en este momento. Usa tu contraseña en su lugar.",
+    "topbar.searchPlaceholder": "Busca o salta a…",
+    "menu.profile": "Perfil y ajustes",
+    "menu.language": "Idioma / Language",
+    "menu.signOut": "Cerrar sesión",
+    "menu.switchToBuyerPortal": "Cambiar al portal de compradores",
+    "menu.buyerPortalSignIn": "Acceder al portal de compradores",
+    "menu.exitImpersonation": "Salir de la suplantación",
+    "menu.returnToAdmin": "Volver al panel de administración",
+    "palette.placeholder": "Busca páginas, clientes, pedidos, facturas…",
+    "palette.jumpTo": "Ir a",
+    "palette.actions": "Acciones",
+    "palette.results": "Resultados",
+    "palette.noResults": "Sin resultados para “{query}”",
+    "palette.navigate": "navegar",
+    "palette.select": "seleccionar",
+    "palette.shortcuts": "atajos",
+    "nav.dashboard": "Panel",
+    "nav.orders": "Pedidos",
+    "nav.customers": "Clientes",
+    "nav.settings": "Ajustes"
+};
+const MESSAGES = {
+    en,
+    es
+};
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2xpYi9pMThuL21lc3NhZ2VzLnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogZW4vZXMgbWVzc2FnZSBjYXRhbG9nIChob21lLWdyb3duIGkxOG4g4oCUIG5vIHJ1bnRpbWUgZGVwZW5kZW5jeSkuXG4gKlxuICogYGVuYCBpcyB0aGUgc291cmNlIG9mIHRydXRoIGFuZCBkZWZpbmVzIHRoZSBrZXkgc2V0OyBgZXNgIG11c3QgY292ZXIgdGhlIHNhbWVcbiAqIGtleXMgKGVuZm9yY2VkIGJ5IHRoZSBgTWVzc2FnZXNgIHR5cGUpLiBLZXlzIGFyZSBkb3R0ZWQgbmFtZXNwYWNlcy4gSW50ZXJwb2xhdGVcbiAqIHdpdGggYHtuYW1lfWAgcGxhY2Vob2xkZXJzLiBDb3ZlcmFnZSBncm93cyBhcyBzY3JlZW5zIGFyZSByZWJ1aWx0IHBlciBwaGFzZTtcbiAqIHRoaXMgaXMgdGhlIFBoYXNlLTEgZm91bmRhdGlvbiBzZXQgKHNoZWxsLCBjb21tYW5kIHBhbGV0dGUsIHVuZG8sIHJlLWF1dGgpLlxuICpcbiAqIEN1c3RvbWVyLWZhY2luZyBjb3B5IHVzZXMgZWFjaCBjdXN0b21lcidzIG93biBsb2NhbGUsIGluZGVwZW5kZW50IG9mIHRoZVxuICogb3BlcmF0b3IncyDigJQgc2VlIG1lc3NhZ2luZyBzcGVjLiBUaGlzIGNhdGFsb2cgaXMgdGhlIG9wZXJhdG9yL2FwcCBVSSBvbmx5LlxuICovXG5cbmV4cG9ydCBjb25zdCBMT0NBTEVTID0gW1wiZW5cIiwgXCJlc1wiXSBhcyBjb25zdDtcbmV4cG9ydCB0eXBlIExvY2FsZSA9ICh0eXBlb2YgTE9DQUxFUylbbnVtYmVyXTtcblxuZXhwb3J0IGNvbnN0IExPQ0FMRV9MQUJFTFM6IFJlY29yZDxMb2NhbGUsIHN0cmluZz4gPSB7XG4gIGVuOiBcIkVuZ2xpc2hcIixcbiAgZXM6IFwiRXNwYcOxb2xcIixcbn07XG5cbmNvbnN0IGVuID0ge1xuICAvLyBDb21tb25cbiAgXCJjb21tb24uc2F2ZVwiOiBcIlNhdmVcIixcbiAgXCJjb21tb24uY2FuY2VsXCI6IFwiQ2FuY2VsXCIsXG4gIFwiY29tbW9uLmNsb3NlXCI6IFwiQ2xvc2VcIixcbiAgXCJjb21tb24udW5kb1wiOiBcIlVuZG9cIixcbiAgXCJjb21tb24ucmVzdG9yZWRcIjogXCJSZXN0b3JlZFwiLFxuICBcImNvbW1vbi5zZWFyY2hcIjogXCJTZWFyY2hcIixcbiAgXCJjb21tb24uZGVsZXRlXCI6IFwiRGVsZXRlXCIsXG4gIFwiY29tbW9uLmxvYWRpbmdcIjogXCJMb2FkaW5nXCIsXG5cbiAgLy8gVW5kbyAvIHJlLWF1dGggKHVuaWZpZWQvdXgtc3RhbmRhcmRzLmh0bWwpXG4gIFwicmVhdXRoLnRpdGxlXCI6IFwiWW91J3ZlIGJlZW4gc2lnbmVkIG91dFwiLFxuICBcInJlYXV0aC5ib2R5XCI6XG4gICAgXCJZb3VyIHNlc3Npb24gdGltZWQgb3V0LiBZb3VyIHdvcmsgaXMgc2FmZSBhbmQgZXhhY3RseSB3aGVyZSB5b3UgbGVmdCBpdC4gRW50ZXIgeW91ciBwYXNzd29yZCB0byBwaWNrIHVwIHdoZXJlIHlvdSBsZWZ0IG9mZi5cIixcbiAgXCJyZWF1dGgucGFzc3dvcmRGb3JcIjogXCJQYXNzd29yZCBmb3Ige3VzZXJuYW1lfVwiLFxuICBcInJlYXV0aC5zd2l0Y2hcIjogXCJTd2l0Y2ggYWNjb3VudFwiLFxuICBcInJlYXV0aC51bmxvY2tcIjogXCJVbmxvY2sgYW5kIGNvbnRpbnVlXCIsXG4gIFwicmVhdXRoLmJhZFBhc3N3b3JkXCI6IFwiVGhhdCBwYXNzd29yZCBkaWQgbm90IG1hdGNoLiBUcnkgYWdhaW4uXCIsXG4gIFwicmVhdXRoLm9yXCI6IFwib3JcIixcbiAgXCJyZWF1dGguY29udGludWVHb29nbGVcIjogXCJDb250aW51ZSB3aXRoIEdvb2dsZVwiLFxuICBcInJlYXV0aC5mb3Jnb3RcIjogXCJGb3Jnb3QgcGFzc3dvcmQ/XCIsXG4gIFwicmVhdXRoLmdvb2dsZVVuYXZhaWxhYmxlXCI6IFwiR29vZ2xlIHNpZ24taW4gaXMgdW5hdmFpbGFibGUgcmlnaHQgbm93LiBVc2UgeW91ciBwYXNzd29yZCBpbnN0ZWFkLlwiLFxuXG4gIC8vIFRvcCBiYXIgLyBhdmF0YXIgbWVudVxuICBcInRvcGJhci5zZWFyY2hQbGFjZWhvbGRlclwiOiBcIlNlYXJjaCBvciBqdW1wIHRv4oCmXCIsXG4gIFwibWVudS5wcm9maWxlXCI6IFwiUHJvZmlsZSAmIFNldHRpbmdzXCIsXG4gIFwibWVudS5sYW5ndWFnZVwiOiBcIkxhbmd1YWdlIC8gSWRpb21hXCIsXG4gIFwibWVudS5zaWduT3V0XCI6IFwiU2lnbiBvdXRcIixcbiAgXCJtZW51LnN3aXRjaFRvQnV5ZXJQb3J0YWxcIjogXCJTd2l0Y2ggdG8gYnV5ZXIgcG9ydGFsXCIsXG4gIFwibWVudS5idXllclBvcnRhbFNpZ25JblwiOiBcIkJ1eWVyIHBvcnRhbCBzaWduLWluXCIsXG4gIFwibWVudS5leGl0SW1wZXJzb25hdGlvblwiOiBcIkV4aXQgaW1wZXJzb25hdGlvblwiLFxuICBcIm1lbnUucmV0dXJuVG9BZG1pblwiOiBcIlJldHVybiB0byBhZG1pblwiLFxuXG4gIC8vIENvbW1hbmQgcGFsZXR0ZSAodW5pZmllZC9vdmVybGF5cy5odG1sKVxuICBcInBhbGV0dGUucGxhY2Vob2xkZXJcIjogXCJTZWFyY2ggcGFnZXMsIGN1c3RvbWVycywgb3JkZXJzLCBpbnZvaWNlc+KAplwiLFxuICBcInBhbGV0dGUuanVtcFRvXCI6IFwiSnVtcCB0b1wiLFxuICBcInBhbGV0dGUuYWN0aW9uc1wiOiBcIkFjdGlvbnNcIixcbiAgXCJwYWxldHRlLnJlc3VsdHNcIjogXCJSZXN1bHRzXCIsXG4gIFwicGFsZXR0ZS5ub1Jlc3VsdHNcIjogXCJObyByZXN1bHRzIGZvciDigJx7cXVlcnl94oCdXCIsXG4gIFwicGFsZXR0ZS5uYXZpZ2F0ZVwiOiBcIm5hdmlnYXRlXCIsXG4gIFwicGFsZXR0ZS5zZWxlY3RcIjogXCJzZWxlY3RcIixcbiAgXCJwYWxldHRlLnNob3J0Y3V0c1wiOiBcInNob3J0Y3V0c1wiLFxuXG4gIC8vIE5hdmlnYXRpb25cbiAgXCJuYXYuZGFzaGJvYXJkXCI6IFwiRGFzaGJvYXJkXCIsXG4gIFwibmF2Lm9yZGVyc1wiOiBcIk9yZGVyc1wiLFxuICBcIm5hdi5jdXN0b21lcnNcIjogXCJDdXN0b21lcnNcIixcbiAgXCJuYXYuc2V0dGluZ3NcIjogXCJTZXR0aW5nc1wiLFxufSBhcyBjb25zdDtcblxuZXhwb3J0IHR5cGUgTWVzc2FnZUtleSA9IGtleW9mIHR5cGVvZiBlbjtcbmV4cG9ydCB0eXBlIE1lc3NhZ2VzID0gUmVjb3JkPE1lc3NhZ2VLZXksIHN0cmluZz47XG5cbmNvbnN0IGVzOiBNZXNzYWdlcyA9IHtcbiAgXCJjb21tb24uc2F2ZVwiOiBcIkd1YXJkYXJcIixcbiAgXCJjb21tb24uY2FuY2VsXCI6IFwiQ2FuY2VsYXJcIixcbiAgXCJjb21tb24uY2xvc2VcIjogXCJDZXJyYXJcIixcbiAgXCJjb21tb24udW5kb1wiOiBcIkRlc2hhY2VyXCIsXG4gIFwiY29tbW9uLnJlc3RvcmVkXCI6IFwiUmVzdGF1cmFkb1wiLFxuICBcImNvbW1vbi5zZWFyY2hcIjogXCJCdXNjYXJcIixcbiAgXCJjb21tb24uZGVsZXRlXCI6IFwiRWxpbWluYXJcIixcbiAgXCJjb21tb24ubG9hZGluZ1wiOiBcIkNhcmdhbmRvXCIsXG5cbiAgXCJyZWF1dGgudGl0bGVcIjogXCJTZSBjZXJyw7MgdHUgc2VzacOzblwiLFxuICBcInJlYXV0aC5ib2R5XCI6XG4gICAgXCJUdSBzZXNpw7NuIGV4cGlyw7MuIFR1IHRyYWJham8gZXN0w6EgYSBzYWx2byB5IGp1c3RvIGRvbmRlIGxvIGRlamFzdGUuIEVzY3JpYmUgdHUgY29udHJhc2XDsWEgcGFyYSBjb250aW51YXIgZG9uZGUgcXVlZGFzdGUuXCIsXG4gIFwicmVhdXRoLnBhc3N3b3JkRm9yXCI6IFwiQ29udHJhc2XDsWEgZGUge3VzZXJuYW1lfVwiLFxuICBcInJlYXV0aC5zd2l0Y2hcIjogXCJDYW1iaWFyIGRlIGN1ZW50YVwiLFxuICBcInJlYXV0aC51bmxvY2tcIjogXCJEZXNibG9xdWVhciB5IGNvbnRpbnVhclwiLFxuICBcInJlYXV0aC5iYWRQYXNzd29yZFwiOiBcIkxhIGNvbnRyYXNlw7FhIG5vIGNvaW5jaWRlLiBJbnTDqW50YWxvIGRlIG51ZXZvLlwiLFxuICBcInJlYXV0aC5vclwiOiBcIm9cIixcbiAgXCJyZWF1dGguY29udGludWVHb29nbGVcIjogXCJDb250aW51YXIgY29uIEdvb2dsZVwiLFxuICBcInJlYXV0aC5mb3Jnb3RcIjogXCLCv09sdmlkYXN0ZSB0dSBjb250cmFzZcOxYT9cIixcbiAgXCJyZWF1dGguZ29vZ2xlVW5hdmFpbGFibGVcIjpcbiAgICBcIkdvb2dsZSBubyBlc3TDoSBkaXNwb25pYmxlIGVuIGVzdGUgbW9tZW50by4gVXNhIHR1IGNvbnRyYXNlw7FhIGVuIHN1IGx1Z2FyLlwiLFxuXG4gIFwidG9wYmFyLnNlYXJjaFBsYWNlaG9sZGVyXCI6IFwiQnVzY2EgbyBzYWx0YSBh4oCmXCIsXG4gIFwibWVudS5wcm9maWxlXCI6IFwiUGVyZmlsIHkgYWp1c3Rlc1wiLFxuICBcIm1lbnUubGFuZ3VhZ2VcIjogXCJJZGlvbWEgLyBMYW5ndWFnZVwiLFxuICBcIm1lbnUuc2lnbk91dFwiOiBcIkNlcnJhciBzZXNpw7NuXCIsXG4gIFwibWVudS5zd2l0Y2hUb0J1eWVyUG9ydGFsXCI6IFwiQ2FtYmlhciBhbCBwb3J0YWwgZGUgY29tcHJhZG9yZXNcIixcbiAgXCJtZW51LmJ1eWVyUG9ydGFsU2lnbkluXCI6IFwiQWNjZWRlciBhbCBwb3J0YWwgZGUgY29tcHJhZG9yZXNcIixcbiAgXCJtZW51LmV4aXRJbXBlcnNvbmF0aW9uXCI6IFwiU2FsaXIgZGUgbGEgc3VwbGFudGFjacOzblwiLFxuICBcIm1lbnUucmV0dXJuVG9BZG1pblwiOiBcIlZvbHZlciBhbCBwYW5lbCBkZSBhZG1pbmlzdHJhY2nDs25cIixcblxuICBcInBhbGV0dGUucGxhY2Vob2xkZXJcIjogXCJCdXNjYSBww6FnaW5hcywgY2xpZW50ZXMsIHBlZGlkb3MsIGZhY3R1cmFz4oCmXCIsXG4gIFwicGFsZXR0ZS5qdW1wVG9cIjogXCJJciBhXCIsXG4gIFwicGFsZXR0ZS5hY3Rpb25zXCI6IFwiQWNjaW9uZXNcIixcbiAgXCJwYWxldHRlLnJlc3VsdHNcIjogXCJSZXN1bHRhZG9zXCIsXG4gIFwicGFsZXR0ZS5ub1Jlc3VsdHNcIjogXCJTaW4gcmVzdWx0YWRvcyBwYXJhIOKAnHtxdWVyeX3igJ1cIixcbiAgXCJwYWxldHRlLm5hdmlnYXRlXCI6IFwibmF2ZWdhclwiLFxuICBcInBhbGV0dGUuc2VsZWN0XCI6IFwic2VsZWNjaW9uYXJcIixcbiAgXCJwYWxldHRlLnNob3J0Y3V0c1wiOiBcImF0YWpvc1wiLFxuXG4gIFwibmF2LmRhc2hib2FyZFwiOiBcIlBhbmVsXCIsXG4gIFwibmF2Lm9yZGVyc1wiOiBcIlBlZGlkb3NcIixcbiAgXCJuYXYuY3VzdG9tZXJzXCI6IFwiQ2xpZW50ZXNcIixcbiAgXCJuYXYuc2V0dGluZ3NcIjogXCJBanVzdGVzXCIsXG59O1xuXG5leHBvcnQgY29uc3QgTUVTU0FHRVM6IFJlY29yZDxMb2NhbGUsIE1lc3NhZ2VzPiA9IHsgZW4sIGVzIH07XG4iXSwibmFtZXMiOlsiTE9DQUxFUyIsIkxPQ0FMRV9MQUJFTFMiLCJNRVNTQUdFUyIsImVuIiwiZXMiXSwibWFwcGluZ3MiOiJBQUFBOzs7Ozs7Ozs7O0NBVUM7Ozs7Ozs7Ozs7O1FBRVlBO2VBQUFBOztRQUdBQztlQUFBQTs7UUEwR0FDO2VBQUFBOzs7QUE3R04sTUFBTUYsVUFBVTtJQUFDO0lBQU07Q0FBSztBQUc1QixNQUFNQyxnQkFBd0M7SUFDbkRFLElBQUk7SUFDSkMsSUFBSTtBQUNOO0FBRUEsTUFBTUQsS0FBSztJQUNULFNBQVM7SUFDVCxlQUFlO0lBQ2YsaUJBQWlCO0lBQ2pCLGdCQUFnQjtJQUNoQixlQUFlO0lBQ2YsbUJBQW1CO0lBQ25CLGlCQUFpQjtJQUNqQixpQkFBaUI7SUFDakIsa0JBQWtCO0lBRWxCLDZDQUE2QztJQUM3QyxnQkFBZ0I7SUFDaEIsZUFDRTtJQUNGLHNCQUFzQjtJQUN0QixpQkFBaUI7SUFDakIsaUJBQWlCO0lBQ2pCLHNCQUFzQjtJQUN0QixhQUFhO0lBQ2IseUJBQXlCO0lBQ3pCLGlCQUFpQjtJQUNqQiw0QkFBNEI7SUFFNUIsd0JBQXdCO0lBQ3hCLDRCQUE0QjtJQUM1QixnQkFBZ0I7SUFDaEIsaUJBQWlCO0lBQ2pCLGdCQUFnQjtJQUNoQiw0QkFBNEI7SUFDNUIsMEJBQTBCO0lBQzFCLDBCQUEwQjtJQUMxQixzQkFBc0I7SUFFdEIsMENBQTBDO0lBQzFDLHVCQUF1QjtJQUN2QixrQkFBa0I7SUFDbEIsbUJBQW1CO0lBQ25CLG1CQUFtQjtJQUNuQixxQkFBcUI7SUFDckIsb0JBQW9CO0lBQ3BCLGtCQUFrQjtJQUNsQixxQkFBcUI7SUFFckIsYUFBYTtJQUNiLGlCQUFpQjtJQUNqQixjQUFjO0lBQ2QsaUJBQWlCO0lBQ2pCLGdCQUFnQjtBQUNsQjtBQUtBLE1BQU1DLEtBQWU7SUFDbkIsZUFBZTtJQUNmLGlCQUFpQjtJQUNqQixnQkFBZ0I7SUFDaEIsZUFBZTtJQUNmLG1CQUFtQjtJQUNuQixpQkFBaUI7SUFDakIsaUJBQWlCO0lBQ2pCLGtCQUFrQjtJQUVsQixnQkFBZ0I7SUFDaEIsZUFDRTtJQUNGLHNCQUFzQjtJQUN0QixpQkFBaUI7SUFDakIsaUJBQWlCO0lBQ2pCLHNCQUFzQjtJQUN0QixhQUFhO0lBQ2IseUJBQXlCO0lBQ3pCLGlCQUFpQjtJQUNqQiw0QkFDRTtJQUVGLDRCQUE0QjtJQUM1QixnQkFBZ0I7SUFDaEIsaUJBQWlCO0lBQ2pCLGdCQUFnQjtJQUNoQiw0QkFBNEI7SUFDNUIsMEJBQTBCO0lBQzFCLDBCQUEwQjtJQUMxQixzQkFBc0I7SUFFdEIsdUJBQXVCO0lBQ3ZCLGtCQUFrQjtJQUNsQixtQkFBbUI7SUFDbkIsbUJBQW1CO0lBQ25CLHFCQUFxQjtJQUNyQixvQkFBb0I7SUFDcEIsa0JBQWtCO0lBQ2xCLHFCQUFxQjtJQUVyQixpQkFBaUI7SUFDakIsY0FBYztJQUNkLGlCQUFpQjtJQUNqQixnQkFBZ0I7QUFDbEI7QUFFTyxNQUFNRixXQUFxQztJQUFFQztJQUFJQztBQUFHIn0=

@@ -1,0 +1,17 @@
+5dbff44a1f6312c3e2e365c8c9f2d8ed
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.buildExpiresAtIso = buildExpiresAtIso;
+const calendar_date_1 = require("../../../../lib/calendar-date");
+/**
+ * Licence-expiry write helper — extracted verbatim from `licenses.tsx`'s `LicenseSheet.submit`
+ * (see B91) so the timestamp construction is directly testable.
+ *
+ * Writes the calendar-date storage convention (UTC midnight OF the intended day) instead of
+ * a LOCAL 23:59:59 instant, which used to shift the stored calendar day for every viewer
+ * whose runtime zone is not UTC.
+ */
+function buildExpiresAtIso(expiresAt) {
+    return (0, calendar_date_1.isoFromCalendarDate)(expiresAt.trim());
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvYXBwLyhvcGVyYXRvcikvY3VzdG9tZXJzL1tpZF0vbGljZW5zZXMubG9naWMudHMiLCJtYXBwaW5ncyI6Ijs7QUFVQSw4Q0FFQztBQVpELGlFQUFvRTtBQUVwRTs7Ozs7OztHQU9HO0FBQ0gsU0FBZ0IsaUJBQWlCLENBQUMsU0FBaUI7SUFDakQsT0FBTyxJQUFBLG1DQUFtQixFQUFDLFNBQVMsQ0FBQyxJQUFJLEVBQUUsQ0FBQyxDQUFDO0FBQy9DLENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvYXBwLyhvcGVyYXRvcikvY3VzdG9tZXJzL1tpZF0vbGljZW5zZXMubG9naWMudHMiXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IHsgaXNvRnJvbUNhbGVuZGFyRGF0ZSB9IGZyb20gXCIuLi8uLi8uLi8uLi9saWIvY2FsZW5kYXItZGF0ZVwiO1xuXG4vKipcbiAqIExpY2VuY2UtZXhwaXJ5IHdyaXRlIGhlbHBlciDigJQgZXh0cmFjdGVkIHZlcmJhdGltIGZyb20gYGxpY2Vuc2VzLnRzeGAncyBgTGljZW5zZVNoZWV0LnN1Ym1pdGBcbiAqIChzZWUgQjkxKSBzbyB0aGUgdGltZXN0YW1wIGNvbnN0cnVjdGlvbiBpcyBkaXJlY3RseSB0ZXN0YWJsZS5cbiAqXG4gKiBXcml0ZXMgdGhlIGNhbGVuZGFyLWRhdGUgc3RvcmFnZSBjb252ZW50aW9uIChVVEMgbWlkbmlnaHQgT0YgdGhlIGludGVuZGVkIGRheSkgaW5zdGVhZCBvZlxuICogYSBMT0NBTCAyMzo1OTo1OSBpbnN0YW50LCB3aGljaCB1c2VkIHRvIHNoaWZ0IHRoZSBzdG9yZWQgY2FsZW5kYXIgZGF5IGZvciBldmVyeSB2aWV3ZXJcbiAqIHdob3NlIHJ1bnRpbWUgem9uZSBpcyBub3QgVVRDLlxuICovXG5leHBvcnQgZnVuY3Rpb24gYnVpbGRFeHBpcmVzQXRJc28oZXhwaXJlc0F0OiBzdHJpbmcpOiBzdHJpbmcge1xuICByZXR1cm4gaXNvRnJvbUNhbGVuZGFyRGF0ZShleHBpcmVzQXQudHJpbSgpKTtcbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

@@ -1,0 +1,69 @@
+ce7bd8b4ccb06bec468afb7de328d478
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+exports.MoneyInvariantError = void 0;
+exports.assertMoneyInvariants = assertMoneyInvariants;
+/**
+ * Shared guard against financial-total manipulation (B451 gap 4): a
+ * component going negative, or a discount exceeding what it's discounting.
+ * One implementation for every create/recompute path that derives a total
+ * from client-influenced components — orders, estimates, vendor-bills. Each
+ * DOES ITS OWN rounding/derivation first (this only validates the already-
+ * computed numbers); invoices.service.ts has its own equivalent inline
+ * checks (lines 469-502) and is not yet migrated to this shared guard.
+ */ class MoneyInvariantError extends Error {
+    constructor(message){
+        super(message), this.code = "MONEY_INVARIANT";
+        this.name = "MoneyInvariantError";
+    }
+}
+exports.MoneyInvariantError = MoneyInvariantError;
+/**
+ * Throws `MoneyInvariantError` when:
+ *  - any component (subtotal, discount, tax, shipping, total) is negative,
+ *    NaN, or infinite (e.g. `Number(undefined)` from a freeform line with
+ *    no unitPrice — `NaN < 0` is false, so the negative check alone misses it)
+ *  - discount exceeds subtotal
+ *
+ * `total < 0` is covered by the negative-component check above — a caller
+ * never needs a second explicit check for it.
+ */ function assertMoneyInvariants(input) {
+    const { subtotal, discount = 0, tax = 0, shipping = 0, total } = input;
+    const components = [
+        [
+            "subtotal",
+            subtotal
+        ],
+        [
+            "discount",
+            discount
+        ],
+        [
+            "tax",
+            tax
+        ],
+        [
+            "shipping",
+            shipping
+        ],
+        [
+            "total",
+            total
+        ]
+    ];
+    for (const [name, value] of components){
+        if (!Number.isFinite(value)) {
+            throw new MoneyInvariantError(`${name} must be a finite number (got ${value}).`);
+        }
+        if (value < 0) {
+            throw new MoneyInvariantError(`${name} cannot be negative (${value}).`);
+        }
+    }
+    if (discount > subtotal) {
+        throw new MoneyInvariantError(`discount (${discount}) cannot exceed subtotal (${subtotal}).`);
+    }
+} //# sourceMappingURL=money-invariants.js.map
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoibW9uZXktaW52YXJpYW50cy5qcyIsInNvdXJjZXMiOlsiLi4vc3JjL21vbmV5LWludmFyaWFudHMudHMiXSwic291cmNlUm9vdCI6IiIsIm5hbWVzIjpbXSwibWFwcGluZ3MiOiI7Ozs7O0FBb0NBLFFBQUEscUJBQUEsR0FBQSxzQkFvQkM7QUF4REQ7Ozs7Ozs7O0dBUUcsQ0FDSCxNQUFhLG1CQUFvQixTQUFRLEtBQUs7SUFHNUMsWUFBWSxPQUFlLENBQUE7UUFDekIsS0FBSyxDQUFDLE9BQU8sQ0FBQyxDQUFDLE1BSFIsSUFBSSxHQUFHLGlCQUEwQixDQUFDO1FBSXpDLElBQUksQ0FBQyxJQUFJLEdBQUcscUJBQXFCLENBQUM7SUFDcEMsQ0FBQztDQUNGO0FBUEQsUUFBQSxtQkFBQSxHQUFBLG9CQU9DO0FBVUQ7Ozs7Ozs7OztHQVNHLENBQ0gsU0FBZ0IscUJBQXFCLENBQUMsS0FBMEI7SUFDOUQsTUFBTSxFQUFFLFFBQVEsRUFBRSxRQUFRLEdBQUcsQ0FBQyxFQUFFLEdBQUcsR0FBRyxDQUFDLEVBQUUsUUFBUSxHQUFHLENBQUMsRUFBRSxLQUFLLEVBQUUsR0FBRyxLQUFLLENBQUM7SUFDdkUsTUFBTSxVQUFVLEdBQXVCO1FBQ3JDO1lBQUMsVUFBVTtZQUFFLFFBQVE7U0FBQztRQUN0QjtZQUFDLFVBQVU7WUFBRSxRQUFRO1NBQUM7UUFDdEI7WUFBQyxLQUFLO1lBQUUsR0FBRztTQUFDO1FBQ1o7WUFBQyxVQUFVO1lBQUUsUUFBUTtTQUFDO1FBQ3RCO1lBQUMsT0FBTztZQUFFLEtBQUs7U0FBQztLQUNqQixDQUFDO0lBQ0YsS0FBSyxNQUFNLENBQUMsSUFBSSxFQUFFLEtBQUssQ0FBQyxJQUFJLFVBQVUsQ0FBRSxDQUFDO1FBQ3ZDLElBQUksQ0FBQyxNQUFNLENBQUMsUUFBUSxDQUFDLEtBQUssQ0FBQyxFQUFFLENBQUM7WUFDNUIsTUFBTSxJQUFJLG1CQUFtQixDQUFDLEdBQUcsSUFBSSxDQUFBLDhCQUFBLEVBQWlDLEtBQUssQ0FBQSxFQUFBLENBQUksQ0FBQyxDQUFDO1FBQ25GLENBQUM7UUFDRCxJQUFJLEtBQUssR0FBRyxDQUFDLEVBQUUsQ0FBQztZQUNkLE1BQU0sSUFBSSxtQkFBbUIsQ0FBQyxHQUFHLElBQUksQ0FBQSxxQkFBQSxFQUF3QixLQUFLLENBQUEsRUFBQSxDQUFJLENBQUMsQ0FBQztRQUMxRSxDQUFDO0lBQ0gsQ0FBQztJQUNELElBQUksUUFBUSxHQUFHLFFBQVEsRUFBRSxDQUFDO1FBQ3hCLE1BQU0sSUFBSSxtQkFBbUIsQ0FBQyxDQUFBLFVBQUEsRUFBYSxRQUFRLENBQUEsMEJBQUEsRUFBNkIsUUFBUSxDQUFBLEVBQUEsQ0FBSSxDQUFDLENBQUM7SUFDaEcsQ0FBQztBQUNILENBQUMifQ==

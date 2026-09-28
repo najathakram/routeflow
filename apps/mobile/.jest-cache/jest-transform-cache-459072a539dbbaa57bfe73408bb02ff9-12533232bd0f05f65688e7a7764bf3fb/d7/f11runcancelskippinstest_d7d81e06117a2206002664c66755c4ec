@@ -1,0 +1,29 @@
+01bb856fc9b548be15f66887f3d7ecbc
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+/**
+ * F11 — TP4: pins P11–P12 (test-plan.md "Pins"). GREEN pre-impl AND
+ * post-impl. Titles carry NO `REG-` token by design — mobile's testMatch
+ * globs every __tests__ dir for *.test.ts, so this *.pins.test.ts file is
+ * what the red gate's --testPathIgnorePatterns pins excludes (a
+ * .pins.spec.ts would never even be collected here).
+ */
+const fs_1 = require("fs");
+const path_1 = require("path");
+const order_tracking_logic_1 = require("../lib/order-tracking-logic");
+// ─── P11 (B146) ─────────────────────────────────────────────────────────────
+describe("pin (B146): trackingStepIndex is unchanged by the F11 helpers", () => {
+    it("keeps today's step indices — the F11 headline/interval helpers are additive, not a rewrite", () => {
+        expect((0, order_tracking_logic_1.trackingStepIndex)("OUT_FOR_DELIVERY")).toBe(2);
+        expect((0, order_tracking_logic_1.trackingStepIndex)("CANCELLED")).toBe(-1);
+    });
+});
+// ─── P12 (B34) ──────────────────────────────────────────────────────────────
+describe("pin (B34): the operator route-runs screen still skips through useUpdateStopStatus", () => {
+    it('source text still wires Skip through useUpdateStopStatus with status: "SKIPPED" — B34\'s working model must not regress if this screen is later refactored onto the shared driver-side handler', () => {
+        const screenSrc = (0, fs_1.readFileSync)((0, path_1.join)(__dirname, "..", "app", "(operator)", "route-runs", "[id].tsx"), "utf8");
+        expect(screenSrc).toMatch(/status: "SKIPPED"/);
+        expect(screenSrc).toMatch(/useUpdateStopStatus/);
+    });
+});
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvX190ZXN0c19fL2YxMS1ydW4tY2FuY2VsLXNraXAucGlucy50ZXN0LnRzIiwibWFwcGluZ3MiOiI7O0FBQUE7Ozs7OztHQU1HO0FBQ0gsMkJBQWtDO0FBQ2xDLCtCQUE0QjtBQUM1QixzRUFBZ0U7QUFFaEUsK0VBQStFO0FBRS9FLFFBQVEsQ0FBQywrREFBK0QsRUFBRSxHQUFHLEVBQUU7SUFDN0UsRUFBRSxDQUFDLDRGQUE0RixFQUFFLEdBQUcsRUFBRTtRQUNwRyxNQUFNLENBQUMsSUFBQSx3Q0FBaUIsRUFBQyxrQkFBa0IsQ0FBQyxDQUFDLENBQUMsSUFBSSxDQUFDLENBQUMsQ0FBQyxDQUFDO1FBQ3RELE1BQU0sQ0FBQyxJQUFBLHdDQUFpQixFQUFDLFdBQVcsQ0FBQyxDQUFDLENBQUMsSUFBSSxDQUFDLENBQUMsQ0FBQyxDQUFDLENBQUM7SUFDbEQsQ0FBQyxDQUFDLENBQUM7QUFDTCxDQUFDLENBQUMsQ0FBQztBQUVILCtFQUErRTtBQUUvRSxRQUFRLENBQUMsbUZBQW1GLEVBQUUsR0FBRyxFQUFFO0lBQ2pHLEVBQUUsQ0FBQyxnTUFBZ00sRUFBRSxHQUFHLEVBQUU7UUFDeE0sTUFBTSxTQUFTLEdBQUcsSUFBQSxpQkFBWSxFQUM1QixJQUFBLFdBQUksRUFBQyxTQUFTLEVBQUUsSUFBSSxFQUFFLEtBQUssRUFBRSxZQUFZLEVBQUUsWUFBWSxFQUFFLFVBQVUsQ0FBQyxFQUNwRSxNQUFNLENBQ1AsQ0FBQztRQUNGLE1BQU0sQ0FBQyxTQUFTLENBQUMsQ0FBQyxPQUFPLENBQUMsbUJBQW1CLENBQUMsQ0FBQztRQUMvQyxNQUFNLENBQUMsU0FBUyxDQUFDLENBQUMsT0FBTyxDQUFDLHFCQUFxQixDQUFDLENBQUM7SUFDbkQsQ0FBQyxDQUFDLENBQUM7QUFDTCxDQUFDLENBQUMsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9hcHBzL21vYmlsZS9fX3Rlc3RzX18vZjExLXJ1bi1jYW5jZWwtc2tpcC5waW5zLnRlc3QudHMiXSwic291cmNlc0NvbnRlbnQiOlsiLyoqXG4gKiBGMTEg4oCUIFRQNDogcGlucyBQMTHigJNQMTIgKHRlc3QtcGxhbi5tZCBcIlBpbnNcIikuIEdSRUVOIHByZS1pbXBsIEFORFxuICogcG9zdC1pbXBsLiBUaXRsZXMgY2FycnkgTk8gYFJFRy1gIHRva2VuIGJ5IGRlc2lnbiDigJQgbW9iaWxlJ3MgdGVzdE1hdGNoXG4gKiBnbG9icyBldmVyeSBfX3Rlc3RzX18gZGlyIGZvciAqLnRlc3QudHMsIHNvIHRoaXMgKi5waW5zLnRlc3QudHMgZmlsZSBpc1xuICogd2hhdCB0aGUgcmVkIGdhdGUncyAtLXRlc3RQYXRoSWdub3JlUGF0dGVybnMgcGlucyBleGNsdWRlcyAoYVxuICogLnBpbnMuc3BlYy50cyB3b3VsZCBuZXZlciBldmVuIGJlIGNvbGxlY3RlZCBoZXJlKS5cbiAqL1xuaW1wb3J0IHsgcmVhZEZpbGVTeW5jIH0gZnJvbSBcImZzXCI7XG5pbXBvcnQgeyBqb2luIH0gZnJvbSBcInBhdGhcIjtcbmltcG9ydCB7IHRyYWNraW5nU3RlcEluZGV4IH0gZnJvbSBcIi4uL2xpYi9vcmRlci10cmFja2luZy1sb2dpY1wiO1xuXG4vLyDilIDilIDilIAgUDExIChCMTQ2KSDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIBcblxuZGVzY3JpYmUoXCJwaW4gKEIxNDYpOiB0cmFja2luZ1N0ZXBJbmRleCBpcyB1bmNoYW5nZWQgYnkgdGhlIEYxMSBoZWxwZXJzXCIsICgpID0+IHtcbiAgaXQoXCJrZWVwcyB0b2RheSdzIHN0ZXAgaW5kaWNlcyDigJQgdGhlIEYxMSBoZWFkbGluZS9pbnRlcnZhbCBoZWxwZXJzIGFyZSBhZGRpdGl2ZSwgbm90IGEgcmV3cml0ZVwiLCAoKSA9PiB7XG4gICAgZXhwZWN0KHRyYWNraW5nU3RlcEluZGV4KFwiT1VUX0ZPUl9ERUxJVkVSWVwiKSkudG9CZSgyKTtcbiAgICBleHBlY3QodHJhY2tpbmdTdGVwSW5kZXgoXCJDQU5DRUxMRURcIikpLnRvQmUoLTEpO1xuICB9KTtcbn0pO1xuXG4vLyDilIDilIDilIAgUDEyIChCMzQpIOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgFxuXG5kZXNjcmliZShcInBpbiAoQjM0KTogdGhlIG9wZXJhdG9yIHJvdXRlLXJ1bnMgc2NyZWVuIHN0aWxsIHNraXBzIHRocm91Z2ggdXNlVXBkYXRlU3RvcFN0YXR1c1wiLCAoKSA9PiB7XG4gIGl0KCdzb3VyY2UgdGV4dCBzdGlsbCB3aXJlcyBTa2lwIHRocm91Z2ggdXNlVXBkYXRlU3RvcFN0YXR1cyB3aXRoIHN0YXR1czogXCJTS0lQUEVEXCIg4oCUIEIzNFxcJ3Mgd29ya2luZyBtb2RlbCBtdXN0IG5vdCByZWdyZXNzIGlmIHRoaXMgc2NyZWVuIGlzIGxhdGVyIHJlZmFjdG9yZWQgb250byB0aGUgc2hhcmVkIGRyaXZlci1zaWRlIGhhbmRsZXInLCAoKSA9PiB7XG4gICAgY29uc3Qgc2NyZWVuU3JjID0gcmVhZEZpbGVTeW5jKFxuICAgICAgam9pbihfX2Rpcm5hbWUsIFwiLi5cIiwgXCJhcHBcIiwgXCIob3BlcmF0b3IpXCIsIFwicm91dGUtcnVuc1wiLCBcIltpZF0udHN4XCIpLFxuICAgICAgXCJ1dGY4XCIsXG4gICAgKTtcbiAgICBleHBlY3Qoc2NyZWVuU3JjKS50b01hdGNoKC9zdGF0dXM6IFwiU0tJUFBFRFwiLyk7XG4gICAgZXhwZWN0KHNjcmVlblNyYykudG9NYXRjaCgvdXNlVXBkYXRlU3RvcFN0YXR1cy8pO1xuICB9KTtcbn0pO1xuIl0sInZlcnNpb24iOjN9

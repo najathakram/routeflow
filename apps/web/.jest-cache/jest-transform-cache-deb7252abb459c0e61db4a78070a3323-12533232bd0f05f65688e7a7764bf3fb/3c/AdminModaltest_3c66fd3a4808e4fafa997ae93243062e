@@ -1,0 +1,274 @@
+6721a8d90ee940a377ecdafd13615793
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+const _react1 = require("@testing-library/react");
+const _userevent = /*#__PURE__*/ _interop_require_default(require("@testing-library/user-event"));
+const _AdminModal = require("./AdminModal");
+function _interop_require_default(obj) {
+    return obj && obj.__esModule ? obj : {
+        default: obj
+    };
+}
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+function Harness({ open: initialOpen }) {
+    const [open, setOpen] = _react.useState(initialOpen);
+    return /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+        children: [
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                onClick: ()=>setOpen(true),
+                children: "Open modal"
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsxs)(_AdminModal.AdminModal, {
+                open: open,
+                onClose: ()=>setOpen(false),
+                title: "Confirm action",
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                        children: "First field"
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                        children: "Second field"
+                    })
+                ]
+            })
+        ]
+    });
+}
+describe("AdminModal — accessibility", ()=>{
+    it("exposes role=dialog and aria-modal=true", ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_AdminModal.AdminModal, {
+            open: true,
+            onClose: jest.fn(),
+            title: "Confirm action",
+            children: /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                children: "Field"
+            })
+        }));
+        const dialog = _react1.screen.getByRole("dialog");
+        expect(dialog).toHaveAttribute("aria-modal", "true");
+    });
+    it("moves focus into the modal on open, to its first focusable element", async ()=>{
+        const user = _userevent.default.setup();
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(Harness, {
+            open: false
+        }));
+        await user.click(_react1.screen.getByText("Open modal"));
+        expect(_react1.screen.getByRole("dialog").contains(document.activeElement)).toBe(true);
+        expect(_react1.screen.getByRole("button", {
+            name: "Close dialog"
+        })).toHaveFocus();
+    });
+    it("traps Tab within the modal, wrapping last -> first and first -> last", async ()=>{
+        const user = _userevent.default.setup();
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(Harness, {
+            open: true
+        }));
+        const closeButton = _react1.screen.getByRole("button", {
+            name: "Close dialog"
+        });
+        const first = _react1.screen.getByText("First field");
+        const second = _react1.screen.getByText("Second field");
+        expect(closeButton).toHaveFocus();
+        await user.tab();
+        expect(first).toHaveFocus();
+        await user.tab();
+        expect(second).toHaveFocus();
+        await user.tab();
+        expect(closeButton).toHaveFocus();
+        await user.tab({
+            shift: true
+        });
+        expect(second).toHaveFocus();
+        await user.tab({
+            shift: true
+        });
+        expect(first).toHaveFocus();
+        await user.tab({
+            shift: true
+        });
+        expect(closeButton).toHaveFocus();
+    });
+    it("returns focus to the triggering element on close", async ()=>{
+        const user = _userevent.default.setup();
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(Harness, {
+            open: false
+        }));
+        const trigger = _react1.screen.getByText("Open modal");
+        await user.click(trigger);
+        expect(_react1.screen.getByRole("dialog")).toBeInTheDocument();
+        await user.keyboard("{Escape}");
+        expect(_react1.screen.queryByRole("dialog")).not.toBeInTheDocument();
+        expect(trigger).toHaveFocus();
+    });
+});
+// A3 F9: the dialog had no accessible name (axe `aria-dialog-name`), its close button was a bare
+// "×" (axe `button-name`), and a parent re-render (a new inline `onClose` per render) re-ran the
+// focus effect so focus jumped to the close button after every keystroke in a controlled field.
+function TypingHarness() {
+    const [open, setOpen] = _react.useState(false);
+    const [slug, setSlug] = _react.useState("");
+    const [closed, setClosed] = _react.useState(0);
+    return /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+        children: [
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                onClick: ()=>setOpen(true),
+                children: "Delete tenant"
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                "data-testid": "closed",
+                children: closed
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)(_AdminModal.AdminModal, {
+                open: open,
+                onClose: ()=>{
+                    setOpen(false);
+                    setClosed(closed + 1); // reads state: a stale onClose would report the OLD count
+                },
+                title: "Permanently delete tenant?",
+                children: /*#__PURE__*/ (0, _jsxruntime.jsx)("input", {
+                    "aria-label": "Tenant slug",
+                    value: slug,
+                    onChange: (e)=>setSlug(e.target.value)
+                })
+            })
+        ]
+    });
+}
+describe("AdminModal — naming and focus stability (A3 F9)", ()=>{
+    it("is named by its title (aria-labelledby -> the heading)", ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_AdminModal.AdminModal, {
+            open: true,
+            onClose: jest.fn(),
+            title: "Confirm action",
+            children: /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                children: "Field"
+            })
+        }));
+        expect(_react1.screen.getByRole("dialog", {
+            name: "Confirm action"
+        })).toBeInTheDocument();
+    });
+    it("two modals on a page keep distinct label ids", ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsxs)(_jsxruntime.Fragment, {
+            children: [
+                /*#__PURE__*/ (0, _jsxruntime.jsx)(_AdminModal.AdminModal, {
+                    open: true,
+                    onClose: jest.fn(),
+                    title: "First",
+                    children: /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                        children: "a"
+                    })
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)(_AdminModal.AdminModal, {
+                    open: true,
+                    onClose: jest.fn(),
+                    title: "Second",
+                    children: /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                        children: "b"
+                    })
+                })
+            ]
+        }));
+        expect(_react1.screen.getByRole("dialog", {
+            name: "First"
+        })).toBeInTheDocument();
+        expect(_react1.screen.getByRole("dialog", {
+            name: "Second"
+        })).toBeInTheDocument();
+    });
+    it("the close control has an accessible name and is a plain button", ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_AdminModal.AdminModal, {
+            open: true,
+            onClose: jest.fn(),
+            title: "Confirm action",
+            children: /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                children: "Field"
+            })
+        }));
+        const close = _react1.screen.getByRole("button", {
+            name: "Close dialog"
+        });
+        expect(close).toHaveAttribute("type", "button");
+    });
+    it("REPRO: typing in a controlled field keeps focus in it across parent re-renders (new inline onClose each time)", async ()=>{
+        const user = _userevent.default.setup();
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(TypingHarness, {}));
+        await user.click(_react1.screen.getByText("Delete tenant"));
+        const input = _react1.screen.getByRole("textbox", {
+            name: "Tenant slug"
+        });
+        await user.click(input);
+        await user.keyboard("acme");
+        expect(input).toHaveValue("acme");
+        expect(input).toHaveFocus();
+    });
+    it("Escape calls the LATEST onClose after re-renders, not the one from when it opened", async ()=>{
+        const user = _userevent.default.setup();
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(TypingHarness, {}));
+        await user.click(_react1.screen.getByText("Delete tenant"));
+        await user.click(_react1.screen.getByRole("textbox", {
+            name: "Tenant slug"
+        }));
+        await user.keyboard("ab");
+        await user.keyboard("{Escape}");
+        expect(_react1.screen.queryByRole("dialog")).not.toBeInTheDocument();
+        expect(_react1.screen.getByTestId("closed")).toHaveTextContent("1");
+    });
+    it("focus still returns to the trigger after closing from a re-rendered modal", async ()=>{
+        const user = _userevent.default.setup();
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(TypingHarness, {}));
+        const trigger = _react1.screen.getByText("Delete tenant");
+        await user.click(trigger);
+        await user.click(_react1.screen.getByRole("textbox", {
+            name: "Tenant slug"
+        }));
+        await user.keyboard("x{Escape}");
+        expect(trigger).toHaveFocus();
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8ocGxhdGZvcm0tYWRtaW4pL19jb21wb25lbnRzL0FkbWluTW9kYWwudGVzdC50c3giXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0ICogYXMgUmVhY3QgZnJvbSBcInJlYWN0XCI7XG5pbXBvcnQgeyByZW5kZXIsIHNjcmVlbiB9IGZyb20gXCJAdGVzdGluZy1saWJyYXJ5L3JlYWN0XCI7XG5pbXBvcnQgdXNlckV2ZW50IGZyb20gXCJAdGVzdGluZy1saWJyYXJ5L3VzZXItZXZlbnRcIjtcbmltcG9ydCB7IEFkbWluTW9kYWwgfSBmcm9tIFwiLi9BZG1pbk1vZGFsXCI7XG5cbmZ1bmN0aW9uIEhhcm5lc3MoeyBvcGVuOiBpbml0aWFsT3BlbiB9OiB7IG9wZW46IGJvb2xlYW4gfSkge1xuICBjb25zdCBbb3Blbiwgc2V0T3Blbl0gPSBSZWFjdC51c2VTdGF0ZShpbml0aWFsT3Blbik7XG4gIHJldHVybiAoXG4gICAgPGRpdj5cbiAgICAgIDxidXR0b24gb25DbGljaz17KCkgPT4gc2V0T3Blbih0cnVlKX0+T3BlbiBtb2RhbDwvYnV0dG9uPlxuICAgICAgPEFkbWluTW9kYWwgb3Blbj17b3Blbn0gb25DbG9zZT17KCkgPT4gc2V0T3BlbihmYWxzZSl9IHRpdGxlPVwiQ29uZmlybSBhY3Rpb25cIj5cbiAgICAgICAgPGJ1dHRvbj5GaXJzdCBmaWVsZDwvYnV0dG9uPlxuICAgICAgICA8YnV0dG9uPlNlY29uZCBmaWVsZDwvYnV0dG9uPlxuICAgICAgPC9BZG1pbk1vZGFsPlxuICAgIDwvZGl2PlxuICApO1xufVxuXG5kZXNjcmliZShcIkFkbWluTW9kYWwg4oCUIGFjY2Vzc2liaWxpdHlcIiwgKCkgPT4ge1xuICBpdChcImV4cG9zZXMgcm9sZT1kaWFsb2cgYW5kIGFyaWEtbW9kYWw9dHJ1ZVwiLCAoKSA9PiB7XG4gICAgcmVuZGVyKFxuICAgICAgPEFkbWluTW9kYWwgb3BlbiBvbkNsb3NlPXtqZXN0LmZuKCl9IHRpdGxlPVwiQ29uZmlybSBhY3Rpb25cIj5cbiAgICAgICAgPGJ1dHRvbj5GaWVsZDwvYnV0dG9uPlxuICAgICAgPC9BZG1pbk1vZGFsPixcbiAgICApO1xuICAgIGNvbnN0IGRpYWxvZyA9IHNjcmVlbi5nZXRCeVJvbGUoXCJkaWFsb2dcIik7XG4gICAgZXhwZWN0KGRpYWxvZykudG9IYXZlQXR0cmlidXRlKFwiYXJpYS1tb2RhbFwiLCBcInRydWVcIik7XG4gIH0pO1xuXG4gIGl0KFwibW92ZXMgZm9jdXMgaW50byB0aGUgbW9kYWwgb24gb3BlbiwgdG8gaXRzIGZpcnN0IGZvY3VzYWJsZSBlbGVtZW50XCIsIGFzeW5jICgpID0+IHtcbiAgICBjb25zdCB1c2VyID0gdXNlckV2ZW50LnNldHVwKCk7XG4gICAgcmVuZGVyKDxIYXJuZXNzIG9wZW49e2ZhbHNlfSAvPik7XG5cbiAgICBhd2FpdCB1c2VyLmNsaWNrKHNjcmVlbi5nZXRCeVRleHQoXCJPcGVuIG1vZGFsXCIpKTtcblxuICAgIGV4cGVjdChzY3JlZW4uZ2V0QnlSb2xlKFwiZGlhbG9nXCIpLmNvbnRhaW5zKGRvY3VtZW50LmFjdGl2ZUVsZW1lbnQpKS50b0JlKHRydWUpO1xuICAgIGV4cGVjdChzY3JlZW4uZ2V0QnlSb2xlKFwiYnV0dG9uXCIsIHsgbmFtZTogXCJDbG9zZSBkaWFsb2dcIiB9KSkudG9IYXZlRm9jdXMoKTtcbiAgfSk7XG5cbiAgaXQoXCJ0cmFwcyBUYWIgd2l0aGluIHRoZSBtb2RhbCwgd3JhcHBpbmcgbGFzdCAtPiBmaXJzdCBhbmQgZmlyc3QgLT4gbGFzdFwiLCBhc3luYyAoKSA9PiB7XG4gICAgY29uc3QgdXNlciA9IHVzZXJFdmVudC5zZXR1cCgpO1xuICAgIHJlbmRlcig8SGFybmVzcyBvcGVuIC8+KTtcblxuICAgIGNvbnN0IGNsb3NlQnV0dG9uID0gc2NyZWVuLmdldEJ5Um9sZShcImJ1dHRvblwiLCB7IG5hbWU6IFwiQ2xvc2UgZGlhbG9nXCIgfSk7XG4gICAgY29uc3QgZmlyc3QgPSBzY3JlZW4uZ2V0QnlUZXh0KFwiRmlyc3QgZmllbGRcIik7XG4gICAgY29uc3Qgc2Vjb25kID0gc2NyZWVuLmdldEJ5VGV4dChcIlNlY29uZCBmaWVsZFwiKTtcblxuICAgIGV4cGVjdChjbG9zZUJ1dHRvbikudG9IYXZlRm9jdXMoKTtcblxuICAgIGF3YWl0IHVzZXIudGFiKCk7XG4gICAgZXhwZWN0KGZpcnN0KS50b0hhdmVGb2N1cygpO1xuXG4gICAgYXdhaXQgdXNlci50YWIoKTtcbiAgICBleHBlY3Qoc2Vjb25kKS50b0hhdmVGb2N1cygpO1xuXG4gICAgYXdhaXQgdXNlci50YWIoKTtcbiAgICBleHBlY3QoY2xvc2VCdXR0b24pLnRvSGF2ZUZvY3VzKCk7XG5cbiAgICBhd2FpdCB1c2VyLnRhYih7IHNoaWZ0OiB0cnVlIH0pO1xuICAgIGV4cGVjdChzZWNvbmQpLnRvSGF2ZUZvY3VzKCk7XG5cbiAgICBhd2FpdCB1c2VyLnRhYih7IHNoaWZ0OiB0cnVlIH0pO1xuICAgIGV4cGVjdChmaXJzdCkudG9IYXZlRm9jdXMoKTtcblxuICAgIGF3YWl0IHVzZXIudGFiKHsgc2hpZnQ6IHRydWUgfSk7XG4gICAgZXhwZWN0KGNsb3NlQnV0dG9uKS50b0hhdmVGb2N1cygpO1xuICB9KTtcblxuICBpdChcInJldHVybnMgZm9jdXMgdG8gdGhlIHRyaWdnZXJpbmcgZWxlbWVudCBvbiBjbG9zZVwiLCBhc3luYyAoKSA9PiB7XG4gICAgY29uc3QgdXNlciA9IHVzZXJFdmVudC5zZXR1cCgpO1xuICAgIHJlbmRlcig8SGFybmVzcyBvcGVuPXtmYWxzZX0gLz4pO1xuXG4gICAgY29uc3QgdHJpZ2dlciA9IHNjcmVlbi5nZXRCeVRleHQoXCJPcGVuIG1vZGFsXCIpO1xuICAgIGF3YWl0IHVzZXIuY2xpY2sodHJpZ2dlcik7XG4gICAgZXhwZWN0KHNjcmVlbi5nZXRCeVJvbGUoXCJkaWFsb2dcIikpLnRvQmVJblRoZURvY3VtZW50KCk7XG5cbiAgICBhd2FpdCB1c2VyLmtleWJvYXJkKFwie0VzY2FwZX1cIik7XG5cbiAgICBleHBlY3Qoc2NyZWVuLnF1ZXJ5QnlSb2xlKFwiZGlhbG9nXCIpKS5ub3QudG9CZUluVGhlRG9jdW1lbnQoKTtcbiAgICBleHBlY3QodHJpZ2dlcikudG9IYXZlRm9jdXMoKTtcbiAgfSk7XG59KTtcblxuLy8gQTMgRjk6IHRoZSBkaWFsb2cgaGFkIG5vIGFjY2Vzc2libGUgbmFtZSAoYXhlIGBhcmlhLWRpYWxvZy1uYW1lYCksIGl0cyBjbG9zZSBidXR0b24gd2FzIGEgYmFyZVxuLy8gXCLDl1wiIChheGUgYGJ1dHRvbi1uYW1lYCksIGFuZCBhIHBhcmVudCByZS1yZW5kZXIgKGEgbmV3IGlubGluZSBgb25DbG9zZWAgcGVyIHJlbmRlcikgcmUtcmFuIHRoZVxuLy8gZm9jdXMgZWZmZWN0IHNvIGZvY3VzIGp1bXBlZCB0byB0aGUgY2xvc2UgYnV0dG9uIGFmdGVyIGV2ZXJ5IGtleXN0cm9rZSBpbiBhIGNvbnRyb2xsZWQgZmllbGQuXG5mdW5jdGlvbiBUeXBpbmdIYXJuZXNzKCkge1xuICBjb25zdCBbb3Blbiwgc2V0T3Blbl0gPSBSZWFjdC51c2VTdGF0ZShmYWxzZSk7XG4gIGNvbnN0IFtzbHVnLCBzZXRTbHVnXSA9IFJlYWN0LnVzZVN0YXRlKFwiXCIpO1xuICBjb25zdCBbY2xvc2VkLCBzZXRDbG9zZWRdID0gUmVhY3QudXNlU3RhdGUoMCk7XG4gIHJldHVybiAoXG4gICAgPGRpdj5cbiAgICAgIDxidXR0b24gb25DbGljaz17KCkgPT4gc2V0T3Blbih0cnVlKX0+RGVsZXRlIHRlbmFudDwvYnV0dG9uPlxuICAgICAgPHNwYW4gZGF0YS10ZXN0aWQ9XCJjbG9zZWRcIj57Y2xvc2VkfTwvc3Bhbj5cbiAgICAgIDxBZG1pbk1vZGFsXG4gICAgICAgIG9wZW49e29wZW59XG4gICAgICAgIG9uQ2xvc2U9eygpID0+IHtcbiAgICAgICAgICBzZXRPcGVuKGZhbHNlKTtcbiAgICAgICAgICBzZXRDbG9zZWQoY2xvc2VkICsgMSk7IC8vIHJlYWRzIHN0YXRlOiBhIHN0YWxlIG9uQ2xvc2Ugd291bGQgcmVwb3J0IHRoZSBPTEQgY291bnRcbiAgICAgICAgfX1cbiAgICAgICAgdGl0bGU9XCJQZXJtYW5lbnRseSBkZWxldGUgdGVuYW50P1wiXG4gICAgICA+XG4gICAgICAgIDxpbnB1dCBhcmlhLWxhYmVsPVwiVGVuYW50IHNsdWdcIiB2YWx1ZT17c2x1Z30gb25DaGFuZ2U9eyhlKSA9PiBzZXRTbHVnKGUudGFyZ2V0LnZhbHVlKX0gLz5cbiAgICAgIDwvQWRtaW5Nb2RhbD5cbiAgICA8L2Rpdj5cbiAgKTtcbn1cblxuZGVzY3JpYmUoXCJBZG1pbk1vZGFsIOKAlCBuYW1pbmcgYW5kIGZvY3VzIHN0YWJpbGl0eSAoQTMgRjkpXCIsICgpID0+IHtcbiAgaXQoXCJpcyBuYW1lZCBieSBpdHMgdGl0bGUgKGFyaWEtbGFiZWxsZWRieSAtPiB0aGUgaGVhZGluZylcIiwgKCkgPT4ge1xuICAgIHJlbmRlcihcbiAgICAgIDxBZG1pbk1vZGFsIG9wZW4gb25DbG9zZT17amVzdC5mbigpfSB0aXRsZT1cIkNvbmZpcm0gYWN0aW9uXCI+XG4gICAgICAgIDxidXR0b24+RmllbGQ8L2J1dHRvbj5cbiAgICAgIDwvQWRtaW5Nb2RhbD4sXG4gICAgKTtcbiAgICBleHBlY3Qoc2NyZWVuLmdldEJ5Um9sZShcImRpYWxvZ1wiLCB7IG5hbWU6IFwiQ29uZmlybSBhY3Rpb25cIiB9KSkudG9CZUluVGhlRG9jdW1lbnQoKTtcbiAgfSk7XG5cbiAgaXQoXCJ0d28gbW9kYWxzIG9uIGEgcGFnZSBrZWVwIGRpc3RpbmN0IGxhYmVsIGlkc1wiLCAoKSA9PiB7XG4gICAgcmVuZGVyKFxuICAgICAgPD5cbiAgICAgICAgPEFkbWluTW9kYWwgb3BlbiBvbkNsb3NlPXtqZXN0LmZuKCl9IHRpdGxlPVwiRmlyc3RcIj5cbiAgICAgICAgICA8YnV0dG9uPmE8L2J1dHRvbj5cbiAgICAgICAgPC9BZG1pbk1vZGFsPlxuICAgICAgICA8QWRtaW5Nb2RhbCBvcGVuIG9uQ2xvc2U9e2plc3QuZm4oKX0gdGl0bGU9XCJTZWNvbmRcIj5cbiAgICAgICAgICA8YnV0dG9uPmI8L2J1dHRvbj5cbiAgICAgICAgPC9BZG1pbk1vZGFsPlxuICAgICAgPC8+LFxuICAgICk7XG4gICAgZXhwZWN0KHNjcmVlbi5nZXRCeVJvbGUoXCJkaWFsb2dcIiwgeyBuYW1lOiBcIkZpcnN0XCIgfSkpLnRvQmVJblRoZURvY3VtZW50KCk7XG4gICAgZXhwZWN0KHNjcmVlbi5nZXRCeVJvbGUoXCJkaWFsb2dcIiwgeyBuYW1lOiBcIlNlY29uZFwiIH0pKS50b0JlSW5UaGVEb2N1bWVudCgpO1xuICB9KTtcblxuICBpdChcInRoZSBjbG9zZSBjb250cm9sIGhhcyBhbiBhY2Nlc3NpYmxlIG5hbWUgYW5kIGlzIGEgcGxhaW4gYnV0dG9uXCIsICgpID0+IHtcbiAgICByZW5kZXIoXG4gICAgICA8QWRtaW5Nb2RhbCBvcGVuIG9uQ2xvc2U9e2plc3QuZm4oKX0gdGl0bGU9XCJDb25maXJtIGFjdGlvblwiPlxuICAgICAgICA8YnV0dG9uPkZpZWxkPC9idXR0b24+XG4gICAgICA8L0FkbWluTW9kYWw+LFxuICAgICk7XG4gICAgY29uc3QgY2xvc2UgPSBzY3JlZW4uZ2V0QnlSb2xlKFwiYnV0dG9uXCIsIHsgbmFtZTogXCJDbG9zZSBkaWFsb2dcIiB9KTtcbiAgICBleHBlY3QoY2xvc2UpLnRvSGF2ZUF0dHJpYnV0ZShcInR5cGVcIiwgXCJidXR0b25cIik7XG4gIH0pO1xuXG4gIGl0KFwiUkVQUk86IHR5cGluZyBpbiBhIGNvbnRyb2xsZWQgZmllbGQga2VlcHMgZm9jdXMgaW4gaXQgYWNyb3NzIHBhcmVudCByZS1yZW5kZXJzIChuZXcgaW5saW5lIG9uQ2xvc2UgZWFjaCB0aW1lKVwiLCBhc3luYyAoKSA9PiB7XG4gICAgY29uc3QgdXNlciA9IHVzZXJFdmVudC5zZXR1cCgpO1xuICAgIHJlbmRlcig8VHlwaW5nSGFybmVzcyAvPik7XG4gICAgYXdhaXQgdXNlci5jbGljayhzY3JlZW4uZ2V0QnlUZXh0KFwiRGVsZXRlIHRlbmFudFwiKSk7XG5cbiAgICBjb25zdCBpbnB1dCA9IHNjcmVlbi5nZXRCeVJvbGUoXCJ0ZXh0Ym94XCIsIHsgbmFtZTogXCJUZW5hbnQgc2x1Z1wiIH0pO1xuICAgIGF3YWl0IHVzZXIuY2xpY2soaW5wdXQpO1xuICAgIGF3YWl0IHVzZXIua2V5Ym9hcmQoXCJhY21lXCIpO1xuXG4gICAgZXhwZWN0KGlucHV0KS50b0hhdmVWYWx1ZShcImFjbWVcIik7XG4gICAgZXhwZWN0KGlucHV0KS50b0hhdmVGb2N1cygpO1xuICB9KTtcblxuICBpdChcIkVzY2FwZSBjYWxscyB0aGUgTEFURVNUIG9uQ2xvc2UgYWZ0ZXIgcmUtcmVuZGVycywgbm90IHRoZSBvbmUgZnJvbSB3aGVuIGl0IG9wZW5lZFwiLCBhc3luYyAoKSA9PiB7XG4gICAgY29uc3QgdXNlciA9IHVzZXJFdmVudC5zZXR1cCgpO1xuICAgIHJlbmRlcig8VHlwaW5nSGFybmVzcyAvPik7XG4gICAgYXdhaXQgdXNlci5jbGljayhzY3JlZW4uZ2V0QnlUZXh0KFwiRGVsZXRlIHRlbmFudFwiKSk7XG4gICAgYXdhaXQgdXNlci5jbGljayhzY3JlZW4uZ2V0QnlSb2xlKFwidGV4dGJveFwiLCB7IG5hbWU6IFwiVGVuYW50IHNsdWdcIiB9KSk7XG4gICAgYXdhaXQgdXNlci5rZXlib2FyZChcImFiXCIpO1xuICAgIGF3YWl0IHVzZXIua2V5Ym9hcmQoXCJ7RXNjYXBlfVwiKTtcbiAgICBleHBlY3Qoc2NyZWVuLnF1ZXJ5QnlSb2xlKFwiZGlhbG9nXCIpKS5ub3QudG9CZUluVGhlRG9jdW1lbnQoKTtcbiAgICBleHBlY3Qoc2NyZWVuLmdldEJ5VGVzdElkKFwiY2xvc2VkXCIpKS50b0hhdmVUZXh0Q29udGVudChcIjFcIik7XG4gIH0pO1xuXG4gIGl0KFwiZm9jdXMgc3RpbGwgcmV0dXJucyB0byB0aGUgdHJpZ2dlciBhZnRlciBjbG9zaW5nIGZyb20gYSByZS1yZW5kZXJlZCBtb2RhbFwiLCBhc3luYyAoKSA9PiB7XG4gICAgY29uc3QgdXNlciA9IHVzZXJFdmVudC5zZXR1cCgpO1xuICAgIHJlbmRlcig8VHlwaW5nSGFybmVzcyAvPik7XG4gICAgY29uc3QgdHJpZ2dlciA9IHNjcmVlbi5nZXRCeVRleHQoXCJEZWxldGUgdGVuYW50XCIpO1xuICAgIGF3YWl0IHVzZXIuY2xpY2sodHJpZ2dlcik7XG4gICAgYXdhaXQgdXNlci5jbGljayhzY3JlZW4uZ2V0QnlSb2xlKFwidGV4dGJveFwiLCB7IG5hbWU6IFwiVGVuYW50IHNsdWdcIiB9KSk7XG4gICAgYXdhaXQgdXNlci5rZXlib2FyZChcInh7RXNjYXBlfVwiKTtcbiAgICBleHBlY3QodHJpZ2dlcikudG9IYXZlRm9jdXMoKTtcbiAgfSk7XG59KTtcbiJdLCJuYW1lcyI6WyJIYXJuZXNzIiwib3BlbiIsImluaXRpYWxPcGVuIiwic2V0T3BlbiIsIlJlYWN0IiwidXNlU3RhdGUiLCJkaXYiLCJidXR0b24iLCJvbkNsaWNrIiwiQWRtaW5Nb2RhbCIsIm9uQ2xvc2UiLCJ0aXRsZSIsImRlc2NyaWJlIiwiaXQiLCJyZW5kZXIiLCJqZXN0IiwiZm4iLCJkaWFsb2ciLCJzY3JlZW4iLCJnZXRCeVJvbGUiLCJleHBlY3QiLCJ0b0hhdmVBdHRyaWJ1dGUiLCJ1c2VyIiwidXNlckV2ZW50Iiwic2V0dXAiLCJjbGljayIsImdldEJ5VGV4dCIsImNvbnRhaW5zIiwiZG9jdW1lbnQiLCJhY3RpdmVFbGVtZW50IiwidG9CZSIsIm5hbWUiLCJ0b0hhdmVGb2N1cyIsImNsb3NlQnV0dG9uIiwiZmlyc3QiLCJzZWNvbmQiLCJ0YWIiLCJzaGlmdCIsInRyaWdnZXIiLCJ0b0JlSW5UaGVEb2N1bWVudCIsImtleWJvYXJkIiwicXVlcnlCeVJvbGUiLCJub3QiLCJUeXBpbmdIYXJuZXNzIiwic2x1ZyIsInNldFNsdWciLCJjbG9zZWQiLCJzZXRDbG9zZWQiLCJzcGFuIiwiZGF0YS10ZXN0aWQiLCJpbnB1dCIsImFyaWEtbGFiZWwiLCJ2YWx1ZSIsIm9uQ2hhbmdlIiwiZSIsInRhcmdldCIsImNsb3NlIiwidG9IYXZlVmFsdWUiLCJnZXRCeVRlc3RJ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

@@ -1,0 +1,28 @@
+81779ab23bbc42a1b0fc68567e7d31f1
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, {
+        enumerable: true,
+        get: Object.getOwnPropertyDescriptor(all, name).get
+    });
+}
+_export(exports, {
+    get BRAND_MARK_SRC () {
+        return _BrandMark.BRAND_MARK_SRC;
+    },
+    get Brand () {
+        return _BrandMark.Brand;
+    },
+    get BrandMark () {
+        return _BrandMark.BrandMark;
+    },
+    get BrandSignature () {
+        return _BrandMark.BrandSignature;
+    }
+});
+const _BrandMark = require("./BrandMark");
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2NvbXBvbmVudHMvYnJhbmQvaW5kZXgudHMiXSwic291cmNlc0NvbnRlbnQiOlsiZXhwb3J0IHsgQnJhbmQsIEJyYW5kTWFyaywgQnJhbmRTaWduYXR1cmUsIEJSQU5EX01BUktfU1JDIH0gZnJvbSBcIi4vQnJhbmRNYXJrXCI7XG4iXSwibmFtZXMiOlsiQlJBTkRfTUFSS19TUkMiLCJCcmFuZCIsIkJyYW5kTWFyayIsIkJyYW5kU2lnbmF0dXJlIl0sIm1hcHBpbmdzIjoiOzs7Ozs7Ozs7OztRQUEyQ0E7ZUFBQUEseUJBQWM7O1FBQWhEQztlQUFBQSxnQkFBSzs7UUFBRUM7ZUFBQUEsb0JBQVM7O1FBQUVDO2VBQUFBLHlCQUFjOzs7MkJBQXdCIn0=

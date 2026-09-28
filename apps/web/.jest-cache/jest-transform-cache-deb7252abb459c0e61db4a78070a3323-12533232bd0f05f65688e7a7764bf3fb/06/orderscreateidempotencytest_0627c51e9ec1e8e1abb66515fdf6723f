@@ -1,0 +1,103 @@
+2803de5f2015d3da22c8b57d2ce169fc
+"use strict";
+jest.mock("@/lib/api-client", ()=>({
+        ...jest.requireActual("@/lib/api-client"),
+        apiClient: {
+            post: (...a)=>post(...a)
+        }
+    }));
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+const _react1 = require("@testing-library/react");
+const _reactquery = require("@tanstack/react-query");
+const _orders = require("./orders");
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+// SA-484a (#2406): useCreateOrder sends the replay key as the `Idempotency-Key` HEADER — POST
+// /orders reads it there (B215) — and never in the request body.
+const post = jest.fn();
+const wrapper = ({ children })=>/*#__PURE__*/ (0, _jsxruntime.jsx)(_reactquery.QueryClientProvider, {
+        client: new _reactquery.QueryClient(),
+        children: children
+    });
+describe("useCreateOrder — Idempotency-Key (SA-484a)", ()=>{
+    beforeEach(()=>post.mockReset().mockResolvedValue({
+            data: {
+                id: "o1"
+            }
+        }));
+    it("sends idempotencyKey as the header, stripped from the body", async ()=>{
+        const { result } = (0, _react1.renderHook)(()=>(0, _orders.useCreateOrder)(), {
+            wrapper
+        });
+        result.current.mutate({
+            customerId: "c1",
+            items: [],
+            idempotencyKey: "k-1"
+        });
+        await (0, _react1.waitFor)(()=>expect(post).toHaveBeenCalledTimes(1));
+        const [url, body, config] = post.mock.calls[0];
+        expect(url).toBe("/orders");
+        expect(body).not.toHaveProperty("idempotencyKey");
+        expect(config).toEqual({
+            headers: {
+                "Idempotency-Key": "k-1"
+            }
+        });
+    });
+    it("no key ⇒ no header (a plain create is unchanged)", async ()=>{
+        const { result } = (0, _react1.renderHook)(()=>(0, _orders.useCreateOrder)(), {
+            wrapper
+        });
+        result.current.mutate({
+            customerId: "c1",
+            items: []
+        });
+        await (0, _react1.waitFor)(()=>expect(post).toHaveBeenCalledTimes(1));
+        expect(post.mock.calls[0][2]).toBeUndefined();
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2xpYi9hcGkvb3JkZXJzLmNyZWF0ZS1pZGVtcG90ZW5jeS50ZXN0LnRzeCJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgKiBhcyBSZWFjdCBmcm9tIFwicmVhY3RcIjtcbmltcG9ydCB7IHJlbmRlckhvb2ssIHdhaXRGb3IgfSBmcm9tIFwiQHRlc3RpbmctbGlicmFyeS9yZWFjdFwiO1xuaW1wb3J0IHsgUXVlcnlDbGllbnQsIFF1ZXJ5Q2xpZW50UHJvdmlkZXIgfSBmcm9tIFwiQHRhbnN0YWNrL3JlYWN0LXF1ZXJ5XCI7XG5pbXBvcnQgeyB1c2VDcmVhdGVPcmRlciB9IGZyb20gXCIuL29yZGVyc1wiO1xuXG4vLyBTQS00ODRhICgjMjQwNik6IHVzZUNyZWF0ZU9yZGVyIHNlbmRzIHRoZSByZXBsYXkga2V5IGFzIHRoZSBgSWRlbXBvdGVuY3ktS2V5YCBIRUFERVIg4oCUIFBPU1Rcbi8vIC9vcmRlcnMgcmVhZHMgaXQgdGhlcmUgKEIyMTUpIOKAlCBhbmQgbmV2ZXIgaW4gdGhlIHJlcXVlc3QgYm9keS5cbmNvbnN0IHBvc3QgPSBqZXN0LmZuKCk7XG5qZXN0Lm1vY2soXCJAL2xpYi9hcGktY2xpZW50XCIsICgpID0+ICh7XG4gIC4uLmplc3QucmVxdWlyZUFjdHVhbChcIkAvbGliL2FwaS1jbGllbnRcIiksXG4gIGFwaUNsaWVudDogeyBwb3N0OiAoLi4uYTogdW5rbm93bltdKSA9PiBwb3N0KC4uLmEpIH0sXG59KSk7XG5cbmNvbnN0IHdyYXBwZXIgPSAoeyBjaGlsZHJlbiB9OiB7IGNoaWxkcmVuOiBSZWFjdC5SZWFjdE5vZGUgfSkgPT4gKFxuICA8UXVlcnlDbGllbnRQcm92aWRlciBjbGllbnQ9e25ldyBRdWVyeUNsaWVudCgpfT57Y2hpbGRyZW59PC9RdWVyeUNsaWVudFByb3ZpZGVyPlxuKTtcblxuZGVzY3JpYmUoXCJ1c2VDcmVhdGVPcmRlciDigJQgSWRlbXBvdGVuY3ktS2V5IChTQS00ODRhKVwiLCAoKSA9PiB7XG4gIGJlZm9yZUVhY2goKCkgPT4gcG9zdC5tb2NrUmVzZXQoKS5tb2NrUmVzb2x2ZWRWYWx1ZSh7IGRhdGE6IHsgaWQ6IFwibzFcIiB9IH0pKTtcblxuICBpdChcInNlbmRzIGlkZW1wb3RlbmN5S2V5IGFzIHRoZSBoZWFkZXIsIHN0cmlwcGVkIGZyb20gdGhlIGJvZHlcIiwgYXN5bmMgKCkgPT4ge1xuICAgIGNvbnN0IHsgcmVzdWx0IH0gPSByZW5kZXJIb29rKCgpID0+IHVzZUNyZWF0ZU9yZGVyKCksIHsgd3JhcHBlciB9KTtcbiAgICByZXN1bHQuY3VycmVudC5tdXRhdGUoeyBjdXN0b21lcklkOiBcImMxXCIsIGl0ZW1zOiBbXSwgaWRlbXBvdGVuY3lLZXk6IFwiay0xXCIgfSBhcyBhbnkpO1xuICAgIGF3YWl0IHdhaXRGb3IoKCkgPT4gZXhwZWN0KHBvc3QpLnRvSGF2ZUJlZW5DYWxsZWRUaW1lcygxKSk7XG4gICAgY29uc3QgW3VybCwgYm9keSwgY29uZmlnXSA9IHBvc3QubW9jay5jYWxsc1swXTtcbiAgICBleHBlY3QodXJsKS50b0JlKFwiL29yZGVyc1wiKTtcbiAgICBleHBlY3QoYm9keSkubm90LnRvSGF2ZVByb3BlcnR5KFwiaWRlbXBvdGVuY3lLZXlcIik7XG4gICAgZXhwZWN0KGNvbmZpZykudG9FcXVhbCh7IGhlYWRlcnM6IHsgXCJJZGVtcG90ZW5jeS1LZXlcIjogXCJrLTFcIiB9IH0pO1xuICB9KTtcblxuICBpdChcIm5vIGtleSDih5Igbm8gaGVhZGVyIChhIHBsYWluIGNyZWF0ZSBpcyB1bmNoYW5nZWQpXCIsIGFzeW5jICgpID0+IHtcbiAgICBjb25zdCB7IHJlc3VsdCB9ID0gcmVuZGVySG9vaygoKSA9PiB1c2VDcmVhdGVPcmRlcigpLCB7IHdyYXBwZXIgfSk7XG4gICAgcmVzdWx0LmN1cnJlbnQubXV0YXRlKHsgY3VzdG9tZXJJZDogXCJjMVwiLCBpdGVtczogW10gfSBhcyBhbnkpO1xuICAgIGF3YWl0IHdhaXRGb3IoKCkgPT4gZXhwZWN0KHBvc3QpLnRvSGF2ZUJlZW5DYWxsZWRUaW1lcygxKSk7XG4gICAgZXhwZWN0KHBvc3QubW9jay5jYWxsc1swXVsyXSkudG9CZVVuZGVmaW5lZCgpO1xuICB9KTtcbn0pO1xuIl0sIm5hbWVzIjpbImplc3QiLCJtb2NrIiwicmVxdWlyZUFjdHVhbCIsImFwaUNsaWVudCIsInBvc3QiLCJhIiwiZm4iLCJ3cmFwcGVyIiwiY2hpbGRyZW4iLCJRdWVyeUNsaWVudFByb3ZpZGVyIiwiY2xpZW50IiwiUXVlcnlDbGllbnQiLCJkZXNjcmliZSIsImJlZm9yZUVhY2giLCJtb2NrUmVzZXQiLCJtb2NrUmVzb2x2ZWRWYWx1ZSIsImRhdGEiLCJpZCIsIml0IiwicmVzdWx0IiwicmVuZGVySG9vayIsInVzZUNyZWF0ZU9yZGVyIiwiY3VycmVudCIsIm11dGF0ZSIsImN1c3RvbWVySWQiLCJpdGVtcyIsImlkZW1wb3RlbmN5S2V5Iiwid2FpdEZvciIsImV4cGVjdCIsInRvSGF2ZUJlZW5DYWxsZWRUaW1lcyIsInVybCIsImJvZHkiLCJjb25maWciLCJjYWxscyIsInRvQmUiLCJub3QiLCJ0b0hhdmVQcm9wZXJ0eSIsInRvRXF1YWwiLCJoZWFkZXJzIiwidG9CZVVuZGVmaW5lZCJdLCJtYXBwaW5ncyI6IjtBQVFBQSxLQUFLQyxJQUFJLENBQUMsb0JBQW9CLElBQU8sQ0FBQTtRQUNuQyxHQUFHRCxLQUFLRSxhQUFhLENBQUMsbUJBQW1CO1FBQ3pDQyxXQUFXO1lBQUVDLE1BQU0sQ0FBQyxHQUFHQyxJQUFpQkQsUUFBUUM7UUFBRztJQUNyRCxDQUFBOzs7OzsrREFYdUI7d0JBQ2E7NEJBQ2E7d0JBQ2xCOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7QUFFL0IsOEZBQThGO0FBQzlGLGlFQUFpRTtBQUNqRSxNQUFNRCxPQUFPSixLQUFLTSxFQUFFO0FBTXBCLE1BQU1DLFVBQVUsQ0FBQyxFQUFFQyxRQUFRLEVBQWlDLGlCQUMxRCxxQkFBQ0MsK0JBQW1CO1FBQUNDLFFBQVEsSUFBSUMsdUJBQVc7a0JBQUtIOztBQUduREksU0FBUyw4Q0FBOEM7SUFDckRDLFdBQVcsSUFBTVQsS0FBS1UsU0FBUyxHQUFHQyxpQkFBaUIsQ0FBQztZQUFFQyxNQUFNO2dCQUFFQyxJQUFJO1lBQUs7UUFBRTtJQUV6RUMsR0FBRyw4REFBOEQ7UUFDL0QsTUFBTSxFQUFFQyxNQUFNLEVBQUUsR0FBR0MsSUFBQUEsa0JBQVUsRUFBQyxJQUFNQyxJQUFBQSxzQkFBYyxLQUFJO1lBQUVkO1FBQVE7UUFDaEVZLE9BQU9HLE9BQU8sQ0FBQ0MsTUFBTSxDQUFDO1lBQUVDLFlBQVk7WUFBTUMsT0FBTyxFQUFFO1lBQUVDLGdCQUFnQjtRQUFNO1FBQzNFLE1BQU1DLElBQUFBLGVBQU8sRUFBQyxJQUFNQyxPQUFPeEIsTUFBTXlCLHFCQUFxQixDQUFDO1FBQ3ZELE1BQU0sQ0FBQ0MsS0FBS0MsTUFBTUMsT0FBTyxHQUFHNUIsS0FBS0gsSUFBSSxDQUFDZ0MsS0FBSyxDQUFDLEVBQUU7UUFDOUNMLE9BQU9FLEtBQUtJLElBQUksQ0FBQztRQUNqQk4sT0FBT0csTUFBTUksR0FBRyxDQUFDQyxjQUFjLENBQUM7UUFDaENSLE9BQU9JLFFBQVFLLE9BQU8sQ0FBQztZQUFFQyxTQUFTO2dCQUFFLG1CQUFtQjtZQUFNO1FBQUU7SUFDakU7SUFFQXBCLEdBQUcsb0RBQW9EO1FBQ3JELE1BQU0sRUFBRUMsTUFBTSxFQUFFLEdBQUdDLElBQUFBLGtCQUFVLEVBQUMsSUFBTUMsSUFBQUEsc0JBQWMsS0FBSTtZQUFFZDtRQUFRO1FBQ2hFWSxPQUFPRyxPQUFPLENBQUNDLE1BQU0sQ0FBQztZQUFFQyxZQUFZO1lBQU1DLE9BQU8sRUFBRTtRQUFDO1FBQ3BELE1BQU1FLElBQUFBLGVBQU8sRUFBQyxJQUFNQyxPQUFPeEIsTUFBTXlCLHFCQUFxQixDQUFDO1FBQ3ZERCxPQUFPeEIsS0FBS0gsSUFBSSxDQUFDZ0MsS0FBSyxDQUFDLEVBQUUsQ0FBQyxFQUFFLEVBQUVNLGFBQWE7SUFDN0M7QUFDRiJ9

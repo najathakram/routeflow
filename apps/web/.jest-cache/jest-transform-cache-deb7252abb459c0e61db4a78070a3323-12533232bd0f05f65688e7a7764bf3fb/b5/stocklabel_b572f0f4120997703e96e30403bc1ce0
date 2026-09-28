@@ -1,0 +1,17 @@
+4347bfc76cb1ddc6e64551c4910d1981
+/**
+ * Moved to `@routeflow/pricing` (shared with mobile). Re-exported so every existing
+ * web import of `@/lib/stock-label` keeps working byte-for-byte.
+ */ "use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+Object.defineProperty(exports, "unitsLabel", {
+    enumerable: true,
+    get: function() {
+        return _pricing.unitsLabel;
+    }
+});
+const _pricing = require("@routeflow/pricing");
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2xpYi9zdG9jay1sYWJlbC50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqIE1vdmVkIHRvIGBAcm91dGVmbG93L3ByaWNpbmdgIChzaGFyZWQgd2l0aCBtb2JpbGUpLiBSZS1leHBvcnRlZCBzbyBldmVyeSBleGlzdGluZ1xuICogd2ViIGltcG9ydCBvZiBgQC9saWIvc3RvY2stbGFiZWxgIGtlZXBzIHdvcmtpbmcgYnl0ZS1mb3ItYnl0ZS5cbiAqL1xuZXhwb3J0IHsgdW5pdHNMYWJlbCB9IGZyb20gXCJAcm91dGVmbG93L3ByaWNpbmdcIjtcbiJdLCJuYW1lcyI6WyJ1bml0c0xhYmVsIl0sIm1hcHBpbmdzIjoiQUFBQTs7O0NBR0M7Ozs7K0JBQ1FBOzs7ZUFBQUEsbUJBQVU7Ozt5QkFBUSJ9

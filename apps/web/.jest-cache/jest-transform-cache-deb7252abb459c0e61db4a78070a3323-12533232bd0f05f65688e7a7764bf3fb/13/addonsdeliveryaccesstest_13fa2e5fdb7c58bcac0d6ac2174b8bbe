@@ -1,0 +1,129 @@
+79afb7b451fed4e0d3a4ef0879ce7164
+/**
+ * REG-B123 — Developer Mode silently overrode the per-tenant delivery feature
+ * toggles: `useDeliveryAccess`/`useRoutesAccess` used to OR the feature addon
+ * with `useDeveloperMode().enabled`, so any tenant with `developer_mode` on
+ * (which included every internal/demo tenant) saw the routes/dispatch surface
+ * regardless of whether `order_delivery`/`recurring_routes` were actually
+ * purchased. Owner decision 2026-08-28 (fixed in #491, 28cb0a25): the
+ * composition helpers read the feature addon ALONE.
+ *
+ * Pinned behaviourally through the real hooks + a real QueryClient — a
+ * regression back to `dev.enabled || od.enabled` fails this the moment
+ * `developer_mode` is present without the feature addon.
+ */ "use strict";
+jest.mock("@/lib/api-client", ()=>({
+        apiClient: {
+            get: jest.fn(),
+            post: jest.fn(),
+            patch: jest.fn(),
+            delete: jest.fn()
+        }
+    }));
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+const _react1 = require("@testing-library/react");
+const _reactquery = require("@tanstack/react-query");
+const _render = require("../../test-utils/render");
+const _apiclient = require("../api-client");
+const _addons = require("./addons");
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+const mockedGet = _apiclient.apiClient.get;
+function Wrapper({ children }) {
+    const [client] = _react.useState(_render.createTestQueryClient);
+    return /*#__PURE__*/ (0, _jsxruntime.jsx)(_reactquery.QueryClientProvider, {
+        client: client,
+        children: children
+    });
+}
+beforeEach(()=>{
+    jest.clearAllMocks();
+});
+describe("useDeliveryAccess / useRoutesAccess — developer_mode no longer substitutes (B123)", ()=>{
+    it("REG-B123 developer_mode alone (no feature addon) does not unlock delivery or routes access", async ()=>{
+        mockedGet.mockResolvedValue({
+            data: {
+                addons: [
+                    "developer_mode"
+                ]
+            }
+        });
+        const delivery = (0, _react1.renderHook)(()=>(0, _addons.useDeliveryAccess)(), {
+            wrapper: Wrapper
+        });
+        const routes = (0, _react1.renderHook)(()=>(0, _addons.useRoutesAccess)(), {
+            wrapper: Wrapper
+        });
+        await (0, _react1.waitFor)(()=>expect(delivery.result.current.resolved).toBe(true));
+        await (0, _react1.waitFor)(()=>expect(routes.result.current.resolved).toBe(true));
+        // RED against the pre-fix `dev.enabled || od.enabled` composition, which
+        // would report enabled: true here off developer_mode alone.
+        expect(delivery.result.current.enabled).toBe(false);
+        expect(routes.result.current.enabled).toBe(false);
+    });
+    it("the real feature addon (without developer_mode) still unlocks access", async ()=>{
+        mockedGet.mockResolvedValue({
+            data: {
+                addons: [
+                    "order_delivery",
+                    "recurring_routes"
+                ]
+            }
+        });
+        const delivery = (0, _react1.renderHook)(()=>(0, _addons.useDeliveryAccess)(), {
+            wrapper: Wrapper
+        });
+        const routes = (0, _react1.renderHook)(()=>(0, _addons.useRoutesAccess)(), {
+            wrapper: Wrapper
+        });
+        await (0, _react1.waitFor)(()=>expect(delivery.result.current.resolved).toBe(true));
+        await (0, _react1.waitFor)(()=>expect(routes.result.current.resolved).toBe(true));
+        expect(delivery.result.current.enabled).toBe(true);
+        expect(routes.result.current.enabled).toBe(true);
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2xpYi9hcGkvYWRkb25zLmRlbGl2ZXJ5LWFjY2Vzcy50ZXN0LnRzeCJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqIFJFRy1CMTIzIOKAlCBEZXZlbG9wZXIgTW9kZSBzaWxlbnRseSBvdmVycm9kZSB0aGUgcGVyLXRlbmFudCBkZWxpdmVyeSBmZWF0dXJlXG4gKiB0b2dnbGVzOiBgdXNlRGVsaXZlcnlBY2Nlc3NgL2B1c2VSb3V0ZXNBY2Nlc3NgIHVzZWQgdG8gT1IgdGhlIGZlYXR1cmUgYWRkb25cbiAqIHdpdGggYHVzZURldmVsb3Blck1vZGUoKS5lbmFibGVkYCwgc28gYW55IHRlbmFudCB3aXRoIGBkZXZlbG9wZXJfbW9kZWAgb25cbiAqICh3aGljaCBpbmNsdWRlZCBldmVyeSBpbnRlcm5hbC9kZW1vIHRlbmFudCkgc2F3IHRoZSByb3V0ZXMvZGlzcGF0Y2ggc3VyZmFjZVxuICogcmVnYXJkbGVzcyBvZiB3aGV0aGVyIGBvcmRlcl9kZWxpdmVyeWAvYHJlY3VycmluZ19yb3V0ZXNgIHdlcmUgYWN0dWFsbHlcbiAqIHB1cmNoYXNlZC4gT3duZXIgZGVjaXNpb24gMjAyNi0wOC0yOCAoZml4ZWQgaW4gIzQ5MSwgMjhjYjBhMjUpOiB0aGVcbiAqIGNvbXBvc2l0aW9uIGhlbHBlcnMgcmVhZCB0aGUgZmVhdHVyZSBhZGRvbiBBTE9ORS5cbiAqXG4gKiBQaW5uZWQgYmVoYXZpb3VyYWxseSB0aHJvdWdoIHRoZSByZWFsIGhvb2tzICsgYSByZWFsIFF1ZXJ5Q2xpZW50IOKAlCBhXG4gKiByZWdyZXNzaW9uIGJhY2sgdG8gYGRldi5lbmFibGVkIHx8IG9kLmVuYWJsZWRgIGZhaWxzIHRoaXMgdGhlIG1vbWVudFxuICogYGRldmVsb3Blcl9tb2RlYCBpcyBwcmVzZW50IHdpdGhvdXQgdGhlIGZlYXR1cmUgYWRkb24uXG4gKi9cbmltcG9ydCAqIGFzIFJlYWN0IGZyb20gXCJyZWFjdFwiO1xuaW1wb3J0IHsgcmVuZGVySG9vaywgd2FpdEZvciB9IGZyb20gXCJAdGVzdGluZy1saWJyYXJ5L3JlYWN0XCI7XG5pbXBvcnQgeyBRdWVyeUNsaWVudFByb3ZpZGVyIH0gZnJvbSBcIkB0YW5zdGFjay9yZWFjdC1xdWVyeVwiO1xuaW1wb3J0IHsgY3JlYXRlVGVzdFF1ZXJ5Q2xpZW50IH0gZnJvbSBcIkAvdGVzdC11dGlscy9yZW5kZXJcIjtcbmltcG9ydCB7IGFwaUNsaWVudCB9IGZyb20gXCJAL2xpYi9hcGktY2xpZW50XCI7XG5pbXBvcnQgeyB1c2VEZWxpdmVyeUFjY2VzcywgdXNlUm91dGVzQWNjZXNzIH0gZnJvbSBcIi4vYWRkb25zXCI7XG5cbmplc3QubW9jayhcIkAvbGliL2FwaS1jbGllbnRcIiwgKCkgPT4gKHtcbiAgYXBpQ2xpZW50OiB7IGdldDogamVzdC5mbigpLCBwb3N0OiBqZXN0LmZuKCksIHBhdGNoOiBqZXN0LmZuKCksIGRlbGV0ZTogamVzdC5mbigpIH0sXG59KSk7XG5cbmNvbnN0IG1vY2tlZEdldCA9IGFwaUNsaWVudC5nZXQgYXMgamVzdC5Nb2NrO1xuXG5mdW5jdGlvbiBXcmFwcGVyKHsgY2hpbGRyZW4gfTogeyBjaGlsZHJlbjogUmVhY3QuUmVhY3ROb2RlIH0pIHtcbiAgY29uc3QgW2NsaWVudF0gPSBSZWFjdC51c2VTdGF0ZShjcmVhdGVUZXN0UXVlcnlDbGllbnQpO1xuICByZXR1cm4gPFF1ZXJ5Q2xpZW50UHJvdmlkZXIgY2xpZW50PXtjbGllbnR9PntjaGlsZHJlbn08L1F1ZXJ5Q2xpZW50UHJvdmlkZXI+O1xufVxuXG5iZWZvcmVFYWNoKCgpID0+IHtcbiAgamVzdC5jbGVhckFsbE1vY2tzKCk7XG59KTtcblxuZGVzY3JpYmUoXCJ1c2VEZWxpdmVyeUFjY2VzcyAvIHVzZVJvdXRlc0FjY2VzcyDigJQgZGV2ZWxvcGVyX21vZGUgbm8gbG9uZ2VyIHN1YnN0aXR1dGVzIChCMTIzKVwiLCAoKSA9PiB7XG4gIGl0KFwiUkVHLUIxMjMgZGV2ZWxvcGVyX21vZGUgYWxvbmUgKG5vIGZlYXR1cmUgYWRkb24pIGRvZXMgbm90IHVubG9jayBkZWxpdmVyeSBvciByb3V0ZXMgYWNjZXNzXCIsIGFzeW5jICgpID0+IHtcbiAgICBtb2NrZWRHZXQubW9ja1Jlc29sdmVkVmFsdWUoeyBkYXRhOiB7IGFkZG9uczogW1wiZGV2ZWxvcGVyX21vZGVcIl0gfSB9KTtcblxuICAgIGNvbnN0IGRlbGl2ZXJ5ID0gcmVuZGVySG9vaygoKSA9PiB1c2VEZWxpdmVyeUFjY2VzcygpLCB7IHdyYXBwZXI6IFdyYXBwZXIgfSk7XG4gICAgY29uc3Qgcm91dGVzID0gcmVuZGVySG9vaygoKSA9PiB1c2VSb3V0ZXNBY2Nlc3MoKSwgeyB3cmFwcGVyOiBXcmFwcGVyIH0pO1xuXG4gICAgYXdhaXQgd2FpdEZvcigoKSA9PiBleHBlY3QoZGVsaXZlcnkucmVzdWx0LmN1cnJlbnQucmVzb2x2ZWQpLnRvQmUodHJ1ZSkpO1xuICAgIGF3YWl0IHdhaXRGb3IoKCkgPT4gZXhwZWN0KHJvdXRlcy5yZXN1bHQuY3VycmVudC5yZXNvbHZlZCkudG9CZSh0cnVlKSk7XG5cbiAgICAvLyBSRUQgYWdhaW5zdCB0aGUgcHJlLWZpeCBgZGV2LmVuYWJsZWQgfHwgb2QuZW5hYmxlZGAgY29tcG9zaXRpb24sIHdoaWNoXG4gICAgLy8gd291bGQgcmVwb3J0IGVuYWJsZWQ6IHRydWUgaGVyZSBvZmYgZGV2ZWxvcGVyX21vZGUgYWxvbmUuXG4gICAgZXhwZWN0KGRlbGl2ZXJ5LnJlc3VsdC5jdXJyZW50LmVuYWJsZWQpLnRvQmUoZmFsc2UpO1xuICAgIGV4cGVjdChyb3V0ZXMucmVzdWx0LmN1cnJlbnQuZW5hYmxlZCkudG9CZShmYWxzZSk7XG4gIH0pO1xuXG4gIGl0KFwidGhlIHJlYWwgZmVhdHVyZSBhZGRvbiAod2l0aG91dCBkZXZlbG9wZXJfbW9kZSkgc3RpbGwgdW5sb2NrcyBhY2Nlc3NcIiwgYXN5bmMgKCkgPT4ge1xuICAgIG1vY2tlZEdldC5tb2NrUmVzb2x2ZWRWYWx1ZSh7IGRhdGE6IHsgYWRkb25zOiBbXCJvcmRlcl9kZWxpdmVyeVwiLCBcInJlY3VycmluZ19yb3V0ZXNcIl0gfSB9KTtcblxuICAgIGNvbnN0IGRlbGl2ZXJ5ID0gcmVuZGVySG9vaygoKSA9PiB1c2VEZWxpdmVyeUFjY2VzcygpLCB7IHdyYXBwZXI6IFdyYXBwZXIgfSk7XG4gICAgY29uc3Qgcm91dGVzID0gcmVuZGVySG9vaygoKSA9PiB1c2VSb3V0ZXNBY2Nlc3MoKSwgeyB3cmFwcGVyOiBXcmFwcGVyIH0pO1xuXG4gICAgYXdhaXQgd2FpdEZvcigoKSA9PiBleHBlY3QoZGVsaXZlcnkucmVzdWx0LmN1cnJlbnQucmVzb2x2ZWQpLnRvQmUodHJ1ZSkpO1xuICAgIGF3YWl0IHdhaXRGb3IoKCkgPT4gZXhwZWN0KHJvdXRlcy5yZXN1bHQuY3VycmVudC5yZXNvbHZlZCkudG9CZSh0cnVlKSk7XG5cbiAgICBleHBlY3QoZGVsaXZlcnkucmVzdWx0LmN1cnJlbnQuZW5hYmxlZCkudG9CZSh0cnVlKTtcbiAgICBleHBlY3Qocm91dGVzLnJlc3VsdC5jdXJyZW50LmVuYWJsZWQpLnRvQmUodHJ1ZSk7XG4gIH0pO1xufSk7XG4iXSwibmFtZXMiOlsiamVzdCIsIm1vY2siLCJhcGlDbGllbnQiLCJnZXQiLCJmbiIsInBvc3QiLCJwYXRjaCIsImRlbGV0ZSIsIm1vY2tlZEdldCIsIldyYXBwZXIiLCJjaGlsZHJlbiIsImNsaWVudCIsIlJlYWN0IiwidXNlU3RhdGUiLCJjcmVhdGVUZXN0UXVlcnlDbGllbnQiLCJRdWVyeUNsaWVudFByb3ZpZGVyIiwiYmVmb3JlRWFjaCIsImNsZWFyQWxsTW9ja3MiLCJkZXNjcmliZSIsIml0IiwibW9ja1Jlc29sdmVkVmFsdWUiLCJkYXRhIiwiYWRkb25zIiwiZGVsaXZlcnkiLCJyZW5kZXJIb29rIiwidXNlRGVsaXZlcnlBY2Nlc3MiLCJ3cmFwcGVyIiwicm91dGVzIiwidXNlUm91dGVzQWNjZXNzIiwid2FpdEZvciIsImV4cGVjdCIsInJlc3VsdCIsImN1cnJlbnQiLCJyZXNvbHZlZCIsInRvQmUiLCJlbmFibGVkIl0sIm1hcHBpbmdzIjoiQUFBQTs7Ozs7Ozs7Ozs7O0NBWUM7QUFRREEsS0FBS0MsSUFBSSxDQUFDLG9CQUFvQixJQUFPLENBQUE7UUFDbkNDLFdBQVc7WUFBRUMsS0FBS0gsS0FBS0ksRUFBRTtZQUFJQyxNQUFNTCxLQUFLSSxFQUFFO1lBQUlFLE9BQU9OLEtBQUtJLEVBQUU7WUFBSUcsUUFBUVAsS0FBS0ksRUFBRTtRQUFHO0lBQ3BGLENBQUE7Ozs7OytEQVR1Qjt3QkFDYTs0QkFDQTt3QkFDRTsyQkFDWjt3QkFDeUI7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7OztBQU1uRCxNQUFNSSxZQUFZTixvQkFBUyxDQUFDQyxHQUFHO0FBRS9CLFNBQVNNLFFBQVEsRUFBRUMsUUFBUSxFQUFpQztJQUMxRCxNQUFNLENBQUNDLE9BQU8sR0FBR0MsT0FBTUMsUUFBUSxDQUFDQyw2QkFBcUI7SUFDckQscUJBQU8scUJBQUNDLCtCQUFtQjtRQUFDSixRQUFRQTtrQkFBU0Q7O0FBQy9DO0FBRUFNLFdBQVc7SUFDVGhCLEtBQUtpQixhQUFhO0FBQ3BCO0FBRUFDLFNBQVMscUZBQXFGO0lBQzVGQyxHQUFHLDhGQUE4RjtRQUMvRlgsVUFBVVksaUJBQWlCLENBQUM7WUFBRUMsTUFBTTtnQkFBRUMsUUFBUTtvQkFBQztpQkFBaUI7WUFBQztRQUFFO1FBRW5FLE1BQU1DLFdBQVdDLElBQUFBLGtCQUFVLEVBQUMsSUFBTUMsSUFBQUEseUJBQWlCLEtBQUk7WUFBRUMsU0FBU2pCO1FBQVE7UUFDMUUsTUFBTWtCLFNBQVNILElBQUFBLGtCQUFVLEVBQUMsSUFBTUksSUFBQUEsdUJBQWUsS0FBSTtZQUFFRixTQUFTakI7UUFBUTtRQUV0RSxNQUFNb0IsSUFBQUEsZUFBTyxFQUFDLElBQU1DLE9BQU9QLFNBQVNRLE1BQU0sQ0FBQ0MsT0FBTyxDQUFDQyxRQUFRLEVBQUVDLElBQUksQ0FBQztRQUNsRSxNQUFNTCxJQUFBQSxlQUFPLEVBQUMsSUFBTUMsT0FBT0gsT0FBT0ksTUFBTSxDQUFDQyxPQUFPLENBQUNDLFFBQVEsRUFBRUMsSUFBSSxDQUFDO1FBRWhFLHlFQUF5RTtRQUN6RSw0REFBNEQ7UUFDNURKLE9BQU9QLFNBQVNRLE1BQU0sQ0FBQ0MsT0FBTyxDQUFDRyxPQUFPLEVBQUVELElBQUksQ0FBQztRQUM3Q0osT0FBT0gsT0FBT0ksTUFBTSxDQUFDQyxPQUFPLENBQUNHLE9BQU8sRUFBRUQsSUFBSSxDQUFDO0lBQzdDO0lBRUFmLEdBQUcsd0VBQXdFO1FBQ3pFWCxVQUFVWSxpQkFBaUIsQ0FBQztZQUFFQyxNQUFNO2dCQUFFQyxRQUFRO29CQUFDO29CQUFrQjtpQkFBbUI7WUFBQztRQUFFO1FBRXZGLE1BQU1DLFdBQVdDLElBQUFBLGtCQUFVLEVBQUMsSUFBTUMsSUFBQUEseUJBQWlCLEtBQUk7WUFBRUMsU0FBU2pCO1FBQVE7UUFDMUUsTUFBTWtCLFNBQVNILElBQUFBLGtCQUFVLEVBQUMsSUFBTUksSUFBQUEsdUJBQWUsS0FBSTtZQUFFRixTQUFTakI7UUFBUTtRQUV0RSxNQUFNb0IsSUFBQUEsZUFBTyxFQUFDLElBQU1DLE9BQU9QLFNBQVNRLE1BQU0sQ0FBQ0MsT0FBTyxDQUFDQyxRQUFRLEVBQUVDLElBQUksQ0FBQztRQUNsRSxNQUFNTCxJQUFBQSxlQUFPLEVBQUMsSUFBTUMsT0FBT0gsT0FBT0ksTUFBTSxDQUFDQyxPQUFPLENBQUNDLFFBQVEsRUFBRUMsSUFBSSxDQUFDO1FBRWhFSixPQUFPUCxTQUFTUSxNQUFNLENBQUNDLE9BQU8sQ0FBQ0csT0FBTyxFQUFFRCxJQUFJLENBQUM7UUFDN0NKLE9BQU9ILE9BQU9JLE1BQU0sQ0FBQ0MsT0FBTyxDQUFDRyxPQUFPLEVBQUVELElBQUksQ0FBQztJQUM3QztBQUNGIn0=

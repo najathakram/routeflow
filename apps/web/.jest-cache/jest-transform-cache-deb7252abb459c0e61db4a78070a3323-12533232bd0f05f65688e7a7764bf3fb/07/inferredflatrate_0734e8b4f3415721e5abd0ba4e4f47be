@@ -1,0 +1,45 @@
+5b84a388254f73148db95a31224ba3ba
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+exports.flatRateFromTotals = flatRateFromTotals;
+exports.inferredFlatRate = inferredFlatRate;
+const pricing_1 = require("./pricing");
+/**
+ * B294 (SA-141): the ONE rule for recovering a legacy invoice's flat sales-tax rate, shared by
+ * the backfill script, invoices.service's applyPriceAdjustment and the mobile invoice edit.
+ *
+ * Order-derived and estimate-converted invoices used to store `taxRate: 0` on every line, while
+ * the header carried the real tax (`order.tax = subtotal * rate`, one flat rate over the whole
+ * subtotal). Any later recompute (`Σ line.subtotal * line.taxRate`) then silently dropped the
+ * sales tax to $0. #725 fixed new invoices; lines stored before it still carry 0.
+ */ /** `tax / subtotal`, the flat rate a header-level tax implies; 0 for a zero or negative subtotal. */ function flatRateFromTotals(tax, subtotal) {
+    const s = Number(subtotal) || 0;
+    if (s <= 0) return 0;
+    return Number(tax ?? 0) / s;
+}
+/**
+ * The flat rate to infer for an invoice, or null when there is nothing to infer. It applies only
+ * when ALL of these hold:
+ *   - every line's taxRate is 0 (a single rated line means the lines are already authoritative);
+ *   - the regular tax (taxAmount − Σ categoryTaxAmount) is above 0;
+ *   - the subtotal is above 0.
+ * `verified` is false when the rounded rate does not reproduce the stored tax to the cent. Callers
+ * must not stamp an unverified rate (the backfill sends it to REVIEW).
+ */ function inferredFlatRate(invoice) {
+    if (invoice.lines.length === 0) return null;
+    if (invoice.lines.some((l)=>Number(l.taxRate ?? 0) !== 0)) return null;
+    const categoryTax = invoice.lines.reduce((s, l)=>s + Number(l.categoryTaxAmount ?? 0), 0);
+    const regularTax = (0, pricing_1.roundMoney)(Number(invoice.taxAmount ?? 0) - categoryTax);
+    const subtotal = Number(invoice.subtotal) || 0;
+    if (!(regularTax > 0) || !(subtotal > 0)) return null;
+    const rate = Math.round(flatRateFromTotals(regularTax, subtotal) * 10000) / 10000;
+    return {
+        rate,
+        regularTax,
+        verified: (0, pricing_1.roundMoney)(subtotal * rate) === regularTax
+    };
+} //# sourceMappingURL=inferred-flat-rate.js.map
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiaW5mZXJyZWQtZmxhdC1yYXRlLmpzIiwic291cmNlcyI6WyIuLi9zcmMvaW5mZXJyZWQtZmxhdC1yYXRlLnRzIl0sInNvdXJjZVJvb3QiOiIiLCJuYW1lcyI6W10sIm1hcHBpbmdzIjoiOzs7O0FBYUEsUUFBQSxrQkFBQSxHQUFBLG1CQUlDO0FBb0JELFFBQUEsZ0JBQUEsR0FBQSxpQkFhQztBQWxERCxNQUFBLFlBQUEsUUFBQSxhQUF1QztBQUV2Qzs7Ozs7Ozs7R0FRRyxDQUVILG1HQUFBLEVBQXFHLENBQ3JHLFNBQWdCLGtCQUFrQixDQUFDLEdBQVksRUFBRSxRQUFpQjtJQUNoRSxNQUFNLENBQUMsR0FBRyxNQUFNLENBQUMsUUFBUSxDQUFDLElBQUksQ0FBQyxDQUFDO0lBQ2hDLElBQUksQ0FBQyxJQUFJLENBQUMsRUFBRSxPQUFPLENBQUMsQ0FBQztJQUNyQixPQUFPLE1BQU0sQ0FBQyxHQUFHLElBQUksQ0FBQyxDQUFDLEdBQUcsQ0FBQyxDQUFDO0FBQzlCLENBQUM7QUFXRDs7Ozs7Ozs7R0FRRyxDQUNILFNBQWdCLGdCQUFnQixDQUFDLE9BSWhDO0lBQ0MsSUFBSSxPQUFPLENBQUMsS0FBSyxDQUFDLE1BQU0sS0FBSyxDQUFDLEVBQUUsT0FBTyxJQUFJLENBQUM7SUFDNUMsSUFBSSxPQUFPLENBQUMsS0FBSyxDQUFDLElBQUksQ0FBQyxDQUFDLENBQUMsRUFBRSxDQUFHLENBQUQsS0FBTyxDQUFDLENBQUMsQ0FBQyxPQUFPLElBQUksQ0FBQyxDQUFDLEtBQUssQ0FBQyxDQUFDLEVBQUUsT0FBTyxJQUFJLENBQUM7SUFDekUsTUFBTSxXQUFXLEdBQUcsT0FBTyxDQUFDLEtBQUssQ0FBQyxNQUFNLENBQUMsQ0FBQyxDQUFDLEVBQUUsQ0FBQyxFQUFFLENBQUcsQ0FBRCxBQUFFLEdBQUcsTUFBTSxDQUFDLENBQUMsQ0FBQyxpQkFBaUIsSUFBSSxDQUFDLENBQUMsRUFBRSxDQUFDLENBQUMsQ0FBQztJQUM1RixNQUFNLFVBQVUsR0FBRyxDQUFBLEdBQUEsVUFBQSxVQUFBLEFBQVUsRUFBQyxNQUFNLENBQUMsT0FBTyxDQUFDLFNBQVMsSUFBSSxDQUFDLENBQUMsR0FBRyxXQUFXLENBQUMsQ0FBQztJQUM1RSxNQUFNLFFBQVEsR0FBRyxNQUFNLENBQUMsT0FBTyxDQUFDLFFBQVEsQ0FBQyxJQUFJLENBQUMsQ0FBQztJQUMvQyxJQUFJLENBQUMsQ0FBQyxVQUFVLElBQUcsQ0FBQyxDQUFDLEdBQUksQ0FBQyxDQUFDLFFBQVEsSUFBRyxDQUFDLENBQUMsQ0FBRSxPQUFPLElBQUksQ0FBQztJQUN0RCxNQUFNLElBQUksR0FBRyxJQUFJLENBQUMsS0FBSyxDQUFDLGtCQUFrQixDQUFDLFVBQVUsRUFBRSxRQUFRLENBQUMsR0FBRyxNQUFNLENBQUMsRUFBRyxNQUFNLENBQUM7SUFDcEYsT0FBTztRQUFFLElBQUk7UUFBRSxVQUFVO1FBQUUsUUFBUSxFQUFFLENBQUEsR0FBQSxVQUFBLFVBQUEsQUFBVSxFQUFDLFFBQVEsR0FBRyxJQUFJLENBQUMsS0FBSyxVQUFVO0lBQUEsQ0FBRSxDQUFDO0FBQ3BGLENBQUMifQ==

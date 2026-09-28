@@ -1,0 +1,140 @@
+bc6f53640264b8280267612867e1be9e
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+Object.defineProperty(exports, "REGISTRY_FIXTURE", {
+    enumerable: true,
+    get: function() {
+        return REGISTRY_FIXTURE;
+    }
+});
+const REGISTRY_FIXTURE = [
+    {
+        key: "tobacco_dealer",
+        kind: "boolean",
+        area: "compliance",
+        label: "Regulated items (tobacco)",
+        description: "License-column ledgers, monthly tobacco reports, regulated filings.",
+        lifecycle: "ga",
+        internal: false,
+        gate: {
+            via: "RequireAddon",
+            state: "enforced"
+        },
+        billing: {
+            skus: [
+                "tobacco_dealer"
+            ]
+        }
+    },
+    {
+        key: "msrp",
+        kind: "boolean",
+        area: "compliance",
+        label: "MSRP on invoices",
+        description: "Suggested retail price (per piece) on products, customers, and invoices.",
+        lifecycle: "ga",
+        internal: false,
+        gate: {
+            via: "service",
+            state: "enforced"
+        },
+        billing: {
+            skus: [
+                "msrp"
+            ]
+        }
+    },
+    {
+        key: "recurring_routes",
+        kind: "boolean",
+        area: "routes",
+        label: "Recurring routes",
+        description: "Standing route templates and scheduled dispatch.",
+        lifecycle: "ga",
+        internal: false,
+        gate: {
+            via: "RequireAddon",
+            state: "enforced"
+        },
+        billing: {
+            skus: [
+                "recurring_routes"
+            ]
+        }
+    },
+    {
+        key: "route_optimization",
+        kind: "boolean",
+        area: "routes",
+        label: "Route optimization mode",
+        description: "How dispatch chooses stop order for this tenant's routes.",
+        lifecycle: "beta",
+        internal: false,
+        gate: {
+            via: "RequirePlanFlag",
+            state: "dark"
+        },
+        billing: {
+            skus: []
+        },
+        config: {
+            fallbackMode: "manual",
+            modes: [
+                {
+                    key: "manual",
+                    label: "Manual dispatch",
+                    lifecycle: "ga"
+                },
+                {
+                    key: "scheduled",
+                    label: "Scheduled dispatch",
+                    lifecycle: "beta",
+                    requires: [
+                        "route_scheduling_addon"
+                    ]
+                },
+                {
+                    key: "mixed",
+                    label: "Both",
+                    lifecycle: "ga"
+                }
+            ]
+        }
+    },
+    {
+        key: "developer_mode",
+        kind: "boolean",
+        area: "platform",
+        label: "Developer mode",
+        description: "Unlocks in-development surfaces (mobile driver-app preview, dispatch API).",
+        lifecycle: "beta",
+        internal: true,
+        gate: {
+            via: "RequireAddon",
+            state: "dark"
+        },
+        billing: {
+            skus: []
+        }
+    },
+    {
+        key: "boxes_pieces_mode",
+        kind: "boolean",
+        area: "platform",
+        label: "Boxes & pieces display",
+        description: "Whether order/invoice line quantities show boxes, pieces, or both.",
+        lifecycle: "ga",
+        internal: false,
+        gate: {
+            via: "guard",
+            state: "enforced"
+        },
+        billing: {
+            skus: []
+        }
+    }
+];
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8ocGxhdGZvcm0tYWRtaW4pL2FkbWluL3RlbmFudHMvW2lkXS9fZmVhdHVyZXMvX19maXh0dXJlc19fL3JlZ2lzdHJ5LmZpeHR1cmVzLnRzIl0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCB0eXBlIHsgRmVhdHVyZVJlZ2lzdHJ5Um93IH0gZnJvbSBcIi4uL3R5cGVzXCI7XG5cbi8vIDMgYXJlYXMgw5cgMiBrZXlzID0gNiByb3dzLiBPbmUga2V5IChgcm91dGVfb3B0aW1pemF0aW9uYCkgY2FycmllcyBgY29uZmlnYCAobW9kZSBzZWxlY3Rvcik7XG4vLyBvbmUga2V5IChgZGV2ZWxvcGVyX21vZGVgKSBpcyBgaW50ZXJuYWw6IHRydWVgIChoaWRkZW4gYmVoaW5kIHRoZSBcInNob3cgaW50ZXJuYWxcIiB0b2dnbGUpLlxuLy8gTWlycm9ycyByZWFsIHJlZ2lzdHJ5LXJvdyBzaGFwZXMgZnJvbSBhcHBzL3dlYi9lMmUvNDgtZmVhdHVyZS1vdmVycmlkZXMuc3BlYy50cydzXG4vLyBSRUdJU1RSWV9GSVhUVVJFLCBleHRlbmRlZCB3aXRoIGFyZWEvbGlmZWN5Y2xlL2dhdGUvYmlsbGluZy9jb25maWcgcGVyIGJyaWVmIEEncyBjb250cmFjdC5cbmV4cG9ydCBjb25zdCBSRUdJU1RSWV9GSVhUVVJFOiBGZWF0dXJlUmVnaXN0cnlSb3dbXSA9IFtcbiAge1xuICAgIGtleTogXCJ0b2JhY2NvX2RlYWxlclwiLFxuICAgIGtpbmQ6IFwiYm9vbGVhblwiLFxuICAgIGFyZWE6IFwiY29tcGxpYW5jZVwiLFxuICAgIGxhYmVsOiBcIlJlZ3VsYXRlZCBpdGVtcyAodG9iYWNjbylcIixcbiAgICBkZXNjcmlwdGlvbjogXCJMaWNlbnNlLWNvbHVtbiBsZWRnZXJzLCBtb250aGx5IHRvYmFjY28gcmVwb3J0cywgcmVndWxhdGVkIGZpbGluZ3MuXCIsXG4gICAgbGlmZWN5Y2xlOiBcImdhXCIsXG4gICAgaW50ZXJuYWw6IGZhbHNlLFxuICAgIGdhdGU6IHsgdmlhOiBcIlJlcXVpcmVBZGRvblwiLCBzdGF0ZTogXCJlbmZvcmNlZFwiIH0sXG4gICAgYmlsbGluZzogeyBza3VzOiBbXCJ0b2JhY2NvX2RlYWxlclwiXSB9LFxuICB9LFxuICB7XG4gICAga2V5OiBcIm1zcnBcIixcbiAgICBraW5kOiBcImJvb2xlYW5cIixcbiAgICBhcmVhOiBcImNvbXBsaWFuY2VcIixcbiAgICBsYWJlbDogXCJNU1JQIG9uIGludm9pY2VzXCIsXG4gICAgZGVzY3JpcHRpb246IFwiU3VnZ2VzdGVkIHJldGFpbCBwcmljZSAocGVyIHBpZWNlKSBvbiBwcm9kdWN0cywgY3VzdG9tZXJzLCBhbmQgaW52b2ljZXMuXCIsXG4gICAgbGlmZWN5Y2xlOiBcImdhXCIsXG4gICAgaW50ZXJuYWw6IGZhbHNlLFxuICAgIGdhdGU6IHsgdmlhOiBcInNlcnZpY2VcIiwgc3RhdGU6IFwiZW5mb3JjZWRcIiB9LFxuICAgIGJpbGxpbmc6IHsgc2t1czogW1wibXNycFwiXSB9LFxuICB9LFxuICB7XG4gICAga2V5OiBcInJlY3VycmluZ19yb3V0ZXNcIixcbiAgICBraW5kOiBcImJvb2xlYW5cIixcbiAgICBhcmVhOiBcInJvdXRlc1wiLFxuICAgIGxhYmVsOiBcIlJlY3VycmluZyByb3V0ZXNcIixcbiAgICBkZXNjcmlwdGlvbjogXCJTdGFuZGluZyByb3V0ZSB0ZW1wbGF0ZXMgYW5kIHNjaGVkdWxlZCBkaXNwYXRjaC5cIixcbiAgICBsaWZlY3ljbGU6IFwiZ2FcIixcbiAgICBpbnRlcm5hbDogZmFsc2UsXG4gICAgZ2F0ZTogeyB2aWE6IFwiUmVxdWlyZUFkZG9uXCIsIHN0YXRlOiBcImVuZm9yY2VkXCIgfSxcbiAgICBiaWxsaW5nOiB7IHNrdXM6IFtcInJlY3VycmluZ19yb3V0ZXNcIl0gfSxcbiAgfSxcbiAge1xuICAgIGtleTogXCJyb3V0ZV9vcHRpbWl6YXRpb25cIixcbiAgICBraW5kOiBcImJvb2xlYW5cIixcbiAgICBhcmVhOiBcInJvdXRlc1wiLFxuICAgIGxhYmVsOiBcIlJvdXRlIG9wdGltaXphdGlvbiBtb2RlXCIsXG4gICAgZGVzY3JpcHRpb246IFwiSG93IGRpc3BhdGNoIGNob29zZXMgc3RvcCBvcmRlciBmb3IgdGhpcyB0ZW5hbnQncyByb3V0ZXMuXCIsXG4gICAgbGlmZWN5Y2xlOiBcImJldGFcIixcbiAgICBpbnRlcm5hbDogZmFsc2UsXG4gICAgZ2F0ZTogeyB2aWE6IFwiUmVxdWlyZVBsYW5GbGFnXCIsIHN0YXRlOiBcImRhcmtcIiB9LFxuICAgIGJpbGxpbmc6IHsgc2t1czogW10gfSxcbiAgICBjb25maWc6IHtcbiAgICAgIGZhbGxiYWNrTW9kZTogXCJtYW51YWxcIixcbiAgICAgIG1vZGVzOiBbXG4gICAgICAgIHsga2V5OiBcIm1hbnVhbFwiLCBsYWJlbDogXCJNYW51YWwgZGlzcGF0Y2hcIiwgbGlmZWN5Y2xlOiBcImdhXCIgfSxcbiAgICAgICAge1xuICAgICAgICAgIGtleTogXCJzY2hlZHVsZWRcIixcbiAgICAgICAgICBsYWJlbDogXCJTY2hlZHVsZWQgZGlzcGF0Y2hcIixcbiAgICAgICAgICBsaWZlY3ljbGU6IFwiYmV0YVwiLFxuICAgICAgICAgIHJlcXVpcmVzOiBbXCJyb3V0ZV9zY2hlZHVsaW5nX2FkZG9uXCJdLFxuICAgICAgICB9LFxuICAgICAgICB7IGtleTogXCJtaXhlZFwiLCBsYWJlbDogXCJCb3RoXCIsIGxpZmVjeWNsZTogXCJnYVwiIH0sXG4gICAgICBdLFxuICAgIH0sXG4gIH0sXG4gIHtcbiAgICBrZXk6IFwiZGV2ZWxvcGVyX21vZGVcIixcbiAgICBraW5kOiBcImJvb2xlYW5cIixcbiAgICBhcmVhOiBcInBsYXRmb3JtXCIsXG4gICAgbGFiZWw6IFwiRGV2ZWxvcGVyIG1vZGVcIixcbiAgICBkZXNjcmlwdGlvbjogXCJVbmxvY2tzIGluLWRldmVsb3BtZW50IHN1cmZhY2VzIChtb2JpbGUgZHJpdmVyLWFwcCBwcmV2aWV3LCBkaXNwYXRjaCBBUEkpLlwiLFxuICAgIGxpZmVjeWNsZTogXCJiZXRhXCIsXG4gICAgaW50ZXJuYWw6IHRydWUsXG4gICAgZ2F0ZTogeyB2aWE6IFwiUmVxdWlyZUFkZG9uXCIsIHN0YXRlOiBcImRhcmtcIiB9LFxuICAgIGJpbGxpbmc6IHsgc2t1czogW10gfSxcbiAgfSxcbiAge1xuICAgIGtleTogXCJib3hlc19waWVjZXNfbW9kZVwiLFxuICAgIGtpbmQ6IFwiYm9vbGVhblwiLFxuICAgIGFyZWE6IFwicGxhdGZvcm1cIixcbiAgICBsYWJlbDogXCJCb3hlcyAmIHBpZWNlcyBkaXNwbGF5XCIsXG4gICAgZGVzY3JpcHRpb246IFwiV2hldGhlciBvcmRlci9pbnZvaWNlIGxpbmUgcXVhbnRpdGllcyBzaG93IGJveGVzLCBwaWVjZXMsIG9yIGJvdGguXCIsXG4gICAgbGlmZWN5Y2xlOiBcImdhXCIsXG4gICAgaW50ZXJuYWw6IGZhbHNlLFxuICAgIGdhdGU6IHsgdmlhOiBcImd1YXJkXCIsIHN0YXRlOiBcImVuZm9yY2VkXCIgfSxcbiAgICBiaWxsaW5nOiB7IHNrdXM6IFtdIH0sXG4gIH0sXG5dO1xuIl0sIm5hbWVzIjpbIlJFR0lTVFJZX0ZJWFRVUkUiLCJrZXkiLCJraW5kIiwiYXJlYSIsImxhYmVsIiwiZGVzY3JpcHRpb24iLCJsaWZlY3ljbGUiLCJpbnRlcm5hbCIsImdhdGUiLCJ2aWEiLCJzdGF0ZSIsImJpbGxpbmciLCJza3VzIiwiY29uZmlnIiwiZmFsbGJhY2tNb2RlIiwibW9kZXMiLCJyZXF1aXJlcyJdLCJtYXBwaW5ncyI6Ijs7OzsrQkFNYUE7OztlQUFBQTs7O0FBQU4sTUFBTUEsbUJBQXlDO0lBQ3BEO1FBQ0VDLEtBQUs7UUFDTEMsTUFBTTtRQUNOQyxNQUFNO1FBQ05DLE9BQU87UUFDUEMsYUFBYTtRQUNiQyxXQUFXO1FBQ1hDLFVBQVU7UUFDVkMsTUFBTTtZQUFFQyxLQUFLO1lBQWdCQyxPQUFPO1FBQVc7UUFDL0NDLFNBQVM7WUFBRUMsTUFBTTtnQkFBQzthQUFpQjtRQUFDO0lBQ3RDO0lBQ0E7UUFDRVgsS0FBSztRQUNMQyxNQUFNO1FBQ05DLE1BQU07UUFDTkMsT0FBTztRQUNQQyxhQUFhO1FBQ2JDLFdBQVc7UUFDWEMsVUFBVTtRQUNWQyxNQUFNO1lBQUVDLEtBQUs7WUFBV0MsT0FBTztRQUFXO1FBQzFDQyxTQUFTO1lBQUVDLE1BQU07Z0JBQUM7YUFBTztRQUFDO0lBQzVCO0lBQ0E7UUFDRVgsS0FBSztRQUNMQyxNQUFNO1FBQ05DLE1BQU07UUFDTkMsT0FBTztRQUNQQyxhQUFhO1FBQ2JDLFdBQVc7UUFDWEMsVUFBVTtRQUNWQyxNQUFNO1lBQUVDLEtBQUs7WUFBZ0JDLE9BQU87UUFBVztRQUMvQ0MsU0FBUztZQUFFQyxNQUFNO2dCQUFDO2FBQW1CO1FBQUM7SUFDeEM7SUFDQTtRQUNFWCxLQUFLO1FBQ0xDLE1BQU07UUFDTkMsTUFBTTtRQUNOQyxPQUFPO1FBQ1BDLGFBQWE7UUFDYkMsV0FBVztRQUNYQyxVQUFVO1FBQ1ZDLE1BQU07WUFBRUMsS0FBSztZQUFtQkMsT0FBTztRQUFPO1FBQzlDQyxTQUFTO1lBQUVDLE1BQU0sRUFBRTtRQUFDO1FBQ3BCQyxRQUFRO1lBQ05DLGNBQWM7WUFDZEMsT0FBTztnQkFDTDtvQkFBRWQsS0FBSztvQkFBVUcsT0FBTztvQkFBbUJFLFdBQVc7Z0JBQUs7Z0JBQzNEO29CQUNFTCxLQUFLO29CQUNMRyxPQUFPO29CQUNQRSxXQUFXO29CQUNYVSxVQUFVO3dCQUFDO3FCQUF5QjtnQkFDdEM7Z0JBQ0E7b0JBQUVmLEtBQUs7b0JBQVNHLE9BQU87b0JBQVFFLFdBQVc7Z0JBQUs7YUFDaEQ7UUFDSDtJQUNGO0lBQ0E7UUFDRUwsS0FBSztRQUNMQyxNQUFNO1FBQ05DLE1BQU07UUFDTkMsT0FBTztRQUNQQyxhQUFhO1FBQ2JDLFdBQVc7UUFDWEMsVUFBVTtRQUNWQyxNQUFNO1lBQUVDLEtBQUs7WUFBZ0JDLE9BQU87UUFBTztRQUMzQ0MsU0FBUztZQUFFQyxNQUFNLEVBQUU7UUFBQztJQUN0QjtJQUNBO1FBQ0VYLEtBQUs7UUFDTEMsTUFBTTtRQUNOQyxNQUFNO1FBQ05DLE9BQU87UUFDUEMsYUFBYTtRQUNiQyxXQUFXO1FBQ1hDLFVBQVU7UUFDVkMsTUFBTTtZQUFFQyxLQUFLO1lBQVNDLE9BQU87UUFBVztRQUN4Q0MsU0FBUztZQUFFQyxNQUFNLEVBQUU7UUFBQztJQUN0QjtDQUNEIn0=

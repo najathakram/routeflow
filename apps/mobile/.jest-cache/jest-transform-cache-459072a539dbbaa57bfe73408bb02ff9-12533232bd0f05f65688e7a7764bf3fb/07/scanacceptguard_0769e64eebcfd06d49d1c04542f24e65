@@ -1,0 +1,81 @@
+65ba8baa0cf1743a4968e25d14b81ec6
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.sameScanCode = sameScanCode;
+exports.createScanAcceptGuard = createScanAcceptGuard;
+/**
+ * Cross-mechanism claim shared between the scan ladder (`scan-ladder.ts`) and
+ * a screen's settled-search auto-add effect, so one input event yields
+ * exactly one add.
+ *
+ * THE PROBLEM (F30 open interleavings A/A'/B, hunt 2026-09-14): a screen's
+ * camera path and its settled-search-effect path both resolve the SAME
+ * physical scan independently — the camera via the ladder's local fast path
+ * or server resolve, the effect via `findExactScanMatch` over rows that
+ * settled a moment later. Nothing links the two, so either both add (a
+ * double-add) or the ladder ends in `notFound`/abort/network-error while the
+ * effect already added the line, and the operator sees a false
+ * `No product for "X"` pill for an item that's already on the order.
+ *
+ * THE FIX IS NOT A CODE OR TIME WINDOW. A guard keyed on "this code was
+ * accepted recently" would swallow a DELIBERATE re-scan of the same physical
+ * item — exactly the under-count `scan-loop.ts`'s 600ms cooldown exists to
+ * avoid, and exactly the 800ms window REG-B201 deleted from `wedge-submit.ts`.
+ * Instead this holds ONE claim, alive only between `begin()` (one input event
+ * entering the ladder) and that same invocation's `settle()`. While the claim
+ * is open, the other mechanism's `offer()` for the SAME label parks its match
+ * on the claim instead of adding; `settle()` redeems the parked match only
+ * when the ladder itself did not resolve (`"unresolved"`) and discards it
+ * otherwise. A claim never survives its own settle, and nothing here
+ * remembers a code across scans — a second `begin()` for the identical code
+ * is a brand new claim and adds independently.
+ *
+ * Label identity is the same normalizeScanCode candidate-SET intersection
+ * `scan-loop.ts#gateScan` uses, so a UPC-A in the box and the EAN-13 the
+ * camera decodes for the same physical label are one claim.
+ */
+const barcode_normalize_1 = require("./barcode-normalize");
+/** Do two decoded/typed strings denote the same physical label? */
+function sameScanCode(a, b) {
+    const setA = new Set((0, barcode_normalize_1.normalizeScanCode)(a).map((c) => c.toUpperCase()));
+    if (setA.size === 0)
+        return false;
+    return (0, barcode_normalize_1.normalizeScanCode)(b).some((c) => setA.has(c.toUpperCase()));
+}
+function createScanAcceptGuard() {
+    let open = null;
+    const begin = (code) => {
+        const mine = { code, deferred: null };
+        // A superseding claim for the SAME label must never silently drop an
+        // already-parked match: it TAKES it (the donor is emptied in the same
+        // step, so the two claims can never both redeem it).
+        if (open && open.deferred && sameScanCode(open.code, code)) {
+            mine.deferred = open.deferred;
+            open.deferred = null;
+        }
+        open = mine;
+        const settle = (resolution) => {
+            // Read and clear THIS claim's own parked match first — a claim
+            // superseded by a begin() for a different label keeps holding what was
+            // parked on it, and dropping that here is the false-miss bug. Clearing
+            // is what makes a second settle() (and a redeem after supersession) a
+            // no-op.
+            const deferred = mine.deferred;
+            mine.deferred = null;
+            // Only the CURRENT claim closes the open slot; a superseded one must
+            // leave the live claim alone.
+            if (open === mine)
+                open = null;
+            return resolution === "unresolved" ? deferred : null;
+        };
+        return { code, settle };
+    };
+    const offer = (code, product, unitKind) => {
+        if (!open || !sameScanCode(open.code, code))
+            return true;
+        open.deferred = { code, product, unitKind };
+        return false;
+    };
+    return { begin, offer };
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3NjYW4tYWNjZXB0LWd1YXJkLnRzIiwibWFwcGluZ3MiOiI7O0FBa0NBLG9DQUlDO0FBMENELHNEQXNDQztBQXRIRDs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7O0dBOEJHO0FBQ0gsMkRBQXdEO0FBRXhELG1FQUFtRTtBQUNuRSxTQUFnQixZQUFZLENBQUMsQ0FBUyxFQUFFLENBQVM7SUFDL0MsTUFBTSxJQUFJLEdBQUcsSUFBSSxHQUFHLENBQUMsSUFBQSxxQ0FBaUIsRUFBQyxDQUFDLENBQUMsQ0FBQyxHQUFHLENBQUMsQ0FBQyxDQUFDLEVBQUUsRUFBRSxDQUFDLENBQUMsQ0FBQyxXQUFXLEVBQUUsQ0FBQyxDQUFDLENBQUM7SUFDdkUsSUFBSSxJQUFJLENBQUMsSUFBSSxLQUFLLENBQUM7UUFBRSxPQUFPLEtBQUssQ0FBQztJQUNsQyxPQUFPLElBQUEscUNBQWlCLEVBQUMsQ0FBQyxDQUFDLENBQUMsSUFBSSxDQUFDLENBQUMsQ0FBQyxFQUFFLEVBQUUsQ0FBQyxJQUFJLENBQUMsR0FBRyxDQUFDLENBQUMsQ0FBQyxXQUFXLEVBQUUsQ0FBQyxDQUFDLENBQUM7QUFDckUsQ0FBQztBQTBDRCxTQUFnQixxQkFBcUI7SUFDbkMsSUFBSSxJQUFJLEdBQWdFLElBQUksQ0FBQztJQUU3RSxNQUFNLEtBQUssR0FBRyxDQUFDLElBQVksRUFBZ0IsRUFBRTtRQUMzQyxNQUFNLElBQUksR0FBeUQsRUFBRSxJQUFJLEVBQUUsUUFBUSxFQUFFLElBQUksRUFBRSxDQUFDO1FBQzVGLHFFQUFxRTtRQUNyRSxzRUFBc0U7UUFDdEUscURBQXFEO1FBQ3JELElBQUksSUFBSSxJQUFJLElBQUksQ0FBQyxRQUFRLElBQUksWUFBWSxDQUFDLElBQUksQ0FBQyxJQUFJLEVBQUUsSUFBSSxDQUFDLEVBQUUsQ0FBQztZQUMzRCxJQUFJLENBQUMsUUFBUSxHQUFHLElBQUksQ0FBQyxRQUFRLENBQUM7WUFDOUIsSUFBSSxDQUFDLFFBQVEsR0FBRyxJQUFJLENBQUM7UUFDdkIsQ0FBQztRQUNELElBQUksR0FBRyxJQUFJLENBQUM7UUFFWixNQUFNLE1BQU0sR0FBRyxDQUFDLFVBQWdDLEVBQTRCLEVBQUU7WUFDNUUsK0RBQStEO1lBQy9ELHVFQUF1RTtZQUN2RSx1RUFBdUU7WUFDdkUsc0VBQXNFO1lBQ3RFLFNBQVM7WUFDVCxNQUFNLFFBQVEsR0FBRyxJQUFJLENBQUMsUUFBUSxDQUFDO1lBQy9CLElBQUksQ0FBQyxRQUFRLEdBQUcsSUFBSSxDQUFDO1lBQ3JCLHFFQUFxRTtZQUNyRSw4QkFBOEI7WUFDOUIsSUFBSSxJQUFJLEtBQUssSUFBSTtnQkFBRSxJQUFJLEdBQUcsSUFBSSxDQUFDO1lBQy9CLE9BQU8sVUFBVSxLQUFLLFlBQVksQ0FBQyxDQUFDLENBQUMsUUFBUSxDQUFDLENBQUMsQ0FBQyxJQUFJLENBQUM7UUFDdkQsQ0FBQyxDQUFDO1FBRUYsT0FBTyxFQUFFLElBQUksRUFBRSxNQUFNLEVBQUUsQ0FBQztJQUMxQixDQUFDLENBQUM7SUFFRixNQUFNLEtBQUssR0FBRyxDQUFDLElBQVksRUFBRSxPQUFVLEVBQUUsUUFBMEIsRUFBVyxFQUFFO1FBQzlFLElBQUksQ0FBQyxJQUFJLElBQUksQ0FBQyxZQUFZLENBQUMsSUFBSSxDQUFDLElBQUksRUFBRSxJQUFJLENBQUM7WUFBRSxPQUFPLElBQUksQ0FBQztRQUN6RCxJQUFJLENBQUMsUUFBUSxHQUFHLEVBQUUsSUFBSSxFQUFFLE9BQU8sRUFBRSxRQUFRLEVBQUUsQ0FBQztRQUM1QyxPQUFPLEtBQUssQ0FBQztJQUNmLENBQUMsQ0FBQztJQUVGLE9BQU8sRUFBRSxLQUFLLEVBQUUsS0FBSyxFQUFFLENBQUM7QUFDMUIsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9hcHBzL21vYmlsZS9saWIvc2Nhbi1hY2NlcHQtZ3VhcmQudHMiXSwic291cmNlc0NvbnRlbnQiOlsiLyoqXG4gKiBDcm9zcy1tZWNoYW5pc20gY2xhaW0gc2hhcmVkIGJldHdlZW4gdGhlIHNjYW4gbGFkZGVyIChgc2Nhbi1sYWRkZXIudHNgKSBhbmRcbiAqIGEgc2NyZWVuJ3Mgc2V0dGxlZC1zZWFyY2ggYXV0by1hZGQgZWZmZWN0LCBzbyBvbmUgaW5wdXQgZXZlbnQgeWllbGRzXG4gKiBleGFjdGx5IG9uZSBhZGQuXG4gKlxuICogVEhFIFBST0JMRU0gKEYzMCBvcGVuIGludGVybGVhdmluZ3MgQS9BJy9CLCBodW50IDIwMjYtMDktMTQpOiBhIHNjcmVlbidzXG4gKiBjYW1lcmEgcGF0aCBhbmQgaXRzIHNldHRsZWQtc2VhcmNoLWVmZmVjdCBwYXRoIGJvdGggcmVzb2x2ZSB0aGUgU0FNRVxuICogcGh5c2ljYWwgc2NhbiBpbmRlcGVuZGVudGx5IOKAlCB0aGUgY2FtZXJhIHZpYSB0aGUgbGFkZGVyJ3MgbG9jYWwgZmFzdCBwYXRoXG4gKiBvciBzZXJ2ZXIgcmVzb2x2ZSwgdGhlIGVmZmVjdCB2aWEgYGZpbmRFeGFjdFNjYW5NYXRjaGAgb3ZlciByb3dzIHRoYXRcbiAqIHNldHRsZWQgYSBtb21lbnQgbGF0ZXIuIE5vdGhpbmcgbGlua3MgdGhlIHR3bywgc28gZWl0aGVyIGJvdGggYWRkIChhXG4gKiBkb3VibGUtYWRkKSBvciB0aGUgbGFkZGVyIGVuZHMgaW4gYG5vdEZvdW5kYC9hYm9ydC9uZXR3b3JrLWVycm9yIHdoaWxlIHRoZVxuICogZWZmZWN0IGFscmVhZHkgYWRkZWQgdGhlIGxpbmUsIGFuZCB0aGUgb3BlcmF0b3Igc2VlcyBhIGZhbHNlXG4gKiBgTm8gcHJvZHVjdCBmb3IgXCJYXCJgIHBpbGwgZm9yIGFuIGl0ZW0gdGhhdCdzIGFscmVhZHkgb24gdGhlIG9yZGVyLlxuICpcbiAqIFRIRSBGSVggSVMgTk9UIEEgQ09ERSBPUiBUSU1FIFdJTkRPVy4gQSBndWFyZCBrZXllZCBvbiBcInRoaXMgY29kZSB3YXNcbiAqIGFjY2VwdGVkIHJlY2VudGx5XCIgd291bGQgc3dhbGxvdyBhIERFTElCRVJBVEUgcmUtc2NhbiBvZiB0aGUgc2FtZSBwaHlzaWNhbFxuICogaXRlbSDigJQgZXhhY3RseSB0aGUgdW5kZXItY291bnQgYHNjYW4tbG9vcC50c2AncyA2MDBtcyBjb29sZG93biBleGlzdHMgdG9cbiAqIGF2b2lkLCBhbmQgZXhhY3RseSB0aGUgODAwbXMgd2luZG93IFJFRy1CMjAxIGRlbGV0ZWQgZnJvbSBgd2VkZ2Utc3VibWl0LnRzYC5cbiAqIEluc3RlYWQgdGhpcyBob2xkcyBPTkUgY2xhaW0sIGFsaXZlIG9ubHkgYmV0d2VlbiBgYmVnaW4oKWAgKG9uZSBpbnB1dCBldmVudFxuICogZW50ZXJpbmcgdGhlIGxhZGRlcikgYW5kIHRoYXQgc2FtZSBpbnZvY2F0aW9uJ3MgYHNldHRsZSgpYC4gV2hpbGUgdGhlIGNsYWltXG4gKiBpcyBvcGVuLCB0aGUgb3RoZXIgbWVjaGFuaXNtJ3MgYG9mZmVyKClgIGZvciB0aGUgU0FNRSBsYWJlbCBwYXJrcyBpdHMgbWF0Y2hcbiAqIG9uIHRoZSBjbGFpbSBpbnN0ZWFkIG9mIGFkZGluZzsgYHNldHRsZSgpYCByZWRlZW1zIHRoZSBwYXJrZWQgbWF0Y2ggb25seVxuICogd2hlbiB0aGUgbGFkZGVyIGl0c2VsZiBkaWQgbm90IHJlc29sdmUgKGBcInVucmVzb2x2ZWRcImApIGFuZCBkaXNjYXJkcyBpdFxuICogb3RoZXJ3aXNlLiBBIGNsYWltIG5ldmVyIHN1cnZpdmVzIGl0cyBvd24gc2V0dGxlLCBhbmQgbm90aGluZyBoZXJlXG4gKiByZW1lbWJlcnMgYSBjb2RlIGFjcm9zcyBzY2FucyDigJQgYSBzZWNvbmQgYGJlZ2luKClgIGZvciB0aGUgaWRlbnRpY2FsIGNvZGVcbiAqIGlzIGEgYnJhbmQgbmV3IGNsYWltIGFuZCBhZGRzIGluZGVwZW5kZW50bHkuXG4gKlxuICogTGFiZWwgaWRlbnRpdHkgaXMgdGhlIHNhbWUgbm9ybWFsaXplU2NhbkNvZGUgY2FuZGlkYXRlLVNFVCBpbnRlcnNlY3Rpb25cbiAqIGBzY2FuLWxvb3AudHMjZ2F0ZVNjYW5gIHVzZXMsIHNvIGEgVVBDLUEgaW4gdGhlIGJveCBhbmQgdGhlIEVBTi0xMyB0aGVcbiAqIGNhbWVyYSBkZWNvZGVzIGZvciB0aGUgc2FtZSBwaHlzaWNhbCBsYWJlbCBhcmUgb25lIGNsYWltLlxuICovXG5pbXBvcnQgeyBub3JtYWxpemVTY2FuQ29kZSB9IGZyb20gXCIuL2JhcmNvZGUtbm9ybWFsaXplXCI7XG5cbi8qKiBEbyB0d28gZGVjb2RlZC90eXBlZCBzdHJpbmdzIGRlbm90ZSB0aGUgc2FtZSBwaHlzaWNhbCBsYWJlbD8gKi9cbmV4cG9ydCBmdW5jdGlvbiBzYW1lU2NhbkNvZGUoYTogc3RyaW5nLCBiOiBzdHJpbmcpOiBib29sZWFuIHtcbiAgY29uc3Qgc2V0QSA9IG5ldyBTZXQobm9ybWFsaXplU2NhbkNvZGUoYSkubWFwKChjKSA9PiBjLnRvVXBwZXJDYXNlKCkpKTtcbiAgaWYgKHNldEEuc2l6ZSA9PT0gMCkgcmV0dXJuIGZhbHNlO1xuICByZXR1cm4gbm9ybWFsaXplU2NhbkNvZGUoYikuc29tZSgoYykgPT4gc2V0QS5oYXMoYy50b1VwcGVyQ2FzZSgpKSk7XG59XG5cbi8qKiBIb3cgYSBzaW5nbGUgbGFkZGVyIGludm9jYXRpb24gZW5kZWQuICovXG5leHBvcnQgdHlwZSBTY2FuQWNjZXB0UmVzb2x1dGlvbiA9IFwiYWNjZXB0ZWRcIiB8IFwicmVmdXNlZFwiIHwgXCJ1bnJlc29sdmVkXCI7XG5cbi8qKiBBIHNldHRsZWQtc2VhcmNoIG1hdGNoIHBhcmtlZCB3aGlsZSBhIGNsYWltIGZvciB0aGUgc2FtZSBsYWJlbCB3YXMgb3Blbi4gKi9cbmV4cG9ydCBpbnRlcmZhY2UgRGVmZXJyZWRBY2NlcHQ8VD4ge1xuICBjb2RlOiBzdHJpbmc7XG4gIHByb2R1Y3Q6IFQ7XG4gIHVuaXRLaW5kOiBcImNhc2VcIiB8IFwicGllY2VcIjtcbn1cblxuZXhwb3J0IGludGVyZmFjZSBTY2FuQ2xhaW08VD4ge1xuICByZWFkb25seSBjb2RlOiBzdHJpbmc7XG4gIC8qKlxuICAgKiBDbG9zZSB0aGUgY2xhaW0uIFJldHVybnMgdGhlIHBhcmtlZCBtYXRjaCB0byByZWRlZW0gKG9ubHkgd2hlblxuICAgKiBgcmVzb2x1dGlvbiA9PT0gXCJ1bnJlc29sdmVkXCJgIGFuZCB0aGlzIGNsYWltIHN0aWxsIGhvbGRzIHNvbWV0aGluZyksIG9yXG4gICAqIG51bGwuXG4gICAqXG4gICAqIEEgY2xhaW0gb3ducyB3aGF0ZXZlciB3YXMgcGFya2VkIG9uIGl0LCBldmVuIGFmdGVyIGEgbGF0ZXIgYGJlZ2luKClgIGZvciBhXG4gICAqIERJRkZFUkVOVCBsYWJlbCBzdXBlcnNlZGVzIGl0OiB0aGF0IGNsYWltJ3Mgb3duIGxhZGRlciBpbnZvY2F0aW9uIHN0aWxsXG4gICAqIGVuZHMsIGFuZCB0aGUgbWF0Y2ggdGhlIHNldHRsZWQgbGlzdCBmb3VuZCBmb3IgSVRTIGNvZGUgbXVzdCBiZSByZWRlZW1lZFxuICAgKiByYXRoZXIgdGhhbiBkcm9wcGVkIG9uIHRoZSBmbG9vciBhcyBhIGZhbHNlIG1pc3MuIEEgc3VwZXJzZWRpbmcgY2xhaW0gZm9yXG4gICAqIHRoZSBTQU1FIGxhYmVsIGluc3RlYWQgVEFLRVMgdGhlIHBhcmtlZCBtYXRjaCBhdCBgYmVnaW4oKWAgdGltZSwgc28gZXhhY3RseVxuICAgKiBvbmUgb2YgdGhlIHR3byBjYW4gZXZlciByZWRlZW0gaXQuIElkZW1wb3RlbnQgZWl0aGVyIHdheTogYSBzZWNvbmQgY2FsbCwgb3JcbiAgICogYSBjYWxsIG9uIGEgY2xhaW0gd2hvc2UgbWF0Y2ggd2FzIHRha2VuLCByZXR1cm5zIG51bGwuXG4gICAqL1xuICBzZXR0bGU6IChyZXNvbHV0aW9uOiBTY2FuQWNjZXB0UmVzb2x1dGlvbikgPT4gRGVmZXJyZWRBY2NlcHQ8VD4gfCBudWxsO1xufVxuXG5leHBvcnQgaW50ZXJmYWNlIFNjYW5BY2NlcHRHdWFyZDxUPiB7XG4gIC8qKiBPbmUgaW5wdXQgZXZlbnQgZW50ZXJzIHRoZSBsYWRkZXIuICovXG4gIGJlZ2luOiAoY29kZTogc3RyaW5nKSA9PiBTY2FuQ2xhaW08VD47XG4gIC8qKlxuICAgKiBUaGUgc2V0dGxlZC1zZWFyY2ggZWZmZWN0IGhhcyBhbiBleGFjdCBtYXRjaC4gUmV0dXJucyB0cnVlIHdoZW4gaXRcbiAgICogc2hvdWxkIGFjY2VwdCBub3cgKG5vIG9wZW4gY2xhaW0gZm9yIHRoaXMgbGFiZWwg4oCUIGEgZGlmZmVyZW50IGl0ZW0sIG9yXG4gICAqIG5vdGhpbmcgaW4gZmxpZ2h0KTsgcmV0dXJucyBmYWxzZSB3aGVuIGl0IHdhcyBwYXJrZWQgb24gdGhlIG9wZW4gY2xhaW1cbiAgICogZm9yIHRoaXMgc2FtZSBsYWJlbCBpbnN0ZWFkLlxuICAgKi9cbiAgb2ZmZXI6IChjb2RlOiBzdHJpbmcsIHByb2R1Y3Q6IFQsIHVuaXRLaW5kOiBcImNhc2VcIiB8IFwicGllY2VcIikgPT4gYm9vbGVhbjtcbn1cblxuZXhwb3J0IGZ1bmN0aW9uIGNyZWF0ZVNjYW5BY2NlcHRHdWFyZDxUPigpOiBTY2FuQWNjZXB0R3VhcmQ8VD4ge1xuICBsZXQgb3BlbjogeyBjb2RlOiBzdHJpbmc7IGRlZmVycmVkOiBEZWZlcnJlZEFjY2VwdDxUPiB8IG51bGwgfSB8IG51bGwgPSBudWxsO1xuXG4gIGNvbnN0IGJlZ2luID0gKGNvZGU6IHN0cmluZyk6IFNjYW5DbGFpbTxUPiA9PiB7XG4gICAgY29uc3QgbWluZTogeyBjb2RlOiBzdHJpbmc7IGRlZmVycmVkOiBEZWZlcnJlZEFjY2VwdDxUPiB8IG51bGwgfSA9IHsgY29kZSwgZGVmZXJyZWQ6IG51bGwgfTtcbiAgICAvLyBBIHN1cGVyc2VkaW5nIGNsYWltIGZvciB0aGUgU0FNRSBsYWJlbCBtdXN0IG5ldmVyIHNpbGVudGx5IGRyb3AgYW5cbiAgICAvLyBhbHJlYWR5LXBhcmtlZCBtYXRjaDogaXQgVEFLRVMgaXQgKHRoZSBkb25vciBpcyBlbXB0aWVkIGluIHRoZSBzYW1lXG4gICAgLy8gc3RlcCwgc28gdGhlIHR3byBjbGFpbXMgY2FuIG5ldmVyIGJvdGggcmVkZWVtIGl0KS5cbiAgICBpZiAob3BlbiAmJiBvcGVuLmRlZmVycmVkICYmIHNhbWVTY2FuQ29kZShvcGVuLmNvZGUsIGNvZGUpKSB7XG4gICAgICBtaW5lLmRlZmVycmVkID0gb3Blbi5kZWZlcnJlZDtcbiAgICAgIG9wZW4uZGVmZXJyZWQgPSBudWxsO1xuICAgIH1cbiAgICBvcGVuID0gbWluZTtcblxuICAgIGNvbnN0IHNldHRsZSA9IChyZXNvbHV0aW9uOiBTY2FuQWNjZXB0UmVzb2x1dGlvbik6IERlZmVycmVkQWNjZXB0PFQ+IHwgbnVsbCA9PiB7XG4gICAgICAvLyBSZWFkIGFuZCBjbGVhciBUSElTIGNsYWltJ3Mgb3duIHBhcmtlZCBtYXRjaCBmaXJzdCDigJQgYSBjbGFpbVxuICAgICAgLy8gc3VwZXJzZWRlZCBieSBhIGJlZ2luKCkgZm9yIGEgZGlmZmVyZW50IGxhYmVsIGtlZXBzIGhvbGRpbmcgd2hhdCB3YXNcbiAgICAgIC8vIHBhcmtlZCBvbiBpdCwgYW5kIGRyb3BwaW5nIHRoYXQgaGVyZSBpcyB0aGUgZmFsc2UtbWlzcyBidWcuIENsZWFyaW5nXG4gICAgICAvLyBpcyB3aGF0IG1ha2VzIGEgc2Vjb25kIHNldHRsZSgpIChhbmQgYSByZWRlZW0gYWZ0ZXIgc3VwZXJzZXNzaW9uKSBhXG4gICAgICAvLyBuby1vcC5cbiAgICAgIGNvbnN0IGRlZmVycmVkID0gbWluZS5kZWZlcnJlZDtcbiAgICAgIG1pbmUuZGVmZXJyZWQgPSBudWxsO1xuICAgICAgLy8gT25seSB0aGUgQ1VSUkVOVCBjbGFpbSBjbG9zZXMgdGhlIG9wZW4gc2xvdDsgYSBzdXBlcnNlZGVkIG9uZSBtdXN0XG4gICAgICAvLyBsZWF2ZSB0aGUgbGl2ZSBjbGFpbSBhbG9uZS5cbiAgICAgIGlmIChvcGVuID09PSBtaW5lKSBvcGVuID0gbnVsbDtcbiAgICAgIHJldHVybiByZXNvbHV0aW9uID09PSBcInVucmVzb2x2ZWRcIiA/IGRlZmVycmVkIDogbnVsbDtcbiAgICB9O1xuXG4gICAgcmV0dXJuIHsgY29kZSwgc2V0dGxlIH07XG4gIH07XG5cbiAgY29uc3Qgb2ZmZXIgPSAoY29kZTogc3RyaW5nLCBwcm9kdWN0OiBULCB1bml0S2luZDogXCJjYXNlXCIgfCBcInBpZWNlXCIpOiBib29sZWFuID0+IHtcbiAgICBpZiAoIW9wZW4gfHwgIXNhbWVTY2FuQ29kZShvcGVuLmNvZGUsIGNvZGUpKSByZXR1cm4gdHJ1ZTtcbiAgICBvcGVuLmRlZmVycmVkID0geyBjb2RlLCBwcm9kdWN0LCB1bml0S2luZCB9O1xuICAgIHJldHVybiBmYWxzZTtcbiAgfTtcblxuICByZXR1cm4geyBiZWdpbiwgb2ZmZXIgfTtcbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

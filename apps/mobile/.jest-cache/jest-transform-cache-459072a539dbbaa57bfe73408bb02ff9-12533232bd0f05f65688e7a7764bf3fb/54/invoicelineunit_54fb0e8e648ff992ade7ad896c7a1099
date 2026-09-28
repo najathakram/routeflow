@@ -1,0 +1,25 @@
+942446e80fffc004aa0c99b891142d1a
+"use strict";
+/**
+ * B784 — mobile mirror of apps/web/lib/invoice-line-unit.ts's isUnitLine/hasUnitLine/
+ * unitLabelsOf. Web's invoice edit page already fails closed on a unit-aware invoice
+ * (B641, edit/page.tsx:591-610) before InvoicesService.update()'s own
+ * assertInvoiceRewriteAllowed (409 UNIT_AWARE_LINE) is ever reached — mobile's edit
+ * screen had no such up-front guard, so an operator only learned from the 409 on Save.
+ * RN can't import a web component, so this tiny pure logic is duplicated rather than
+ * shared (same reasoning as invoice-line-display.ts).
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.unitLabelsOf = exports.hasUnitLine = exports.isUnitLine = void 0;
+/** True when the stored line is sold by a non-pack unit. */
+const isUnitLine = (it) => (it?.unitLabel ?? "").trim() !== "";
+exports.isUnitLine = isUnitLine;
+/** True when ANY of the invoice's lines is sold by a unit. */
+const hasUnitLine = (items) => !!items?.some(exports.isUnitLine);
+exports.hasUnitLine = hasUnitLine;
+/** The distinct unit labels on an invoice, in line order ("Case", "Pallet"). */
+const unitLabelsOf = (items) => [
+    ...new Set((items ?? []).filter(exports.isUnitLine).map((it) => it.unitLabel.trim())),
+];
+exports.unitLabelsOf = unitLabelsOf;
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL2ludm9pY2UtbGluZS11bml0LnRzIiwibWFwcGluZ3MiOiI7QUFBQTs7Ozs7Ozs7R0FRRzs7O0FBTUgsNERBQTREO0FBQ3JELE1BQU0sVUFBVSxHQUFHLENBQUMsRUFBbUMsRUFBVyxFQUFFLENBQ3pFLENBQUMsRUFBRSxFQUFFLFNBQVMsSUFBSSxFQUFFLENBQUMsQ0FBQyxJQUFJLEVBQUUsS0FBSyxFQUFFLENBQUM7QUFEekIsUUFBQSxVQUFVLGNBQ2U7QUFFdEMsOERBQThEO0FBQ3ZELE1BQU0sV0FBVyxHQUFHLENBQUMsS0FBcUQsRUFBVyxFQUFFLENBQzVGLENBQUMsQ0FBQyxLQUFLLEVBQUUsSUFBSSxDQUFDLGtCQUFVLENBQUMsQ0FBQztBQURmLFFBQUEsV0FBVyxlQUNJO0FBRTVCLGdGQUFnRjtBQUN6RSxNQUFNLFlBQVksR0FBRyxDQUFDLEtBQXFELEVBQVksRUFBRSxDQUFDO0lBQy9GLEdBQUcsSUFBSSxHQUFHLENBQUMsQ0FBQyxLQUFLLElBQUksRUFBRSxDQUFDLENBQUMsTUFBTSxDQUFDLGtCQUFVLENBQUMsQ0FBQyxHQUFHLENBQUMsQ0FBQyxFQUFFLEVBQUUsRUFBRSxDQUFFLEVBQUUsQ0FBQyxTQUFvQixDQUFDLElBQUksRUFBRSxDQUFDLENBQUM7Q0FDMUYsQ0FBQztBQUZXLFFBQUEsWUFBWSxnQkFFdkIiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL2ludm9pY2UtbGluZS11bml0LnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogQjc4NCDigJQgbW9iaWxlIG1pcnJvciBvZiBhcHBzL3dlYi9saWIvaW52b2ljZS1saW5lLXVuaXQudHMncyBpc1VuaXRMaW5lL2hhc1VuaXRMaW5lL1xuICogdW5pdExhYmVsc09mLiBXZWIncyBpbnZvaWNlIGVkaXQgcGFnZSBhbHJlYWR5IGZhaWxzIGNsb3NlZCBvbiBhIHVuaXQtYXdhcmUgaW52b2ljZVxuICogKEI2NDEsIGVkaXQvcGFnZS50c3g6NTkxLTYxMCkgYmVmb3JlIEludm9pY2VzU2VydmljZS51cGRhdGUoKSdzIG93blxuICogYXNzZXJ0SW52b2ljZVJld3JpdGVBbGxvd2VkICg0MDkgVU5JVF9BV0FSRV9MSU5FKSBpcyBldmVyIHJlYWNoZWQg4oCUIG1vYmlsZSdzIGVkaXRcbiAqIHNjcmVlbiBoYWQgbm8gc3VjaCB1cC1mcm9udCBndWFyZCwgc28gYW4gb3BlcmF0b3Igb25seSBsZWFybmVkIGZyb20gdGhlIDQwOSBvbiBTYXZlLlxuICogUk4gY2FuJ3QgaW1wb3J0IGEgd2ViIGNvbXBvbmVudCwgc28gdGhpcyB0aW55IHB1cmUgbG9naWMgaXMgZHVwbGljYXRlZCByYXRoZXIgdGhhblxuICogc2hhcmVkIChzYW1lIHJlYXNvbmluZyBhcyBpbnZvaWNlLWxpbmUtZGlzcGxheS50cykuXG4gKi9cblxuaW50ZXJmYWNlIFVuaXRMYWJlbGxlZCB7XG4gIHVuaXRMYWJlbD86IHN0cmluZyB8IG51bGw7XG59XG5cbi8qKiBUcnVlIHdoZW4gdGhlIHN0b3JlZCBsaW5lIGlzIHNvbGQgYnkgYSBub24tcGFjayB1bml0LiAqL1xuZXhwb3J0IGNvbnN0IGlzVW5pdExpbmUgPSAoaXQ6IFVuaXRMYWJlbGxlZCB8IG51bGwgfCB1bmRlZmluZWQpOiBib29sZWFuID0+XG4gIChpdD8udW5pdExhYmVsID8/IFwiXCIpLnRyaW0oKSAhPT0gXCJcIjtcblxuLyoqIFRydWUgd2hlbiBBTlkgb2YgdGhlIGludm9pY2UncyBsaW5lcyBpcyBzb2xkIGJ5IGEgdW5pdC4gKi9cbmV4cG9ydCBjb25zdCBoYXNVbml0TGluZSA9IChpdGVtczogUmVhZG9ubHlBcnJheTxVbml0TGFiZWxsZWQ+IHwgbnVsbCB8IHVuZGVmaW5lZCk6IGJvb2xlYW4gPT5cbiAgISFpdGVtcz8uc29tZShpc1VuaXRMaW5lKTtcblxuLyoqIFRoZSBkaXN0aW5jdCB1bml0IGxhYmVscyBvbiBhbiBpbnZvaWNlLCBpbiBsaW5lIG9yZGVyIChcIkNhc2VcIiwgXCJQYWxsZXRcIikuICovXG5leHBvcnQgY29uc3QgdW5pdExhYmVsc09mID0gKGl0ZW1zOiBSZWFkb25seUFycmF5PFVuaXRMYWJlbGxlZD4gfCBudWxsIHwgdW5kZWZpbmVkKTogc3RyaW5nW10gPT4gW1xuICAuLi5uZXcgU2V0KChpdGVtcyA/PyBbXSkuZmlsdGVyKGlzVW5pdExpbmUpLm1hcCgoaXQpID0+IChpdC51bml0TGFiZWwgYXMgc3RyaW5nKS50cmltKCkpKSxcbl07XG4iXSwidmVyc2lvbiI6M30=

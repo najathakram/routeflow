@@ -1,0 +1,108 @@
+0435c71dbf5ce7fd65d9369d5174b328
+/**
+ * Locks the CHECK payment lifecycle badge decision table so it never drifts from the mobile
+ * mirror (apps/mobile/lib/check-badge.ts, tested in apps/mobile/__tests__/check-badge.test.ts).
+ */ "use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _checkbadge = require("./check-badge");
+describe("checkBadgeFor", ()=>{
+    it("returns null for non-CHECK payment methods", ()=>{
+        expect((0, _checkbadge.checkBadgeFor)({
+            method: "CREDIT_CARD"
+        })).toBeNull();
+        expect((0, _checkbadge.checkBadgeFor)({
+            method: "CASH",
+            checkStatus: "CLEARED"
+        })).toBeNull();
+    });
+    it("maps each lifecycle status to its label + variant", ()=>{
+        expect((0, _checkbadge.checkBadgeFor)({
+            method: "CHECK",
+            checkStatus: "RECORDED"
+        })).toEqual({
+            label: "Recorded",
+            variant: "neutral"
+        });
+        expect((0, _checkbadge.checkBadgeFor)({
+            method: "CHECK",
+            checkStatus: "DEPOSITED"
+        })).toEqual({
+            label: "Deposited",
+            variant: "info"
+        });
+        expect((0, _checkbadge.checkBadgeFor)({
+            method: "CHECK",
+            checkStatus: "CLEARED"
+        })).toEqual({
+            label: "Cleared",
+            variant: "success"
+        });
+        expect((0, _checkbadge.checkBadgeFor)({
+            method: "CHECK",
+            checkStatus: "BOUNCED"
+        })).toEqual({
+            label: "Bounced",
+            variant: "danger"
+        });
+    });
+    it("keeps the Bounced badge even when status is also VOID", ()=>{
+        expect((0, _checkbadge.checkBadgeFor)({
+            method: "CHECK",
+            status: "VOID",
+            checkStatus: "BOUNCED"
+        })).toEqual({
+            label: "Bounced",
+            variant: "danger"
+        });
+    });
+    it("treats a missing checkStatus on legacy data as Recorded", ()=>{
+        expect((0, _checkbadge.checkBadgeFor)({
+            method: "CHECK"
+        })).toEqual({
+            label: "Recorded",
+            variant: "neutral"
+        });
+        expect((0, _checkbadge.checkBadgeFor)({
+            method: "CHECK",
+            checkStatus: null
+        })).toEqual({
+            label: "Recorded",
+            variant: "neutral"
+        });
+    });
+    it("returns null for a manually-voided check that never had a lifecycle (no checkStatus + VOID)", ()=>{
+        expect((0, _checkbadge.checkBadgeFor)({
+            method: "CHECK",
+            status: "VOID"
+        })).toBeNull();
+        expect((0, _checkbadge.checkBadgeFor)({
+            method: "CHECK",
+            status: "VOID",
+            checkStatus: null
+        })).toBeNull();
+    });
+    // Post-dated check payments PR-1
+    it("REG-PR1-BADGE: maps a PENDING payment to 'Post-dated · pending' / warning, ahead of the checkStatus switch", ()=>{
+        expect((0, _checkbadge.checkBadgeFor)({
+            method: "CHECK",
+            status: "PENDING",
+            checkStatus: "RECORDED"
+        })).toEqual({
+            label: "Post-dated · pending",
+            variant: "warning"
+        });
+    });
+    it("REG-PR1-BADGE: the PENDING check wins even with no checkStatus at all", ()=>{
+        expect((0, _checkbadge.checkBadgeFor)({
+            method: "CHECK",
+            status: "PENDING"
+        })).toEqual({
+            label: "Post-dated · pending",
+            variant: "warning"
+        });
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2xpYi9jaGVjay1iYWRnZS50ZXN0LnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogTG9ja3MgdGhlIENIRUNLIHBheW1lbnQgbGlmZWN5Y2xlIGJhZGdlIGRlY2lzaW9uIHRhYmxlIHNvIGl0IG5ldmVyIGRyaWZ0cyBmcm9tIHRoZSBtb2JpbGVcbiAqIG1pcnJvciAoYXBwcy9tb2JpbGUvbGliL2NoZWNrLWJhZGdlLnRzLCB0ZXN0ZWQgaW4gYXBwcy9tb2JpbGUvX190ZXN0c19fL2NoZWNrLWJhZGdlLnRlc3QudHMpLlxuICovXG5pbXBvcnQgeyBjaGVja0JhZGdlRm9yIH0gZnJvbSBcIi4vY2hlY2stYmFkZ2VcIjtcblxuZGVzY3JpYmUoXCJjaGVja0JhZGdlRm9yXCIsICgpID0+IHtcbiAgaXQoXCJyZXR1cm5zIG51bGwgZm9yIG5vbi1DSEVDSyBwYXltZW50IG1ldGhvZHNcIiwgKCkgPT4ge1xuICAgIGV4cGVjdChjaGVja0JhZGdlRm9yKHsgbWV0aG9kOiBcIkNSRURJVF9DQVJEXCIgfSkpLnRvQmVOdWxsKCk7XG4gICAgZXhwZWN0KGNoZWNrQmFkZ2VGb3IoeyBtZXRob2Q6IFwiQ0FTSFwiLCBjaGVja1N0YXR1czogXCJDTEVBUkVEXCIgfSkpLnRvQmVOdWxsKCk7XG4gIH0pO1xuXG4gIGl0KFwibWFwcyBlYWNoIGxpZmVjeWNsZSBzdGF0dXMgdG8gaXRzIGxhYmVsICsgdmFyaWFudFwiLCAoKSA9PiB7XG4gICAgZXhwZWN0KGNoZWNrQmFkZ2VGb3IoeyBtZXRob2Q6IFwiQ0hFQ0tcIiwgY2hlY2tTdGF0dXM6IFwiUkVDT1JERURcIiB9KSkudG9FcXVhbCh7XG4gICAgICBsYWJlbDogXCJSZWNvcmRlZFwiLFxuICAgICAgdmFyaWFudDogXCJuZXV0cmFsXCIsXG4gICAgfSk7XG4gICAgZXhwZWN0KGNoZWNrQmFkZ2VGb3IoeyBtZXRob2Q6IFwiQ0hFQ0tcIiwgY2hlY2tTdGF0dXM6IFwiREVQT1NJVEVEXCIgfSkpLnRvRXF1YWwoe1xuICAgICAgbGFiZWw6IFwiRGVwb3NpdGVkXCIsXG4gICAgICB2YXJpYW50OiBcImluZm9cIixcbiAgICB9KTtcbiAgICBleHBlY3QoY2hlY2tCYWRnZUZvcih7IG1ldGhvZDogXCJDSEVDS1wiLCBjaGVja1N0YXR1czogXCJDTEVBUkVEXCIgfSkpLnRvRXF1YWwoe1xuICAgICAgbGFiZWw6IFwiQ2xlYXJlZFwiLFxuICAgICAgdmFyaWFudDogXCJzdWNjZXNzXCIsXG4gICAgfSk7XG4gICAgZXhwZWN0KGNoZWNrQmFkZ2VGb3IoeyBtZXRob2Q6IFwiQ0hFQ0tcIiwgY2hlY2tTdGF0dXM6IFwiQk9VTkNFRFwiIH0pKS50b0VxdWFsKHtcbiAgICAgIGxhYmVsOiBcIkJvdW5jZWRcIixcbiAgICAgIHZhcmlhbnQ6IFwiZGFuZ2VyXCIsXG4gICAgfSk7XG4gIH0pO1xuXG4gIGl0KFwia2VlcHMgdGhlIEJvdW5jZWQgYmFkZ2UgZXZlbiB3aGVuIHN0YXR1cyBpcyBhbHNvIFZPSURcIiwgKCkgPT4ge1xuICAgIGV4cGVjdChjaGVja0JhZGdlRm9yKHsgbWV0aG9kOiBcIkNIRUNLXCIsIHN0YXR1czogXCJWT0lEXCIsIGNoZWNrU3RhdHVzOiBcIkJPVU5DRURcIiB9KSkudG9FcXVhbCh7XG4gICAgICBsYWJlbDogXCJCb3VuY2VkXCIsXG4gICAgICB2YXJpYW50OiBcImRhbmdlclwiLFxuICAgIH0pO1xuICB9KTtcblxuICBpdChcInRyZWF0cyBhIG1pc3NpbmcgY2hlY2tTdGF0dXMgb24gbGVnYWN5IGRhdGEgYXMgUmVjb3JkZWRcIiwgKCkgPT4ge1xuICAgIGV4cGVjdChjaGVja0JhZGdlRm9yKHsgbWV0aG9kOiBcIkNIRUNLXCIgfSkpLnRvRXF1YWwoeyBsYWJlbDogXCJSZWNvcmRlZFwiLCB2YXJpYW50OiBcIm5ldXRyYWxcIiB9KTtcbiAgICBleHBlY3QoY2hlY2tCYWRnZUZvcih7IG1ldGhvZDogXCJDSEVDS1wiLCBjaGVja1N0YXR1czogbnVsbCB9KSkudG9FcXVhbCh7XG4gICAgICBsYWJlbDogXCJSZWNvcmRlZFwiLFxuICAgICAgdmFyaWFudDogXCJuZXV0cmFsXCIsXG4gICAgfSk7XG4gIH0pO1xuXG4gIGl0KFwicmV0dXJucyBudWxsIGZvciBhIG1hbnVhbGx5LXZvaWRlZCBjaGVjayB0aGF0IG5ldmVyIGhhZCBhIGxpZmVjeWNsZSAobm8gY2hlY2tTdGF0dXMgKyBWT0lEKVwiLCAoKSA9PiB7XG4gICAgZXhwZWN0KGNoZWNrQmFkZ2VGb3IoeyBtZXRob2Q6IFwiQ0hFQ0tcIiwgc3RhdHVzOiBcIlZPSURcIiB9KSkudG9CZU51bGwoKTtcbiAgICBleHBlY3QoY2hlY2tCYWRnZUZvcih7IG1ldGhvZDogXCJDSEVDS1wiLCBzdGF0dXM6IFwiVk9JRFwiLCBjaGVja1N0YXR1czogbnVsbCB9KSkudG9CZU51bGwoKTtcbiAgfSk7XG5cbiAgLy8gUG9zdC1kYXRlZCBjaGVjayBwYXltZW50cyBQUi0xXG4gIGl0KFwiUkVHLVBSMS1CQURHRTogbWFwcyBhIFBFTkRJTkcgcGF5bWVudCB0byAnUG9zdC1kYXRlZCDCtyBwZW5kaW5nJyAvIHdhcm5pbmcsIGFoZWFkIG9mIHRoZSBjaGVja1N0YXR1cyBzd2l0Y2hcIiwgKCkgPT4ge1xuICAgIGV4cGVjdChjaGVja0JhZGdlRm9yKHsgbWV0aG9kOiBcIkNIRUNLXCIsIHN0YXR1czogXCJQRU5ESU5HXCIsIGNoZWNrU3RhdHVzOiBcIlJFQ09SREVEXCIgfSkpLnRvRXF1YWwoe1xuICAgICAgbGFiZWw6IFwiUG9zdC1kYXRlZCDCtyBwZW5kaW5nXCIsXG4gICAgICB2YXJpYW50OiBcIndhcm5pbmdcIixcbiAgICB9KTtcbiAgfSk7XG5cbiAgaXQoXCJSRUctUFIxLUJBREdFOiB0aGUgUEVORElORyBjaGVjayB3aW5zIGV2ZW4gd2l0aCBubyBjaGVja1N0YXR1cyBhdCBhbGxcIiwgKCkgPT4ge1xuICAgIGV4cGVjdChjaGVja0JhZGdlRm9yKHsgbWV0aG9kOiBcIkNIRUNLXCIsIHN0YXR1czogXCJQRU5ESU5HXCIgfSkpLnRvRXF1YWwoe1xuICAgICAgbGFiZWw6IFwiUG9zdC1kYXRlZCDCtyBwZW5kaW5nXCIsXG4gICAgICB2YXJpYW50OiBcIndhcm5pbmdcIixcbiAgICB9KTtcbiAgfSk7XG59KTtcbiJdLCJuYW1lcyI6WyJkZXNjcmliZSIsIml0IiwiZXhwZWN0IiwiY2hlY2tCYWRnZUZvciIsIm1ldGhvZCIsInRvQmVOdWxsIiwiY2hlY2tTdGF0dXMiLCJ0b0VxdWFsIiwibGFiZWwiLCJ2YXJpYW50Iiwic3RhdHVzIl0sIm1hcHBpbmdzIjoiQUFBQTs7O0NBR0M7Ozs7NEJBQzZCO0FBRTlCQSxTQUFTLGlCQUFpQjtJQUN4QkMsR0FBRyw4Q0FBOEM7UUFDL0NDLE9BQU9DLElBQUFBLHlCQUFhLEVBQUM7WUFBRUMsUUFBUTtRQUFjLElBQUlDLFFBQVE7UUFDekRILE9BQU9DLElBQUFBLHlCQUFhLEVBQUM7WUFBRUMsUUFBUTtZQUFRRSxhQUFhO1FBQVUsSUFBSUQsUUFBUTtJQUM1RTtJQUVBSixHQUFHLHFEQUFxRDtRQUN0REMsT0FBT0MsSUFBQUEseUJBQWEsRUFBQztZQUFFQyxRQUFRO1lBQVNFLGFBQWE7UUFBVyxJQUFJQyxPQUFPLENBQUM7WUFDMUVDLE9BQU87WUFDUEMsU0FBUztRQUNYO1FBQ0FQLE9BQU9DLElBQUFBLHlCQUFhLEVBQUM7WUFBRUMsUUFBUTtZQUFTRSxhQUFhO1FBQVksSUFBSUMsT0FBTyxDQUFDO1lBQzNFQyxPQUFPO1lBQ1BDLFNBQVM7UUFDWDtRQUNBUCxPQUFPQyxJQUFBQSx5QkFBYSxFQUFDO1lBQUVDLFFBQVE7WUFBU0UsYUFBYTtRQUFVLElBQUlDLE9BQU8sQ0FBQztZQUN6RUMsT0FBTztZQUNQQyxTQUFTO1FBQ1g7UUFDQVAsT0FBT0MsSUFBQUEseUJBQWEsRUFBQztZQUFFQyxRQUFRO1lBQVNFLGFBQWE7UUFBVSxJQUFJQyxPQUFPLENBQUM7WUFDekVDLE9BQU87WUFDUEMsU0FBUztRQUNYO0lBQ0Y7SUFFQVIsR0FBRyx5REFBeUQ7UUFDMURDLE9BQU9DLElBQUFBLHlCQUFhLEVBQUM7WUFBRUMsUUFBUTtZQUFTTSxRQUFRO1lBQVFKLGFBQWE7UUFBVSxJQUFJQyxPQUFPLENBQUM7WUFDekZDLE9BQU87WUFDUEMsU0FBUztRQUNYO0lBQ0Y7SUFFQVIsR0FBRywyREFBMkQ7UUFDNURDLE9BQU9DLElBQUFBLHlCQUFhLEVBQUM7WUFBRUMsUUFBUTtRQUFRLElBQUlHLE9BQU8sQ0FBQztZQUFFQyxPQUFPO1lBQVlDLFNBQVM7UUFBVTtRQUMzRlAsT0FBT0MsSUFBQUEseUJBQWEsRUFBQztZQUFFQyxRQUFRO1lBQVNFLGFBQWE7UUFBSyxJQUFJQyxPQUFPLENBQUM7WUFDcEVDLE9BQU87WUFDUEMsU0FBUztRQUNYO0lBQ0Y7SUFFQVIsR0FBRywrRkFBK0Y7UUFDaEdDLE9BQU9DLElBQUFBLHlCQUFhLEVBQUM7WUFBRUMsUUFBUTtZQUFTTSxRQUFRO1FBQU8sSUFBSUwsUUFBUTtRQUNuRUgsT0FBT0MsSUFBQUEseUJBQWEsRUFBQztZQUFFQyxRQUFRO1lBQVNNLFFBQVE7WUFBUUosYUFBYTtRQUFLLElBQUlELFFBQVE7SUFDeEY7SUFFQSxpQ0FBaUM7SUFDakNKLEdBQUcsOEdBQThHO1FBQy9HQyxPQUFPQyxJQUFBQSx5QkFBYSxFQUFDO1lBQUVDLFFBQVE7WUFBU00sUUFBUTtZQUFXSixhQUFhO1FBQVcsSUFBSUMsT0FBTyxDQUFDO1lBQzdGQyxPQUFPO1lBQ1BDLFNBQVM7UUFDWDtJQUNGO0lBRUFSLEdBQUcseUVBQXlFO1FBQzFFQyxPQUFPQyxJQUFBQSx5QkFBYSxFQUFDO1lBQUVDLFFBQVE7WUFBU00sUUFBUTtRQUFVLElBQUlILE9BQU8sQ0FBQztZQUNwRUMsT0FBTztZQUNQQyxTQUFTO1FBQ1g7SUFDRjtBQUNGIn0=

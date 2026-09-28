@@ -1,0 +1,30 @@
+b406e483e971044086386daeb0b61afd
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.hydratedLineTax = hydratedLineTax;
+const pricing_1 = require("@routeflow/pricing");
+/**
+ * B294 (SA-141): each stored line's `{ taxRate, taxable }` when the operator invoice edit loads.
+ *
+ * A legacy order- or estimate-derived invoice stores `taxRate: 0` on every line while its header
+ * carries the real tax. Hydrating `taxable: taxRate > 0` loaded those lines as NON-taxable, so
+ * the save sent `taxRate: 0` and silently dropped the sales tax. When the SHARED rule
+ * (@routeflow/pricing inferredFlatRate, the same one applyPriceAdjustment and the backfill use)
+ * verifies a flat rate, each 0-rate line loads at that rate and as taxable. A line with its own
+ * rate always keeps it.
+ */
+function hydratedLineTax(invoice) {
+    const items = invoice.items ?? [];
+    const inferred = (0, pricing_1.inferredFlatRate)({
+        subtotal: invoice.subtotal,
+        taxAmount: invoice.taxAmount,
+        lines: items,
+    });
+    const fill = inferred?.verified ? inferred.rate : 0;
+    return items.map((it) => {
+        const stored = Number(it.taxRate ?? 0);
+        const taxRate = stored > 0 ? stored : fill;
+        return { taxRate, taxable: taxRate > 0 };
+    });
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL2ludm9pY2UtZWRpdC10YXgudHMiLCJtYXBwaW5ncyI6Ijs7QUFZQSwwQ0FpQkM7QUE3QkQsZ0RBQXNEO0FBRXREOzs7Ozs7Ozs7R0FTRztBQUNILFNBQWdCLGVBQWUsQ0FBQyxPQUkvQjtJQUNDLE1BQU0sS0FBSyxHQUFHLE9BQU8sQ0FBQyxLQUFLLElBQUksRUFBRSxDQUFDO0lBQ2xDLE1BQU0sUUFBUSxHQUFHLElBQUEsMEJBQWdCLEVBQUM7UUFDaEMsUUFBUSxFQUFFLE9BQU8sQ0FBQyxRQUFRO1FBQzFCLFNBQVMsRUFBRSxPQUFPLENBQUMsU0FBUztRQUM1QixLQUFLLEVBQUUsS0FBSztLQUNiLENBQUMsQ0FBQztJQUNILE1BQU0sSUFBSSxHQUFHLFFBQVEsRUFBRSxRQUFRLENBQUMsQ0FBQyxDQUFDLFFBQVEsQ0FBQyxJQUFJLENBQUMsQ0FBQyxDQUFDLENBQUMsQ0FBQztJQUNwRCxPQUFPLEtBQUssQ0FBQyxHQUFHLENBQUMsQ0FBQyxFQUFFLEVBQUUsRUFBRTtRQUN0QixNQUFNLE1BQU0sR0FBRyxNQUFNLENBQUMsRUFBRSxDQUFDLE9BQU8sSUFBSSxDQUFDLENBQUMsQ0FBQztRQUN2QyxNQUFNLE9BQU8sR0FBRyxNQUFNLEdBQUcsQ0FBQyxDQUFDLENBQUMsQ0FBQyxNQUFNLENBQUMsQ0FBQyxDQUFDLElBQUksQ0FBQztRQUMzQyxPQUFPLEVBQUUsT0FBTyxFQUFFLE9BQU8sRUFBRSxPQUFPLEdBQUcsQ0FBQyxFQUFFLENBQUM7SUFDM0MsQ0FBQyxDQUFDLENBQUM7QUFDTCxDQUFDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvbW9iaWxlL2xpYi9pbnZvaWNlLWVkaXQtdGF4LnRzIl0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCB7IGluZmVycmVkRmxhdFJhdGUgfSBmcm9tIFwiQHJvdXRlZmxvdy9wcmljaW5nXCI7XG5cbi8qKlxuICogQjI5NCAoU0EtMTQxKTogZWFjaCBzdG9yZWQgbGluZSdzIGB7IHRheFJhdGUsIHRheGFibGUgfWAgd2hlbiB0aGUgb3BlcmF0b3IgaW52b2ljZSBlZGl0IGxvYWRzLlxuICpcbiAqIEEgbGVnYWN5IG9yZGVyLSBvciBlc3RpbWF0ZS1kZXJpdmVkIGludm9pY2Ugc3RvcmVzIGB0YXhSYXRlOiAwYCBvbiBldmVyeSBsaW5lIHdoaWxlIGl0cyBoZWFkZXJcbiAqIGNhcnJpZXMgdGhlIHJlYWwgdGF4LiBIeWRyYXRpbmcgYHRheGFibGU6IHRheFJhdGUgPiAwYCBsb2FkZWQgdGhvc2UgbGluZXMgYXMgTk9OLXRheGFibGUsIHNvXG4gKiB0aGUgc2F2ZSBzZW50IGB0YXhSYXRlOiAwYCBhbmQgc2lsZW50bHkgZHJvcHBlZCB0aGUgc2FsZXMgdGF4LiBXaGVuIHRoZSBTSEFSRUQgcnVsZVxuICogKEByb3V0ZWZsb3cvcHJpY2luZyBpbmZlcnJlZEZsYXRSYXRlLCB0aGUgc2FtZSBvbmUgYXBwbHlQcmljZUFkanVzdG1lbnQgYW5kIHRoZSBiYWNrZmlsbCB1c2UpXG4gKiB2ZXJpZmllcyBhIGZsYXQgcmF0ZSwgZWFjaCAwLXJhdGUgbGluZSBsb2FkcyBhdCB0aGF0IHJhdGUgYW5kIGFzIHRheGFibGUuIEEgbGluZSB3aXRoIGl0cyBvd25cbiAqIHJhdGUgYWx3YXlzIGtlZXBzIGl0LlxuICovXG5leHBvcnQgZnVuY3Rpb24gaHlkcmF0ZWRMaW5lVGF4KGludm9pY2U6IHtcbiAgc3VidG90YWw/OiB1bmtub3duO1xuICB0YXhBbW91bnQ/OiB1bmtub3duO1xuICBpdGVtcz86IFJlYWRvbmx5QXJyYXk8eyB0YXhSYXRlPzogdW5rbm93bjsgY2F0ZWdvcnlUYXhBbW91bnQ/OiB1bmtub3duIH0+O1xufSk6IEFycmF5PHsgdGF4UmF0ZTogbnVtYmVyOyB0YXhhYmxlOiBib29sZWFuIH0+IHtcbiAgY29uc3QgaXRlbXMgPSBpbnZvaWNlLml0ZW1zID8/IFtdO1xuICBjb25zdCBpbmZlcnJlZCA9IGluZmVycmVkRmxhdFJhdGUoe1xuICAgIHN1YnRvdGFsOiBpbnZvaWNlLnN1YnRvdGFsLFxuICAgIHRheEFtb3VudDogaW52b2ljZS50YXhBbW91bnQsXG4gICAgbGluZXM6IGl0ZW1zLFxuICB9KTtcbiAgY29uc3QgZmlsbCA9IGluZmVycmVkPy52ZXJpZmllZCA/IGluZmVycmVkLnJhdGUgOiAwO1xuICByZXR1cm4gaXRlbXMubWFwKChpdCkgPT4ge1xuICAgIGNvbnN0IHN0b3JlZCA9IE51bWJlcihpdC50YXhSYXRlID8/IDApO1xuICAgIGNvbnN0IHRheFJhdGUgPSBzdG9yZWQgPiAwID8gc3RvcmVkIDogZmlsbDtcbiAgICByZXR1cm4geyB0YXhSYXRlLCB0YXhhYmxlOiB0YXhSYXRlID4gMCB9O1xuICB9KTtcbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

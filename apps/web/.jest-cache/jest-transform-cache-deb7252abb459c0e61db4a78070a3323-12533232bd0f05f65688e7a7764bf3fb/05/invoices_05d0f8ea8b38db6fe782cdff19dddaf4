@@ -1,0 +1,13 @@
+c13cc190b93bf3dade5061ad3b8c3405
+// ─── Invoice KPI summary (B12) ─────────────────────────────────────────────
+//
+// `GET /invoices/kpi-summary?today=YYYY-MM-DD` — the invoices page's six KPI
+// tiles, computed server-side over the tenant's whole OPEN set (never a
+// capped `limit: 999` fetch-all-then-reduce, which silently drops whichever
+// rows page 1000+ would have held — see .claude/pipeline/2026-09-07-F16-list-caps).
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L3BhY2thZ2VzL3R5cGVzL2FwaS9pbnZvaWNlcy50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvLyDilIDilIDilIAgSW52b2ljZSBLUEkgc3VtbWFyeSAoQjEyKSDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIBcbi8vXG4vLyBgR0VUIC9pbnZvaWNlcy9rcGktc3VtbWFyeT90b2RheT1ZWVlZLU1NLUREYCDigJQgdGhlIGludm9pY2VzIHBhZ2UncyBzaXggS1BJXG4vLyB0aWxlcywgY29tcHV0ZWQgc2VydmVyLXNpZGUgb3ZlciB0aGUgdGVuYW50J3Mgd2hvbGUgT1BFTiBzZXQgKG5ldmVyIGFcbi8vIGNhcHBlZCBgbGltaXQ6IDk5OWAgZmV0Y2gtYWxsLXRoZW4tcmVkdWNlLCB3aGljaCBzaWxlbnRseSBkcm9wcyB3aGljaGV2ZXJcbi8vIHJvd3MgcGFnZSAxMDAwKyB3b3VsZCBoYXZlIGhlbGQg4oCUIHNlZSAuY2xhdWRlL3BpcGVsaW5lLzIwMjYtMDktMDctRjE2LWxpc3QtY2FwcykuXG5cbmV4cG9ydCBpbnRlcmZhY2UgSW52b2ljZUtwaVN1bW1hcnkge1xuICB0b3RhbE91dHN0YW5kaW5nOiBudW1iZXI7XG4gIG92ZXJkdWU6IG51bWJlcjtcbiAgZHVlVG9kYXk6IG51bWJlcjtcbiAgZHVlSW4zMDogbnVtYmVyO1xuICBhdmdEYXlzOiBudW1iZXI7XG4gIGF3YWl0aW5nQ29uZmlybWF0aW9uQ291bnQ6IG51bWJlcjtcbn1cbiJdLCJuYW1lcyI6W10sIm1hcHBpbmdzIjoiQUFBQSw4RUFBOEU7QUFDOUUsRUFBRTtBQUNGLDZFQUE2RTtBQUM3RSx3RUFBd0U7QUFDeEUsNEVBQTRFO0FBQzVFLG9GQUFvRiJ9

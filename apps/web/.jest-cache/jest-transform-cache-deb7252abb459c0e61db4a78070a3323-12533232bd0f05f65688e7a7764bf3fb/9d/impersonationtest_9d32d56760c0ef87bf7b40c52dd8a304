@@ -1,0 +1,55 @@
+e31bd69d6396d1bbff5349f73c546d89
+/**
+ * REG-B124 — impersonation kept the previous tenant's logo, business name and
+ * username: AuthProvider/TenantProvider never re-read the acting identity when
+ * an operator impersonated a tenant from the SAME tab (no route change, no
+ * storage event — same-tab `localStorage` writes don't fire `storage`). Fixed
+ * in #491 (28cb0a25): `setImpersonation`/`clearImpersonation` now dispatch a
+ * same-tab change event, and `subscribeImpersonation` is the single place both
+ * providers listen for it (plus a key-filtered cross-tab `storage` fallback).
+ *
+ * Pinned at the source module — no React tree needed — so a regression that
+ * drops the same-tab dispatch, or that widens the storage filter back to
+ * "every key", fails here directly.
+ */ "use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _impersonation = require("./impersonation");
+describe("impersonation change notifications (B124)", ()=>{
+    beforeEach(()=>{
+        localStorage.clear();
+    });
+    it("REG-B124 setImpersonation notifies same-tab subscribers synchronously (no route change needed)", ()=>{
+        const onChange = jest.fn();
+        const unsubscribe = (0, _impersonation.subscribeImpersonation)(onChange);
+        (0, _impersonation.setImpersonation)("fake.token.value", "acme", "acting-admin");
+        // RED against the pre-fix module, which never dispatched anything on
+        // set/clear — AuthProvider/TenantProvider had no signal to re-read the
+        // acting tenant's identity within the same tab.
+        expect(onChange).toHaveBeenCalledTimes(1);
+        (0, _impersonation.clearImpersonation)();
+        expect(onChange).toHaveBeenCalledTimes(2);
+        unsubscribe();
+    });
+    it("subscribeImpersonation reacts to a cross-tab storage event on an impersonation key, but not on an unrelated key", ()=>{
+        const onChange = jest.fn();
+        const unsubscribe = (0, _impersonation.subscribeImpersonation)(onChange);
+        window.dispatchEvent(new StorageEvent("storage", {
+            key: "impersonationTenantSlug",
+            storageArea: localStorage
+        }));
+        expect(onChange).toHaveBeenCalledTimes(1);
+        // An unrelated cross-tab write (sidebar state, view mode, ...) must NOT
+        // re-fire the subscription — that would tear down or refetch identity on
+        // noise, the exact over-broad-listener trap the fix's comment calls out.
+        window.dispatchEvent(new StorageEvent("storage", {
+            key: "some-unrelated-ui-pref",
+            storageArea: localStorage
+        }));
+        expect(onChange).toHaveBeenCalledTimes(1);
+        unsubscribe();
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2xpYi9pbXBlcnNvbmF0aW9uLnRlc3QudHMiXSwic291cmNlc0NvbnRlbnQiOlsiLyoqXG4gKiBSRUctQjEyNCDigJQgaW1wZXJzb25hdGlvbiBrZXB0IHRoZSBwcmV2aW91cyB0ZW5hbnQncyBsb2dvLCBidXNpbmVzcyBuYW1lIGFuZFxuICogdXNlcm5hbWU6IEF1dGhQcm92aWRlci9UZW5hbnRQcm92aWRlciBuZXZlciByZS1yZWFkIHRoZSBhY3RpbmcgaWRlbnRpdHkgd2hlblxuICogYW4gb3BlcmF0b3IgaW1wZXJzb25hdGVkIGEgdGVuYW50IGZyb20gdGhlIFNBTUUgdGFiIChubyByb3V0ZSBjaGFuZ2UsIG5vXG4gKiBzdG9yYWdlIGV2ZW50IOKAlCBzYW1lLXRhYiBgbG9jYWxTdG9yYWdlYCB3cml0ZXMgZG9uJ3QgZmlyZSBgc3RvcmFnZWApLiBGaXhlZFxuICogaW4gIzQ5MSAoMjhjYjBhMjUpOiBgc2V0SW1wZXJzb25hdGlvbmAvYGNsZWFySW1wZXJzb25hdGlvbmAgbm93IGRpc3BhdGNoIGFcbiAqIHNhbWUtdGFiIGNoYW5nZSBldmVudCwgYW5kIGBzdWJzY3JpYmVJbXBlcnNvbmF0aW9uYCBpcyB0aGUgc2luZ2xlIHBsYWNlIGJvdGhcbiAqIHByb3ZpZGVycyBsaXN0ZW4gZm9yIGl0IChwbHVzIGEga2V5LWZpbHRlcmVkIGNyb3NzLXRhYiBgc3RvcmFnZWAgZmFsbGJhY2spLlxuICpcbiAqIFBpbm5lZCBhdCB0aGUgc291cmNlIG1vZHVsZSDigJQgbm8gUmVhY3QgdHJlZSBuZWVkZWQg4oCUIHNvIGEgcmVncmVzc2lvbiB0aGF0XG4gKiBkcm9wcyB0aGUgc2FtZS10YWIgZGlzcGF0Y2gsIG9yIHRoYXQgd2lkZW5zIHRoZSBzdG9yYWdlIGZpbHRlciBiYWNrIHRvXG4gKiBcImV2ZXJ5IGtleVwiLCBmYWlscyBoZXJlIGRpcmVjdGx5LlxuICovXG5pbXBvcnQgeyBzZXRJbXBlcnNvbmF0aW9uLCBjbGVhckltcGVyc29uYXRpb24sIHN1YnNjcmliZUltcGVyc29uYXRpb24gfSBmcm9tIFwiLi9pbXBlcnNvbmF0aW9uXCI7XG5cbmRlc2NyaWJlKFwiaW1wZXJzb25hdGlvbiBjaGFuZ2Ugbm90aWZpY2F0aW9ucyAoQjEyNClcIiwgKCkgPT4ge1xuICBiZWZvcmVFYWNoKCgpID0+IHtcbiAgICBsb2NhbFN0b3JhZ2UuY2xlYXIoKTtcbiAgfSk7XG5cbiAgaXQoXCJSRUctQjEyNCBzZXRJbXBlcnNvbmF0aW9uIG5vdGlmaWVzIHNhbWUtdGFiIHN1YnNjcmliZXJzIHN5bmNocm9ub3VzbHkgKG5vIHJvdXRlIGNoYW5nZSBuZWVkZWQpXCIsICgpID0+IHtcbiAgICBjb25zdCBvbkNoYW5nZSA9IGplc3QuZm4oKTtcbiAgICBjb25zdCB1bnN1YnNjcmliZSA9IHN1YnNjcmliZUltcGVyc29uYXRpb24ob25DaGFuZ2UpO1xuXG4gICAgc2V0SW1wZXJzb25hdGlvbihcImZha2UudG9rZW4udmFsdWVcIiwgXCJhY21lXCIsIFwiYWN0aW5nLWFkbWluXCIpO1xuXG4gICAgLy8gUkVEIGFnYWluc3QgdGhlIHByZS1maXggbW9kdWxlLCB3aGljaCBuZXZlciBkaXNwYXRjaGVkIGFueXRoaW5nIG9uXG4gICAgLy8gc2V0L2NsZWFyIOKAlCBBdXRoUHJvdmlkZXIvVGVuYW50UHJvdmlkZXIgaGFkIG5vIHNpZ25hbCB0byByZS1yZWFkIHRoZVxuICAgIC8vIGFjdGluZyB0ZW5hbnQncyBpZGVudGl0eSB3aXRoaW4gdGhlIHNhbWUgdGFiLlxuICAgIGV4cGVjdChvbkNoYW5nZSkudG9IYXZlQmVlbkNhbGxlZFRpbWVzKDEpO1xuXG4gICAgY2xlYXJJbXBlcnNvbmF0aW9uKCk7XG4gICAgZXhwZWN0KG9uQ2hhbmdlKS50b0hhdmVCZWVuQ2FsbGVkVGltZXMoMik7XG5cbiAgICB1bnN1YnNjcmliZSgpO1xuICB9KTtcblxuICBpdChcInN1YnNjcmliZUltcGVyc29uYXRpb24gcmVhY3RzIHRvIGEgY3Jvc3MtdGFiIHN0b3JhZ2UgZXZlbnQgb24gYW4gaW1wZXJzb25hdGlvbiBrZXksIGJ1dCBub3Qgb24gYW4gdW5yZWxhdGVkIGtleVwiLCAoKSA9PiB7XG4gICAgY29uc3Qgb25DaGFuZ2UgPSBqZXN0LmZuKCk7XG4gICAgY29uc3QgdW5zdWJzY3JpYmUgPSBzdWJzY3JpYmVJbXBlcnNvbmF0aW9uKG9uQ2hhbmdlKTtcblxuICAgIHdpbmRvdy5kaXNwYXRjaEV2ZW50KFxuICAgICAgbmV3IFN0b3JhZ2VFdmVudChcInN0b3JhZ2VcIiwge1xuICAgICAgICBrZXk6IFwiaW1wZXJzb25hdGlvblRlbmFudFNsdWdcIixcbiAgICAgICAgc3RvcmFnZUFyZWE6IGxvY2FsU3RvcmFnZSxcbiAgICAgIH0pLFxuICAgICk7XG4gICAgZXhwZWN0KG9uQ2hhbmdlKS50b0hhdmVCZWVuQ2FsbGVkVGltZXMoMSk7XG5cbiAgICAvLyBBbiB1bnJlbGF0ZWQgY3Jvc3MtdGFiIHdyaXRlIChzaWRlYmFyIHN0YXRlLCB2aWV3IG1vZGUsIC4uLikgbXVzdCBOT1RcbiAgICAvLyByZS1maXJlIHRoZSBzdWJzY3JpcHRpb24g4oCUIHRoYXQgd291bGQgdGVhciBkb3duIG9yIHJlZmV0Y2ggaWRlbnRpdHkgb25cbiAgICAvLyBub2lzZSwgdGhlIGV4YWN0IG92ZXItYnJvYWQtbGlzdGVuZXIgdHJhcCB0aGUgZml4J3MgY29tbWVudCBjYWxscyBvdXQuXG4gICAgd2luZG93LmRpc3BhdGNoRXZlbnQoXG4gICAgICBuZXcgU3RvcmFnZUV2ZW50KFwic3RvcmFnZVwiLCB7XG4gICAgICAgIGtleTogXCJzb21lLXVucmVsYXRlZC11aS1wcmVmXCIsXG4gICAgICAgIHN0b3JhZ2VBcmVhOiBsb2NhbFN0b3JhZ2UsXG4gICAgICB9KSxcbiAgICApO1xuICAgIGV4cGVjdChvbkNoYW5nZSkudG9IYXZlQmVlbkNhbGxlZFRpbWVzKDEpO1xuXG4gICAgdW5zdWJzY3JpYmUoKTtcbiAgfSk7XG59KTtcbiJdLCJuYW1lcyI6WyJkZXNjcmliZSIsImJlZm9yZUVhY2giLCJsb2NhbFN0b3JhZ2UiLCJjbGVhciIsIml0Iiwib25DaGFuZ2UiLCJqZXN0IiwiZm4iLCJ1bnN1YnNjcmliZSIsInN1YnNjcmliZUltcGVyc29uYXRpb24iLCJzZXRJbXBlcnNvbmF0aW9uIiwiZXhwZWN0IiwidG9IYXZlQmVlbkNhbGxlZFRpbWVzIiwiY2xlYXJJbXBlcnNvbmF0aW9uIiwid2luZG93IiwiZGlzcGF0Y2hFdmVudCIsIlN0b3JhZ2VFdmVudCIsImtleSIsInN0b3JhZ2VBcmVhIl0sIm1hcHBpbmdzIjoiQUFBQTs7Ozs7Ozs7Ozs7O0NBWUM7Ozs7K0JBQzRFO0FBRTdFQSxTQUFTLDZDQUE2QztJQUNwREMsV0FBVztRQUNUQyxhQUFhQyxLQUFLO0lBQ3BCO0lBRUFDLEdBQUcsa0dBQWtHO1FBQ25HLE1BQU1DLFdBQVdDLEtBQUtDLEVBQUU7UUFDeEIsTUFBTUMsY0FBY0MsSUFBQUEscUNBQXNCLEVBQUNKO1FBRTNDSyxJQUFBQSwrQkFBZ0IsRUFBQyxvQkFBb0IsUUFBUTtRQUU3QyxxRUFBcUU7UUFDckUsdUVBQXVFO1FBQ3ZFLGdEQUFnRDtRQUNoREMsT0FBT04sVUFBVU8scUJBQXFCLENBQUM7UUFFdkNDLElBQUFBLGlDQUFrQjtRQUNsQkYsT0FBT04sVUFBVU8scUJBQXFCLENBQUM7UUFFdkNKO0lBQ0Y7SUFFQUosR0FBRyxtSEFBbUg7UUFDcEgsTUFBTUMsV0FBV0MsS0FBS0MsRUFBRTtRQUN4QixNQUFNQyxjQUFjQyxJQUFBQSxxQ0FBc0IsRUFBQ0o7UUFFM0NTLE9BQU9DLGFBQWEsQ0FDbEIsSUFBSUMsYUFBYSxXQUFXO1lBQzFCQyxLQUFLO1lBQ0xDLGFBQWFoQjtRQUNmO1FBRUZTLE9BQU9OLFVBQVVPLHFCQUFxQixDQUFDO1FBRXZDLHdFQUF3RTtRQUN4RSx5RUFBeUU7UUFDekUseUVBQXlFO1FBQ3pFRSxPQUFPQyxhQUFhLENBQ2xCLElBQUlDLGFBQWEsV0FBVztZQUMxQkMsS0FBSztZQUNMQyxhQUFhaEI7UUFDZjtRQUVGUyxPQUFPTixVQUFVTyxxQkFBcUIsQ0FBQztRQUV2Q0o7SUFDRjtBQUNGIn0=

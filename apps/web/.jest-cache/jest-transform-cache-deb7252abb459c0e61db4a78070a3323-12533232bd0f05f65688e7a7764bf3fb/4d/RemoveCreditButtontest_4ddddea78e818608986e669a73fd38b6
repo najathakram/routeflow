@@ -1,0 +1,106 @@
+c38c942203cc74641874fb6b39fbe4bf
+/**
+ * #2403 (P0, epic #2400): "Remove credit" on an invoice showed only for role === "OPERATOR",
+ * but the API's RolesGuard lets TENANT_ADMIN (and SUPER_ADMIN) satisfy @Roles(OPERATOR)
+ * (roles.guard.ts ROLE_SATISFIES). SA-436 PR-3: isOperator -> isStaff, one condition, the
+ * server's own role set.
+ */ "use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+const _react1 = require("@testing-library/react");
+const _fs = require("fs");
+const _path = require("path");
+const _RemoveCreditButton = require("./RemoveCreditButton");
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+describe("RemoveCreditButton (#2403)", ()=>{
+    it.each([
+        "OPERATOR",
+        "TENANT_ADMIN",
+        "SUPER_ADMIN"
+    ])("%s sees Remove credit", (role)=>{
+        const onRemove = jest.fn();
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_RemoveCreditButton.RemoveCreditButton, {
+            role: role,
+            voided: false,
+            onRemove: onRemove
+        }));
+        _react1.fireEvent.click(_react1.screen.getByRole("button", {
+            name: "Remove credit"
+        }));
+        expect(onRemove).toHaveBeenCalledTimes(1);
+    });
+    it.each([
+        "DRIVER",
+        "CUSTOMER",
+        undefined
+    ])("%s does not", (role)=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_RemoveCreditButton.RemoveCreditButton, {
+            role: role,
+            voided: false,
+            onRemove: jest.fn()
+        }));
+        expect(_react1.screen.queryByRole("button", {
+            name: "Remove credit"
+        })).toBeNull();
+    });
+    it("nobody sees it on a voided invoice", ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_RemoveCreditButton.RemoveCreditButton, {
+            role: "TENANT_ADMIN",
+            voided: true,
+            onRemove: jest.fn()
+        }));
+        expect(_react1.screen.queryByRole("button", {
+            name: "Remove credit"
+        })).toBeNull();
+    });
+    it("the invoice page renders it instead of an OPERATOR-only gate", ()=>{
+        const src = (0, _fs.readFileSync)((0, _path.join)(__dirname, "page.tsx"), "utf8");
+        expect(src).toMatch(/<RemoveCreditButton[\s\S]*?role=\{user\?\.role\}/);
+        expect(src).not.toMatch(/role === "OPERATOR"/);
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS9pbnZvaWNlcy9baWRdL1JlbW92ZUNyZWRpdEJ1dHRvbi50ZXN0LnRzeCJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqICMyNDAzIChQMCwgZXBpYyAjMjQwMCk6IFwiUmVtb3ZlIGNyZWRpdFwiIG9uIGFuIGludm9pY2Ugc2hvd2VkIG9ubHkgZm9yIHJvbGUgPT09IFwiT1BFUkFUT1JcIixcbiAqIGJ1dCB0aGUgQVBJJ3MgUm9sZXNHdWFyZCBsZXRzIFRFTkFOVF9BRE1JTiAoYW5kIFNVUEVSX0FETUlOKSBzYXRpc2Z5IEBSb2xlcyhPUEVSQVRPUilcbiAqIChyb2xlcy5ndWFyZC50cyBST0xFX1NBVElTRklFUykuIFNBLTQzNiBQUi0zOiBpc09wZXJhdG9yIC0+IGlzU3RhZmYsIG9uZSBjb25kaXRpb24sIHRoZVxuICogc2VydmVyJ3Mgb3duIHJvbGUgc2V0LlxuICovXG5pbXBvcnQgKiBhcyBSZWFjdCBmcm9tIFwicmVhY3RcIjtcbmltcG9ydCB7IGZpcmVFdmVudCwgcmVuZGVyLCBzY3JlZW4gfSBmcm9tIFwiQHRlc3RpbmctbGlicmFyeS9yZWFjdFwiO1xuaW1wb3J0IHsgcmVhZEZpbGVTeW5jIH0gZnJvbSBcImZzXCI7XG5pbXBvcnQgeyBqb2luIH0gZnJvbSBcInBhdGhcIjtcbmltcG9ydCB7IFJlbW92ZUNyZWRpdEJ1dHRvbiB9IGZyb20gXCIuL1JlbW92ZUNyZWRpdEJ1dHRvblwiO1xuXG5kZXNjcmliZShcIlJlbW92ZUNyZWRpdEJ1dHRvbiAoIzI0MDMpXCIsICgpID0+IHtcbiAgaXQuZWFjaChbXCJPUEVSQVRPUlwiLCBcIlRFTkFOVF9BRE1JTlwiLCBcIlNVUEVSX0FETUlOXCJdKShcIiVzIHNlZXMgUmVtb3ZlIGNyZWRpdFwiLCAocm9sZSkgPT4ge1xuICAgIGNvbnN0IG9uUmVtb3ZlID0gamVzdC5mbigpO1xuICAgIHJlbmRlcig8UmVtb3ZlQ3JlZGl0QnV0dG9uIHJvbGU9e3JvbGV9IHZvaWRlZD17ZmFsc2V9IG9uUmVtb3ZlPXtvblJlbW92ZX0gLz4pO1xuICAgIGZpcmVFdmVudC5jbGljayhzY3JlZW4uZ2V0QnlSb2xlKFwiYnV0dG9uXCIsIHsgbmFtZTogXCJSZW1vdmUgY3JlZGl0XCIgfSkpO1xuICAgIGV4cGVjdChvblJlbW92ZSkudG9IYXZlQmVlbkNhbGxlZFRpbWVzKDEpO1xuICB9KTtcblxuICBpdC5lYWNoKFtcIkRSSVZFUlwiLCBcIkNVU1RPTUVSXCIsIHVuZGVmaW5lZF0pKFwiJXMgZG9lcyBub3RcIiwgKHJvbGUpID0+IHtcbiAgICByZW5kZXIoPFJlbW92ZUNyZWRpdEJ1dHRvbiByb2xlPXtyb2xlfSB2b2lkZWQ9e2ZhbHNlfSBvblJlbW92ZT17amVzdC5mbigpfSAvPik7XG4gICAgZXhwZWN0KHNjcmVlbi5xdWVyeUJ5Um9sZShcImJ1dHRvblwiLCB7IG5hbWU6IFwiUmVtb3ZlIGNyZWRpdFwiIH0pKS50b0JlTnVsbCgpO1xuICB9KTtcblxuICBpdChcIm5vYm9keSBzZWVzIGl0IG9uIGEgdm9pZGVkIGludm9pY2VcIiwgKCkgPT4ge1xuICAgIHJlbmRlcig8UmVtb3ZlQ3JlZGl0QnV0dG9uIHJvbGU9XCJURU5BTlRfQURNSU5cIiB2b2lkZWQgb25SZW1vdmU9e2plc3QuZm4oKX0gLz4pO1xuICAgIGV4cGVjdChzY3JlZW4ucXVlcnlCeVJvbGUoXCJidXR0b25cIiwgeyBuYW1lOiBcIlJlbW92ZSBjcmVkaXRcIiB9KSkudG9CZU51bGwoKTtcbiAgfSk7XG5cbiAgaXQoXCJ0aGUgaW52b2ljZSBwYWdlIHJlbmRlcnMgaXQgaW5zdGVhZCBvZiBhbiBPUEVSQVRPUi1vbmx5IGdhdGVcIiwgKCkgPT4ge1xuICAgIGNvbnN0IHNyYyA9IHJlYWRGaWxlU3luYyhqb2luKF9fZGlybmFtZSwgXCJwYWdlLnRzeFwiKSwgXCJ1dGY4XCIpO1xuICAgIGV4cGVjdChzcmMpLnRvTWF0Y2goLzxSZW1vdmVDcmVkaXRCdXR0b25bXFxzXFxTXSo/cm9sZT1cXHt1c2VyXFw/XFwucm9sZVxcfS8pO1xuICAgIGV4cGVjdChzcmMpLm5vdC50b01hdGNoKC9yb2xlID09PSBcIk9QRVJBVE9SXCIvKTtcbiAgfSk7XG59KTtcbiJdLCJuYW1lcyI6WyJkZXNjcmliZSIsIml0IiwiZWFjaCIsInJvbGUiLCJvblJlbW92ZSIsImplc3QiLCJmbiIsInJlbmRlciIsIlJlbW92ZUNyZWRpdEJ1dHRvbiIsInZvaWRlZCIsImZpcmVFdmVudCIsImNsaWNrIiwic2NyZWVuIiwiZ2V0QnlSb2xlIiwibmFtZSIsImV4cGVjdCIsInRvSGF2ZUJlZW5DYWxsZWRUaW1lcyIsInVuZGVmaW5lZCIsInF1ZXJ5QnlSb2xlIiwidG9CZU51bGwiLCJzcmMiLCJyZWFkRmlsZVN5bmMiLCJqb2luIiwiX19kaXJuYW1lIiwidG9NYXRjaCIsIm5vdCJdLCJtYXBwaW5ncyI6IkFBQUE7Ozs7O0NBS0M7Ozs7OytEQUNzQjt3QkFDbUI7b0JBQ2I7c0JBQ1I7b0NBQ2M7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7OztBQUVuQ0EsU0FBUyw4QkFBOEI7SUFDckNDLEdBQUdDLElBQUksQ0FBQztRQUFDO1FBQVk7UUFBZ0I7S0FBYyxFQUFFLHlCQUF5QixDQUFDQztRQUM3RSxNQUFNQyxXQUFXQyxLQUFLQyxFQUFFO1FBQ3hCQyxJQUFBQSxjQUFNLGdCQUFDLHFCQUFDQyxzQ0FBa0I7WUFBQ0wsTUFBTUE7WUFBTU0sUUFBUTtZQUFPTCxVQUFVQTs7UUFDaEVNLGlCQUFTLENBQUNDLEtBQUssQ0FBQ0MsY0FBTSxDQUFDQyxTQUFTLENBQUMsVUFBVTtZQUFFQyxNQUFNO1FBQWdCO1FBQ25FQyxPQUFPWCxVQUFVWSxxQkFBcUIsQ0FBQztJQUN6QztJQUVBZixHQUFHQyxJQUFJLENBQUM7UUFBQztRQUFVO1FBQVllO0tBQVUsRUFBRSxlQUFlLENBQUNkO1FBQ3pESSxJQUFBQSxjQUFNLGdCQUFDLHFCQUFDQyxzQ0FBa0I7WUFBQ0wsTUFBTUE7WUFBTU0sUUFBUTtZQUFPTCxVQUFVQyxLQUFLQyxFQUFFOztRQUN2RVMsT0FBT0gsY0FBTSxDQUFDTSxXQUFXLENBQUMsVUFBVTtZQUFFSixNQUFNO1FBQWdCLElBQUlLLFFBQVE7SUFDMUU7SUFFQWxCLEdBQUcsc0NBQXNDO1FBQ3ZDTSxJQUFBQSxjQUFNLGdCQUFDLHFCQUFDQyxzQ0FBa0I7WUFBQ0wsTUFBSztZQUFlTSxNQUFNO1lBQUNMLFVBQVVDLEtBQUtDLEVBQUU7O1FBQ3ZFUyxPQUFPSCxjQUFNLENBQUNNLFdBQVcsQ0FBQyxVQUFVO1lBQUVKLE1BQU07UUFBZ0IsSUFBSUssUUFBUTtJQUMxRTtJQUVBbEIsR0FBRyxnRUFBZ0U7UUFDakUsTUFBTW1CLE1BQU1DLElBQUFBLGdCQUFZLEVBQUNDLElBQUFBLFVBQUksRUFBQ0MsV0FBVyxhQUFhO1FBQ3REUixPQUFPSyxLQUFLSSxPQUFPLENBQUM7UUFDcEJULE9BQU9LLEtBQUtLLEdBQUcsQ0FBQ0QsT0FBTyxDQUFDO0lBQzFCO0FBQ0YifQ==

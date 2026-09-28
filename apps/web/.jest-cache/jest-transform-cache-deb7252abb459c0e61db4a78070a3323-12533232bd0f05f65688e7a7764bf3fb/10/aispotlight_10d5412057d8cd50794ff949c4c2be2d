@@ -1,0 +1,165 @@
+414eaca5c744c512b56c81c9a62a5eae
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+Object.defineProperty(exports, "AISpotlight", {
+    enumerable: true,
+    get: function() {
+        return AISpotlight;
+    }
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _link = /*#__PURE__*/ _interop_require_default(require("next/link"));
+const _lucidereact = require("lucide-react");
+function _interop_require_default(obj) {
+    return obj && obj.__esModule ? obj : {
+        default: obj
+    };
+}
+function AISpotlight() {
+    return /*#__PURE__*/ (0, _jsxruntime.jsxs)("section", {
+        className: "ai-spotlight section wrap",
+        "aria-labelledby": "ai-heading",
+        children: [
+            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                className: "ai-copy",
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("span", {
+                        className: "ai-label",
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.ScanText, {
+                                size: 17
+                            }),
+                            " AI PURCHASE-INVOICE SCANNING"
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("h2", {
+                        id: "ai-heading",
+                        children: [
+                            "Less invoice entry.",
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("br", {}),
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("em", {
+                                children: [
+                                    "More clarity on ",
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("br", {}),
+                                    "stock and cost."
+                                ]
+                            })
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                        children: "Different vendors. Different invoices. One easier way to update inventory and costing. RouteFlow uses AI to scan purchase invoices, reducing the work of entering supplier purchases by hand."
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)(_link.default, {
+                        className: "text-link",
+                        href: "/book-a-demo",
+                        children: [
+                            "See AI invoice scanning in a demo ",
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.ArrowRight, {
+                                size: 18
+                            })
+                        ]
+                    })
+                ]
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                className: "ai-review",
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                        className: "ai-review-heading",
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                children: "INVOICE → INVENTORY → COSTING"
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                children: "Built for multiple vendors"
+                            })
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("ol", {
+                        className: "ai-review-steps",
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                                children: [
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                        className: "ai-step-icon",
+                                        children: /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.FileText, {
+                                            size: 27
+                                        })
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("small", {
+                                                children: "01 / THE WORK"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("h3", {
+                                                children: "Bring your purchase invoices."
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                                children: "Keep purchases from different vendors in one workflow."
+                                            })
+                                        ]
+                                    })
+                                ]
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                                className: "ai-assisted-step",
+                                children: [
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                        className: "ai-step-icon",
+                                        children: /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.ScanText, {
+                                            size: 27
+                                        })
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("small", {
+                                                children: "02 / AI ASSISTANCE"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("h3", {
+                                                children: "Let AI scan the invoice."
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                                children: "Turn purchase-invoice information into usable purchase data."
+                                            })
+                                        ]
+                                    })
+                                ]
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                                children: [
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                        className: "ai-step-icon",
+                                        children: /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.UserCheck, {
+                                            size: 27
+                                        })
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("small", {
+                                                children: "03 / YOUR DECISION"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("h3", {
+                                                children: "Update inventory and costing."
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                                children: "Connect what you bought with stock quantities and purchase costs."
+                                            })
+                                        ]
+                                    })
+                                ]
+                            })
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                        className: "ai-illustration-note",
+                        children: "Illustrative workflow. See supported invoice formats and your inventory and costing configuration in a product demo."
+                    })
+                ]
+            })
+        ]
+    });
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8obWFya2V0aW5nKS9jb21wb25lbnRzL2FpLXNwb3RsaWdodC50c3giXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IExpbmsgZnJvbSBcIm5leHQvbGlua1wiO1xuaW1wb3J0IHsgQXJyb3dSaWdodCwgRmlsZVRleHQsIFNjYW5UZXh0LCBVc2VyQ2hlY2sgfSBmcm9tIFwibHVjaWRlLXJlYWN0XCI7XG5cbi8vIENvcHkgdmVyYmF0aW0gZnJvbSB0aGUgcmVkZXNpZ24ncyBjb21wb25lbnRzL2FpLXNwb3RsaWdodC50c3ggKE0xIMKnMS40KS5cblxuZXhwb3J0IGZ1bmN0aW9uIEFJU3BvdGxpZ2h0KCkge1xuICByZXR1cm4gKFxuICAgIDxzZWN0aW9uIGNsYXNzTmFtZT1cImFpLXNwb3RsaWdodCBzZWN0aW9uIHdyYXBcIiBhcmlhLWxhYmVsbGVkYnk9XCJhaS1oZWFkaW5nXCI+XG4gICAgICA8ZGl2IGNsYXNzTmFtZT1cImFpLWNvcHlcIj5cbiAgICAgICAgPHNwYW4gY2xhc3NOYW1lPVwiYWktbGFiZWxcIj5cbiAgICAgICAgICA8U2NhblRleHQgc2l6ZT17MTd9IC8+IEFJIFBVUkNIQVNFLUlOVk9JQ0UgU0NBTk5JTkdcbiAgICAgICAgPC9zcGFuPlxuICAgICAgICA8aDIgaWQ9XCJhaS1oZWFkaW5nXCI+XG4gICAgICAgICAgTGVzcyBpbnZvaWNlIGVudHJ5LlxuICAgICAgICAgIDxiciAvPlxuICAgICAgICAgIDxlbT5cbiAgICAgICAgICAgIE1vcmUgY2xhcml0eSBvbiA8YnIgLz5cbiAgICAgICAgICAgIHN0b2NrIGFuZCBjb3N0LlxuICAgICAgICAgIDwvZW0+XG4gICAgICAgIDwvaDI+XG4gICAgICAgIDxwPlxuICAgICAgICAgIERpZmZlcmVudCB2ZW5kb3JzLiBEaWZmZXJlbnQgaW52b2ljZXMuIE9uZSBlYXNpZXIgd2F5IHRvIHVwZGF0ZSBpbnZlbnRvcnkgYW5kIGNvc3RpbmcuXG4gICAgICAgICAgUm91dGVGbG93IHVzZXMgQUkgdG8gc2NhbiBwdXJjaGFzZSBpbnZvaWNlcywgcmVkdWNpbmcgdGhlIHdvcmsgb2YgZW50ZXJpbmcgc3VwcGxpZXJcbiAgICAgICAgICBwdXJjaGFzZXMgYnkgaGFuZC5cbiAgICAgICAgPC9wPlxuICAgICAgICA8TGluayBjbGFzc05hbWU9XCJ0ZXh0LWxpbmtcIiBocmVmPVwiL2Jvb2stYS1kZW1vXCI+XG4gICAgICAgICAgU2VlIEFJIGludm9pY2Ugc2Nhbm5pbmcgaW4gYSBkZW1vIDxBcnJvd1JpZ2h0IHNpemU9ezE4fSAvPlxuICAgICAgICA8L0xpbms+XG4gICAgICA8L2Rpdj5cbiAgICAgIDxkaXYgY2xhc3NOYW1lPVwiYWktcmV2aWV3XCI+XG4gICAgICAgIDxkaXYgY2xhc3NOYW1lPVwiYWktcmV2aWV3LWhlYWRpbmdcIj5cbiAgICAgICAgICA8c3Bhbj5JTlZPSUNFIOKGkiBJTlZFTlRPUlkg4oaSIENPU1RJTkc8L3NwYW4+XG4gICAgICAgICAgPHNwYW4+QnVpbHQgZm9yIG11bHRpcGxlIHZlbmRvcnM8L3NwYW4+XG4gICAgICAgIDwvZGl2PlxuICAgICAgICA8b2wgY2xhc3NOYW1lPVwiYWktcmV2aWV3LXN0ZXBzXCI+XG4gICAgICAgICAgPGxpPlxuICAgICAgICAgICAgPHNwYW4gY2xhc3NOYW1lPVwiYWktc3RlcC1pY29uXCI+XG4gICAgICAgICAgICAgIDxGaWxlVGV4dCBzaXplPXsyN30gLz5cbiAgICAgICAgICAgIDwvc3Bhbj5cbiAgICAgICAgICAgIDxkaXY+XG4gICAgICAgICAgICAgIDxzbWFsbD4wMSAvIFRIRSBXT1JLPC9zbWFsbD5cbiAgICAgICAgICAgICAgPGgzPkJyaW5nIHlvdXIgcHVyY2hhc2UgaW52b2ljZXMuPC9oMz5cbiAgICAgICAgICAgICAgPHA+S2VlcCBwdXJjaGFzZXMgZnJvbSBkaWZmZXJlbnQgdmVuZG9ycyBpbiBvbmUgd29ya2Zsb3cuPC9wPlxuICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgPC9saT5cbiAgICAgICAgICA8bGkgY2xhc3NOYW1lPVwiYWktYXNzaXN0ZWQtc3RlcFwiPlxuICAgICAgICAgICAgPHNwYW4gY2xhc3NOYW1lPVwiYWktc3RlcC1pY29uXCI+XG4gICAgICAgICAgICAgIDxTY2FuVGV4dCBzaXplPXsyN30gLz5cbiAgICAgICAgICAgIDwvc3Bhbj5cbiAgICAgICAgICAgIDxkaXY+XG4gICAgICAgICAgICAgIDxzbWFsbD4wMiAvIEFJIEFTU0lTVEFOQ0U8L3NtYWxsPlxuICAgICAgICAgICAgICA8aDM+TGV0IEFJIHNjYW4gdGhlIGludm9pY2UuPC9oMz5cbiAgICAgICAgICAgICAgPHA+VHVybiBwdXJjaGFzZS1pbnZvaWNlIGluZm9ybWF0aW9uIGludG8gdXNhYmxlIHB1cmNoYXNlIGRhdGEuPC9wPlxuICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgPC9saT5cbiAgICAgICAgICA8bGk+XG4gICAgICAgICAgICA8c3BhbiBjbGFzc05hbWU9XCJhaS1zdGVwLWljb25cIj5cbiAgICAgICAgICAgICAgPFVzZXJDaGVjayBzaXplPXsyN30gLz5cbiAgICAgICAgICAgIDwvc3Bhbj5cbiAgICAgICAgICAgIDxkaXY+XG4gICAgICAgICAgICAgIDxzbWFsbD4wMyAvIFlPVVIgREVDSVNJT048L3NtYWxsPlxuICAgICAgICAgICAgICA8aDM+VXBkYXRlIGludmVudG9yeSBhbmQgY29zdGluZy48L2gzPlxuICAgICAgICAgICAgICA8cD5Db25uZWN0IHdoYXQgeW91IGJvdWdodCB3aXRoIHN0b2NrIHF1YW50aXRpZXMgYW5kIHB1cmNoYXNlIGNvc3RzLjwvcD5cbiAgICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgIDwvbGk+XG4gICAgICAgIDwvb2w+XG4gICAgICAgIDxwIGNsYXNzTmFtZT1cImFpLWlsbHVzdHJhdGlvbi1ub3RlXCI+XG4gICAgICAgICAgSWxsdXN0cmF0aXZlIHdvcmtmbG93LiBTZWUgc3VwcG9ydGVkIGludm9pY2UgZm9ybWF0cyBhbmQgeW91ciBpbnZlbnRvcnkgYW5kIGNvc3RpbmdcbiAgICAgICAgICBjb25maWd1cmF0aW9uIGluIGEgcHJvZHVjdCBkZW1vLlxuICAgICAgICA8L3A+XG4gICAgICA8L2Rpdj5cbiAgICA8L3NlY3Rpb24+XG4gICk7XG59XG4iXSwibmFtZXMiOlsiQUlTcG90bGlnaHQiLCJzZWN0aW9uIiwiY2xhc3NOYW1lIiwiYXJpYS1sYWJlbGxlZGJ5IiwiZGl2Iiwic3BhbiIsIlNjYW5UZXh0Iiwic2l6ZSIsImgyIiwiaWQiLCJiciIsImVtIiwicCIsIkxpbmsiLCJocmVmIiwiQXJyb3dSaWdodCIsIm9sIiwibGkiLCJGaWxlVGV4dCIsInNtYWxsIiwiaDMiLCJVc2VyQ2hlY2siXSwibWFwcGluZ3MiOiI7Ozs7K0JBS2dCQTs7O2VBQUFBOzs7OzZEQUxDOzZCQUN5Qzs7Ozs7O0FBSW5ELFNBQVNBO0lBQ2QscUJBQ0Usc0JBQUNDO1FBQVFDLFdBQVU7UUFBNEJDLG1CQUFnQjs7MEJBQzdELHNCQUFDQztnQkFBSUYsV0FBVTs7a0NBQ2Isc0JBQUNHO3dCQUFLSCxXQUFVOzswQ0FDZCxxQkFBQ0kscUJBQVE7Z0NBQUNDLE1BQU07OzRCQUFNOzs7a0NBRXhCLHNCQUFDQzt3QkFBR0MsSUFBRzs7NEJBQWE7MENBRWxCLHFCQUFDQzswQ0FDRCxzQkFBQ0M7O29DQUFHO2tEQUNjLHFCQUFDRDtvQ0FBSzs7Ozs7a0NBSTFCLHFCQUFDRTtrQ0FBRTs7a0NBS0gsc0JBQUNDLGFBQUk7d0JBQUNYLFdBQVU7d0JBQVlZLE1BQUs7OzRCQUFlOzBDQUNaLHFCQUFDQyx1QkFBVTtnQ0FBQ1IsTUFBTTs7Ozs7OzBCQUd4RCxzQkFBQ0g7Z0JBQUlGLFdBQVU7O2tDQUNiLHNCQUFDRTt3QkFBSUYsV0FBVTs7MENBQ2IscUJBQUNHOzBDQUFLOzswQ0FDTixxQkFBQ0E7MENBQUs7Ozs7a0NBRVIsc0JBQUNXO3dCQUFHZCxXQUFVOzswQ0FDWixzQkFBQ2U7O2tEQUNDLHFCQUFDWjt3Q0FBS0gsV0FBVTtrREFDZCxjQUFBLHFCQUFDZ0IscUJBQVE7NENBQUNYLE1BQU07OztrREFFbEIsc0JBQUNIOzswREFDQyxxQkFBQ2U7MERBQU07OzBEQUNQLHFCQUFDQzswREFBRzs7MERBQ0oscUJBQUNSOzBEQUFFOzs7Ozs7MENBR1Asc0JBQUNLO2dDQUFHZixXQUFVOztrREFDWixxQkFBQ0c7d0NBQUtILFdBQVU7a0RBQ2QsY0FBQSxxQkFBQ0kscUJBQVE7NENBQUNDLE1BQU07OztrREFFbEIsc0JBQUNIOzswREFDQyxxQkFBQ2U7MERBQU07OzBEQUNQLHFCQUFDQzswREFBRzs7MERBQ0oscUJBQUNSOzBEQUFFOzs7Ozs7MENBR1Asc0JBQUNLOztrREFDQyxxQkFBQ1o7d0NBQUtILFdBQVU7a0RBQ2QsY0FBQSxxQkFBQ21CLHNCQUFTOzRDQUFDZCxNQUFNOzs7a0RBRW5CLHNCQUFDSDs7MERBQ0MscUJBQUNlOzBEQUFNOzswREFDUCxxQkFBQ0M7MERBQUc7OzBEQUNKLHFCQUFDUjswREFBRTs7Ozs7Ozs7a0NBSVQscUJBQUNBO3dCQUFFVixXQUFVO2tDQUF1Qjs7Ozs7O0FBTzVDIn0=

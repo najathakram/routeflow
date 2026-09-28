@@ -1,0 +1,75 @@
+0144aa90db43f0d1ad5a7f022d62d95a
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+const _react1 = require("@testing-library/react");
+const _ledgertruncationnote = require("./ledger-truncation-note");
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+/**
+ * B110 disclosure (`.claude/pipeline/2026-09-07-F16-list-caps/build-plan.md`):
+ * whenever the API reports `transactionsTruncated: true` the operator sees a
+ * partial-view label above the statement ledger; when the flag is `false` or
+ * absent, nothing is added — a complete ledger must not be labelled partial.
+ */ describe("LedgerTruncationNote", ()=>{
+    it("renders the partial-view note when the server reports the ledger truncated", ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_ledgertruncationnote.LedgerTruncationNote, {
+            truncated: true
+        }));
+        expect(_react1.screen.getByText(/Showing the most recent transactions only/i)).toBeInTheDocument();
+    });
+    it("renders nothing when the server reports the ledger complete", ()=>{
+        const { container } = (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_ledgertruncationnote.LedgerTruncationNote, {
+            truncated: false
+        }));
+        expect(container).toBeEmptyDOMElement();
+    });
+    it("renders nothing when the flag is absent (older API response)", ()=>{
+        const { container } = (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_ledgertruncationnote.LedgerTruncationNote, {}));
+        expect(container).toBeEmptyDOMElement();
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS9jdXN0b21lcnMvW2lkXS9sZWRnZXItdHJ1bmNhdGlvbi1ub3RlLnRlc3QudHN4Il0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCAqIGFzIFJlYWN0IGZyb20gXCJyZWFjdFwiO1xuaW1wb3J0IHsgcmVuZGVyLCBzY3JlZW4gfSBmcm9tIFwiQHRlc3RpbmctbGlicmFyeS9yZWFjdFwiO1xuaW1wb3J0IHsgTGVkZ2VyVHJ1bmNhdGlvbk5vdGUgfSBmcm9tIFwiLi9sZWRnZXItdHJ1bmNhdGlvbi1ub3RlXCI7XG5cbi8qKlxuICogQjExMCBkaXNjbG9zdXJlIChgLmNsYXVkZS9waXBlbGluZS8yMDI2LTA5LTA3LUYxNi1saXN0LWNhcHMvYnVpbGQtcGxhbi5tZGApOlxuICogd2hlbmV2ZXIgdGhlIEFQSSByZXBvcnRzIGB0cmFuc2FjdGlvbnNUcnVuY2F0ZWQ6IHRydWVgIHRoZSBvcGVyYXRvciBzZWVzIGFcbiAqIHBhcnRpYWwtdmlldyBsYWJlbCBhYm92ZSB0aGUgc3RhdGVtZW50IGxlZGdlcjsgd2hlbiB0aGUgZmxhZyBpcyBgZmFsc2VgIG9yXG4gKiBhYnNlbnQsIG5vdGhpbmcgaXMgYWRkZWQg4oCUIGEgY29tcGxldGUgbGVkZ2VyIG11c3Qgbm90IGJlIGxhYmVsbGVkIHBhcnRpYWwuXG4gKi9cbmRlc2NyaWJlKFwiTGVkZ2VyVHJ1bmNhdGlvbk5vdGVcIiwgKCkgPT4ge1xuICBpdChcInJlbmRlcnMgdGhlIHBhcnRpYWwtdmlldyBub3RlIHdoZW4gdGhlIHNlcnZlciByZXBvcnRzIHRoZSBsZWRnZXIgdHJ1bmNhdGVkXCIsICgpID0+IHtcbiAgICByZW5kZXIoPExlZGdlclRydW5jYXRpb25Ob3RlIHRydW5jYXRlZCAvPik7XG4gICAgZXhwZWN0KHNjcmVlbi5nZXRCeVRleHQoL1Nob3dpbmcgdGhlIG1vc3QgcmVjZW50IHRyYW5zYWN0aW9ucyBvbmx5L2kpKS50b0JlSW5UaGVEb2N1bWVudCgpO1xuICB9KTtcblxuICBpdChcInJlbmRlcnMgbm90aGluZyB3aGVuIHRoZSBzZXJ2ZXIgcmVwb3J0cyB0aGUgbGVkZ2VyIGNvbXBsZXRlXCIsICgpID0+IHtcbiAgICBjb25zdCB7IGNvbnRhaW5lciB9ID0gcmVuZGVyKDxMZWRnZXJUcnVuY2F0aW9uTm90ZSB0cnVuY2F0ZWQ9e2ZhbHNlfSAvPik7XG4gICAgZXhwZWN0KGNvbnRhaW5lcikudG9CZUVtcHR5RE9NRWxlbWVudCgpO1xuICB9KTtcblxuICBpdChcInJlbmRlcnMgbm90aGluZyB3aGVuIHRoZSBmbGFnIGlzIGFic2VudCAob2xkZXIgQVBJIHJlc3BvbnNlKVwiLCAoKSA9PiB7XG4gICAgY29uc3QgeyBjb250YWluZXIgfSA9IHJlbmRlcig8TGVkZ2VyVHJ1bmNhdGlvbk5vdGUgLz4pO1xuICAgIGV4cGVjdChjb250YWluZXIpLnRvQmVFbXB0eURPTUVsZW1lbnQoKTtcbiAgfSk7XG59KTtcbiJdLCJuYW1lcyI6WyJkZXNjcmliZSIsIml0IiwicmVuZGVyIiwiTGVkZ2VyVHJ1bmNhdGlvbk5vdGUiLCJ0cnVuY2F0ZWQiLCJleHBlY3QiLCJzY3JlZW4iLCJnZXRCeVRleHQiLCJ0b0JlSW5UaGVEb2N1bWVudCIsImNvbnRhaW5lciIsInRvQmVFbXB0eURPTUVsZW1lbnQiXSwibWFwcGluZ3MiOiI7Ozs7OytEQUF1Qjt3QkFDUTtzQ0FDTTs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7O0FBRXJDOzs7OztDQUtDLEdBQ0RBLFNBQVMsd0JBQXdCO0lBQy9CQyxHQUFHLDhFQUE4RTtRQUMvRUMsSUFBQUEsY0FBTSxnQkFBQyxxQkFBQ0MsMENBQW9CO1lBQUNDLFNBQVM7O1FBQ3RDQyxPQUFPQyxjQUFNLENBQUNDLFNBQVMsQ0FBQywrQ0FBK0NDLGlCQUFpQjtJQUMxRjtJQUVBUCxHQUFHLCtEQUErRDtRQUNoRSxNQUFNLEVBQUVRLFNBQVMsRUFBRSxHQUFHUCxJQUFBQSxjQUFNLGdCQUFDLHFCQUFDQywwQ0FBb0I7WUFBQ0MsV0FBVzs7UUFDOURDLE9BQU9JLFdBQVdDLG1CQUFtQjtJQUN2QztJQUVBVCxHQUFHLGdFQUFnRTtRQUNqRSxNQUFNLEVBQUVRLFNBQVMsRUFBRSxHQUFHUCxJQUFBQSxjQUFNLGdCQUFDLHFCQUFDQywwQ0FBb0I7UUFDbERFLE9BQU9JLFdBQVdDLG1CQUFtQjtJQUN2QztBQUNGIn0=

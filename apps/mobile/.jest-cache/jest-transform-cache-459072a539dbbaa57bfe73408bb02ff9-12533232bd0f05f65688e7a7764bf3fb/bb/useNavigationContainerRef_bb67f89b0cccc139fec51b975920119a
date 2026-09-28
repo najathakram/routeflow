@@ -1,0 +1,47 @@
+6eb84be4422fc9d311b63a2a7891bee1
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.useNavigationContainerRef = useNavigationContainerRef;
+const React = __importStar(require("react"));
+const createNavigationContainerRef_js_1 = require("./createNavigationContainerRef.js");
+function useNavigationContainerRef() {
+    const navigation = React.useRef(null);
+    if (navigation.current == null) {
+        navigation.current = (0, createNavigationContainerRef_js_1.createNavigationContainerRef)();
+    }
+    return navigation.current;
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0Mzcvbm9kZV9tb2R1bGVzL0ByZWFjdC1uYXZpZ2F0aW9uL2NvcmUvbGliL21vZHVsZS91c2VOYXZpZ2F0aW9uQ29udGFpbmVyUmVmLmpzIiwibWFwcGluZ3MiOiJBQUFBLFlBQVksQ0FBQzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7QUFJYiw4REFNQztBQVJELDZDQUErQjtBQUMvQix1RkFBaUY7QUFDakYsU0FBZ0IseUJBQXlCO0lBQ3ZDLE1BQU0sVUFBVSxHQUFHLEtBQUssQ0FBQyxNQUFNLENBQUMsSUFBSSxDQUFDLENBQUM7SUFDdEMsSUFBSSxVQUFVLENBQUMsT0FBTyxJQUFJLElBQUksRUFBRSxDQUFDO1FBQy9CLFVBQVUsQ0FBQyxPQUFPLEdBQUcsSUFBQSw4REFBNEIsR0FBRSxDQUFDO0lBQ3RELENBQUM7SUFDRCxPQUFPLFVBQVUsQ0FBQyxPQUFPLENBQUM7QUFDNUIsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9ub2RlX21vZHVsZXMvQHJlYWN0LW5hdmlnYXRpb24vY29yZS9saWIvbW9kdWxlL3VzZU5hdmlnYXRpb25Db250YWluZXJSZWYuanMiXSwic291cmNlc0NvbnRlbnQiOlsiXCJ1c2Ugc3RyaWN0XCI7XG5cbmltcG9ydCAqIGFzIFJlYWN0IGZyb20gJ3JlYWN0JztcbmltcG9ydCB7IGNyZWF0ZU5hdmlnYXRpb25Db250YWluZXJSZWYgfSBmcm9tIFwiLi9jcmVhdGVOYXZpZ2F0aW9uQ29udGFpbmVyUmVmLmpzXCI7XG5leHBvcnQgZnVuY3Rpb24gdXNlTmF2aWdhdGlvbkNvbnRhaW5lclJlZigpIHtcbiAgY29uc3QgbmF2aWdhdGlvbiA9IFJlYWN0LnVzZVJlZihudWxsKTtcbiAgaWYgKG5hdmlnYXRpb24uY3VycmVudCA9PSBudWxsKSB7XG4gICAgbmF2aWdhdGlvbi5jdXJyZW50ID0gY3JlYXRlTmF2aWdhdGlvbkNvbnRhaW5lclJlZigpO1xuICB9XG4gIHJldHVybiBuYXZpZ2F0aW9uLmN1cnJlbnQ7XG59XG4vLyMgc291cmNlTWFwcGluZ1VSTD11c2VOYXZpZ2F0aW9uQ29udGFpbmVyUmVmLmpzLm1hcCJdLCJ2ZXJzaW9uIjozfQ==

@@ -1,0 +1,70 @@
+58f034a2c632cc94214e180ac9118f50
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+/**
+ * B246 Option C / T2 (REG-B246) — `scan-fab-visibility.test.ts`
+ *
+ * `cause-ruling.md` §2/§3: the order-edit line-list scan FAB must stay
+ * hidden while pricing is not ready (the REG-B62 guard — the picker is the
+ * only place a line gets priced, so nothing scan-shaped may act before the
+ * customer's contract loads), while the product picker is open, or while the
+ * price-edit modal is open, or while any other transparent modal on the
+ * screen (unlisted item, credit note, licence / credit-limit guards) is up;
+ * it is visible only when none of those hold.
+ *
+ * Every case compares the whole boolean via `toBe` against the plan's literal
+ * expected value: the rule is a single conjunction, so any partial-credit
+ * matcher (truthiness, `not.toBe(false)`) would let a constant-`true` or
+ * constant-`false` implementation through. Each case flips exactly one input.
+ */
+const scan_fab_visibility_1 = require("../lib/scan-fab-visibility");
+describe("scanFabHidden (REG-B246)", () => {
+    it("REG-B246: hidden while pricing is not ready, even with nothing else open (REG-B62 guard)", () => {
+        expect((0, scan_fab_visibility_1.scanFabHidden)({
+            pricingReady: false,
+            pickerOpen: false,
+            priceModalOpen: false,
+            blockingModalOpen: false,
+        })).toBe(true);
+    });
+    // `pickerOpen` is defensive-only: at the only call site (edit-items.tsx,
+    // inside the `showPicker ? <ProductPicker/> : (...)` else-branch) the FAB
+    // renders solely when `showPicker` is false, so this case pins a guard
+    // against a future re-layout, not a reachable render today.
+    it("REG-B246: hidden while the product picker is open, even once pricing is ready", () => {
+        expect((0, scan_fab_visibility_1.scanFabHidden)({
+            pricingReady: true,
+            pickerOpen: true,
+            priceModalOpen: false,
+            blockingModalOpen: false,
+        })).toBe(true);
+    });
+    it("REG-B246: hidden while the price-edit modal is open, even once pricing is ready", () => {
+        expect((0, scan_fab_visibility_1.scanFabHidden)({
+            pricingReady: true,
+            pickerOpen: false,
+            priceModalOpen: true,
+            blockingModalOpen: false,
+        })).toBe(true);
+    });
+    // The other four modals on the edit screen are `<Modal transparent>` and
+    // render OUTSIDE the `showPicker ? … : …` ternary, so the FAB is still on
+    // screen behind their scrim unless the rule hides it.
+    it("REG-B246: hidden while another blocking modal (unlisted item / credit note / licence or credit-limit guard) is open, even once pricing is ready", () => {
+        expect((0, scan_fab_visibility_1.scanFabHidden)({
+            pricingReady: true,
+            pickerOpen: false,
+            priceModalOpen: false,
+            blockingModalOpen: true,
+        })).toBe(true);
+    });
+    it("REG-B246: visible once pricing is ready and neither the picker nor the price modal is open", () => {
+        expect((0, scan_fab_visibility_1.scanFabHidden)({
+            pricingReady: true,
+            pickerOpen: false,
+            priceModalOpen: false,
+            blockingModalOpen: false,
+        })).toBe(false);
+    });
+});
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvX190ZXN0c19fL3NjYW4tZmFiLXZpc2liaWxpdHkudGVzdC50cyIsIm1hcHBpbmdzIjoiOztBQUFBOzs7Ozs7Ozs7Ozs7Ozs7R0FlRztBQUNILG9FQUEyRDtBQUUzRCxRQUFRLENBQUMsMEJBQTBCLEVBQUUsR0FBRyxFQUFFO0lBQ3hDLEVBQUUsQ0FBQywwRkFBMEYsRUFBRSxHQUFHLEVBQUU7UUFDbEcsTUFBTSxDQUNKLElBQUEsbUNBQWEsRUFBQztZQUNaLFlBQVksRUFBRSxLQUFLO1lBQ25CLFVBQVUsRUFBRSxLQUFLO1lBQ2pCLGNBQWMsRUFBRSxLQUFLO1lBQ3JCLGlCQUFpQixFQUFFLEtBQUs7U0FDekIsQ0FBQyxDQUNILENBQUMsSUFBSSxDQUFDLElBQUksQ0FBQyxDQUFDO0lBQ2YsQ0FBQyxDQUFDLENBQUM7SUFFSCx5RUFBeUU7SUFDekUsMEVBQTBFO0lBQzFFLHVFQUF1RTtJQUN2RSw0REFBNEQ7SUFDNUQsRUFBRSxDQUFDLCtFQUErRSxFQUFFLEdBQUcsRUFBRTtRQUN2RixNQUFNLENBQ0osSUFBQSxtQ0FBYSxFQUFDO1lBQ1osWUFBWSxFQUFFLElBQUk7WUFDbEIsVUFBVSxFQUFFLElBQUk7WUFDaEIsY0FBYyxFQUFFLEtBQUs7WUFDckIsaUJBQWlCLEVBQUUsS0FBSztTQUN6QixDQUFDLENBQ0gsQ0FBQyxJQUFJLENBQUMsSUFBSSxDQUFDLENBQUM7SUFDZixDQUFDLENBQUMsQ0FBQztJQUVILEVBQUUsQ0FBQyxpRkFBaUYsRUFBRSxHQUFHLEVBQUU7UUFDekYsTUFBTSxDQUNKLElBQUEsbUNBQWEsRUFBQztZQUNaLFlBQVksRUFBRSxJQUFJO1lBQ2xCLFVBQVUsRUFBRSxLQUFLO1lBQ2pCLGNBQWMsRUFBRSxJQUFJO1lBQ3BCLGlCQUFpQixFQUFFLEtBQUs7U0FDekIsQ0FBQyxDQUNILENBQUMsSUFBSSxDQUFDLElBQUksQ0FBQyxDQUFDO0lBQ2YsQ0FBQyxDQUFDLENBQUM7SUFFSCx5RUFBeUU7SUFDekUsMEVBQTBFO0lBQzFFLHNEQUFzRDtJQUN0RCxFQUFFLENBQUMsaUpBQWlKLEVBQUUsR0FBRyxFQUFFO1FBQ3pKLE1BQU0sQ0FDSixJQUFBLG1DQUFhLEVBQUM7WUFDWixZQUFZLEVBQUUsSUFBSTtZQUNsQixVQUFVLEVBQUUsS0FBSztZQUNqQixjQUFjLEVBQUUsS0FBSztZQUNyQixpQkFBaUIsRUFBRSxJQUFJO1NBQ3hCLENBQUMsQ0FDSCxDQUFDLElBQUksQ0FBQyxJQUFJLENBQUMsQ0FBQztJQUNmLENBQUMsQ0FBQyxDQUFDO0lBRUgsRUFBRSxDQUFDLDRGQUE0RixFQUFFLEdBQUcsRUFBRTtRQUNwRyxNQUFNLENBQ0osSUFBQSxtQ0FBYSxFQUFDO1lBQ1osWUFBWSxFQUFFLElBQUk7WUFDbEIsVUFBVSxFQUFFLEtBQUs7WUFDakIsY0FBYyxFQUFFLEtBQUs7WUFDckIsaUJBQWlCLEVBQUUsS0FBSztTQUN6QixDQUFDLENBQ0gsQ0FBQyxJQUFJLENBQUMsS0FBSyxDQUFDLENBQUM7SUFDaEIsQ0FBQyxDQUFDLENBQUM7QUFDTCxDQUFDLENBQUMsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9hcHBzL21vYmlsZS9fX3Rlc3RzX18vc2Nhbi1mYWItdmlzaWJpbGl0eS50ZXN0LnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogQjI0NiBPcHRpb24gQyAvIFQyIChSRUctQjI0Nikg4oCUIGBzY2FuLWZhYi12aXNpYmlsaXR5LnRlc3QudHNgXG4gKlxuICogYGNhdXNlLXJ1bGluZy5tZGAgwqcyL8KnMzogdGhlIG9yZGVyLWVkaXQgbGluZS1saXN0IHNjYW4gRkFCIG11c3Qgc3RheVxuICogaGlkZGVuIHdoaWxlIHByaWNpbmcgaXMgbm90IHJlYWR5ICh0aGUgUkVHLUI2MiBndWFyZCDigJQgdGhlIHBpY2tlciBpcyB0aGVcbiAqIG9ubHkgcGxhY2UgYSBsaW5lIGdldHMgcHJpY2VkLCBzbyBub3RoaW5nIHNjYW4tc2hhcGVkIG1heSBhY3QgYmVmb3JlIHRoZVxuICogY3VzdG9tZXIncyBjb250cmFjdCBsb2FkcyksIHdoaWxlIHRoZSBwcm9kdWN0IHBpY2tlciBpcyBvcGVuLCBvciB3aGlsZSB0aGVcbiAqIHByaWNlLWVkaXQgbW9kYWwgaXMgb3Blbiwgb3Igd2hpbGUgYW55IG90aGVyIHRyYW5zcGFyZW50IG1vZGFsIG9uIHRoZVxuICogc2NyZWVuICh1bmxpc3RlZCBpdGVtLCBjcmVkaXQgbm90ZSwgbGljZW5jZSAvIGNyZWRpdC1saW1pdCBndWFyZHMpIGlzIHVwO1xuICogaXQgaXMgdmlzaWJsZSBvbmx5IHdoZW4gbm9uZSBvZiB0aG9zZSBob2xkLlxuICpcbiAqIEV2ZXJ5IGNhc2UgY29tcGFyZXMgdGhlIHdob2xlIGJvb2xlYW4gdmlhIGB0b0JlYCBhZ2FpbnN0IHRoZSBwbGFuJ3MgbGl0ZXJhbFxuICogZXhwZWN0ZWQgdmFsdWU6IHRoZSBydWxlIGlzIGEgc2luZ2xlIGNvbmp1bmN0aW9uLCBzbyBhbnkgcGFydGlhbC1jcmVkaXRcbiAqIG1hdGNoZXIgKHRydXRoaW5lc3MsIGBub3QudG9CZShmYWxzZSlgKSB3b3VsZCBsZXQgYSBjb25zdGFudC1gdHJ1ZWAgb3JcbiAqIGNvbnN0YW50LWBmYWxzZWAgaW1wbGVtZW50YXRpb24gdGhyb3VnaC4gRWFjaCBjYXNlIGZsaXBzIGV4YWN0bHkgb25lIGlucHV0LlxuICovXG5pbXBvcnQgeyBzY2FuRmFiSGlkZGVuIH0gZnJvbSBcIi4uL2xpYi9zY2FuLWZhYi12aXNpYmlsaXR5XCI7XG5cbmRlc2NyaWJlKFwic2NhbkZhYkhpZGRlbiAoUkVHLUIyNDYpXCIsICgpID0+IHtcbiAgaXQoXCJSRUctQjI0NjogaGlkZGVuIHdoaWxlIHByaWNpbmcgaXMgbm90IHJlYWR5LCBldmVuIHdpdGggbm90aGluZyBlbHNlIG9wZW4gKFJFRy1CNjIgZ3VhcmQpXCIsICgpID0+IHtcbiAgICBleHBlY3QoXG4gICAgICBzY2FuRmFiSGlkZGVuKHtcbiAgICAgICAgcHJpY2luZ1JlYWR5OiBmYWxzZSxcbiAgICAgICAgcGlja2VyT3BlbjogZmFsc2UsXG4gICAgICAgIHByaWNlTW9kYWxPcGVuOiBmYWxzZSxcbiAgICAgICAgYmxvY2tpbmdNb2RhbE9wZW46IGZhbHNlLFxuICAgICAgfSksXG4gICAgKS50b0JlKHRydWUpO1xuICB9KTtcblxuICAvLyBgcGlja2VyT3BlbmAgaXMgZGVmZW5zaXZlLW9ubHk6IGF0IHRoZSBvbmx5IGNhbGwgc2l0ZSAoZWRpdC1pdGVtcy50c3gsXG4gIC8vIGluc2lkZSB0aGUgYHNob3dQaWNrZXIgPyA8UHJvZHVjdFBpY2tlci8+IDogKC4uLilgIGVsc2UtYnJhbmNoKSB0aGUgRkFCXG4gIC8vIHJlbmRlcnMgc29sZWx5IHdoZW4gYHNob3dQaWNrZXJgIGlzIGZhbHNlLCBzbyB0aGlzIGNhc2UgcGlucyBhIGd1YXJkXG4gIC8vIGFnYWluc3QgYSBmdXR1cmUgcmUtbGF5b3V0LCBub3QgYSByZWFjaGFibGUgcmVuZGVyIHRvZGF5LlxuICBpdChcIlJFRy1CMjQ2OiBoaWRkZW4gd2hpbGUgdGhlIHByb2R1Y3QgcGlja2VyIGlzIG9wZW4sIGV2ZW4gb25jZSBwcmljaW5nIGlzIHJlYWR5XCIsICgpID0+IHtcbiAgICBleHBlY3QoXG4gICAgICBzY2FuRmFiSGlkZGVuKHtcbiAgICAgICAgcHJpY2luZ1JlYWR5OiB0cnVlLFxuICAgICAgICBwaWNrZXJPcGVuOiB0cnVlLFxuICAgICAgICBwcmljZU1vZGFsT3BlbjogZmFsc2UsXG4gICAgICAgIGJsb2NraW5nTW9kYWxPcGVuOiBmYWxzZSxcbiAgICAgIH0pLFxuICAgICkudG9CZSh0cnVlKTtcbiAgfSk7XG5cbiAgaXQoXCJSRUctQjI0NjogaGlkZGVuIHdoaWxlIHRoZSBwcmljZS1lZGl0IG1vZGFsIGlzIG9wZW4sIGV2ZW4gb25jZSBwcmljaW5nIGlzIHJlYWR5XCIsICgpID0+IHtcbiAgICBleHBlY3QoXG4gICAgICBzY2FuRmFiSGlkZGVuKHtcbiAgICAgICAgcHJpY2luZ1JlYWR5OiB0cnVlLFxuICAgICAgICBwaWNrZXJPcGVuOiBmYWxzZSxcbiAgICAgICAgcHJpY2VNb2RhbE9wZW46IHRydWUsXG4gICAgICAgIGJsb2NraW5nTW9kYWxPcGVuOiBmYWxzZSxcbiAgICAgIH0pLFxuICAgICkudG9CZSh0cnVlKTtcbiAgfSk7XG5cbiAgLy8gVGhlIG90aGVyIGZvdXIgbW9kYWxzIG9uIHRoZSBlZGl0IHNjcmVlbiBhcmUgYDxNb2RhbCB0cmFuc3BhcmVudD5gIGFuZFxuICAvLyByZW5kZXIgT1VUU0lERSB0aGUgYHNob3dQaWNrZXIgPyDigKYgOiDigKZgIHRlcm5hcnksIHNvIHRoZSBGQUIgaXMgc3RpbGwgb25cbiAgLy8gc2NyZWVuIGJlaGluZCB0aGVpciBzY3JpbSB1bmxlc3MgdGhlIHJ1bGUgaGlkZXMgaXQuXG4gIGl0KFwiUkVHLUIyNDY6IGhpZGRlbiB3aGlsZSBhbm90aGVyIGJsb2NraW5nIG1vZGFsICh1bmxpc3RlZCBpdGVtIC8gY3JlZGl0IG5vdGUgLyBsaWNlbmNlIG9yIGNyZWRpdC1saW1pdCBndWFyZCkgaXMgb3BlbiwgZXZlbiBvbmNlIHByaWNpbmcgaXMgcmVhZHlcIiwgKCkgPT4ge1xuICAgIGV4cGVjdChcbiAgICAgIHNjYW5GYWJIaWRkZW4oe1xuICAgICAgICBwcmljaW5nUmVhZHk6IHRydWUsXG4gICAgICAgIHBpY2tlck9wZW46IGZhbHNlLFxuICAgICAgICBwcmljZU1vZGFsT3BlbjogZmFsc2UsXG4gICAgICAgIGJsb2NraW5nTW9kYWxPcGVuOiB0cnVlLFxuICAgICAgfSksXG4gICAgKS50b0JlKHRydWUpO1xuICB9KTtcblxuICBpdChcIlJFRy1CMjQ2OiB2aXNpYmxlIG9uY2UgcHJpY2luZyBpcyByZWFkeSBhbmQgbmVpdGhlciB0aGUgcGlja2VyIG5vciB0aGUgcHJpY2UgbW9kYWwgaXMgb3BlblwiLCAoKSA9PiB7XG4gICAgZXhwZWN0KFxuICAgICAgc2NhbkZhYkhpZGRlbih7XG4gICAgICAgIHByaWNpbmdSZWFkeTogdHJ1ZSxcbiAgICAgICAgcGlja2VyT3BlbjogZmFsc2UsXG4gICAgICAgIHByaWNlTW9kYWxPcGVuOiBmYWxzZSxcbiAgICAgICAgYmxvY2tpbmdNb2RhbE9wZW46IGZhbHNlLFxuICAgICAgfSksXG4gICAgKS50b0JlKGZhbHNlKTtcbiAgfSk7XG59KTtcbiJdLCJ2ZXJzaW9uIjozfQ==

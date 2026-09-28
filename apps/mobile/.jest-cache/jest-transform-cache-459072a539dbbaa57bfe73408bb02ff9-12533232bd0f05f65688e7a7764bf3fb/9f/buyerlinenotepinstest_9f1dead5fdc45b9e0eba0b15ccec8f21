@@ -1,0 +1,41 @@
+793e7cbc0ab0ae8df3d5c6fbd768da6b
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+/**
+ * WP2 — PINS for the buyer-facing mobile note render (R5.6, R5.7), extended
+ * for multi-line notes (truncation raised 2 -> 4 on order/invoice detail
+ * screens per the lead's ruling — the template row stays at 2, untouched).
+ * Source-text pin (the RN component can't be rendered under the mobile Jest
+ * env — see jest.config.js) mirroring the convention of
+ * `invoice-print-tile.pins.test.ts`.
+ *
+ * `(customer)/invoices/[id].tsx` and `(customer)/orders/[id].tsx` each render
+ * a guarded `item.notes` line under the existing meta line (HL-3). The
+ * OPERATOR invoice screen's `{it.notes}` render was also touched by the
+ * multi-line notes change (same numberOfLines raise) — no longer a "buyer
+ * screens only" NEG case, so it now gets the same positive assertion.
+ */
+const fs_1 = require("fs");
+const path_1 = require("path");
+const BUYER_INVOICE_PATH = (0, path_1.join)(__dirname, "..", "app", "(customer)", "invoices", "[id].tsx");
+const BUYER_ORDER_PATH = (0, path_1.join)(__dirname, "..", "app", "(customer)", "orders", "[id].tsx");
+const OPERATOR_INVOICE_PATH = (0, path_1.join)(__dirname, "..", "app", "(operator)", "(tabs)", "invoices", "[id].tsx");
+describe("pin: buyer-facing per-line note render", () => {
+    const buyerInvoiceSrc = (0, fs_1.readFileSync)(BUYER_INVOICE_PATH, "utf8");
+    const buyerOrderSrc = (0, fs_1.readFileSync)(BUYER_ORDER_PATH, "utf8");
+    const operatorInvoiceSrc = (0, fs_1.readFileSync)(OPERATOR_INVOICE_PATH, "utf8");
+    it("buyer invoice detail renders a guarded itemNote Text, truncated at 4 lines (was 2)", () => {
+        expect(buyerInvoiceSrc).toMatch(/item\.notes\?\.trim\(\)\s*\?/);
+        expect(buyerInvoiceSrc).toMatch(/<Text style=\{styles\.itemNote\} numberOfLines=\{4\}>/);
+    });
+    it("buyer order detail renders a guarded itemNote Text, truncated at 4 lines (was 2)", () => {
+        expect(buyerOrderSrc).toMatch(/item\.notes\?\.trim\(\)\s*\?/);
+        expect(buyerOrderSrc).toMatch(/<Text style=\{styles\.itemNote\} numberOfLines=\{4\}>/);
+    });
+    it("operator invoice screen's {it.notes} render is truncated at 4 lines too (still exactly once)", () => {
+        const matches = operatorInvoiceSrc.match(/\{it\.notes\}/g) ?? [];
+        expect(matches.length).toBe(1);
+        expect(operatorInvoiceSrc).toMatch(/<Text style=\{\[styles\.itemSub, \{ fontStyle: "italic" \}\]\} numberOfLines=\{4\}>/);
+    });
+});
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvX190ZXN0c19fL2J1eWVyLWxpbmUtbm90ZS5waW5zLnRlc3QudHMiLCJtYXBwaW5ncyI6Ijs7QUFBQTs7Ozs7Ozs7Ozs7OztHQWFHO0FBQ0gsMkJBQWtDO0FBQ2xDLCtCQUE0QjtBQUU1QixNQUFNLGtCQUFrQixHQUFHLElBQUEsV0FBSSxFQUFDLFNBQVMsRUFBRSxJQUFJLEVBQUUsS0FBSyxFQUFFLFlBQVksRUFBRSxVQUFVLEVBQUUsVUFBVSxDQUFDLENBQUM7QUFDOUYsTUFBTSxnQkFBZ0IsR0FBRyxJQUFBLFdBQUksRUFBQyxTQUFTLEVBQUUsSUFBSSxFQUFFLEtBQUssRUFBRSxZQUFZLEVBQUUsUUFBUSxFQUFFLFVBQVUsQ0FBQyxDQUFDO0FBQzFGLE1BQU0scUJBQXFCLEdBQUcsSUFBQSxXQUFJLEVBQ2hDLFNBQVMsRUFDVCxJQUFJLEVBQ0osS0FBSyxFQUNMLFlBQVksRUFDWixRQUFRLEVBQ1IsVUFBVSxFQUNWLFVBQVUsQ0FDWCxDQUFDO0FBRUYsUUFBUSxDQUFDLHdDQUF3QyxFQUFFLEdBQUcsRUFBRTtJQUN0RCxNQUFNLGVBQWUsR0FBRyxJQUFBLGlCQUFZLEVBQUMsa0JBQWtCLEVBQUUsTUFBTSxDQUFDLENBQUM7SUFDakUsTUFBTSxhQUFhLEdBQUcsSUFBQSxpQkFBWSxFQUFDLGdCQUFnQixFQUFFLE1BQU0sQ0FBQyxDQUFDO0lBQzdELE1BQU0sa0JBQWtCLEdBQUcsSUFBQSxpQkFBWSxFQUFDLHFCQUFxQixFQUFFLE1BQU0sQ0FBQyxDQUFDO0lBRXZFLEVBQUUsQ0FBQyxvRkFBb0YsRUFBRSxHQUFHLEVBQUU7UUFDNUYsTUFBTSxDQUFDLGVBQWUsQ0FBQyxDQUFDLE9BQU8sQ0FBQyw4QkFBOEIsQ0FBQyxDQUFDO1FBQ2hFLE1BQU0sQ0FBQyxlQUFlLENBQUMsQ0FBQyxPQUFPLENBQUMsdURBQXVELENBQUMsQ0FBQztJQUMzRixDQUFDLENBQUMsQ0FBQztJQUVILEVBQUUsQ0FBQyxrRkFBa0YsRUFBRSxHQUFHLEVBQUU7UUFDMUYsTUFBTSxDQUFDLGFBQWEsQ0FBQyxDQUFDLE9BQU8sQ0FBQyw4QkFBOEIsQ0FBQyxDQUFDO1FBQzlELE1BQU0sQ0FBQyxhQUFhLENBQUMsQ0FBQyxPQUFPLENBQUMsdURBQXVELENBQUMsQ0FBQztJQUN6RixDQUFDLENBQUMsQ0FBQztJQUVILEVBQUUsQ0FBQyw4RkFBOEYsRUFBRSxHQUFHLEVBQUU7UUFDdEcsTUFBTSxPQUFPLEdBQUcsa0JBQWtCLENBQUMsS0FBSyxDQUFDLGdCQUFnQixDQUFDLElBQUksRUFBRSxDQUFDO1FBQ2pFLE1BQU0sQ0FBQyxPQUFPLENBQUMsTUFBTSxDQUFDLENBQUMsSUFBSSxDQUFDLENBQUMsQ0FBQyxDQUFDO1FBQy9CLE1BQU0sQ0FBQyxrQkFBa0IsQ0FBQyxDQUFDLE9BQU8sQ0FDaEMscUZBQXFGLENBQ3RGLENBQUM7SUFDSixDQUFDLENBQUMsQ0FBQztBQUNMLENBQUMsQ0FBQyxDQUFDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvbW9iaWxlL19fdGVzdHNfXy9idXllci1saW5lLW5vdGUucGlucy50ZXN0LnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogV1AyIOKAlCBQSU5TIGZvciB0aGUgYnV5ZXItZmFjaW5nIG1vYmlsZSBub3RlIHJlbmRlciAoUjUuNiwgUjUuNyksIGV4dGVuZGVkXG4gKiBmb3IgbXVsdGktbGluZSBub3RlcyAodHJ1bmNhdGlvbiByYWlzZWQgMiAtPiA0IG9uIG9yZGVyL2ludm9pY2UgZGV0YWlsXG4gKiBzY3JlZW5zIHBlciB0aGUgbGVhZCdzIHJ1bGluZyDigJQgdGhlIHRlbXBsYXRlIHJvdyBzdGF5cyBhdCAyLCB1bnRvdWNoZWQpLlxuICogU291cmNlLXRleHQgcGluICh0aGUgUk4gY29tcG9uZW50IGNhbid0IGJlIHJlbmRlcmVkIHVuZGVyIHRoZSBtb2JpbGUgSmVzdFxuICogZW52IOKAlCBzZWUgamVzdC5jb25maWcuanMpIG1pcnJvcmluZyB0aGUgY29udmVudGlvbiBvZlxuICogYGludm9pY2UtcHJpbnQtdGlsZS5waW5zLnRlc3QudHNgLlxuICpcbiAqIGAoY3VzdG9tZXIpL2ludm9pY2VzL1tpZF0udHN4YCBhbmQgYChjdXN0b21lcikvb3JkZXJzL1tpZF0udHN4YCBlYWNoIHJlbmRlclxuICogYSBndWFyZGVkIGBpdGVtLm5vdGVzYCBsaW5lIHVuZGVyIHRoZSBleGlzdGluZyBtZXRhIGxpbmUgKEhMLTMpLiBUaGVcbiAqIE9QRVJBVE9SIGludm9pY2Ugc2NyZWVuJ3MgYHtpdC5ub3Rlc31gIHJlbmRlciB3YXMgYWxzbyB0b3VjaGVkIGJ5IHRoZVxuICogbXVsdGktbGluZSBub3RlcyBjaGFuZ2UgKHNhbWUgbnVtYmVyT2ZMaW5lcyByYWlzZSkg4oCUIG5vIGxvbmdlciBhIFwiYnV5ZXJcbiAqIHNjcmVlbnMgb25seVwiIE5FRyBjYXNlLCBzbyBpdCBub3cgZ2V0cyB0aGUgc2FtZSBwb3NpdGl2ZSBhc3NlcnRpb24uXG4gKi9cbmltcG9ydCB7IHJlYWRGaWxlU3luYyB9IGZyb20gXCJmc1wiO1xuaW1wb3J0IHsgam9pbiB9IGZyb20gXCJwYXRoXCI7XG5cbmNvbnN0IEJVWUVSX0lOVk9JQ0VfUEFUSCA9IGpvaW4oX19kaXJuYW1lLCBcIi4uXCIsIFwiYXBwXCIsIFwiKGN1c3RvbWVyKVwiLCBcImludm9pY2VzXCIsIFwiW2lkXS50c3hcIik7XG5jb25zdCBCVVlFUl9PUkRFUl9QQVRIID0gam9pbihfX2Rpcm5hbWUsIFwiLi5cIiwgXCJhcHBcIiwgXCIoY3VzdG9tZXIpXCIsIFwib3JkZXJzXCIsIFwiW2lkXS50c3hcIik7XG5jb25zdCBPUEVSQVRPUl9JTlZPSUNFX1BBVEggPSBqb2luKFxuICBfX2Rpcm5hbWUsXG4gIFwiLi5cIixcbiAgXCJhcHBcIixcbiAgXCIob3BlcmF0b3IpXCIsXG4gIFwiKHRhYnMpXCIsXG4gIFwiaW52b2ljZXNcIixcbiAgXCJbaWRdLnRzeFwiLFxuKTtcblxuZGVzY3JpYmUoXCJwaW46IGJ1eWVyLWZhY2luZyBwZXItbGluZSBub3RlIHJlbmRlclwiLCAoKSA9PiB7XG4gIGNvbnN0IGJ1eWVySW52b2ljZVNyYyA9IHJlYWRGaWxlU3luYyhCVVlFUl9JTlZPSUNFX1BBVEgsIFwidXRmOFwiKTtcbiAgY29uc3QgYnV5ZXJPcmRlclNyYyA9IHJlYWRGaWxlU3luYyhCVVlFUl9PUkRFUl9QQVRILCBcInV0ZjhcIik7XG4gIGNvbnN0IG9wZXJhdG9ySW52b2ljZVNyYyA9IHJlYWRGaWxlU3luYyhPUEVSQVRPUl9JTlZPSUNFX1BBVEgsIFwidXRmOFwiKTtcblxuICBpdChcImJ1eWVyIGludm9pY2UgZGV0YWlsIHJlbmRlcnMgYSBndWFyZGVkIGl0ZW1Ob3RlIFRleHQsIHRydW5jYXRlZCBhdCA0IGxpbmVzICh3YXMgMilcIiwgKCkgPT4ge1xuICAgIGV4cGVjdChidXllckludm9pY2VTcmMpLnRvTWF0Y2goL2l0ZW1cXC5ub3Rlc1xcP1xcLnRyaW1cXChcXClcXHMqXFw/Lyk7XG4gICAgZXhwZWN0KGJ1eWVySW52b2ljZVNyYykudG9NYXRjaCgvPFRleHQgc3R5bGU9XFx7c3R5bGVzXFwuaXRlbU5vdGVcXH0gbnVtYmVyT2ZMaW5lcz1cXHs0XFx9Pi8pO1xuICB9KTtcblxuICBpdChcImJ1eWVyIG9yZGVyIGRldGFpbCByZW5kZXJzIGEgZ3VhcmRlZCBpdGVtTm90ZSBUZXh0LCB0cnVuY2F0ZWQgYXQgNCBsaW5lcyAod2FzIDIpXCIsICgpID0+IHtcbiAgICBleHBlY3QoYnV5ZXJPcmRlclNyYykudG9NYXRjaCgvaXRlbVxcLm5vdGVzXFw/XFwudHJpbVxcKFxcKVxccypcXD8vKTtcbiAgICBleHBlY3QoYnV5ZXJPcmRlclNyYykudG9NYXRjaCgvPFRleHQgc3R5bGU9XFx7c3R5bGVzXFwuaXRlbU5vdGVcXH0gbnVtYmVyT2ZMaW5lcz1cXHs0XFx9Pi8pO1xuICB9KTtcblxuICBpdChcIm9wZXJhdG9yIGludm9pY2Ugc2NyZWVuJ3Mge2l0Lm5vdGVzfSByZW5kZXIgaXMgdHJ1bmNhdGVkIGF0IDQgbGluZXMgdG9vIChzdGlsbCBleGFjdGx5IG9uY2UpXCIsICgpID0+IHtcbiAgICBjb25zdCBtYXRjaGVzID0gb3BlcmF0b3JJbnZvaWNlU3JjLm1hdGNoKC9cXHtpdFxcLm5vdGVzXFx9L2cpID8/IFtdO1xuICAgIGV4cGVjdChtYXRjaGVzLmxlbmd0aCkudG9CZSgxKTtcbiAgICBleHBlY3Qob3BlcmF0b3JJbnZvaWNlU3JjKS50b01hdGNoKFxuICAgICAgLzxUZXh0IHN0eWxlPVxce1xcW3N0eWxlc1xcLml0ZW1TdWIsIFxceyBmb250U3R5bGU6IFwiaXRhbGljXCIgXFx9XFxdXFx9IG51bWJlck9mTGluZXM9XFx7NFxcfT4vLFxuICAgICk7XG4gIH0pO1xufSk7XG4iXSwidmVyc2lvbiI6M30=

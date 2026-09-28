@@ -1,0 +1,20 @@
+88d097a5e0b1c96fd4adf6d057a1d38e
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.scanSettled = exports.manualScanned = exports.createScanEngine = void 0;
+exports.frameScanned = frameScanned;
+/**
+ * The gate → buffer sequencing seam now lives in `@routeflow/scanning` (one source shared with
+ * apps/web). This file keeps every existing `../lib/scan-engine` import path working and injects
+ * mobile's `normalizeScanCode` into the per-frame gate — see `./scan-loop` for why.
+ */
+const scanning_1 = require("@routeflow/scanning");
+const barcode_normalize_1 = require("./barcode-normalize");
+var scanning_2 = require("@routeflow/scanning");
+Object.defineProperty(exports, "createScanEngine", { enumerable: true, get: function () { return scanning_2.createScanEngine; } });
+Object.defineProperty(exports, "manualScanned", { enumerable: true, get: function () { return scanning_2.manualScanned; } });
+Object.defineProperty(exports, "scanSettled", { enumerable: true, get: function () { return scanning_2.scanSettled; } });
+function frameScanned(state, code, now) {
+    return (0, scanning_1.frameScanned)(state, code, now, barcode_normalize_1.normalizeScanCode);
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3NjYW4tZW5naW5lLnRzIiwibWFwcGluZ3MiOiI7OztBQVlBLG9DQUVDO0FBZEQ7Ozs7R0FJRztBQUNILGtEQUF5RTtBQUV6RSwyREFBd0Q7QUFFeEQsZ0RBQW1GO0FBQTFFLDRHQUFBLGdCQUFnQixPQUFBO0FBQUUseUdBQUEsYUFBYSxPQUFBO0FBQUUsdUdBQUEsV0FBVyxPQUFBO0FBR3JELFNBQWdCLFlBQVksQ0FBQyxLQUFzQixFQUFFLElBQVksRUFBRSxHQUFXO0lBQzVFLE9BQU8sSUFBQSx1QkFBa0IsRUFBQyxLQUFLLEVBQUUsSUFBSSxFQUFFLEdBQUcsRUFBRSxxQ0FBaUIsQ0FBQyxDQUFDO0FBQ2pFLENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3NjYW4tZW5naW5lLnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogVGhlIGdhdGUg4oaSIGJ1ZmZlciBzZXF1ZW5jaW5nIHNlYW0gbm93IGxpdmVzIGluIGBAcm91dGVmbG93L3NjYW5uaW5nYCAob25lIHNvdXJjZSBzaGFyZWQgd2l0aFxuICogYXBwcy93ZWIpLiBUaGlzIGZpbGUga2VlcHMgZXZlcnkgZXhpc3RpbmcgYC4uL2xpYi9zY2FuLWVuZ2luZWAgaW1wb3J0IHBhdGggd29ya2luZyBhbmQgaW5qZWN0c1xuICogbW9iaWxlJ3MgYG5vcm1hbGl6ZVNjYW5Db2RlYCBpbnRvIHRoZSBwZXItZnJhbWUgZ2F0ZSDigJQgc2VlIGAuL3NjYW4tbG9vcGAgZm9yIHdoeS5cbiAqL1xuaW1wb3J0IHsgZnJhbWVTY2FubmVkIGFzIGZyYW1lU2Nhbm5lZFNoYXJlZCB9IGZyb20gXCJAcm91dGVmbG93L3NjYW5uaW5nXCI7XG5pbXBvcnQgdHlwZSB7IFNjYW5FbmdpbmVTdGF0ZSwgU2NhbkVuZ2luZVN0ZXAgfSBmcm9tIFwiQHJvdXRlZmxvdy9zY2FubmluZ1wiO1xuaW1wb3J0IHsgbm9ybWFsaXplU2NhbkNvZGUgfSBmcm9tIFwiLi9iYXJjb2RlLW5vcm1hbGl6ZVwiO1xuXG5leHBvcnQgeyBjcmVhdGVTY2FuRW5naW5lLCBtYW51YWxTY2FubmVkLCBzY2FuU2V0dGxlZCB9IGZyb20gXCJAcm91dGVmbG93L3NjYW5uaW5nXCI7XG5leHBvcnQgdHlwZSB7IFNjYW5FbmdpbmVTdGF0ZSwgU2NhbkVuZ2luZVN0ZXAgfSBmcm9tIFwiQHJvdXRlZmxvdy9zY2FubmluZ1wiO1xuXG5leHBvcnQgZnVuY3Rpb24gZnJhbWVTY2FubmVkKHN0YXRlOiBTY2FuRW5naW5lU3RhdGUsIGNvZGU6IHN0cmluZywgbm93OiBudW1iZXIpOiBTY2FuRW5naW5lU3RlcCB7XG4gIHJldHVybiBmcmFtZVNjYW5uZWRTaGFyZWQoc3RhdGUsIGNvZGUsIG5vdywgbm9ybWFsaXplU2NhbkNvZGUpO1xufVxuIl0sInZlcnNpb24iOjN9

@@ -1,0 +1,89 @@
+da14bafbbc1f2eb3a6459059b049c04a
+/**
+ * @jest-environment node
+ */ // Defence in depth for GHSA-2xp9-vwfh-vxw4 (libheif/AVIF RCE in Next's Image Optimization API).
+// Next 15.5.25 fixes the advisory, which retired its security/audit-allowlist.json entry. The pin
+// stays: this app never renders `next/image` (see components/no-next-image.test.ts), and
+// `images.unoptimized: true` disables the `/_next/image` optimizer route entirely, keeping that
+// code path unreachable regardless of the installed next version. Pinned here so the config can't
+// drift back to the default silently.
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _path = /*#__PURE__*/ _interop_require_wildcard(require("path"));
+const _child_process = require("child_process");
+const _url = require("url");
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+const WEB_ROOT = _path.resolve(__dirname, "..");
+// next.config.mjs is deliberately NOT imported in-process here — see
+// distributors-redirect.static.test.ts's header comment: it opens with
+// `const __dirname = path.dirname(fileURLToPath(import.meta.url));`, and this workspace's
+// Jest/Babel transform (next/jest) recompiles a dynamically imported .mjs to CJS and injects
+// its OWN `__dirname` binding, colliding with that line ("Identifier '__dirname' has already
+// been declared"). A real, unmodified `node` subprocess sidesteps the transform and actually
+// resolves the config's default export.
+function loadNextConfigImages() {
+    const configUrl = (0, _url.pathToFileURL)(_path.join(WEB_ROOT, "next.config.mjs")).href;
+    const script = `const m = await import(${JSON.stringify(configUrl)});` + `process.stdout.write(JSON.stringify(m.default.images));`;
+    const output = (0, _child_process.execFileSync)(process.execPath, [
+        "--input-type=module",
+        "-e",
+        script
+    ], {
+        cwd: WEB_ROOT,
+        encoding: "utf8",
+        timeout: 15000
+    });
+    return JSON.parse(output);
+}
+describe("next.config.mjs images (GHSA-2xp9-vwfh-vxw4 defence in depth)", ()=>{
+    it("disables the /_next/image optimizer (images.unoptimized === true)", ()=>{
+        const images = loadNextConfigImages();
+        expect(images).toEqual({
+            unoptimized: true
+        });
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2NvbXBvbmVudHMvbmV4dC1jb25maWctaW1hZ2VzLnN0YXRpYy50ZXN0LnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogQGplc3QtZW52aXJvbm1lbnQgbm9kZVxuICovXG4vLyBEZWZlbmNlIGluIGRlcHRoIGZvciBHSFNBLTJ4cDktdndmaC12eHc0IChsaWJoZWlmL0FWSUYgUkNFIGluIE5leHQncyBJbWFnZSBPcHRpbWl6YXRpb24gQVBJKS5cbi8vIE5leHQgMTUuNS4yNSBmaXhlcyB0aGUgYWR2aXNvcnksIHdoaWNoIHJldGlyZWQgaXRzIHNlY3VyaXR5L2F1ZGl0LWFsbG93bGlzdC5qc29uIGVudHJ5LiBUaGUgcGluXG4vLyBzdGF5czogdGhpcyBhcHAgbmV2ZXIgcmVuZGVycyBgbmV4dC9pbWFnZWAgKHNlZSBjb21wb25lbnRzL25vLW5leHQtaW1hZ2UudGVzdC50cyksIGFuZFxuLy8gYGltYWdlcy51bm9wdGltaXplZDogdHJ1ZWAgZGlzYWJsZXMgdGhlIGAvX25leHQvaW1hZ2VgIG9wdGltaXplciByb3V0ZSBlbnRpcmVseSwga2VlcGluZyB0aGF0XG4vLyBjb2RlIHBhdGggdW5yZWFjaGFibGUgcmVnYXJkbGVzcyBvZiB0aGUgaW5zdGFsbGVkIG5leHQgdmVyc2lvbi4gUGlubmVkIGhlcmUgc28gdGhlIGNvbmZpZyBjYW4ndFxuLy8gZHJpZnQgYmFjayB0byB0aGUgZGVmYXVsdCBzaWxlbnRseS5cbmltcG9ydCAqIGFzIHBhdGggZnJvbSBcInBhdGhcIjtcbmltcG9ydCB7IGV4ZWNGaWxlU3luYyB9IGZyb20gXCJjaGlsZF9wcm9jZXNzXCI7XG5pbXBvcnQgeyBwYXRoVG9GaWxlVVJMIH0gZnJvbSBcInVybFwiO1xuXG5jb25zdCBXRUJfUk9PVCA9IHBhdGgucmVzb2x2ZShfX2Rpcm5hbWUsIFwiLi5cIik7XG5cbi8vIG5leHQuY29uZmlnLm1qcyBpcyBkZWxpYmVyYXRlbHkgTk9UIGltcG9ydGVkIGluLXByb2Nlc3MgaGVyZSDigJQgc2VlXG4vLyBkaXN0cmlidXRvcnMtcmVkaXJlY3Quc3RhdGljLnRlc3QudHMncyBoZWFkZXIgY29tbWVudDogaXQgb3BlbnMgd2l0aFxuLy8gYGNvbnN0IF9fZGlybmFtZSA9IHBhdGguZGlybmFtZShmaWxlVVJMVG9QYXRoKGltcG9ydC5tZXRhLnVybCkpO2AsIGFuZCB0aGlzIHdvcmtzcGFjZSdzXG4vLyBKZXN0L0JhYmVsIHRyYW5zZm9ybSAobmV4dC9qZXN0KSByZWNvbXBpbGVzIGEgZHluYW1pY2FsbHkgaW1wb3J0ZWQgLm1qcyB0byBDSlMgYW5kIGluamVjdHNcbi8vIGl0cyBPV04gYF9fZGlybmFtZWAgYmluZGluZywgY29sbGlkaW5nIHdpdGggdGhhdCBsaW5lIChcIklkZW50aWZpZXIgJ19fZGlybmFtZScgaGFzIGFscmVhZHlcbi8vIGJlZW4gZGVjbGFyZWRcIikuIEEgcmVhbCwgdW5tb2RpZmllZCBgbm9kZWAgc3VicHJvY2VzcyBzaWRlc3RlcHMgdGhlIHRyYW5zZm9ybSBhbmQgYWN0dWFsbHlcbi8vIHJlc29sdmVzIHRoZSBjb25maWcncyBkZWZhdWx0IGV4cG9ydC5cbmZ1bmN0aW9uIGxvYWROZXh0Q29uZmlnSW1hZ2VzKCk6IHVua25vd24ge1xuICBjb25zdCBjb25maWdVcmwgPSBwYXRoVG9GaWxlVVJMKHBhdGguam9pbihXRUJfUk9PVCwgXCJuZXh0LmNvbmZpZy5tanNcIikpLmhyZWY7XG4gIGNvbnN0IHNjcmlwdCA9XG4gICAgYGNvbnN0IG0gPSBhd2FpdCBpbXBvcnQoJHtKU09OLnN0cmluZ2lmeShjb25maWdVcmwpfSk7YCArXG4gICAgYHByb2Nlc3Muc3Rkb3V0LndyaXRlKEpTT04uc3RyaW5naWZ5KG0uZGVmYXVsdC5pbWFnZXMpKTtgO1xuICBjb25zdCBvdXRwdXQgPSBleGVjRmlsZVN5bmMocHJvY2Vzcy5leGVjUGF0aCwgW1wiLS1pbnB1dC10eXBlPW1vZHVsZVwiLCBcIi1lXCIsIHNjcmlwdF0sIHtcbiAgICBjd2Q6IFdFQl9ST09ULFxuICAgIGVuY29kaW5nOiBcInV0ZjhcIixcbiAgICB0aW1lb3V0OiAxNV8wMDAsXG4gIH0pO1xuICByZXR1cm4gSlNPTi5wYXJzZShvdXRwdXQpO1xufVxuXG5kZXNjcmliZShcIm5leHQuY29uZmlnLm1qcyBpbWFnZXMgKEdIU0EtMnhwOS12d2ZoLXZ4dzQgZGVmZW5jZSBpbiBkZXB0aClcIiwgKCkgPT4ge1xuICBpdChcImRpc2FibGVzIHRoZSAvX25leHQvaW1hZ2Ugb3B0aW1pemVyIChpbWFnZXMudW5vcHRpbWl6ZWQgPT09IHRydWUpXCIsICgpID0+IHtcbiAgICBjb25zdCBpbWFnZXMgPSBsb2FkTmV4dENvbmZpZ0ltYWdlcygpO1xuICAgIGV4cGVjdChpbWFnZXMpLnRvRXF1YWwoeyB1bm9wdGltaXplZDogdHJ1ZSB9KTtcbiAgfSk7XG59KTtcbiJdLCJuYW1lcyI6WyJXRUJfUk9PVCIsInBhdGgiLCJyZXNvbHZlIiwiX19kaXJuYW1lIiwibG9hZE5leHRDb25maWdJbWFnZXMiLCJjb25maWdVcmwiLCJwYXRoVG9GaWxlVVJMIiwiam9pbiIsImhyZWYiLCJzY3JpcHQiLCJKU09OIiwic3RyaW5naWZ5Iiwib3V0cHV0IiwiZXhlY0ZpbGVTeW5jIiwicHJvY2VzcyIsImV4ZWNQYXRoIiwiY3dkIiwiZW5jb2RpbmciLCJ0aW1lb3V0IiwicGFyc2UiLCJkZXNjcmliZSIsIml0IiwiaW1hZ2VzIiwiZXhwZWN0IiwidG9FcXVhbCIsInVub3B0aW1pemVkIl0sIm1hcHBpbmdzIjoiQUFBQTs7Q0FFQyxHQUNELGdHQUFnRztBQUNoRyxrR0FBa0c7QUFDbEcseUZBQXlGO0FBQ3pGLGdHQUFnRztBQUNoRyxrR0FBa0c7QUFDbEcsc0NBQXNDOzs7Ozs4REFDaEI7K0JBQ087cUJBQ0M7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7OztBQUU5QixNQUFNQSxXQUFXQyxNQUFLQyxPQUFPLENBQUNDLFdBQVc7QUFFekMscUVBQXFFO0FBQ3JFLHVFQUF1RTtBQUN2RSwwRkFBMEY7QUFDMUYsNkZBQTZGO0FBQzdGLDZGQUE2RjtBQUM3Riw2RkFBNkY7QUFDN0Ysd0NBQXdDO0FBQ3hDLFNBQVNDO0lBQ1AsTUFBTUMsWUFBWUMsSUFBQUEsa0JBQWEsRUFBQ0wsTUFBS00sSUFBSSxDQUFDUCxVQUFVLG9CQUFvQlEsSUFBSTtJQUM1RSxNQUFNQyxTQUNKLENBQUMsdUJBQXVCLEVBQUVDLEtBQUtDLFNBQVMsQ0FBQ04sV0FBVyxFQUFFLENBQUMsR0FDdkQsQ0FBQyx1REFBdUQsQ0FBQztJQUMzRCxNQUFNTyxTQUFTQyxJQUFBQSwyQkFBWSxFQUFDQyxRQUFRQyxRQUFRLEVBQUU7UUFBQztRQUF1QjtRQUFNTjtLQUFPLEVBQUU7UUFDbkZPLEtBQUtoQjtRQUNMaUIsVUFBVTtRQUNWQyxTQUFTO0lBQ1g7SUFDQSxPQUFPUixLQUFLUyxLQUFLLENBQUNQO0FBQ3BCO0FBRUFRLFNBQVMsaUVBQWlFO0lBQ3hFQyxHQUFHLHFFQUFxRTtRQUN0RSxNQUFNQyxTQUFTbEI7UUFDZm1CLE9BQU9ELFFBQVFFLE9BQU8sQ0FBQztZQUFFQyxhQUFhO1FBQUs7SUFDN0M7QUFDRiJ9

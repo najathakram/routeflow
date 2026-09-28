@@ -1,0 +1,50 @@
+be39f2a411c9e7d1bfe60d3610516632
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.useCurrentRender = useCurrentRender;
+const React = __importStar(require("react"));
+const CurrentRenderContext_js_1 = require("./CurrentRenderContext.js");
+/**
+ * Write the current options, so that server renderer can get current values
+ * Mutating values like this is not safe in async mode, but it doesn't apply to SSR
+ */
+function useCurrentRender({ state, navigation, descriptors }) {
+    const current = React.useContext(CurrentRenderContext_js_1.CurrentRenderContext);
+    if (current && navigation.isFocused()) {
+        current.options = descriptors[state.routes[state.index].key].options;
+    }
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0Mzcvbm9kZV9tb2R1bGVzL0ByZWFjdC1uYXZpZ2F0aW9uL2NvcmUvbGliL21vZHVsZS91c2VDdXJyZW50UmVuZGVyLmpzIiwibWFwcGluZ3MiOiJBQUFBLFlBQVksQ0FBQzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7QUFRYiw0Q0FTQztBQWZELDZDQUErQjtBQUMvQix1RUFBaUU7QUFDakU7OztHQUdHO0FBQ0gsU0FBZ0IsZ0JBQWdCLENBQUMsRUFDL0IsS0FBSyxFQUNMLFVBQVUsRUFDVixXQUFXLEVBQ1o7SUFDQyxNQUFNLE9BQU8sR0FBRyxLQUFLLENBQUMsVUFBVSxDQUFDLDhDQUFvQixDQUFDLENBQUM7SUFDdkQsSUFBSSxPQUFPLElBQUksVUFBVSxDQUFDLFNBQVMsRUFBRSxFQUFFLENBQUM7UUFDdEMsT0FBTyxDQUFDLE9BQU8sR0FBRyxXQUFXLENBQUMsS0FBSyxDQUFDLE1BQU0sQ0FBQyxLQUFLLENBQUMsS0FBSyxDQUFDLENBQUMsR0FBRyxDQUFDLENBQUMsT0FBTyxDQUFDO0lBQ3ZFLENBQUM7QUFDSCxDQUFDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L25vZGVfbW9kdWxlcy9AcmVhY3QtbmF2aWdhdGlvbi9jb3JlL2xpYi9tb2R1bGUvdXNlQ3VycmVudFJlbmRlci5qcyJdLCJzb3VyY2VzQ29udGVudCI6WyJcInVzZSBzdHJpY3RcIjtcblxuaW1wb3J0ICogYXMgUmVhY3QgZnJvbSAncmVhY3QnO1xuaW1wb3J0IHsgQ3VycmVudFJlbmRlckNvbnRleHQgfSBmcm9tIFwiLi9DdXJyZW50UmVuZGVyQ29udGV4dC5qc1wiO1xuLyoqXG4gKiBXcml0ZSB0aGUgY3VycmVudCBvcHRpb25zLCBzbyB0aGF0IHNlcnZlciByZW5kZXJlciBjYW4gZ2V0IGN1cnJlbnQgdmFsdWVzXG4gKiBNdXRhdGluZyB2YWx1ZXMgbGlrZSB0aGlzIGlzIG5vdCBzYWZlIGluIGFzeW5jIG1vZGUsIGJ1dCBpdCBkb2Vzbid0IGFwcGx5IHRvIFNTUlxuICovXG5leHBvcnQgZnVuY3Rpb24gdXNlQ3VycmVudFJlbmRlcih7XG4gIHN0YXRlLFxuICBuYXZpZ2F0aW9uLFxuICBkZXNjcmlwdG9yc1xufSkge1xuICBjb25zdCBjdXJyZW50ID0gUmVhY3QudXNlQ29udGV4dChDdXJyZW50UmVuZGVyQ29udGV4dCk7XG4gIGlmIChjdXJyZW50ICYmIG5hdmlnYXRpb24uaXNGb2N1c2VkKCkpIHtcbiAgICBjdXJyZW50Lm9wdGlvbnMgPSBkZXNjcmlwdG9yc1tzdGF0ZS5yb3V0ZXNbc3RhdGUuaW5kZXhdLmtleV0ub3B0aW9ucztcbiAgfVxufVxuLy8jIHNvdXJjZU1hcHBpbmdVUkw9dXNlQ3VycmVudFJlbmRlci5qcy5tYXAiXSwidmVyc2lvbiI6M30=

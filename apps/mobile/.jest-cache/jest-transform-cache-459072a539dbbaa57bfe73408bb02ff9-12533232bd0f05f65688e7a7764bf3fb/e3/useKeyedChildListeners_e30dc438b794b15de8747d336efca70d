@@ -1,0 +1,62 @@
+5409daa662ef0c6ca5e6bc7e8e785625
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.useKeyedChildListeners = useKeyedChildListeners;
+const React = __importStar(require("react"));
+/**
+ * Hook which lets child navigators add getters to be called for obtaining rehydrated state.
+ */
+function useKeyedChildListeners() {
+    const { current: keyedListeners } = React.useRef(Object.assign(Object.create(null), {
+        getState: {},
+        beforeRemove: {}
+    }));
+    const addKeyedListener = React.useCallback((type, key, listener) => {
+        // @ts-expect-error: according to ref stated above you can use `key` to index type
+        keyedListeners[type][key] = listener;
+        return () => {
+            if (keyedListeners[type][key] === listener) {
+                // @ts-expect-error: according to ref stated above you can use `key` to index type
+                keyedListeners[type][key] = undefined;
+            }
+        };
+    }, [keyedListeners]);
+    return {
+        keyedListeners,
+        addKeyedListener
+    };
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0Mzcvbm9kZV9tb2R1bGVzL0ByZWFjdC1uYXZpZ2F0aW9uL2NvcmUvbGliL21vZHVsZS91c2VLZXllZENoaWxkTGlzdGVuZXJzLmpzIiwibWFwcGluZ3MiOiJBQUFBLFlBQVksQ0FBQzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7QUFNYix3REFxQkM7QUF6QkQsNkNBQStCO0FBQy9COztHQUVHO0FBQ0gsU0FBZ0Isc0JBQXNCO0lBQ3BDLE1BQU0sRUFDSixPQUFPLEVBQUUsY0FBYyxFQUN4QixHQUFHLEtBQUssQ0FBQyxNQUFNLENBQUMsTUFBTSxDQUFDLE1BQU0sQ0FBQyxNQUFNLENBQUMsTUFBTSxDQUFDLElBQUksQ0FBQyxFQUFFO1FBQ2xELFFBQVEsRUFBRSxFQUFFO1FBQ1osWUFBWSxFQUFFLEVBQUU7S0FDakIsQ0FBQyxDQUFDLENBQUM7SUFDSixNQUFNLGdCQUFnQixHQUFHLEtBQUssQ0FBQyxXQUFXLENBQUMsQ0FBQyxJQUFJLEVBQUUsR0FBRyxFQUFFLFFBQVEsRUFBRSxFQUFFO1FBQ2pFLGtGQUFrRjtRQUNsRixjQUFjLENBQUMsSUFBSSxDQUFDLENBQUMsR0FBRyxDQUFDLEdBQUcsUUFBUSxDQUFDO1FBQ3JDLE9BQU8sR0FBRyxFQUFFO1lBQ1YsSUFBSSxjQUFjLENBQUMsSUFBSSxDQUFDLENBQUMsR0FBRyxDQUFDLEtBQUssUUFBUSxFQUFFLENBQUM7Z0JBQzNDLGtGQUFrRjtnQkFDbEYsY0FBYyxDQUFDLElBQUksQ0FBQyxDQUFDLEdBQUcsQ0FBQyxHQUFHLFNBQVMsQ0FBQztZQUN4QyxDQUFDO1FBQ0gsQ0FBQyxDQUFDO0lBQ0osQ0FBQyxFQUFFLENBQUMsY0FBYyxDQUFDLENBQUMsQ0FBQztJQUNyQixPQUFPO1FBQ0wsY0FBYztRQUNkLGdCQUFnQjtLQUNqQixDQUFDO0FBQ0osQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9ub2RlX21vZHVsZXMvQHJlYWN0LW5hdmlnYXRpb24vY29yZS9saWIvbW9kdWxlL3VzZUtleWVkQ2hpbGRMaXN0ZW5lcnMuanMiXSwic291cmNlc0NvbnRlbnQiOlsiXCJ1c2Ugc3RyaWN0XCI7XG5cbmltcG9ydCAqIGFzIFJlYWN0IGZyb20gJ3JlYWN0Jztcbi8qKlxuICogSG9vayB3aGljaCBsZXRzIGNoaWxkIG5hdmlnYXRvcnMgYWRkIGdldHRlcnMgdG8gYmUgY2FsbGVkIGZvciBvYnRhaW5pbmcgcmVoeWRyYXRlZCBzdGF0ZS5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIHVzZUtleWVkQ2hpbGRMaXN0ZW5lcnMoKSB7XG4gIGNvbnN0IHtcbiAgICBjdXJyZW50OiBrZXllZExpc3RlbmVyc1xuICB9ID0gUmVhY3QudXNlUmVmKE9iamVjdC5hc3NpZ24oT2JqZWN0LmNyZWF0ZShudWxsKSwge1xuICAgIGdldFN0YXRlOiB7fSxcbiAgICBiZWZvcmVSZW1vdmU6IHt9XG4gIH0pKTtcbiAgY29uc3QgYWRkS2V5ZWRMaXN0ZW5lciA9IFJlYWN0LnVzZUNhbGxiYWNrKCh0eXBlLCBrZXksIGxpc3RlbmVyKSA9PiB7XG4gICAgLy8gQHRzLWV4cGVjdC1lcnJvcjogYWNjb3JkaW5nIHRvIHJlZiBzdGF0ZWQgYWJvdmUgeW91IGNhbiB1c2UgYGtleWAgdG8gaW5kZXggdHlwZVxuICAgIGtleWVkTGlzdGVuZXJzW3R5cGVdW2tleV0gPSBsaXN0ZW5lcjtcbiAgICByZXR1cm4gKCkgPT4ge1xuICAgICAgaWYgKGtleWVkTGlzdGVuZXJzW3R5cGVdW2tleV0gPT09IGxpc3RlbmVyKSB7XG4gICAgICAgIC8vIEB0cy1leHBlY3QtZXJyb3I6IGFjY29yZGluZyB0byByZWYgc3RhdGVkIGFib3ZlIHlvdSBjYW4gdXNlIGBrZXlgIHRvIGluZGV4IHR5cGVcbiAgICAgICAga2V5ZWRMaXN0ZW5lcnNbdHlwZV1ba2V5XSA9IHVuZGVmaW5lZDtcbiAgICAgIH1cbiAgICB9O1xuICB9LCBba2V5ZWRMaXN0ZW5lcnNdKTtcbiAgcmV0dXJuIHtcbiAgICBrZXllZExpc3RlbmVycyxcbiAgICBhZGRLZXllZExpc3RlbmVyXG4gIH07XG59XG4vLyMgc291cmNlTWFwcGluZ1VSTD11c2VLZXllZENoaWxkTGlzdGVuZXJzLmpzLm1hcCJdLCJ2ZXJzaW9uIjozfQ==

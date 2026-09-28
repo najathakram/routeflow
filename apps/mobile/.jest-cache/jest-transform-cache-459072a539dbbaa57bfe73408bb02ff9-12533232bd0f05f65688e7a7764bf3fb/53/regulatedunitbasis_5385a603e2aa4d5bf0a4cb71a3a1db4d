@@ -1,0 +1,62 @@
+a4a594916754a272d245a91a2691651d
+"use strict";
+/**
+ * THE conversion from a stored line's own shape to the piece count a regulated levy is computed
+ * on (Senior Architect ruling, B661/B671, 2026-09-21). Used at WRITE time only — when a line's
+ * shape and the product's pack size, AS THEY WERE AT THAT MOMENT, are both in hand — never to
+ * re-read an old row later (that's `legacyLinePieces`'s job: it has no `packAtSale` to trust,
+ * because a product's pack size can change after the sale).
+ *
+ * `packAtSale` MUST be the product's `unitsPerBox` captured at the same moment as `line` (the
+ * write transaction), never a later re-read of the live product — the box-unaware branch (4)
+ * below is a best-effort fallback specifically because the line itself doesn't say, and reading
+ * today's pack for a line written yesterday reintroduces the bug this design retires.
+ *
+ * Branches, in order — the FIRST one that applies wins:
+ *   (1) `line.unitLabel` is a non-blank string (`""`/null/undefined means "the pack" — no unit
+ *       requested, same convention as `orders/unit-line-build.ts`'s `requestsUnit`) — a Units/PO
+ *       line: `qty` is already in the line's own base selling unit. `unitBasisQty = qty`.
+ *   (2) `line.boxes` or `line.pieces` is set (a box-split line, whichever branch is null) —
+ *       `qty` is already a piece count. `unitBasisQty = qty`.
+ *   (3) neither of the above, and `packAtSale` is not a real pack (`<= 1`, `null`, missing) —
+ *       an ordinary non-boxed product. `unitBasisQty = qty`.
+ *   (4) neither of the above, and `packAtSale > 1` — the box-unaware convention this design
+ *       retires: a boxed product sold in SELLING UNITS with no split recorded. `unitBasisQty =
+ *       qty * packAtSale`, and the result carries a `warn` reason — this is the ONE place that
+ *       expansion still happens, done at write time against the pack AS SNAPSHOT, not guessed
+ *       later. A future diff (once `buildLine` is wired everywhere so this branch never fires)
+ *       turns this into a throw instead of a warn.
+ *
+ * This is NOT `legacyLinePieces` (packages/pricing/src/legacy-line-pieces.ts) — that classifier
+ * reads a row back later with no write-time context and refuses to guess; this function is the
+ * one write-time place allowed to fall back to a snapshot pack. `apps/api`'s
+ * `no-second-legacy-line-pieces.spec.ts` is widened to fail the build on a second function
+ * anywhere that multiplies a boxes-null qty by a pack size — this is the only one left standing.
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.regulatedUnitBasis = regulatedUnitBasis;
+function regulatedUnitBasis(line, packAtSale) {
+    const qty = Number(line.qty);
+    // (1) a Units/PO line: qty is already in the line's own base unit. `""`/null/undefined means
+    // "the pack" (no unit requested) — same convention as orders/unit-line-build.ts's requestsUnit.
+    if ((line.unitLabel ?? "").trim() !== "") {
+        return { unitBasisQty: qty };
+    }
+    // (2) a box-split line: qty is already a piece count.
+    if (line.boxes != null || line.pieces != null) {
+        return { unitBasisQty: qty };
+    }
+    const pack = Number(packAtSale ?? 0);
+    // (3) no split, and the product isn't (or wasn't, at sale time) boxed at all.
+    if (!(pack > 1)) {
+        return { unitBasisQty: qty };
+    }
+    // (4) box-unaware: the only place this design still expands qty by a pack — at write time,
+    // against the snapshot pack, never a later re-read.
+    return {
+        unitBasisQty: qty * pack,
+        warn: `B644: box-unaware line (qty ${line.qty}, no boxes/pieces split, no unitLabel) ` +
+            `expanded by packAtSale ${pack} at write time — write-time snapshot only, never re-derived later`,
+    };
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvcGFja2FnZXMvcHJpY2luZy9zcmMvcmVndWxhdGVkLXVuaXQtYmFzaXMudHMiLCJtYXBwaW5ncyI6IjtBQUFBOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7OztHQWdDRzs7QUFlSCxnREE4QkM7QUE5QkQsU0FBZ0Isa0JBQWtCLENBQ2hDLElBQTRCLEVBQzVCLFVBQXFDO0lBRXJDLE1BQU0sR0FBRyxHQUFHLE1BQU0sQ0FBQyxJQUFJLENBQUMsR0FBRyxDQUFDLENBQUM7SUFFN0IsNkZBQTZGO0lBQzdGLGdHQUFnRztJQUNoRyxJQUFJLENBQUMsSUFBSSxDQUFDLFNBQVMsSUFBSSxFQUFFLENBQUMsQ0FBQyxJQUFJLEVBQUUsS0FBSyxFQUFFLEVBQUUsQ0FBQztRQUN6QyxPQUFPLEVBQUUsWUFBWSxFQUFFLEdBQUcsRUFBRSxDQUFDO0lBQy9CLENBQUM7SUFDRCxzREFBc0Q7SUFDdEQsSUFBSSxJQUFJLENBQUMsS0FBSyxJQUFJLElBQUksSUFBSSxJQUFJLENBQUMsTUFBTSxJQUFJLElBQUksRUFBRSxDQUFDO1FBQzlDLE9BQU8sRUFBRSxZQUFZLEVBQUUsR0FBRyxFQUFFLENBQUM7SUFDL0IsQ0FBQztJQUVELE1BQU0sSUFBSSxHQUFHLE1BQU0sQ0FBQyxVQUFVLElBQUksQ0FBQyxDQUFDLENBQUM7SUFDckMsOEVBQThFO0lBQzlFLElBQUksQ0FBQyxDQUFDLElBQUksR0FBRyxDQUFDLENBQUMsRUFBRSxDQUFDO1FBQ2hCLE9BQU8sRUFBRSxZQUFZLEVBQUUsR0FBRyxFQUFFLENBQUM7SUFDL0IsQ0FBQztJQUVELDJGQUEyRjtJQUMzRixvREFBb0Q7SUFDcEQsT0FBTztRQUNMLFlBQVksRUFBRSxHQUFHLEdBQUcsSUFBSTtRQUN4QixJQUFJLEVBQ0YsK0JBQStCLElBQUksQ0FBQyxHQUFHLHlDQUF5QztZQUNoRiwwQkFBMEIsSUFBSSxtRUFBbUU7S0FDcEcsQ0FBQztBQUNKLENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvcGFja2FnZXMvcHJpY2luZy9zcmMvcmVndWxhdGVkLXVuaXQtYmFzaXMudHMiXSwic291cmNlc0NvbnRlbnQiOlsiLyoqXG4gKiBUSEUgY29udmVyc2lvbiBmcm9tIGEgc3RvcmVkIGxpbmUncyBvd24gc2hhcGUgdG8gdGhlIHBpZWNlIGNvdW50IGEgcmVndWxhdGVkIGxldnkgaXMgY29tcHV0ZWRcbiAqIG9uIChTZW5pb3IgQXJjaGl0ZWN0IHJ1bGluZywgQjY2MS9CNjcxLCAyMDI2LTA5LTIxKS4gVXNlZCBhdCBXUklURSB0aW1lIG9ubHkg4oCUIHdoZW4gYSBsaW5lJ3NcbiAqIHNoYXBlIGFuZCB0aGUgcHJvZHVjdCdzIHBhY2sgc2l6ZSwgQVMgVEhFWSBXRVJFIEFUIFRIQVQgTU9NRU5ULCBhcmUgYm90aCBpbiBoYW5kIOKAlCBuZXZlciB0b1xuICogcmUtcmVhZCBhbiBvbGQgcm93IGxhdGVyICh0aGF0J3MgYGxlZ2FjeUxpbmVQaWVjZXNgJ3Mgam9iOiBpdCBoYXMgbm8gYHBhY2tBdFNhbGVgIHRvIHRydXN0LFxuICogYmVjYXVzZSBhIHByb2R1Y3QncyBwYWNrIHNpemUgY2FuIGNoYW5nZSBhZnRlciB0aGUgc2FsZSkuXG4gKlxuICogYHBhY2tBdFNhbGVgIE1VU1QgYmUgdGhlIHByb2R1Y3QncyBgdW5pdHNQZXJCb3hgIGNhcHR1cmVkIGF0IHRoZSBzYW1lIG1vbWVudCBhcyBgbGluZWAgKHRoZVxuICogd3JpdGUgdHJhbnNhY3Rpb24pLCBuZXZlciBhIGxhdGVyIHJlLXJlYWQgb2YgdGhlIGxpdmUgcHJvZHVjdCDigJQgdGhlIGJveC11bmF3YXJlIGJyYW5jaCAoNClcbiAqIGJlbG93IGlzIGEgYmVzdC1lZmZvcnQgZmFsbGJhY2sgc3BlY2lmaWNhbGx5IGJlY2F1c2UgdGhlIGxpbmUgaXRzZWxmIGRvZXNuJ3Qgc2F5LCBhbmQgcmVhZGluZ1xuICogdG9kYXkncyBwYWNrIGZvciBhIGxpbmUgd3JpdHRlbiB5ZXN0ZXJkYXkgcmVpbnRyb2R1Y2VzIHRoZSBidWcgdGhpcyBkZXNpZ24gcmV0aXJlcy5cbiAqXG4gKiBCcmFuY2hlcywgaW4gb3JkZXIg4oCUIHRoZSBGSVJTVCBvbmUgdGhhdCBhcHBsaWVzIHdpbnM6XG4gKiAgICgxKSBgbGluZS51bml0TGFiZWxgIGlzIGEgbm9uLWJsYW5rIHN0cmluZyAoYFwiXCJgL251bGwvdW5kZWZpbmVkIG1lYW5zIFwidGhlIHBhY2tcIiDigJQgbm8gdW5pdFxuICogICAgICAgcmVxdWVzdGVkLCBzYW1lIGNvbnZlbnRpb24gYXMgYG9yZGVycy91bml0LWxpbmUtYnVpbGQudHNgJ3MgYHJlcXVlc3RzVW5pdGApIOKAlCBhIFVuaXRzL1BPXG4gKiAgICAgICBsaW5lOiBgcXR5YCBpcyBhbHJlYWR5IGluIHRoZSBsaW5lJ3Mgb3duIGJhc2Ugc2VsbGluZyB1bml0LiBgdW5pdEJhc2lzUXR5ID0gcXR5YC5cbiAqICAgKDIpIGBsaW5lLmJveGVzYCBvciBgbGluZS5waWVjZXNgIGlzIHNldCAoYSBib3gtc3BsaXQgbGluZSwgd2hpY2hldmVyIGJyYW5jaCBpcyBudWxsKSDigJRcbiAqICAgICAgIGBxdHlgIGlzIGFscmVhZHkgYSBwaWVjZSBjb3VudC4gYHVuaXRCYXNpc1F0eSA9IHF0eWAuXG4gKiAgICgzKSBuZWl0aGVyIG9mIHRoZSBhYm92ZSwgYW5kIGBwYWNrQXRTYWxlYCBpcyBub3QgYSByZWFsIHBhY2sgKGA8PSAxYCwgYG51bGxgLCBtaXNzaW5nKSDigJRcbiAqICAgICAgIGFuIG9yZGluYXJ5IG5vbi1ib3hlZCBwcm9kdWN0LiBgdW5pdEJhc2lzUXR5ID0gcXR5YC5cbiAqICAgKDQpIG5laXRoZXIgb2YgdGhlIGFib3ZlLCBhbmQgYHBhY2tBdFNhbGUgPiAxYCDigJQgdGhlIGJveC11bmF3YXJlIGNvbnZlbnRpb24gdGhpcyBkZXNpZ25cbiAqICAgICAgIHJldGlyZXM6IGEgYm94ZWQgcHJvZHVjdCBzb2xkIGluIFNFTExJTkcgVU5JVFMgd2l0aCBubyBzcGxpdCByZWNvcmRlZC4gYHVuaXRCYXNpc1F0eSA9XG4gKiAgICAgICBxdHkgKiBwYWNrQXRTYWxlYCwgYW5kIHRoZSByZXN1bHQgY2FycmllcyBhIGB3YXJuYCByZWFzb24g4oCUIHRoaXMgaXMgdGhlIE9ORSBwbGFjZSB0aGF0XG4gKiAgICAgICBleHBhbnNpb24gc3RpbGwgaGFwcGVucywgZG9uZSBhdCB3cml0ZSB0aW1lIGFnYWluc3QgdGhlIHBhY2sgQVMgU05BUFNIT1QsIG5vdCBndWVzc2VkXG4gKiAgICAgICBsYXRlci4gQSBmdXR1cmUgZGlmZiAob25jZSBgYnVpbGRMaW5lYCBpcyB3aXJlZCBldmVyeXdoZXJlIHNvIHRoaXMgYnJhbmNoIG5ldmVyIGZpcmVzKVxuICogICAgICAgdHVybnMgdGhpcyBpbnRvIGEgdGhyb3cgaW5zdGVhZCBvZiBhIHdhcm4uXG4gKlxuICogVGhpcyBpcyBOT1QgYGxlZ2FjeUxpbmVQaWVjZXNgIChwYWNrYWdlcy9wcmljaW5nL3NyYy9sZWdhY3ktbGluZS1waWVjZXMudHMpIOKAlCB0aGF0IGNsYXNzaWZpZXJcbiAqIHJlYWRzIGEgcm93IGJhY2sgbGF0ZXIgd2l0aCBubyB3cml0ZS10aW1lIGNvbnRleHQgYW5kIHJlZnVzZXMgdG8gZ3Vlc3M7IHRoaXMgZnVuY3Rpb24gaXMgdGhlXG4gKiBvbmUgd3JpdGUtdGltZSBwbGFjZSBhbGxvd2VkIHRvIGZhbGwgYmFjayB0byBhIHNuYXBzaG90IHBhY2suIGBhcHBzL2FwaWAnc1xuICogYG5vLXNlY29uZC1sZWdhY3ktbGluZS1waWVjZXMuc3BlYy50c2AgaXMgd2lkZW5lZCB0byBmYWlsIHRoZSBidWlsZCBvbiBhIHNlY29uZCBmdW5jdGlvblxuICogYW55d2hlcmUgdGhhdCBtdWx0aXBsaWVzIGEgYm94ZXMtbnVsbCBxdHkgYnkgYSBwYWNrIHNpemUg4oCUIHRoaXMgaXMgdGhlIG9ubHkgb25lIGxlZnQgc3RhbmRpbmcuXG4gKi9cblxuZXhwb3J0IGludGVyZmFjZSBSZWd1bGF0ZWRVbml0QmFzaXNMaW5lIHtcbiAgcXR5OiBudW1iZXI7XG4gIGJveGVzPzogbnVtYmVyIHwgbnVsbDtcbiAgcGllY2VzPzogbnVtYmVyIHwgbnVsbDtcbiAgdW5pdExhYmVsPzogc3RyaW5nIHwgbnVsbDtcbn1cblxuZXhwb3J0IGludGVyZmFjZSBSZWd1bGF0ZWRVbml0QmFzaXNSZXN1bHQge1xuICB1bml0QmFzaXNRdHk6IG51bWJlcjtcbiAgLyoqIFNldCBvbmx5IG9uIHRoZSBib3gtdW5hd2FyZSBmYWxsYmFjayAoYnJhbmNoIDQpIOKAlCB0aGUgY2FsbGVyIGxvZ3MgaXQuICovXG4gIHdhcm4/OiBzdHJpbmc7XG59XG5cbmV4cG9ydCBmdW5jdGlvbiByZWd1bGF0ZWRVbml0QmFzaXMoXG4gIGxpbmU6IFJlZ3VsYXRlZFVuaXRCYXNpc0xpbmUsXG4gIHBhY2tBdFNhbGU6IG51bWJlciB8IG51bGwgfCB1bmRlZmluZWQsXG4pOiBSZWd1bGF0ZWRVbml0QmFzaXNSZXN1bHQge1xuICBjb25zdCBxdHkgPSBOdW1iZXIobGluZS5xdHkpO1xuXG4gIC8vICgxKSBhIFVuaXRzL1BPIGxpbmU6IHF0eSBpcyBhbHJlYWR5IGluIHRoZSBsaW5lJ3Mgb3duIGJhc2UgdW5pdC4gYFwiXCJgL251bGwvdW5kZWZpbmVkIG1lYW5zXG4gIC8vIFwidGhlIHBhY2tcIiAobm8gdW5pdCByZXF1ZXN0ZWQpIOKAlCBzYW1lIGNvbnZlbnRpb24gYXMgb3JkZXJzL3VuaXQtbGluZS1idWlsZC50cydzIHJlcXVlc3RzVW5pdC5cbiAgaWYgKChsaW5lLnVuaXRMYWJlbCA/PyBcIlwiKS50cmltKCkgIT09IFwiXCIpIHtcbiAgICByZXR1cm4geyB1bml0QmFzaXNRdHk6IHF0eSB9O1xuICB9XG4gIC8vICgyKSBhIGJveC1zcGxpdCBsaW5lOiBxdHkgaXMgYWxyZWFkeSBhIHBpZWNlIGNvdW50LlxuICBpZiAobGluZS5ib3hlcyAhPSBudWxsIHx8IGxpbmUucGllY2VzICE9IG51bGwpIHtcbiAgICByZXR1cm4geyB1bml0QmFzaXNRdHk6IHF0eSB9O1xuICB9XG5cbiAgY29uc3QgcGFjayA9IE51bWJlcihwYWNrQXRTYWxlID8/IDApO1xuICAvLyAoMykgbm8gc3BsaXQsIGFuZCB0aGUgcHJvZHVjdCBpc24ndCAob3Igd2Fzbid0LCBhdCBzYWxlIHRpbWUpIGJveGVkIGF0IGFsbC5cbiAgaWYgKCEocGFjayA+IDEpKSB7XG4gICAgcmV0dXJuIHsgdW5pdEJhc2lzUXR5OiBxdHkgfTtcbiAgfVxuXG4gIC8vICg0KSBib3gtdW5hd2FyZTogdGhlIG9ubHkgcGxhY2UgdGhpcyBkZXNpZ24gc3RpbGwgZXhwYW5kcyBxdHkgYnkgYSBwYWNrIOKAlCBhdCB3cml0ZSB0aW1lLFxuICAvLyBhZ2FpbnN0IHRoZSBzbmFwc2hvdCBwYWNrLCBuZXZlciBhIGxhdGVyIHJlLXJlYWQuXG4gIHJldHVybiB7XG4gICAgdW5pdEJhc2lzUXR5OiBxdHkgKiBwYWNrLFxuICAgIHdhcm46XG4gICAgICBgQjY0NDogYm94LXVuYXdhcmUgbGluZSAocXR5ICR7bGluZS5xdHl9LCBubyBib3hlcy9waWVjZXMgc3BsaXQsIG5vIHVuaXRMYWJlbCkgYCArXG4gICAgICBgZXhwYW5kZWQgYnkgcGFja0F0U2FsZSAke3BhY2t9IGF0IHdyaXRlIHRpbWUg4oCUIHdyaXRlLXRpbWUgc25hcHNob3Qgb25seSwgbmV2ZXIgcmUtZGVyaXZlZCBsYXRlcmAsXG4gIH07XG59XG4iXSwidmVyc2lvbiI6M30=

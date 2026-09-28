@@ -1,0 +1,48 @@
+0ac18b5d4bf3ad5e3c249908f0782d01
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const pricing_1 = require("@routeflow/pricing");
+const invoice_totals_1 = require("../lib/invoice-totals");
+/**
+ * B656 confirmation (NOT a fix — no defect found on the mobile side).
+ *
+ * B656 was `Invoice.duplicate()` (server) omitting `unitsPerBox` from a copied boxed
+ * line, so the mobile edit screen's save (`invoiceLineDto`) saw a boxed line as
+ * unboxed (`unitsPerBox` null) and withheld `boxes`/`pieces` from the PATCH — the
+ * server then priced it `qty x unitPrice` (72 x $40 = $2,880) instead of the true
+ * $240. Fixed server-side by #1159 (`invoices.service.ts#duplicate`, tested exactly
+ * to the levy in `invoices.duplicate.spec.ts`: subtotal $240, levy $7.20).
+ *
+ * This is the mobile-observable half of the same chain: `edit.tsx`'s hydrate
+ * (`unitsPerBox: it.unitsPerBox ?? null`) and this file's `invoiceLineDto` already
+ * pass the line's own `unitsPerBox` straight through — once the server sends it
+ * (as it now does, post-#1159), the split travels and the money is right. Nothing
+ * to change here; this pins the round trip so a regression on either side is caught.
+ */
+describe("a duplicated boxed invoice line round-trips through invoiceLineDto (B656)", () => {
+    // Mirrors invoices.duplicate.spec.ts's boxedLine exactly: 6 boxes of 12 at $40/box.
+    const hydratedFromServer = {
+        description: "Sample Case Product",
+        productId: "p-1",
+        qty: 72,
+        unitPrice: 40,
+        boxes: 6,
+        pieces: 0,
+        unitsPerBox: 12, // present because duplicate() now copies it (#1159)
+        taxable: false,
+    };
+    it("sends the split (boxes, pieces) — the server derives unitsPerBox itself from the live product on save (invoices.service.ts#update), never from the wire", () => {
+        const dto = (0, invoice_totals_1.invoiceLineDto)(hydratedFromServer, 0);
+        expect(dto).toMatchObject({ qty: 72, unitPrice: 40, boxes: 6, pieces: 0 });
+        expect(dto).not.toHaveProperty("unitsPerBox"); // whitelisted out — by design, not a bug
+        // What the server then does with { boxes: 6, pieces: 0 } + the live product's unitsPerBox 12:
+        expect((0, pricing_1.computeLineSubtotal)({ ...dto, unitsPerBox: 12 })).toBe(240);
+        expect((0, pricing_1.computeLineSubtotal)({ ...dto, unitsPerBox: 12 })).not.toBe(72 * 40);
+    });
+    it("a line with no unitsPerBox (unboxed, or a pre-#1159 already-broken row) correctly withholds boxes/pieces", () => {
+        const dto = (0, invoice_totals_1.invoiceLineDto)({ ...hydratedFromServer, unitsPerBox: null }, 0);
+        expect(dto.boxes).toBeUndefined();
+        expect(dto.pieces).toBeUndefined();
+    });
+});
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvX190ZXN0c19fL2ludm9pY2UtZHVwbGljYXRlLWJveGVkLXJvdW5kdHJpcC50ZXN0LnRzIiwibWFwcGluZ3MiOiI7O0FBQUEsZ0RBQXlEO0FBQ3pELDBEQUF1RDtBQUV2RDs7Ozs7Ozs7Ozs7Ozs7O0dBZUc7QUFDSCxRQUFRLENBQUMsMkVBQTJFLEVBQUUsR0FBRyxFQUFFO0lBQ3pGLG9GQUFvRjtJQUNwRixNQUFNLGtCQUFrQixHQUFHO1FBQ3pCLFdBQVcsRUFBRSxxQkFBcUI7UUFDbEMsU0FBUyxFQUFFLEtBQUs7UUFDaEIsR0FBRyxFQUFFLEVBQUU7UUFDUCxTQUFTLEVBQUUsRUFBRTtRQUNiLEtBQUssRUFBRSxDQUFDO1FBQ1IsTUFBTSxFQUFFLENBQUM7UUFDVCxXQUFXLEVBQUUsRUFBRSxFQUFFLG9EQUFvRDtRQUNyRSxPQUFPLEVBQUUsS0FBSztLQUNmLENBQUM7SUFFRixFQUFFLENBQUMseUpBQXlKLEVBQUUsR0FBRyxFQUFFO1FBQ2pLLE1BQU0sR0FBRyxHQUFHLElBQUEsK0JBQWMsRUFBQyxrQkFBa0IsRUFBRSxDQUFDLENBQUMsQ0FBQztRQUNsRCxNQUFNLENBQUMsR0FBRyxDQUFDLENBQUMsYUFBYSxDQUFDLEVBQUUsR0FBRyxFQUFFLEVBQUUsRUFBRSxTQUFTLEVBQUUsRUFBRSxFQUFFLEtBQUssRUFBRSxDQUFDLEVBQUUsTUFBTSxFQUFFLENBQUMsRUFBRSxDQUFDLENBQUM7UUFDM0UsTUFBTSxDQUFDLEdBQUcsQ0FBQyxDQUFDLEdBQUcsQ0FBQyxjQUFjLENBQUMsYUFBYSxDQUFDLENBQUMsQ0FBQyx5Q0FBeUM7UUFDeEYsOEZBQThGO1FBQzlGLE1BQU0sQ0FBQyxJQUFBLDZCQUFtQixFQUFDLEVBQUUsR0FBRyxHQUFHLEVBQUUsV0FBVyxFQUFFLEVBQUUsRUFBRSxDQUFDLENBQUMsQ0FBQyxJQUFJLENBQUMsR0FBRyxDQUFDLENBQUM7UUFDbkUsTUFBTSxDQUFDLElBQUEsNkJBQW1CLEVBQUMsRUFBRSxHQUFHLEdBQUcsRUFBRSxXQUFXLEVBQUUsRUFBRSxFQUFFLENBQUMsQ0FBQyxDQUFDLEdBQUcsQ0FBQyxJQUFJLENBQUMsRUFBRSxHQUFHLEVBQUUsQ0FBQyxDQUFDO0lBQzdFLENBQUMsQ0FBQyxDQUFDO0lBRUgsRUFBRSxDQUFDLDBHQUEwRyxFQUFFLEdBQUcsRUFBRTtRQUNsSCxNQUFNLEdBQUcsR0FBRyxJQUFBLCtCQUFjLEVBQUMsRUFBRSxHQUFHLGtCQUFrQixFQUFFLFdBQVcsRUFBRSxJQUFJLEVBQUUsRUFBRSxDQUFDLENBQUMsQ0FBQztRQUM1RSxNQUFNLENBQUMsR0FBRyxDQUFDLEtBQUssQ0FBQyxDQUFDLGFBQWEsRUFBRSxDQUFDO1FBQ2xDLE1BQU0sQ0FBQyxHQUFHLENBQUMsTUFBTSxDQUFDLENBQUMsYUFBYSxFQUFFLENBQUM7SUFDckMsQ0FBQyxDQUFDLENBQUM7QUFDTCxDQUFDLENBQUMsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9hcHBzL21vYmlsZS9fX3Rlc3RzX18vaW52b2ljZS1kdXBsaWNhdGUtYm94ZWQtcm91bmR0cmlwLnRlc3QudHMiXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IHsgY29tcHV0ZUxpbmVTdWJ0b3RhbCB9IGZyb20gXCJAcm91dGVmbG93L3ByaWNpbmdcIjtcbmltcG9ydCB7IGludm9pY2VMaW5lRHRvIH0gZnJvbSBcIi4uL2xpYi9pbnZvaWNlLXRvdGFsc1wiO1xuXG4vKipcbiAqIEI2NTYgY29uZmlybWF0aW9uIChOT1QgYSBmaXgg4oCUIG5vIGRlZmVjdCBmb3VuZCBvbiB0aGUgbW9iaWxlIHNpZGUpLlxuICpcbiAqIEI2NTYgd2FzIGBJbnZvaWNlLmR1cGxpY2F0ZSgpYCAoc2VydmVyKSBvbWl0dGluZyBgdW5pdHNQZXJCb3hgIGZyb20gYSBjb3BpZWQgYm94ZWRcbiAqIGxpbmUsIHNvIHRoZSBtb2JpbGUgZWRpdCBzY3JlZW4ncyBzYXZlIChgaW52b2ljZUxpbmVEdG9gKSBzYXcgYSBib3hlZCBsaW5lIGFzXG4gKiB1bmJveGVkIChgdW5pdHNQZXJCb3hgIG51bGwpIGFuZCB3aXRoaGVsZCBgYm94ZXNgL2BwaWVjZXNgIGZyb20gdGhlIFBBVENIIOKAlCB0aGVcbiAqIHNlcnZlciB0aGVuIHByaWNlZCBpdCBgcXR5IHggdW5pdFByaWNlYCAoNzIgeCAkNDAgPSAkMiw4ODApIGluc3RlYWQgb2YgdGhlIHRydWVcbiAqICQyNDAuIEZpeGVkIHNlcnZlci1zaWRlIGJ5ICMxMTU5IChgaW52b2ljZXMuc2VydmljZS50cyNkdXBsaWNhdGVgLCB0ZXN0ZWQgZXhhY3RseVxuICogdG8gdGhlIGxldnkgaW4gYGludm9pY2VzLmR1cGxpY2F0ZS5zcGVjLnRzYDogc3VidG90YWwgJDI0MCwgbGV2eSAkNy4yMCkuXG4gKlxuICogVGhpcyBpcyB0aGUgbW9iaWxlLW9ic2VydmFibGUgaGFsZiBvZiB0aGUgc2FtZSBjaGFpbjogYGVkaXQudHN4YCdzIGh5ZHJhdGVcbiAqIChgdW5pdHNQZXJCb3g6IGl0LnVuaXRzUGVyQm94ID8/IG51bGxgKSBhbmQgdGhpcyBmaWxlJ3MgYGludm9pY2VMaW5lRHRvYCBhbHJlYWR5XG4gKiBwYXNzIHRoZSBsaW5lJ3Mgb3duIGB1bml0c1BlckJveGAgc3RyYWlnaHQgdGhyb3VnaCDigJQgb25jZSB0aGUgc2VydmVyIHNlbmRzIGl0XG4gKiAoYXMgaXQgbm93IGRvZXMsIHBvc3QtIzExNTkpLCB0aGUgc3BsaXQgdHJhdmVscyBhbmQgdGhlIG1vbmV5IGlzIHJpZ2h0LiBOb3RoaW5nXG4gKiB0byBjaGFuZ2UgaGVyZTsgdGhpcyBwaW5zIHRoZSByb3VuZCB0cmlwIHNvIGEgcmVncmVzc2lvbiBvbiBlaXRoZXIgc2lkZSBpcyBjYXVnaHQuXG4gKi9cbmRlc2NyaWJlKFwiYSBkdXBsaWNhdGVkIGJveGVkIGludm9pY2UgbGluZSByb3VuZC10cmlwcyB0aHJvdWdoIGludm9pY2VMaW5lRHRvIChCNjU2KVwiLCAoKSA9PiB7XG4gIC8vIE1pcnJvcnMgaW52b2ljZXMuZHVwbGljYXRlLnNwZWMudHMncyBib3hlZExpbmUgZXhhY3RseTogNiBib3hlcyBvZiAxMiBhdCAkNDAvYm94LlxuICBjb25zdCBoeWRyYXRlZEZyb21TZXJ2ZXIgPSB7XG4gICAgZGVzY3JpcHRpb246IFwiU2FtcGxlIENhc2UgUHJvZHVjdFwiLFxuICAgIHByb2R1Y3RJZDogXCJwLTFcIixcbiAgICBxdHk6IDcyLFxuICAgIHVuaXRQcmljZTogNDAsXG4gICAgYm94ZXM6IDYsXG4gICAgcGllY2VzOiAwLFxuICAgIHVuaXRzUGVyQm94OiAxMiwgLy8gcHJlc2VudCBiZWNhdXNlIGR1cGxpY2F0ZSgpIG5vdyBjb3BpZXMgaXQgKCMxMTU5KVxuICAgIHRheGFibGU6IGZhbHNlLFxuICB9O1xuXG4gIGl0KFwic2VuZHMgdGhlIHNwbGl0IChib3hlcywgcGllY2VzKSDigJQgdGhlIHNlcnZlciBkZXJpdmVzIHVuaXRzUGVyQm94IGl0c2VsZiBmcm9tIHRoZSBsaXZlIHByb2R1Y3Qgb24gc2F2ZSAoaW52b2ljZXMuc2VydmljZS50cyN1cGRhdGUpLCBuZXZlciBmcm9tIHRoZSB3aXJlXCIsICgpID0+IHtcbiAgICBjb25zdCBkdG8gPSBpbnZvaWNlTGluZUR0byhoeWRyYXRlZEZyb21TZXJ2ZXIsIDApO1xuICAgIGV4cGVjdChkdG8pLnRvTWF0Y2hPYmplY3QoeyBxdHk6IDcyLCB1bml0UHJpY2U6IDQwLCBib3hlczogNiwgcGllY2VzOiAwIH0pO1xuICAgIGV4cGVjdChkdG8pLm5vdC50b0hhdmVQcm9wZXJ0eShcInVuaXRzUGVyQm94XCIpOyAvLyB3aGl0ZWxpc3RlZCBvdXQg4oCUIGJ5IGRlc2lnbiwgbm90IGEgYnVnXG4gICAgLy8gV2hhdCB0aGUgc2VydmVyIHRoZW4gZG9lcyB3aXRoIHsgYm94ZXM6IDYsIHBpZWNlczogMCB9ICsgdGhlIGxpdmUgcHJvZHVjdCdzIHVuaXRzUGVyQm94IDEyOlxuICAgIGV4cGVjdChjb21wdXRlTGluZVN1YnRvdGFsKHsgLi4uZHRvLCB1bml0c1BlckJveDogMTIgfSkpLnRvQmUoMjQwKTtcbiAgICBleHBlY3QoY29tcHV0ZUxpbmVTdWJ0b3RhbCh7IC4uLmR0bywgdW5pdHNQZXJCb3g6IDEyIH0pKS5ub3QudG9CZSg3MiAqIDQwKTtcbiAgfSk7XG5cbiAgaXQoXCJhIGxpbmUgd2l0aCBubyB1bml0c1BlckJveCAodW5ib3hlZCwgb3IgYSBwcmUtIzExNTkgYWxyZWFkeS1icm9rZW4gcm93KSBjb3JyZWN0bHkgd2l0aGhvbGRzIGJveGVzL3BpZWNlc1wiLCAoKSA9PiB7XG4gICAgY29uc3QgZHRvID0gaW52b2ljZUxpbmVEdG8oeyAuLi5oeWRyYXRlZEZyb21TZXJ2ZXIsIHVuaXRzUGVyQm94OiBudWxsIH0sIDApO1xuICAgIGV4cGVjdChkdG8uYm94ZXMpLnRvQmVVbmRlZmluZWQoKTtcbiAgICBleHBlY3QoZHRvLnBpZWNlcykudG9CZVVuZGVmaW5lZCgpO1xuICB9KTtcbn0pO1xuIl0sInZlcnNpb24iOjN9

@@ -1,0 +1,224 @@
+b5b2b10d4a4d77639232f2ac87e7c0c4
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, {
+        enumerable: true,
+        get: Object.getOwnPropertyDescriptor(all, name).get
+    });
+}
+_export(exports, {
+    get AudienceCards () {
+        return AudienceCards;
+    },
+    get CTA () {
+        return CTA;
+    },
+    get CheckList () {
+        return CheckList;
+    },
+    get Eyebrow () {
+        return Eyebrow;
+    }
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _link = /*#__PURE__*/ _interop_require_default(require("next/link"));
+const _lucidereact = require("lucide-react");
+const _authlinks = require("./auth-links");
+function _interop_require_default(obj) {
+    return obj && obj.__esModule ? obj : {
+        default: obj
+    };
+}
+function Eyebrow({ children }) {
+    return /*#__PURE__*/ (0, _jsxruntime.jsxs)("p", {
+        className: "eyebrow",
+        children: [
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {}),
+            children
+        ]
+    });
+}
+function CheckList({ items }) {
+    return /*#__PURE__*/ (0, _jsxruntime.jsx)("ul", {
+        className: "check-list",
+        children: items.map((item)=>/*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.Check, {
+                        size: 18
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                        children: item
+                    })
+                ]
+            }, item))
+    });
+}
+function CTA({ retailer = false } = {}) {
+    return /*#__PURE__*/ (0, _jsxruntime.jsxs)("section", {
+        className: "cta-block wrap " + (retailer ? "cta-retailer" : ""),
+        children: [
+            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)(Eyebrow, {
+                        children: retailer ? "FOR YOUR NEXT RESTOCK" : "LET’S TALK ABOUT YOUR WORKFLOW"
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("h2", {
+                        children: retailer ? /*#__PURE__*/ (0, _jsxruntime.jsxs)(_jsxruntime.Fragment, {
+                            children: [
+                                "Place your next order ",
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("br", {}),
+                                "with a clearer view."
+                            ]
+                        }) : /*#__PURE__*/ (0, _jsxruntime.jsxs)(_jsxruntime.Fragment, {
+                            children: [
+                                "Put your workflow ",
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("br", {}),
+                                "to the test."
+                            ]
+                        })
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                        children: retailer ? "Use the web portal to order from your connected suppliers." : "Bring one example of how an order moves through your business. See where RouteFlow can connect the handoffs."
+                    })
+                ]
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)(_link.default, {
+                        className: "button button-white",
+                        href: retailer ? _authlinks.authLinks.retailerSignUp : "/book-a-demo",
+                        children: [
+                            retailer ? "Create a retailer account" : "Book a workflow demo",
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.ArrowUpRight, {
+                                size: 19
+                            })
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                        children: retailer ? "Continue to the existing retailer portal" : "Review your workflow, pricing, and setup before you decide."
+                    })
+                ]
+            })
+        ]
+    });
+}
+function AudienceCards() {
+    return /*#__PURE__*/ (0, _jsxruntime.jsxs)("section", {
+        className: "section wrap",
+        children: [
+            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                className: "section-heading",
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)(Eyebrow, {
+                        children: "TWO SIDES OF THE SAME DELIVERY"
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("h2", {
+                        children: [
+                            "Better connected,",
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("br", {}),
+                            "from warehouse to store."
+                        ]
+                    })
+                ]
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                className: "audience-grid",
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("article", {
+                        className: "audience-card distributors",
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("img", {
+                                src: "/marketing/warehouse.webp",
+                                alt: "Two warehouse workers carrying stock through an aisle.",
+                                width: 1400,
+                                height: 933,
+                                loading: "lazy",
+                                decoding: "async"
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                children: [
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.Warehouse, {
+                                        size: 28
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                        className: "card-eyebrow",
+                                        children: "FOR DISTRIBUTORS"
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("h3", {
+                                        children: [
+                                            "Give your team",
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("br", {}),
+                                            "a shared plan."
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                        children: "Manage orders, prepare routes, and follow each delivery with the customer record close at hand."
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)(_link.default, {
+                                        className: "text-link",
+                                        href: "/wholesalers",
+                                        children: [
+                                            "Explore RouteFlow for distributors ",
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.ArrowRight, {
+                                                size: 18
+                                            })
+                                        ]
+                                    })
+                                ]
+                            })
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("article", {
+                        className: "audience-card retailers",
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("img", {
+                                src: "/marketing/retailer-technology.webp",
+                                alt: "Conceptual retailer web ordering on a phone, connected to a storefront and delivery cartons.",
+                                width: 1448,
+                                height: 1086,
+                                loading: "lazy",
+                                decoding: "async"
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                children: [
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.Store, {
+                                        size: 28
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                        className: "card-eyebrow",
+                                        children: "FOR RETAILERS"
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("h3", {
+                                        children: [
+                                            "Restock with less",
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("br", {}),
+                                            "back and forth."
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                        children: "Browse your suppliers’ catalogs, place orders, and find your purchase history in the retailer portal."
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)(_link.default, {
+                                        className: "text-link",
+                                        href: "/retailers",
+                                        children: [
+                                            "Explore RouteFlow for retailers ",
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.ArrowRight, {
+                                                size: 18
+                                            })
+                                        ]
+                                    })
+                                ]
+                            })
+                        ]
+                    })
+                ]
+            })
+        ]
+    });
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8obWFya2V0aW5nKS9jb21wb25lbnRzL21hcmtldGluZy50c3giXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IExpbmsgZnJvbSBcIm5leHQvbGlua1wiO1xuaW1wb3J0IHsgQXJyb3dSaWdodCwgQXJyb3dVcFJpZ2h0LCBDaGVjaywgV2FyZWhvdXNlLCBTdG9yZSB9IGZyb20gXCJsdWNpZGUtcmVhY3RcIjtcbmltcG9ydCB0eXBlIHsgUmVhY3ROb2RlIH0gZnJvbSBcInJlYWN0XCI7XG5pbXBvcnQgeyBhdXRoTGlua3MgfSBmcm9tIFwiLi9hdXRoLWxpbmtzXCI7XG5cbi8vIFNoYXJlZCBzdGF0aWMvcHJlc2VudGF0aW9uYWwgYnVpbGRpbmcgYmxvY2tzIHVzZWQgYWNyb3NzIHRoZSBtYXJrZXRpbmdcbi8vIHBhZ2VzIChNMSDCpzEwKS4gQ29weSBpcyB2ZXJiYXRpbSBmcm9tIHRoZSByZWRlc2lnbidzIGNvbXBvbmVudHMvbWFya2V0aW5nLnRzeC5cblxuZXhwb3J0IGZ1bmN0aW9uIEV5ZWJyb3coeyBjaGlsZHJlbiB9OiB7IGNoaWxkcmVuOiBSZWFjdE5vZGUgfSkge1xuICByZXR1cm4gKFxuICAgIDxwIGNsYXNzTmFtZT1cImV5ZWJyb3dcIj5cbiAgICAgIDxzcGFuIC8+XG4gICAgICB7Y2hpbGRyZW59XG4gICAgPC9wPlxuICApO1xufVxuXG5leHBvcnQgZnVuY3Rpb24gQ2hlY2tMaXN0KHsgaXRlbXMgfTogeyBpdGVtczogc3RyaW5nW10gfSkge1xuICByZXR1cm4gKFxuICAgIDx1bCBjbGFzc05hbWU9XCJjaGVjay1saXN0XCI+XG4gICAgICB7aXRlbXMubWFwKChpdGVtKSA9PiAoXG4gICAgICAgIDxsaSBrZXk9e2l0ZW19PlxuICAgICAgICAgIDxDaGVjayBzaXplPXsxOH0gLz5cbiAgICAgICAgICA8c3Bhbj57aXRlbX08L3NwYW4+XG4gICAgICAgIDwvbGk+XG4gICAgICApKX1cbiAgICA8L3VsPlxuICApO1xufVxuXG5leHBvcnQgZnVuY3Rpb24gQ1RBKHsgcmV0YWlsZXIgPSBmYWxzZSB9OiB7IHJldGFpbGVyPzogYm9vbGVhbiB9ID0ge30pIHtcbiAgcmV0dXJuIChcbiAgICA8c2VjdGlvbiBjbGFzc05hbWU9e1wiY3RhLWJsb2NrIHdyYXAgXCIgKyAocmV0YWlsZXIgPyBcImN0YS1yZXRhaWxlclwiIDogXCJcIil9PlxuICAgICAgPGRpdj5cbiAgICAgICAgPEV5ZWJyb3c+e3JldGFpbGVyID8gXCJGT1IgWU9VUiBORVhUIFJFU1RPQ0tcIiA6IFwiTEVU4oCZUyBUQUxLIEFCT1VUIFlPVVIgV09SS0ZMT1dcIn08L0V5ZWJyb3c+XG4gICAgICAgIDxoMj5cbiAgICAgICAgICB7cmV0YWlsZXIgPyAoXG4gICAgICAgICAgICA8PlxuICAgICAgICAgICAgICBQbGFjZSB5b3VyIG5leHQgb3JkZXIgPGJyIC8+XG4gICAgICAgICAgICAgIHdpdGggYSBjbGVhcmVyIHZpZXcuXG4gICAgICAgICAgICA8Lz5cbiAgICAgICAgICApIDogKFxuICAgICAgICAgICAgPD5cbiAgICAgICAgICAgICAgUHV0IHlvdXIgd29ya2Zsb3cgPGJyIC8+XG4gICAgICAgICAgICAgIHRvIHRoZSB0ZXN0LlxuICAgICAgICAgICAgPC8+XG4gICAgICAgICAgKX1cbiAgICAgICAgPC9oMj5cbiAgICAgICAgPHA+XG4gICAgICAgICAge3JldGFpbGVyXG4gICAgICAgICAgICA/IFwiVXNlIHRoZSB3ZWIgcG9ydGFsIHRvIG9yZGVyIGZyb20geW91ciBjb25uZWN0ZWQgc3VwcGxpZXJzLlwiXG4gICAgICAgICAgICA6IFwiQnJpbmcgb25lIGV4YW1wbGUgb2YgaG93IGFuIG9yZGVyIG1vdmVzIHRocm91Z2ggeW91ciBidXNpbmVzcy4gU2VlIHdoZXJlIFJvdXRlRmxvdyBjYW4gY29ubmVjdCB0aGUgaGFuZG9mZnMuXCJ9XG4gICAgICAgIDwvcD5cbiAgICAgIDwvZGl2PlxuICAgICAgPGRpdj5cbiAgICAgICAgPExpbmtcbiAgICAgICAgICBjbGFzc05hbWU9XCJidXR0b24gYnV0dG9uLXdoaXRlXCJcbiAgICAgICAgICBocmVmPXtyZXRhaWxlciA/IGF1dGhMaW5rcy5yZXRhaWxlclNpZ25VcCA6IFwiL2Jvb2stYS1kZW1vXCJ9XG4gICAgICAgID5cbiAgICAgICAgICB7cmV0YWlsZXIgPyBcIkNyZWF0ZSBhIHJldGFpbGVyIGFjY291bnRcIiA6IFwiQm9vayBhIHdvcmtmbG93IGRlbW9cIn1cbiAgICAgICAgICA8QXJyb3dVcFJpZ2h0IHNpemU9ezE5fSAvPlxuICAgICAgICA8L0xpbms+XG4gICAgICAgIDxzcGFuPlxuICAgICAgICAgIHtyZXRhaWxlclxuICAgICAgICAgICAgPyBcIkNvbnRpbnVlIHRvIHRoZSBleGlzdGluZyByZXRhaWxlciBwb3J0YWxcIlxuICAgICAgICAgICAgOiBcIlJldmlldyB5b3VyIHdvcmtmbG93LCBwcmljaW5nLCBhbmQgc2V0dXAgYmVmb3JlIHlvdSBkZWNpZGUuXCJ9XG4gICAgICAgIDwvc3Bhbj5cbiAgICAgIDwvZGl2PlxuICAgIDwvc2VjdGlvbj5cbiAgKTtcbn1cblxuZXhwb3J0IGZ1bmN0aW9uIEF1ZGllbmNlQ2FyZHMoKSB7XG4gIHJldHVybiAoXG4gICAgPHNlY3Rpb24gY2xhc3NOYW1lPVwic2VjdGlvbiB3cmFwXCI+XG4gICAgICA8ZGl2IGNsYXNzTmFtZT1cInNlY3Rpb24taGVhZGluZ1wiPlxuICAgICAgICA8RXllYnJvdz5UV08gU0lERVMgT0YgVEhFIFNBTUUgREVMSVZFUlk8L0V5ZWJyb3c+XG4gICAgICAgIDxoMj5cbiAgICAgICAgICBCZXR0ZXIgY29ubmVjdGVkLFxuICAgICAgICAgIDxiciAvPlxuICAgICAgICAgIGZyb20gd2FyZWhvdXNlIHRvIHN0b3JlLlxuICAgICAgICA8L2gyPlxuICAgICAgPC9kaXY+XG4gICAgICA8ZGl2IGNsYXNzTmFtZT1cImF1ZGllbmNlLWdyaWRcIj5cbiAgICAgICAgPGFydGljbGUgY2xhc3NOYW1lPVwiYXVkaWVuY2UtY2FyZCBkaXN0cmlidXRvcnNcIj5cbiAgICAgICAgICB7LyogUGxhaW4gPGltZz4sIG5vdCBuZXh0L2ltYWdlIChydWxpbmcgQjEpOyBiZWxvdyB0aGUgZm9sZCwgc28gbGF6eS5cbiAgICAgICAgICAgICAgUmV1c2VzIHB1YmxpYy9tYXJrZXRpbmcvd2FyZWhvdXNlLndlYnAg4oCUIG5vIG5ldyBiaW5hcnkgKG93bmVyXG4gICAgICAgICAgICAgIGxheW91dCBydWxpbmcsIDIwMjYtMDktMTYsIFBSLTM6IGF1ZGllbmNlIGNhcmRzIGdldCBwaG90b3MsXG4gICAgICAgICAgICAgIG1hdGNoaW5nIHRoZSBkZXNpZ24gc3R1ZHkncyBvd24gYXVkaWVuY2UgY2FyZHMpLiAqL31cbiAgICAgICAgICB7LyogZXNsaW50LWRpc2FibGUtbmV4dC1saW5lIEBuZXh0L25leHQvbm8taW1nLWVsZW1lbnQgLS0gc2VlIGFib3ZlICovfVxuICAgICAgICAgIDxpbWdcbiAgICAgICAgICAgIHNyYz1cIi9tYXJrZXRpbmcvd2FyZWhvdXNlLndlYnBcIlxuICAgICAgICAgICAgYWx0PVwiVHdvIHdhcmVob3VzZSB3b3JrZXJzIGNhcnJ5aW5nIHN0b2NrIHRocm91Z2ggYW4gYWlzbGUuXCJcbiAgICAgICAgICAgIHdpZHRoPXsxNDAwfVxuICAgICAgICAgICAgaGVpZ2h0PXs5MzN9XG4gICAgICAgICAgICBsb2FkaW5nPVwibGF6eVwiXG4gICAgICAgICAgICBkZWNvZGluZz1cImFzeW5jXCJcbiAgICAgICAgICAvPlxuICAgICAgICAgIDxkaXY+XG4gICAgICAgICAgICA8V2FyZWhvdXNlIHNpemU9ezI4fSAvPlxuICAgICAgICAgICAgPHNwYW4gY2xhc3NOYW1lPVwiY2FyZC1leWVicm93XCI+Rk9SIERJU1RSSUJVVE9SUzwvc3Bhbj5cbiAgICAgICAgICAgIDxoMz5cbiAgICAgICAgICAgICAgR2l2ZSB5b3VyIHRlYW1cbiAgICAgICAgICAgICAgPGJyIC8+YSBzaGFyZWQgcGxhbi5cbiAgICAgICAgICAgIDwvaDM+XG4gICAgICAgICAgICA8cD5cbiAgICAgICAgICAgICAgTWFuYWdlIG9yZGVycywgcHJlcGFyZSByb3V0ZXMsIGFuZCBmb2xsb3cgZWFjaCBkZWxpdmVyeSB3aXRoIHRoZSBjdXN0b21lciByZWNvcmQgY2xvc2VcbiAgICAgICAgICAgICAgYXQgaGFuZC5cbiAgICAgICAgICAgIDwvcD5cbiAgICAgICAgICAgIDxMaW5rIGNsYXNzTmFtZT1cInRleHQtbGlua1wiIGhyZWY9XCIvd2hvbGVzYWxlcnNcIj5cbiAgICAgICAgICAgICAgRXhwbG9yZSBSb3V0ZUZsb3cgZm9yIGRpc3RyaWJ1dG9ycyA8QXJyb3dSaWdodCBzaXplPXsxOH0gLz5cbiAgICAgICAgICAgIDwvTGluaz5cbiAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgPC9hcnRpY2xlPlxuICAgICAgICA8YXJ0aWNsZSBjbGFzc05hbWU9XCJhdWRpZW5jZS1jYXJkIHJldGFpbGVyc1wiPlxuICAgICAgICAgIHsvKiBSZXVzZXMgcHVibGljL21hcmtldGluZy9yZXRhaWxlci10ZWNobm9sb2d5LndlYnAg4oCUIG5vIG5ldyBiaW5hcnkuICovfVxuICAgICAgICAgIHsvKiBlc2xpbnQtZGlzYWJsZS1uZXh0LWxpbmUgQG5leHQvbmV4dC9uby1pbWctZWxlbWVudCAtLSBzZWUgYWJvdmUgKi99XG4gICAgICAgICAgPGltZ1xuICAgICAgICAgICAgc3JjPVwiL21hcmtldGluZy9yZXRhaWxlci10ZWNobm9sb2d5LndlYnBcIlxuICAgICAgICAgICAgYWx0PVwiQ29uY2VwdHVhbCByZXRhaWxlciB3ZWIgb3JkZXJpbmcgb24gYSBwaG9uZSwgY29ubmVjdGVkIHRvIGEgc3RvcmVmcm9udCBhbmQgZGVsaXZlcnkgY2FydG9ucy5cIlxuICAgICAgICAgICAgd2lkdGg9ezE0NDh9XG4gICAgICAgICAgICBoZWlnaHQ9ezEwODZ9XG4gICAgICAgICAgICBsb2FkaW5nPVwibGF6eVwiXG4gICAgICAgICAgICBkZWNvZGluZz1cImFzeW5jXCJcbiAgICAgICAgICAvPlxuICAgICAgICAgIDxkaXY+XG4gICAgICAgICAgICA8U3RvcmUgc2l6ZT17Mjh9IC8+XG4gICAgICAgICAgICA8c3BhbiBjbGFzc05hbWU9XCJjYXJkLWV5ZWJyb3dcIj5GT1IgUkVUQUlMRVJTPC9zcGFuPlxuICAgICAgICAgICAgPGgzPlxuICAgICAgICAgICAgICBSZXN0b2NrIHdpdGggbGVzc1xuICAgICAgICAgICAgICA8YnIgLz5cbiAgICAgICAgICAgICAgYmFjayBhbmQgZm9ydGguXG4gICAgICAgICAgICA8L2gzPlxuICAgICAgICAgICAgPHA+XG4gICAgICAgICAgICAgIEJyb3dzZSB5b3VyIHN1cHBsaWVyc+KAmSBjYXRhbG9ncywgcGxhY2Ugb3JkZXJzLCBhbmQgZmluZCB5b3VyIHB1cmNoYXNlIGhpc3RvcnkgaW4gdGhlXG4gICAgICAgICAgICAgIHJldGFpbGVyIHBvcnRhbC5cbiAgICAgICAgICAgIDwvcD5cbiAgICAgICAgICAgIDxMaW5rIGNsYXNzTmFtZT1cInRleHQtbGlua1wiIGhyZWY9XCIvcmV0YWlsZXJzXCI+XG4gICAgICAgICAgICAgIEV4cGxvcmUgUm91dGVGbG93IGZvciByZXRhaWxlcnMgPEFycm93UmlnaHQgc2l6ZT17MTh9IC8+XG4gICAgICAgICAgICA8L0xpbms+XG4gICAgICAgICAgPC9kaXY+XG4gICAgICAgIDwvYXJ0aWNsZT5cbiAgICAgIDwvZGl2PlxuICAgIDwvc2VjdGlvbj5cbiAgKTtcbn1cbiJdLCJuYW1lcyI6WyJBdWRpZW5jZUNhcmRzIiwiQ1RBIiwiQ2hlY2tMaXN0IiwiRXllYnJvdyIsImNoaWxkcmVuIiwicCIsImNsYXNzTmFtZSIsInNwYW4iLCJpdGVtcyIsInVsIiwibWFwIiwiaXRlbSIsImxpIiwiQ2hlY2siLCJzaXplIiwicmV0YWlsZXIiLCJzZWN0aW9uIiwiZGl2IiwiaDIiLCJiciIsIkxpbmsiLCJocmVmIiwiYXV0aExpbmtzIiwicmV0YWlsZXJTaWduVXAiLCJBcnJvd1VwUmlnaHQiLCJhcnRpY2xlIiwiaW1nIiwic3JjIiwiYWx0Iiwid2lkdGgiLCJoZWlnaHQiLCJsb2FkaW5nIiwiZGVjb2RpbmciLCJXYXJlaG91c2UiLCJoMyIsIkFycm93UmlnaHQiLCJTdG9yZSJdLCJtYXBwaW5ncyI6Ijs7Ozs7Ozs7Ozs7UUF3RWdCQTtlQUFBQTs7UUExQ0FDO2VBQUFBOztRQWJBQztlQUFBQTs7UUFUQUM7ZUFBQUE7Ozs7NkRBUkM7NkJBQ2lEOzJCQUV4Qzs7Ozs7O0FBS25CLFNBQVNBLFFBQVEsRUFBRUMsUUFBUSxFQUEyQjtJQUMzRCxxQkFDRSxzQkFBQ0M7UUFBRUMsV0FBVTs7MEJBQ1gscUJBQUNDO1lBQ0FIOzs7QUFHUDtBQUVPLFNBQVNGLFVBQVUsRUFBRU0sS0FBSyxFQUF1QjtJQUN0RCxxQkFDRSxxQkFBQ0M7UUFBR0gsV0FBVTtrQkFDWEUsTUFBTUUsR0FBRyxDQUFDLENBQUNDLHFCQUNWLHNCQUFDQzs7a0NBQ0MscUJBQUNDLGtCQUFLO3dCQUFDQyxNQUFNOztrQ0FDYixxQkFBQ1A7a0NBQU1JOzs7ZUFGQUE7O0FBT2pCO0FBRU8sU0FBU1YsSUFBSSxFQUFFYyxXQUFXLEtBQUssRUFBMEIsR0FBRyxDQUFDLENBQUM7SUFDbkUscUJBQ0Usc0JBQUNDO1FBQVFWLFdBQVcsb0JBQXFCUyxDQUFBQSxXQUFXLGlCQUFpQixFQUFDOzswQkFDcEUsc0JBQUNFOztrQ0FDQyxxQkFBQ2Q7a0NBQVNZLFdBQVcsMEJBQTBCOztrQ0FDL0MscUJBQUNHO2tDQUNFSCx5QkFDQzs7Z0NBQUU7OENBQ3NCLHFCQUFDSTtnQ0FBSzs7MkNBSTlCOztnQ0FBRTs4Q0FDa0IscUJBQUNBO2dDQUFLOzs7O2tDQUs5QixxQkFBQ2Q7a0NBQ0VVLFdBQ0csK0RBQ0E7Ozs7MEJBR1Isc0JBQUNFOztrQ0FDQyxzQkFBQ0csYUFBSTt3QkFDSGQsV0FBVTt3QkFDVmUsTUFBTU4sV0FBV08sb0JBQVMsQ0FBQ0MsY0FBYyxHQUFHOzs0QkFFM0NSLFdBQVcsOEJBQThCOzBDQUMxQyxxQkFBQ1MseUJBQVk7Z0NBQUNWLE1BQU07Ozs7a0NBRXRCLHFCQUFDUDtrQ0FDRVEsV0FDRyw2Q0FDQTs7Ozs7O0FBS2Q7QUFFTyxTQUFTZjtJQUNkLHFCQUNFLHNCQUFDZ0I7UUFBUVYsV0FBVTs7MEJBQ2pCLHNCQUFDVztnQkFBSVgsV0FBVTs7a0NBQ2IscUJBQUNIO2tDQUFROztrQ0FDVCxzQkFBQ2U7OzRCQUFHOzBDQUVGLHFCQUFDQzs0QkFBSzs7Ozs7MEJBSVYsc0JBQUNGO2dCQUFJWCxXQUFVOztrQ0FDYixzQkFBQ21CO3dCQUFRbkIsV0FBVTs7MENBTWpCLHFCQUFDb0I7Z0NBQ0NDLEtBQUk7Z0NBQ0pDLEtBQUk7Z0NBQ0pDLE9BQU87Z0NBQ1BDLFFBQVE7Z0NBQ1JDLFNBQVE7Z0NBQ1JDLFVBQVM7OzBDQUVYLHNCQUFDZjs7a0RBQ0MscUJBQUNnQixzQkFBUzt3Q0FBQ25CLE1BQU07O2tEQUNqQixxQkFBQ1A7d0NBQUtELFdBQVU7a0RBQWU7O2tEQUMvQixzQkFBQzRCOzs0Q0FBRzswREFFRixxQkFBQ2Y7NENBQUs7OztrREFFUixxQkFBQ2Q7a0RBQUU7O2tEQUlILHNCQUFDZSxhQUFJO3dDQUFDZCxXQUFVO3dDQUFZZSxNQUFLOzs0Q0FBZTswREFDWCxxQkFBQ2MsdUJBQVU7Z0RBQUNyQixNQUFNOzs7Ozs7OztrQ0FJM0Qsc0JBQUNXO3dCQUFRbkIsV0FBVTs7MENBR2pCLHFCQUFDb0I7Z0NBQ0NDLEtBQUk7Z0NBQ0pDLEtBQUk7Z0NBQ0pDLE9BQU87Z0NBQ1BDLFFBQVE7Z0NBQ1JDLFNBQVE7Z0NBQ1JDLFVBQVM7OzBDQUVYLHNCQUFDZjs7a0RBQ0MscUJBQUNtQixrQkFBSzt3Q0FBQ3RCLE1BQU07O2tEQUNiLHFCQUFDUDt3Q0FBS0QsV0FBVTtrREFBZTs7a0RBQy9CLHNCQUFDNEI7OzRDQUFHOzBEQUVGLHFCQUFDZjs0Q0FBSzs7O2tEQUdSLHFCQUFDZDtrREFBRTs7a0RBSUgsc0JBQUNlLGFBQUk7d0NBQUNkLFdBQVU7d0NBQVllLE1BQUs7OzRDQUFhOzBEQUNaLHFCQUFDYyx1QkFBVTtnREFBQ3JCLE1BQU07Ozs7Ozs7Ozs7OztBQU9oRSJ9

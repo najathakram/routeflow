@@ -1,0 +1,29 @@
+b5b8607ed48bc72ebc51aacd8219fec7
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _fs = /*#__PURE__*/ _interop_require_default(require("fs"));
+const _path = /*#__PURE__*/ _interop_require_default(require("path"));
+function _interop_require_default(obj) {
+    return obj && obj.__esModule ? obj : {
+        default: obj
+    };
+}
+/**
+ * #2211 (2): the New Inventory Purchase modal put Bill Date / Terms / Due Date in a bare
+ * `grid grid-cols-3`. At 320px the modal body is ~272px, so each cell is ~80px — narrower than a
+ * date input's intrinsic width — and the row ran ~40px past the viewport. The row stacks below sm
+ * now. This page has no render harness (see scanner-refocus-wiring-b744.test.ts), so this pins
+ * the class wiring; the 320-430px proof is a Playwright capture.
+ */ const src = _fs.default.readFileSync(_path.default.join(__dirname, "page.tsx"), "utf8");
+describe("#2211 — vendor-bill modal date row stacks at narrow widths", ()=>{
+    it("has no unconditional three-column grid", ()=>{
+        expect(src).not.toMatch(/className="grid grid-cols-3 gap-3"/);
+    });
+    it("the Bill Date / Terms / Due Date row is one column below sm, three from sm up", ()=>{
+        expect(src).toMatch(/className="grid grid-cols-1 gap-3 sm:grid-cols-3">\s*<div>\s*<label[^>]*>Bill Date</);
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS92ZW5kb3ItYmlsbHMvbW9kYWwtZGF0ZXMtZ3JpZC1iMjIxMS50ZXN0LnRzIl0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCBmcyBmcm9tIFwiZnNcIjtcbmltcG9ydCBwYXRoIGZyb20gXCJwYXRoXCI7XG5cbi8qKlxuICogIzIyMTEgKDIpOiB0aGUgTmV3IEludmVudG9yeSBQdXJjaGFzZSBtb2RhbCBwdXQgQmlsbCBEYXRlIC8gVGVybXMgLyBEdWUgRGF0ZSBpbiBhIGJhcmVcbiAqIGBncmlkIGdyaWQtY29scy0zYC4gQXQgMzIwcHggdGhlIG1vZGFsIGJvZHkgaXMgfjI3MnB4LCBzbyBlYWNoIGNlbGwgaXMgfjgwcHgg4oCUIG5hcnJvd2VyIHRoYW4gYVxuICogZGF0ZSBpbnB1dCdzIGludHJpbnNpYyB3aWR0aCDigJQgYW5kIHRoZSByb3cgcmFuIH40MHB4IHBhc3QgdGhlIHZpZXdwb3J0LiBUaGUgcm93IHN0YWNrcyBiZWxvdyBzbVxuICogbm93LiBUaGlzIHBhZ2UgaGFzIG5vIHJlbmRlciBoYXJuZXNzIChzZWUgc2Nhbm5lci1yZWZvY3VzLXdpcmluZy1iNzQ0LnRlc3QudHMpLCBzbyB0aGlzIHBpbnNcbiAqIHRoZSBjbGFzcyB3aXJpbmc7IHRoZSAzMjAtNDMwcHggcHJvb2YgaXMgYSBQbGF5d3JpZ2h0IGNhcHR1cmUuXG4gKi9cbmNvbnN0IHNyYyA9IGZzLnJlYWRGaWxlU3luYyhwYXRoLmpvaW4oX19kaXJuYW1lLCBcInBhZ2UudHN4XCIpLCBcInV0ZjhcIik7XG5cbmRlc2NyaWJlKFwiIzIyMTEg4oCUIHZlbmRvci1iaWxsIG1vZGFsIGRhdGUgcm93IHN0YWNrcyBhdCBuYXJyb3cgd2lkdGhzXCIsICgpID0+IHtcbiAgaXQoXCJoYXMgbm8gdW5jb25kaXRpb25hbCB0aHJlZS1jb2x1bW4gZ3JpZFwiLCAoKSA9PiB7XG4gICAgZXhwZWN0KHNyYykubm90LnRvTWF0Y2goL2NsYXNzTmFtZT1cImdyaWQgZ3JpZC1jb2xzLTMgZ2FwLTNcIi8pO1xuICB9KTtcblxuICBpdChcInRoZSBCaWxsIERhdGUgLyBUZXJtcyAvIER1ZSBEYXRlIHJvdyBpcyBvbmUgY29sdW1uIGJlbG93IHNtLCB0aHJlZSBmcm9tIHNtIHVwXCIsICgpID0+IHtcbiAgICBleHBlY3Qoc3JjKS50b01hdGNoKFxuICAgICAgL2NsYXNzTmFtZT1cImdyaWQgZ3JpZC1jb2xzLTEgZ2FwLTMgc206Z3JpZC1jb2xzLTNcIj5cXHMqPGRpdj5cXHMqPGxhYmVsW14+XSo+QmlsbCBEYXRlPC8sXG4gICAgKTtcbiAgfSk7XG59KTtcbiJdLCJuYW1lcyI6WyJzcmMiLCJmcyIsInJlYWRGaWxlU3luYyIsInBhdGgiLCJqb2luIiwiX19kaXJuYW1lIiwiZGVzY3JpYmUiLCJpdCIsImV4cGVjdCIsIm5vdCIsInRvTWF0Y2giXSwibWFwcGluZ3MiOiI7Ozs7MkRBQWU7NkRBQ0U7Ozs7OztBQUVqQjs7Ozs7O0NBTUMsR0FDRCxNQUFNQSxNQUFNQyxXQUFFLENBQUNDLFlBQVksQ0FBQ0MsYUFBSSxDQUFDQyxJQUFJLENBQUNDLFdBQVcsYUFBYTtBQUU5REMsU0FBUyw4REFBOEQ7SUFDckVDLEdBQUcsMENBQTBDO1FBQzNDQyxPQUFPUixLQUFLUyxHQUFHLENBQUNDLE9BQU8sQ0FBQztJQUMxQjtJQUVBSCxHQUFHLGlGQUFpRjtRQUNsRkMsT0FBT1IsS0FBS1UsT0FBTyxDQUNqQjtJQUVKO0FBQ0YifQ==

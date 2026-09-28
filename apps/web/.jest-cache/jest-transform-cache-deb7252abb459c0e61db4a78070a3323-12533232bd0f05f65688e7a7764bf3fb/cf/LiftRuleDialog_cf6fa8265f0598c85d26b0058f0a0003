@@ -1,0 +1,146 @@
+b2cb78a5736882613149db0a94160f17
+"use client";
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+Object.defineProperty(exports, "LiftRuleDialog", {
+    enumerable: true,
+    get: function() {
+        return LiftRuleDialog;
+    }
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+const _web = require("@routeflow/ui/web");
+const _restrictionruleform = require("../../../../../../lib/restriction-rule-form");
+const _restrictionsadminwrite = require("../../../../../../lib/api/restrictions-admin-write");
+const _restrictionrules = require("../../../../../../lib/restriction-rules");
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+function LiftRuleDialog({ rule, onClose }) {
+    const { toast } = (0, _web.useToast)();
+    const lift = (0, _restrictionsadminwrite.useLiftRestriction)();
+    const [reason, setReason] = _react.useState("");
+    const [error, setError] = _react.useState("");
+    // Opened from a card button, not a Radix trigger, so focus would fall to <body> on close: keep the
+    // opener and give focus back (the BlockedLinesDialog pattern).
+    const returnFocusTo = _react.useRef(null);
+    _react.useEffect(()=>{
+        setReason("");
+        setError("");
+    }, [
+        rule?.id
+    ]);
+    const submit = (e)=>{
+        e.preventDefault();
+        if (!rule) return;
+        const trimmed = reason.trim();
+        if (!trimmed) return setError("Add a reason");
+        if (trimmed.length > _restrictionruleform.REASON_MAX) return setError(`Keep the reason under ${_restrictionruleform.REASON_MAX} characters`);
+        setError("");
+        lift.mutate({
+            id: rule.id,
+            reason: trimmed
+        }, {
+            onSuccess: ()=>{
+                toast({
+                    title: "Rule lifted",
+                    variant: "success"
+                });
+                onClose();
+            }
+        });
+    };
+    return /*#__PURE__*/ (0, _jsxruntime.jsx)(_web.Modal, {
+        open: !!rule,
+        onClose: onClose,
+        scroll: true,
+        onOpenAutoFocus: ()=>{
+            returnFocusTo.current = document.activeElement;
+        },
+        onCloseAutoFocus: (e)=>{
+            const el = returnFocusTo.current;
+            returnFocusTo.current = null;
+            if (el && el.isConnected && el !== document.body) {
+                e.preventDefault();
+                el.focus();
+            }
+        },
+        title: "Lift this rule?",
+        description: rule ? `${(0, _restrictionrules.ruleTarget)(rule).name} will stop being restricted straight away. This can't be undone; add a new rule to restrict it again.` : undefined,
+        children: /*#__PURE__*/ (0, _jsxruntime.jsxs)("form", {
+            onSubmit: submit,
+            noValidate: true,
+            className: "space-y-4",
+            children: [
+                /*#__PURE__*/ (0, _jsxruntime.jsx)(_web.Textarea, {
+                    label: "Reason",
+                    rows: 3,
+                    maxLength: _restrictionruleform.REASON_MAX + 50,
+                    value: reason,
+                    onChange: (e)=>setReason(e.target.value),
+                    error: error
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                    className: "flex justify-end gap-3 border-t border-surface-border pt-4",
+                    children: [
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)(_web.Button, {
+                            type: "button",
+                            variant: "secondary",
+                            onClick: onClose,
+                            children: "Cancel"
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)(_web.Button, {
+                            type: "submit",
+                            variant: "danger",
+                            loading: lift.isPending,
+                            children: "Lift rule"
+                        })
+                    ]
+                })
+            ]
+        })
+    });
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS9zZXR0aW5ncy9yZXN0cmljdGlvbnMvcnVsZXMvX2NvbXBvbmVudHMvTGlmdFJ1bGVEaWFsb2cudHN4Il0sInNvdXJjZXNDb250ZW50IjpbIlwidXNlIGNsaWVudFwiO1xuXG5pbXBvcnQgKiBhcyBSZWFjdCBmcm9tIFwicmVhY3RcIjtcbmltcG9ydCB7IEJ1dHRvbiwgTW9kYWwsIFRleHRhcmVhLCB1c2VUb2FzdCB9IGZyb20gXCJAcm91dGVmbG93L3VpL3dlYlwiO1xuaW1wb3J0IHsgUkVBU09OX01BWCB9IGZyb20gXCJAL2xpYi9yZXN0cmljdGlvbi1ydWxlLWZvcm1cIjtcbmltcG9ydCB7IHVzZUxpZnRSZXN0cmljdGlvbiB9IGZyb20gXCJAL2xpYi9hcGkvcmVzdHJpY3Rpb25zLWFkbWluLXdyaXRlXCI7XG5pbXBvcnQgdHlwZSB7IFNlbGxpbmdSZXN0cmljdGlvbkxpc3RJdGVtRHRvIH0gZnJvbSBcIkAvbGliL2FwaS9yZXN0cmljdGlvbnMtYWRtaW5cIjtcbmltcG9ydCB7IHJ1bGVUYXJnZXQgfSBmcm9tIFwiQC9saWIvcmVzdHJpY3Rpb24tcnVsZXNcIjtcblxuLyoqXG4gKiBMaWZ0LXJ1bGUgZGlhbG9nIChMYW5lIFIgc3RlcCA1Yi0zKTogZW5kcyBhIHJ1bGUgbm93LCB3aXRoIGEgcmVhc29uIGZvciB0aGUgYXVkaXQgdHJhaWwuIEEgc2VydmVyXG4gKiByZWZ1c2FsIChcImFscmVhZHkgYmVlbiBsaWZ0ZWRcIikgcmVhY2hlcyB0aGUgdXNlciB0aHJvdWdoIHRoZSBhcHAncyBvbmUgZ2xvYmFsIHRvYXN0OyB0aGUgZGlhbG9nXG4gKiBhZGRzIG5vIHNlY29uZCBtZXNzYWdlIGFuZCBzdGF5cyBvcGVuLlxuICovXG5leHBvcnQgZnVuY3Rpb24gTGlmdFJ1bGVEaWFsb2coe1xuICBydWxlLFxuICBvbkNsb3NlLFxufToge1xuICBydWxlOiBTZWxsaW5nUmVzdHJpY3Rpb25MaXN0SXRlbUR0byB8IG51bGw7XG4gIG9uQ2xvc2U6ICgpID0+IHZvaWQ7XG59KSB7XG4gIGNvbnN0IHsgdG9hc3QgfSA9IHVzZVRvYXN0KCk7XG4gIGNvbnN0IGxpZnQgPSB1c2VMaWZ0UmVzdHJpY3Rpb24oKTtcbiAgY29uc3QgW3JlYXNvbiwgc2V0UmVhc29uXSA9IFJlYWN0LnVzZVN0YXRlKFwiXCIpO1xuICBjb25zdCBbZXJyb3IsIHNldEVycm9yXSA9IFJlYWN0LnVzZVN0YXRlKFwiXCIpO1xuICAvLyBPcGVuZWQgZnJvbSBhIGNhcmQgYnV0dG9uLCBub3QgYSBSYWRpeCB0cmlnZ2VyLCBzbyBmb2N1cyB3b3VsZCBmYWxsIHRvIDxib2R5PiBvbiBjbG9zZToga2VlcCB0aGVcbiAgLy8gb3BlbmVyIGFuZCBnaXZlIGZvY3VzIGJhY2sgKHRoZSBCbG9ja2VkTGluZXNEaWFsb2cgcGF0dGVybikuXG4gIGNvbnN0IHJldHVybkZvY3VzVG8gPSBSZWFjdC51c2VSZWY8SFRNTEVsZW1lbnQgfCBudWxsPihudWxsKTtcbiAgUmVhY3QudXNlRWZmZWN0KCgpID0+IHtcbiAgICBzZXRSZWFzb24oXCJcIik7XG4gICAgc2V0RXJyb3IoXCJcIik7XG4gIH0sIFtydWxlPy5pZF0pO1xuXG4gIGNvbnN0IHN1Ym1pdCA9IChlOiBSZWFjdC5Gb3JtRXZlbnQpID0+IHtcbiAgICBlLnByZXZlbnREZWZhdWx0KCk7XG4gICAgaWYgKCFydWxlKSByZXR1cm47XG4gICAgY29uc3QgdHJpbW1lZCA9IHJlYXNvbi50cmltKCk7XG4gICAgaWYgKCF0cmltbWVkKSByZXR1cm4gc2V0RXJyb3IoXCJBZGQgYSByZWFzb25cIik7XG4gICAgaWYgKHRyaW1tZWQubGVuZ3RoID4gUkVBU09OX01BWClcbiAgICAgIHJldHVybiBzZXRFcnJvcihgS2VlcCB0aGUgcmVhc29uIHVuZGVyICR7UkVBU09OX01BWH0gY2hhcmFjdGVyc2ApO1xuICAgIHNldEVycm9yKFwiXCIpO1xuICAgIGxpZnQubXV0YXRlKFxuICAgICAgeyBpZDogcnVsZS5pZCwgcmVhc29uOiB0cmltbWVkIH0sXG4gICAgICB7XG4gICAgICAgIG9uU3VjY2VzczogKCkgPT4ge1xuICAgICAgICAgIHRvYXN0KHsgdGl0bGU6IFwiUnVsZSBsaWZ0ZWRcIiwgdmFyaWFudDogXCJzdWNjZXNzXCIgfSk7XG4gICAgICAgICAgb25DbG9zZSgpO1xuICAgICAgICB9LFxuICAgICAgfSxcbiAgICApO1xuICB9O1xuXG4gIHJldHVybiAoXG4gICAgPE1vZGFsXG4gICAgICBvcGVuPXshIXJ1bGV9XG4gICAgICBvbkNsb3NlPXtvbkNsb3NlfVxuICAgICAgc2Nyb2xsXG4gICAgICBvbk9wZW5BdXRvRm9jdXM9eygpID0+IHtcbiAgICAgICAgcmV0dXJuRm9jdXNUby5jdXJyZW50ID0gZG9jdW1lbnQuYWN0aXZlRWxlbWVudCBhcyBIVE1MRWxlbWVudCB8IG51bGw7XG4gICAgICB9fVxuICAgICAgb25DbG9zZUF1dG9Gb2N1cz17KGUpID0+IHtcbiAgICAgICAgY29uc3QgZWwgPSByZXR1cm5Gb2N1c1RvLmN1cnJlbnQ7XG4gICAgICAgIHJldHVybkZvY3VzVG8uY3VycmVudCA9IG51bGw7XG4gICAgICAgIGlmIChlbCAmJiBlbC5pc0Nvbm5lY3RlZCAmJiBlbCAhPT0gZG9jdW1lbnQuYm9keSkge1xuICAgICAgICAgIGUucHJldmVudERlZmF1bHQoKTtcbiAgICAgICAgICBlbC5mb2N1cygpO1xuICAgICAgICB9XG4gICAgICB9fVxuICAgICAgdGl0bGU9XCJMaWZ0IHRoaXMgcnVsZT9cIlxuICAgICAgZGVzY3JpcHRpb249e1xuICAgICAgICBydWxlXG4gICAgICAgICAgPyBgJHtydWxlVGFyZ2V0KHJ1bGUpLm5hbWV9IHdpbGwgc3RvcCBiZWluZyByZXN0cmljdGVkIHN0cmFpZ2h0IGF3YXkuIFRoaXMgY2FuJ3QgYmUgdW5kb25lOyBhZGQgYSBuZXcgcnVsZSB0byByZXN0cmljdCBpdCBhZ2Fpbi5gXG4gICAgICAgICAgOiB1bmRlZmluZWRcbiAgICAgIH1cbiAgICA+XG4gICAgICA8Zm9ybSBvblN1Ym1pdD17c3VibWl0fSBub1ZhbGlkYXRlIGNsYXNzTmFtZT1cInNwYWNlLXktNFwiPlxuICAgICAgICA8VGV4dGFyZWFcbiAgICAgICAgICBsYWJlbD1cIlJlYXNvblwiXG4gICAgICAgICAgcm93cz17M31cbiAgICAgICAgICBtYXhMZW5ndGg9e1JFQVNPTl9NQVggKyA1MH1cbiAgICAgICAgICB2YWx1ZT17cmVhc29ufVxuICAgICAgICAgIG9uQ2hhbmdlPXsoZSkgPT4gc2V0UmVhc29uKGUudGFyZ2V0LnZhbHVlKX1cbiAgICAgICAgICBlcnJvcj17ZXJyb3J9XG4gICAgICAgIC8+XG4gICAgICAgIDxkaXYgY2xhc3NOYW1lPVwiZmxleCBqdXN0aWZ5LWVuZCBnYXAtMyBib3JkZXItdCBib3JkZXItc3VyZmFjZS1ib3JkZXIgcHQtNFwiPlxuICAgICAgICAgIDxCdXR0b24gdHlwZT1cImJ1dHRvblwiIHZhcmlhbnQ9XCJzZWNvbmRhcnlcIiBvbkNsaWNrPXtvbkNsb3NlfT5cbiAgICAgICAgICAgIENhbmNlbFxuICAgICAgICAgIDwvQnV0dG9uPlxuICAgICAgICAgIDxCdXR0b24gdHlwZT1cInN1Ym1pdFwiIHZhcmlhbnQ9XCJkYW5nZXJcIiBsb2FkaW5nPXtsaWZ0LmlzUGVuZGluZ30+XG4gICAgICAgICAgICBMaWZ0IHJ1bGVcbiAgICAgICAgICA8L0J1dHRvbj5cbiAgICAgICAgPC9kaXY+XG4gICAgICA8L2Zvcm0+XG4gICAgPC9Nb2RhbD5cbiAgKTtcbn1cbiJdLCJuYW1lcyI6WyJMaWZ0UnVsZURpYWxvZyIsInJ1bGUiLCJvbkNsb3NlIiwidG9hc3QiLCJ1c2VUb2FzdCIsImxpZnQiLCJ1c2VMaWZ0UmVzdHJpY3Rpb24iLCJyZWFzb24iLCJzZXRSZWFzb24iLCJSZWFjdCIsInVzZVN0YXRlIiwiZXJyb3IiLCJzZXRFcnJvciIsInJldHVybkZvY3VzVG8iLCJ1c2VSZWYiLCJ1c2VFZmZlY3QiLCJpZCIsInN1Ym1pdCIsImUiLCJwcmV2ZW50RGVmYXVsdCIsInRyaW1tZWQiLCJ0cmltIiwibGVuZ3RoIiwiUkVBU09OX01BWCIsIm11dGF0ZSIsIm9uU3VjY2VzcyIsInRpdGxlIiwidmFyaWFudCIsIk1vZGFsIiwib3BlbiIsInNjcm9sbCIsIm9uT3BlbkF1dG9Gb2N1cyIsImN1cnJlbnQiLCJkb2N1bWVudCIsImFjdGl2ZUVsZW1lbnQiLCJvbkNsb3NlQXV0b0ZvY3VzIiwiZWwiLCJpc0Nvbm5lY3RlZCIsImJvZHkiLCJmb2N1cyIsImRlc2NyaXB0aW9uIiwicnVsZVRhcmdldCIsIm5hbWUiLCJ1bmRlZmluZWQiLCJmb3JtIiwib25TdWJtaXQiLCJub1ZhbGlkYXRlIiwiY2xhc3NOYW1lIiwiVGV4dGFyZWEiLCJsYWJlbCIsInJvd3MiLCJtYXhMZW5ndGgiLCJ2YWx1ZSIsIm9uQ2hhbmdlIiwidGFyZ2V0IiwiZGl2IiwiQnV0dG9uIiwidHlwZSIsIm9uQ2xpY2siLCJsb2FkaW5nIiwiaXNQZW5kaW5nIl0sIm1hcHBpbmdzIjoiQUFBQTs7Ozs7K0JBY2dCQTs7O2VBQUFBOzs7OytEQVpPO3FCQUMyQjtxQ0FDdkI7d0NBQ1E7a0NBRVI7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7OztBQU9wQixTQUFTQSxlQUFlLEVBQzdCQyxJQUFJLEVBQ0pDLE9BQU8sRUFJUjtJQUNDLE1BQU0sRUFBRUMsS0FBSyxFQUFFLEdBQUdDLElBQUFBLGFBQVE7SUFDMUIsTUFBTUMsT0FBT0MsSUFBQUEsMENBQWtCO0lBQy9CLE1BQU0sQ0FBQ0MsUUFBUUMsVUFBVSxHQUFHQyxPQUFNQyxRQUFRLENBQUM7SUFDM0MsTUFBTSxDQUFDQyxPQUFPQyxTQUFTLEdBQUdILE9BQU1DLFFBQVEsQ0FBQztJQUN6QyxtR0FBbUc7SUFDbkcsK0RBQStEO0lBQy9ELE1BQU1HLGdCQUFnQkosT0FBTUssTUFBTSxDQUFxQjtJQUN2REwsT0FBTU0sU0FBUyxDQUFDO1FBQ2RQLFVBQVU7UUFDVkksU0FBUztJQUNYLEdBQUc7UUFBQ1gsTUFBTWU7S0FBRztJQUViLE1BQU1DLFNBQVMsQ0FBQ0M7UUFDZEEsRUFBRUMsY0FBYztRQUNoQixJQUFJLENBQUNsQixNQUFNO1FBQ1gsTUFBTW1CLFVBQVViLE9BQU9jLElBQUk7UUFDM0IsSUFBSSxDQUFDRCxTQUFTLE9BQU9SLFNBQVM7UUFDOUIsSUFBSVEsUUFBUUUsTUFBTSxHQUFHQywrQkFBVSxFQUM3QixPQUFPWCxTQUFTLENBQUMsc0JBQXNCLEVBQUVXLCtCQUFVLENBQUMsV0FBVyxDQUFDO1FBQ2xFWCxTQUFTO1FBQ1RQLEtBQUttQixNQUFNLENBQ1Q7WUFBRVIsSUFBSWYsS0FBS2UsRUFBRTtZQUFFVCxRQUFRYTtRQUFRLEdBQy9CO1lBQ0VLLFdBQVc7Z0JBQ1R0QixNQUFNO29CQUFFdUIsT0FBTztvQkFBZUMsU0FBUztnQkFBVTtnQkFDakR6QjtZQUNGO1FBQ0Y7SUFFSjtJQUVBLHFCQUNFLHFCQUFDMEIsVUFBSztRQUNKQyxNQUFNLENBQUMsQ0FBQzVCO1FBQ1JDLFNBQVNBO1FBQ1Q0QixNQUFNO1FBQ05DLGlCQUFpQjtZQUNmbEIsY0FBY21CLE9BQU8sR0FBR0MsU0FBU0MsYUFBYTtRQUNoRDtRQUNBQyxrQkFBa0IsQ0FBQ2pCO1lBQ2pCLE1BQU1rQixLQUFLdkIsY0FBY21CLE9BQU87WUFDaENuQixjQUFjbUIsT0FBTyxHQUFHO1lBQ3hCLElBQUlJLE1BQU1BLEdBQUdDLFdBQVcsSUFBSUQsT0FBT0gsU0FBU0ssSUFBSSxFQUFFO2dCQUNoRHBCLEVBQUVDLGNBQWM7Z0JBQ2hCaUIsR0FBR0csS0FBSztZQUNWO1FBQ0Y7UUFDQWIsT0FBTTtRQUNOYyxhQUNFdkMsT0FDSSxHQUFHd0MsSUFBQUEsNEJBQVUsRUFBQ3hDLE1BQU15QyxJQUFJLENBQUMscUdBQXFHLENBQUMsR0FDL0hDO2tCQUdOLGNBQUEsc0JBQUNDO1lBQUtDLFVBQVU1QjtZQUFRNkIsVUFBVTtZQUFDQyxXQUFVOzs4QkFDM0MscUJBQUNDLGFBQVE7b0JBQ1BDLE9BQU07b0JBQ05DLE1BQU07b0JBQ05DLFdBQVc1QiwrQkFBVSxHQUFHO29CQUN4QjZCLE9BQU83QztvQkFDUDhDLFVBQVUsQ0FBQ25DLElBQU1WLFVBQVVVLEVBQUVvQyxNQUFNLENBQUNGLEtBQUs7b0JBQ3pDekMsT0FBT0E7OzhCQUVULHNCQUFDNEM7b0JBQUlSLFdBQVU7O3NDQUNiLHFCQUFDUyxXQUFNOzRCQUFDQyxNQUFLOzRCQUFTOUIsU0FBUTs0QkFBWStCLFNBQVN4RDtzQ0FBUzs7c0NBRzVELHFCQUFDc0QsV0FBTTs0QkFBQ0MsTUFBSzs0QkFBUzlCLFNBQVE7NEJBQVNnQyxTQUFTdEQsS0FBS3VELFNBQVM7c0NBQUU7Ozs7Ozs7QUFPMUUifQ==

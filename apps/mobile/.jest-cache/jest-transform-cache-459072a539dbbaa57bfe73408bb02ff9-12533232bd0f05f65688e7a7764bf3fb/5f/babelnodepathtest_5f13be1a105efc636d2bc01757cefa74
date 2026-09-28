@@ -1,0 +1,77 @@
+081d7c2547f154ed0778b2fa47be96ab
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+/**
+ * #2312: babel.config.js puts apps/mobile/node_modules on Node's global resolution paths, so
+ * babel-preset-expo (hoisted to the repo root) can find expo-router (nested under apps/mobile) and
+ * keep its router plugin, on every build worker, with no hard-coded NODE_PATH. Without it an iOS
+ * bundle dies with "Invalid call at line 2: process.env.EXPO_ROUTER_APP_ROOT" (EAS build 4cbd03bf).
+ */
+const path = __importStar(require("path"));
+const child_process_1 = require("child_process");
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const babelConfig = require("../babel.config.js");
+const appDir = path.resolve(__dirname, "..");
+const appNodeModules = path.join(appDir, "node_modules");
+describe("babel.config.js node_modules injection (#2312)", () => {
+    const { withAppNodeModules } = babelConfig;
+    it("puts the app's node_modules first, keeps what was there, and is idempotent", () => {
+        expect(withAppNodeModules(undefined, appDir)).toBe(appNodeModules);
+        expect(withAppNodeModules("/elsewhere", appDir)).toBe([appNodeModules, "/elsewhere"].join(path.delimiter));
+        const once = withAppNodeModules("/elsewhere", appDir);
+        expect(withAppNodeModules(once, appDir)).toBe(once);
+    });
+    it("loading the config puts the app's node_modules on NODE_PATH", () => {
+        expect((process.env.NODE_PATH ?? "").split(path.delimiter)).toContain(appNodeModules);
+    });
+    it("in a real Node process, expo-router resolves FROM babel-preset-expo's own location (its hasModule probe)", () => {
+        // Jest's resolver ignores a runtime NODE_PATH, so this runs in plain Node with NODE_PATH unset
+        // (what an EAS worker now gets): load babel.config.js, then resolve expo-router the way the
+        // hoisted preset does. Red if the injection is removed while npm nests expo-router under
+        // apps/mobile/node_modules (it does).
+        const script = [
+            'require("./babel.config.js");',
+            'const { createRequire } = require("module");',
+            'createRequire(require.resolve("babel-preset-expo")).resolve("expo-router");',
+        ].join("\n");
+        const env = { ...process.env };
+        delete env.NODE_PATH;
+        const run = (0, child_process_1.spawnSync)(process.execPath, ["-e", script], { cwd: appDir, env, encoding: "utf8" });
+        expect(run.stderr).toBe("");
+        expect(run.status).toBe(0);
+    });
+});
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvX190ZXN0c19fL2JhYmVsLW5vZGUtcGF0aC50ZXN0LnRzIiwibWFwcGluZ3MiOiI7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7O0FBQUE7Ozs7O0dBS0c7QUFDSCwyQ0FBNkI7QUFDN0IsaURBQTBDO0FBRTFDLDhEQUE4RDtBQUM5RCxNQUFNLFdBQVcsR0FBRyxPQUFPLENBQUMsb0JBQW9CLENBQUMsQ0FBQztBQUVsRCxNQUFNLE1BQU0sR0FBRyxJQUFJLENBQUMsT0FBTyxDQUFDLFNBQVMsRUFBRSxJQUFJLENBQUMsQ0FBQztBQUM3QyxNQUFNLGNBQWMsR0FBRyxJQUFJLENBQUMsSUFBSSxDQUFDLE1BQU0sRUFBRSxjQUFjLENBQUMsQ0FBQztBQUV6RCxRQUFRLENBQUMsZ0RBQWdELEVBQUUsR0FBRyxFQUFFO0lBQzlELE1BQU0sRUFBRSxrQkFBa0IsRUFBRSxHQUFHLFdBQVcsQ0FBQztJQUUzQyxFQUFFLENBQUMsNEVBQTRFLEVBQUUsR0FBRyxFQUFFO1FBQ3BGLE1BQU0sQ0FBQyxrQkFBa0IsQ0FBQyxTQUFTLEVBQUUsTUFBTSxDQUFDLENBQUMsQ0FBQyxJQUFJLENBQUMsY0FBYyxDQUFDLENBQUM7UUFDbkUsTUFBTSxDQUFDLGtCQUFrQixDQUFDLFlBQVksRUFBRSxNQUFNLENBQUMsQ0FBQyxDQUFDLElBQUksQ0FDbkQsQ0FBQyxjQUFjLEVBQUUsWUFBWSxDQUFDLENBQUMsSUFBSSxDQUFDLElBQUksQ0FBQyxTQUFTLENBQUMsQ0FDcEQsQ0FBQztRQUNGLE1BQU0sSUFBSSxHQUFHLGtCQUFrQixDQUFDLFlBQVksRUFBRSxNQUFNLENBQUMsQ0FBQztRQUN0RCxNQUFNLENBQUMsa0JBQWtCLENBQUMsSUFBSSxFQUFFLE1BQU0sQ0FBQyxDQUFDLENBQUMsSUFBSSxDQUFDLElBQUksQ0FBQyxDQUFDO0lBQ3RELENBQUMsQ0FBQyxDQUFDO0lBRUgsRUFBRSxDQUFDLDZEQUE2RCxFQUFFLEdBQUcsRUFBRTtRQUNyRSxNQUFNLENBQUMsQ0FBQyxPQUFPLENBQUMsR0FBRyxDQUFDLFNBQVMsSUFBSSxFQUFFLENBQUMsQ0FBQyxLQUFLLENBQUMsSUFBSSxDQUFDLFNBQVMsQ0FBQyxDQUFDLENBQUMsU0FBUyxDQUFDLGNBQWMsQ0FBQyxDQUFDO0lBQ3hGLENBQUMsQ0FBQyxDQUFDO0lBRUgsRUFBRSxDQUFDLDBHQUEwRyxFQUFFLEdBQUcsRUFBRTtRQUNsSCwrRkFBK0Y7UUFDL0YsNEZBQTRGO1FBQzVGLHlGQUF5RjtRQUN6RixzQ0FBc0M7UUFDdEMsTUFBTSxNQUFNLEdBQUc7WUFDYiwrQkFBK0I7WUFDL0IsOENBQThDO1lBQzlDLDZFQUE2RTtTQUM5RSxDQUFDLElBQUksQ0FBQyxJQUFJLENBQUMsQ0FBQztRQUNiLE1BQU0sR0FBRyxHQUFHLEVBQUUsR0FBRyxPQUFPLENBQUMsR0FBRyxFQUFFLENBQUM7UUFDL0IsT0FBTyxHQUFHLENBQUMsU0FBUyxDQUFDO1FBQ3JCLE1BQU0sR0FBRyxHQUFHLElBQUEseUJBQVMsRUFBQyxPQUFPLENBQUMsUUFBUSxFQUFFLENBQUMsSUFBSSxFQUFFLE1BQU0sQ0FBQyxFQUFFLEVBQUUsR0FBRyxFQUFFLE1BQU0sRUFBRSxHQUFHLEVBQUUsUUFBUSxFQUFFLE1BQU0sRUFBRSxDQUFDLENBQUM7UUFDaEcsTUFBTSxDQUFDLEdBQUcsQ0FBQyxNQUFNLENBQUMsQ0FBQyxJQUFJLENBQUMsRUFBRSxDQUFDLENBQUM7UUFDNUIsTUFBTSxDQUFDLEdBQUcsQ0FBQyxNQUFNLENBQUMsQ0FBQyxJQUFJLENBQUMsQ0FBQyxDQUFDLENBQUM7SUFDN0IsQ0FBQyxDQUFDLENBQUM7QUFDTCxDQUFDLENBQUMsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9hcHBzL21vYmlsZS9fX3Rlc3RzX18vYmFiZWwtbm9kZS1wYXRoLnRlc3QudHMiXSwic291cmNlc0NvbnRlbnQiOlsiLyoqXG4gKiAjMjMxMjogYmFiZWwuY29uZmlnLmpzIHB1dHMgYXBwcy9tb2JpbGUvbm9kZV9tb2R1bGVzIG9uIE5vZGUncyBnbG9iYWwgcmVzb2x1dGlvbiBwYXRocywgc29cbiAqIGJhYmVsLXByZXNldC1leHBvIChob2lzdGVkIHRvIHRoZSByZXBvIHJvb3QpIGNhbiBmaW5kIGV4cG8tcm91dGVyIChuZXN0ZWQgdW5kZXIgYXBwcy9tb2JpbGUpIGFuZFxuICoga2VlcCBpdHMgcm91dGVyIHBsdWdpbiwgb24gZXZlcnkgYnVpbGQgd29ya2VyLCB3aXRoIG5vIGhhcmQtY29kZWQgTk9ERV9QQVRILiBXaXRob3V0IGl0IGFuIGlPU1xuICogYnVuZGxlIGRpZXMgd2l0aCBcIkludmFsaWQgY2FsbCBhdCBsaW5lIDI6IHByb2Nlc3MuZW52LkVYUE9fUk9VVEVSX0FQUF9ST09UXCIgKEVBUyBidWlsZCA0Y2JkMDNiZikuXG4gKi9cbmltcG9ydCAqIGFzIHBhdGggZnJvbSBcInBhdGhcIjtcbmltcG9ydCB7IHNwYXduU3luYyB9IGZyb20gXCJjaGlsZF9wcm9jZXNzXCI7XG5cbi8vIGVzbGludC1kaXNhYmxlLW5leHQtbGluZSBAdHlwZXNjcmlwdC1lc2xpbnQvbm8tdmFyLXJlcXVpcmVzXG5jb25zdCBiYWJlbENvbmZpZyA9IHJlcXVpcmUoXCIuLi9iYWJlbC5jb25maWcuanNcIik7XG5cbmNvbnN0IGFwcERpciA9IHBhdGgucmVzb2x2ZShfX2Rpcm5hbWUsIFwiLi5cIik7XG5jb25zdCBhcHBOb2RlTW9kdWxlcyA9IHBhdGguam9pbihhcHBEaXIsIFwibm9kZV9tb2R1bGVzXCIpO1xuXG5kZXNjcmliZShcImJhYmVsLmNvbmZpZy5qcyBub2RlX21vZHVsZXMgaW5qZWN0aW9uICgjMjMxMilcIiwgKCkgPT4ge1xuICBjb25zdCB7IHdpdGhBcHBOb2RlTW9kdWxlcyB9ID0gYmFiZWxDb25maWc7XG5cbiAgaXQoXCJwdXRzIHRoZSBhcHAncyBub2RlX21vZHVsZXMgZmlyc3QsIGtlZXBzIHdoYXQgd2FzIHRoZXJlLCBhbmQgaXMgaWRlbXBvdGVudFwiLCAoKSA9PiB7XG4gICAgZXhwZWN0KHdpdGhBcHBOb2RlTW9kdWxlcyh1bmRlZmluZWQsIGFwcERpcikpLnRvQmUoYXBwTm9kZU1vZHVsZXMpO1xuICAgIGV4cGVjdCh3aXRoQXBwTm9kZU1vZHVsZXMoXCIvZWxzZXdoZXJlXCIsIGFwcERpcikpLnRvQmUoXG4gICAgICBbYXBwTm9kZU1vZHVsZXMsIFwiL2Vsc2V3aGVyZVwiXS5qb2luKHBhdGguZGVsaW1pdGVyKSxcbiAgICApO1xuICAgIGNvbnN0IG9uY2UgPSB3aXRoQXBwTm9kZU1vZHVsZXMoXCIvZWxzZXdoZXJlXCIsIGFwcERpcik7XG4gICAgZXhwZWN0KHdpdGhBcHBOb2RlTW9kdWxlcyhvbmNlLCBhcHBEaXIpKS50b0JlKG9uY2UpO1xuICB9KTtcblxuICBpdChcImxvYWRpbmcgdGhlIGNvbmZpZyBwdXRzIHRoZSBhcHAncyBub2RlX21vZHVsZXMgb24gTk9ERV9QQVRIXCIsICgpID0+IHtcbiAgICBleHBlY3QoKHByb2Nlc3MuZW52Lk5PREVfUEFUSCA/PyBcIlwiKS5zcGxpdChwYXRoLmRlbGltaXRlcikpLnRvQ29udGFpbihhcHBOb2RlTW9kdWxlcyk7XG4gIH0pO1xuXG4gIGl0KFwiaW4gYSByZWFsIE5vZGUgcHJvY2VzcywgZXhwby1yb3V0ZXIgcmVzb2x2ZXMgRlJPTSBiYWJlbC1wcmVzZXQtZXhwbydzIG93biBsb2NhdGlvbiAoaXRzIGhhc01vZHVsZSBwcm9iZSlcIiwgKCkgPT4ge1xuICAgIC8vIEplc3QncyByZXNvbHZlciBpZ25vcmVzIGEgcnVudGltZSBOT0RFX1BBVEgsIHNvIHRoaXMgcnVucyBpbiBwbGFpbiBOb2RlIHdpdGggTk9ERV9QQVRIIHVuc2V0XG4gICAgLy8gKHdoYXQgYW4gRUFTIHdvcmtlciBub3cgZ2V0cyk6IGxvYWQgYmFiZWwuY29uZmlnLmpzLCB0aGVuIHJlc29sdmUgZXhwby1yb3V0ZXIgdGhlIHdheSB0aGVcbiAgICAvLyBob2lzdGVkIHByZXNldCBkb2VzLiBSZWQgaWYgdGhlIGluamVjdGlvbiBpcyByZW1vdmVkIHdoaWxlIG5wbSBuZXN0cyBleHBvLXJvdXRlciB1bmRlclxuICAgIC8vIGFwcHMvbW9iaWxlL25vZGVfbW9kdWxlcyAoaXQgZG9lcykuXG4gICAgY29uc3Qgc2NyaXB0ID0gW1xuICAgICAgJ3JlcXVpcmUoXCIuL2JhYmVsLmNvbmZpZy5qc1wiKTsnLFxuICAgICAgJ2NvbnN0IHsgY3JlYXRlUmVxdWlyZSB9ID0gcmVxdWlyZShcIm1vZHVsZVwiKTsnLFxuICAgICAgJ2NyZWF0ZVJlcXVpcmUocmVxdWlyZS5yZXNvbHZlKFwiYmFiZWwtcHJlc2V0LWV4cG9cIikpLnJlc29sdmUoXCJleHBvLXJvdXRlclwiKTsnLFxuICAgIF0uam9pbihcIlxcblwiKTtcbiAgICBjb25zdCBlbnYgPSB7IC4uLnByb2Nlc3MuZW52IH07XG4gICAgZGVsZXRlIGVudi5OT0RFX1BBVEg7XG4gICAgY29uc3QgcnVuID0gc3Bhd25TeW5jKHByb2Nlc3MuZXhlY1BhdGgsIFtcIi1lXCIsIHNjcmlwdF0sIHsgY3dkOiBhcHBEaXIsIGVudiwgZW5jb2Rpbmc6IFwidXRmOFwiIH0pO1xuICAgIGV4cGVjdChydW4uc3RkZXJyKS50b0JlKFwiXCIpO1xuICAgIGV4cGVjdChydW4uc3RhdHVzKS50b0JlKDApO1xuICB9KTtcbn0pO1xuIl0sInZlcnNpb24iOjN9

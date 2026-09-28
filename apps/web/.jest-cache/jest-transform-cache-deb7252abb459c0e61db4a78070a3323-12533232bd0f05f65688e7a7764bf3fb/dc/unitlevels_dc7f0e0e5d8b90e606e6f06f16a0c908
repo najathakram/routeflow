@@ -1,0 +1,185 @@
+7edfebe5a356db5179c82d6d33e6460c
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+exports.UnknownUnitError = exports.PIECE_LABEL = exports.InvalidTierError = void 0;
+exports.resolveLevelPrice = resolveLevelPrice;
+exports.resolveLadderLevel = resolveLadderLevel;
+exports.resolveUnitPrice = resolveUnitPrice;
+exports.toBaseQty = toBaseQty;
+exports.fromBaseQty = fromBaseQty;
+const pricing_1 = require("./pricing");
+const tier_pricing_1 = require("./tier-pricing");
+/**
+ * A level price counts as EXPLICIT only when it is a positive number — the same convention as
+ * `getTierPrice`'s `|| fallback` (and `cascadeTierPrices`, which writes "0.00" to mean "inherit
+ * again"). NULL, 0, NaN and negatives are all "derive". Coerces Decimal/string so an operator's
+ * typed price can never silently round to 0.00.
+ */ function explicitPrice(v) {
+    if (v == null) return null;
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? n : null;
+}
+/** Price for ONE resolved level at a given customer tier (the low-level rule). */ function resolveLevelPrice(input) {
+    const { packPrice, packFactor, tierPackPrice, level, tier } = input;
+    const tierPrices = [
+        level.price,
+        level.priceTier2,
+        level.priceTier3,
+        level.priceTier4,
+        level.priceTier5
+    ];
+    const explicit = explicitPrice(tierPrices[tier - 1]);
+    if (explicit != null) return (0, pricing_1.roundMoney)(explicit);
+    const base = explicitPrice(level.price);
+    // A zero pack price gives no ladder to scale by — the level's own price stands unscaled.
+    if (base != null) return (0, pricing_1.roundMoney)(packPrice > 0 ? base * tierPackPrice / packPrice : base);
+    return (0, pricing_1.roundMoney)(tierPackPrice * level.factorToBase / packFactor);
+}
+// ─── The ladder (units_v1, step 1) ────────────────────────────────────────────
+// A product's ladder = its pack (`unitsPerBox`, `pricePerUnit` + tiers) + zero or more
+// `ProductUnit` rows + an implicit Piece (factor 1). The SERVER resolves a line's factor
+// from this ladder by label — a client-supplied factor is never trusted (B13 posture).
+/** Thrown for a tier that is not an integer 1..5 — callers map it to a 400. */ class InvalidTierError extends Error {
+    constructor(tier){
+        super(`Invalid price tier "${String(tier)}" (expected an integer 1-5)`);
+        this.tier = tier;
+        this.name = "InvalidTierError";
+    }
+}
+exports.InvalidTierError = InvalidTierError;
+/** `Number()` at the boundary, then strict: blank/NaN/fractional/out-of-range never become tier 1. */ function toTier(raw) {
+    const n = typeof raw === "string" && raw.trim() === "" ? Number.NaN : Number(raw);
+    if (!Number.isInteger(n) || n < 1 || n > 5) throw new InvalidTierError(raw);
+    return n;
+}
+exports.PIECE_LABEL = "Piece";
+/** Thrown for a label the product's ladder does not define — callers map it to a 400. */ class UnknownUnitError extends Error {
+    constructor(unitLabel){
+        super(`Unknown unit "${unitLabel}" for this product`);
+        this.unitLabel = unitLabel;
+        this.name = "UnknownUnitError";
+    }
+}
+exports.UnknownUnitError = UnknownUnitError;
+const norm = (s)=>s.trim().toLowerCase();
+const noLevel = {
+    price: null,
+    priceTier2: null,
+    priceTier3: null,
+    priceTier4: null,
+    priceTier5: null
+};
+function packFactorOf(product) {
+    const upb = Math.trunc(Number(product.unitsPerBox ?? 0));
+    return upb > 1 ? upb : 1;
+}
+function packLabelOf(product) {
+    return (product.unit ?? "").trim() || "Box";
+}
+/** Only rows with a positive integer factor can be sold — a corrupt row is invisible, never priced. */ const validRows = (units)=>units.filter((u)=>Number.isInteger(u.factorToBase) && u.factorToBase >= 1);
+/** Exact label first, then case-insensitive — "Case" and "case" may both exist on one product. */ function findUnitRow(units, label) {
+    const rows = validRows(units);
+    return rows.find((u)=>u.label === label) ?? rows.find((u)=>norm(u.label) === norm(label));
+}
+/**
+ * Resolve `unitLabel` against the ladder. Absent/blank ⇒ the pack (today's behaviour, byte for
+ * byte). Order: "Piece" (always factor 1, even if the pack itself is labelled "Piece") → the
+ * pack's own label (the pack wins over a colliding row) → a `ProductUnit` row → UnknownUnitError.
+ */ function resolveLadderLevel(product, units, unitLabel) {
+    const label = (unitLabel ?? "").trim();
+    const pack = {
+        label: packLabelOf(product),
+        factorToBase: packFactorOf(product),
+        kind: "pack"
+    };
+    if (!label) return {
+        ...pack,
+        row: null
+    };
+    if (norm(label) === norm(exports.PIECE_LABEL)) {
+        const row = validRows(units).find((u)=>u.factorToBase === 1 && norm(u.label) === norm(exports.PIECE_LABEL));
+        return {
+            label: exports.PIECE_LABEL,
+            factorToBase: 1,
+            kind: "piece",
+            row: row ?? null
+        };
+    }
+    if (norm(label) === norm(pack.label)) return {
+        ...pack,
+        row: null
+    };
+    const row = findUnitRow(units, label);
+    if (!row) throw new UnknownUnitError(label);
+    return {
+        label: row.label,
+        factorToBase: row.factorToBase,
+        kind: row.factorToBase === 1 ? "piece" : "level",
+        row
+    };
+}
+/**
+ * Price PER ONE unit of `unitLabel` at customer tier `tierIndex` (an integer 1..5 — a numeric
+ * string is accepted; anything else throws `InvalidTierError`, never silently priced as tier 1: a
+ * wrong tier is a wrong price, so callers map it to a 400).
+ * A level's explicit price wins; otherwise derived from the pack (see `resolveLevelPrice`); the
+ * pack itself and tier fallbacks follow `getTierPrice` exactly.
+ */ function resolveUnitPrice(product, units, unitLabel, tierIndex) {
+    const tier = toTier(tierIndex);
+    const tierPackPrice = (0, tier_pricing_1.getTierPrice)(product, tier);
+    const level = resolveLadderLevel(product, units, unitLabel);
+    if (level.kind === "pack") return (0, pricing_1.roundMoney)(tierPackPrice);
+    return resolveLevelPrice({
+        packPrice: (0, tier_pricing_1.getTierPrice)(product, 1),
+        packFactor: packFactorOf(product),
+        tierPackPrice,
+        level: level.row ?? {
+            ...noLevel,
+            factorToBase: level.factorToBase
+        },
+        tier
+    });
+}
+/** Whole `qty` of a level → base pieces. Always a non-negative integer. */ function toBaseQty(qty, factorToBase) {
+    const q = Math.trunc(Number(qty));
+    const f = Math.trunc(Number(factorToBase));
+    return Number.isFinite(q) && Number.isFinite(f) && q > 0 && f > 0 ? q * f : 0;
+}
+/**
+ * Split a base-piece quantity across the ladder, largest level first (pack included, implicit
+ * Piece appended). The remainder always lands on the last (smallest) level — nothing is ever
+ * dropped: Σ part.qty × part.factorToBase === baseQty. Zero-qty parts are omitted.
+ */ function fromBaseQty(baseQty, product, units) {
+    const n = Math.trunc(Number(baseQty));
+    let rest = Number.isFinite(n) ? Math.max(0, n) : 0;
+    // Pack first so it survives the by-factor dedupe over a row sharing its factor; rows before
+    // the implicit Piece so an explicit Piece row keeps its label.
+    const levels = [
+        {
+            label: packLabelOf(product),
+            factorToBase: packFactorOf(product)
+        },
+        ...validRows(units).map((u)=>({
+                label: u.label,
+                factorToBase: u.factorToBase
+            })),
+        {
+            label: exports.PIECE_LABEL,
+            factorToBase: 1
+        }
+    ].filter((l, i, all)=>l.factorToBase >= 1 && all.findIndex((x)=>x.factorToBase === l.factorToBase) === i).sort((a, b)=>b.factorToBase - a.factorToBase);
+    const parts = [];
+    for (const l of levels){
+        const qty = Math.floor(rest / l.factorToBase);
+        if (qty > 0) parts.push({
+            ...l,
+            qty
+        });
+        rest -= qty * l.factorToBase;
+    }
+    return parts;
+} //# sourceMappingURL=unit-levels.js.map
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoidW5pdC1sZXZlbHMuanMiLCJzb3VyY2VzIjpbIi4uL3NyYy91bml0LWxldmVscy50cyJdLCJzb3VyY2VSb290IjoiIiwibmFtZXMiOltdLCJtYXBwaW5ncyI6Ijs7Ozs7QUE2Q0EsUUFBQSxpQkFBQSxHQUFBLGtCQWVDO0FBeUZELFFBQUEsa0JBQUEsR0FBQSxtQkEyQkM7QUFTRCxRQUFBLGdCQUFBLEdBQUEsaUJBaUJDO0FBR0QsUUFBQSxTQUFBLEdBQUEsVUFJQztBQWFELFFBQUEsV0FBQSxHQUFBLFlBMEJDO0FBeFBELE1BQUEsWUFBQSxRQUFBLGFBQXVDO0FBQ3ZDLE1BQUEsaUJBQUEsUUFBQSxrQkFBOEM7QUFvQjlDOzs7OztHQUtHLENBQ0gsU0FBUyxhQUFhLENBQUMsQ0FBNkI7SUFDbEQsSUFBSSxDQUFDLElBQUksSUFBSSxFQUFFLE9BQU8sSUFBSSxDQUFDO0lBQzNCLE1BQU0sQ0FBQyxHQUFHLE1BQU0sQ0FBQyxDQUFDLENBQUMsQ0FBQztJQUNwQixPQUFPLE1BQU0sQ0FBQyxRQUFRLENBQUMsQ0FBQyxDQUFDLElBQUksQ0FBQyxHQUFHLENBQUMsQ0FBQyxDQUFDLENBQUMsQ0FBQyxDQUFDLENBQUMsQ0FBQyxJQUFJLENBQUM7QUFDaEQsQ0FBQztBQWFELGdGQUFBLEVBQWtGLENBQ2xGLFNBQWdCLGlCQUFpQixDQUFDLEtBQTZCO0lBQzdELE1BQU0sRUFBRSxTQUFTLEVBQUUsVUFBVSxFQUFFLGFBQWEsRUFBRSxLQUFLLEVBQUUsSUFBSSxFQUFFLEdBQUcsS0FBSyxDQUFDO0lBQ3BFLE1BQU0sVUFBVSxHQUFHO1FBQ2pCLEtBQUssQ0FBQyxLQUFLO1FBQ1gsS0FBSyxDQUFDLFVBQVU7UUFDaEIsS0FBSyxDQUFDLFVBQVU7UUFDaEIsS0FBSyxDQUFDLFVBQVU7UUFDaEIsS0FBSyxDQUFDLFVBQVU7S0FDakIsQ0FBQztJQUNGLE1BQU0sUUFBUSxHQUFHLGFBQWEsQ0FBQyxVQUFVLENBQUMsSUFBSSxHQUFHLENBQUMsQ0FBQyxDQUFDLENBQUM7SUFDckQs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

@@ -1,0 +1,44 @@
+3498adf40d32954023fef9402948b0d5
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+Object.defineProperty(exports, // Note: signed-in users are redirected away from `/` by the middleware
+// (rf-op-auth → /dashboard, rf-buyer-auth → /buyer/portal), keyed on the
+// presence cookies which track the live session (lib/presence-cookies.ts).
+// An earlier client-side AutoRedirectIfAuthed component here was removed
+// because its localStorage-only check falsely fired on stale tokens and hid
+// the marketing site; the middleware approach avoids that because the
+// cookies are cleared whenever a token refresh fails. All marketing pages
+// other than `/` always render, even while signed in.
+"default", {
+    enumerable: true,
+    get: function() {
+        return MarketingLayout;
+    }
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _siteheader = require("./components/site-header");
+const _sitefooter = require("./components/site-footer");
+const _editorialmotion = require("./components/editorial-motion");
+function MarketingLayout({ children }) {
+    return /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+        className: "rf-marketing",
+        children: [
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("a", {
+                href: "#main-content",
+                className: "sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-white focus:px-4 focus:py-2 focus:text-[#10264d] focus:shadow-lg",
+                children: "Skip to main content"
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)(_siteheader.SiteHeader, {}),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("main", {
+                id: "main-content",
+                children: children
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)(_sitefooter.SiteFooter, {}),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)(_editorialmotion.EditorialMotion, {})
+        ]
+    });
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8obWFya2V0aW5nKS9sYXlvdXQudHN4Il0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCB7IFNpdGVIZWFkZXIgfSBmcm9tIFwiLi9jb21wb25lbnRzL3NpdGUtaGVhZGVyXCI7XG5pbXBvcnQgeyBTaXRlRm9vdGVyIH0gZnJvbSBcIi4vY29tcG9uZW50cy9zaXRlLWZvb3RlclwiO1xuaW1wb3J0IHsgRWRpdG9yaWFsTW90aW9uIH0gZnJvbSBcIi4vY29tcG9uZW50cy9lZGl0b3JpYWwtbW90aW9uXCI7XG5cbi8vIE5vdGU6IHNpZ25lZC1pbiB1c2VycyBhcmUgcmVkaXJlY3RlZCBhd2F5IGZyb20gYC9gIGJ5IHRoZSBtaWRkbGV3YXJlXG4vLyAocmYtb3AtYXV0aCDihpIgL2Rhc2hib2FyZCwgcmYtYnV5ZXItYXV0aCDihpIgL2J1eWVyL3BvcnRhbCksIGtleWVkIG9uIHRoZVxuLy8gcHJlc2VuY2UgY29va2llcyB3aGljaCB0cmFjayB0aGUgbGl2ZSBzZXNzaW9uIChsaWIvcHJlc2VuY2UtY29va2llcy50cykuXG4vLyBBbiBlYXJsaWVyIGNsaWVudC1zaWRlIEF1dG9SZWRpcmVjdElmQXV0aGVkIGNvbXBvbmVudCBoZXJlIHdhcyByZW1vdmVkXG4vLyBiZWNhdXNlIGl0cyBsb2NhbFN0b3JhZ2Utb25seSBjaGVjayBmYWxzZWx5IGZpcmVkIG9uIHN0YWxlIHRva2VucyBhbmQgaGlkXG4vLyB0aGUgbWFya2V0aW5nIHNpdGU7IHRoZSBtaWRkbGV3YXJlIGFwcHJvYWNoIGF2b2lkcyB0aGF0IGJlY2F1c2UgdGhlXG4vLyBjb29raWVzIGFyZSBjbGVhcmVkIHdoZW5ldmVyIGEgdG9rZW4gcmVmcmVzaCBmYWlscy4gQWxsIG1hcmtldGluZyBwYWdlc1xuLy8gb3RoZXIgdGhhbiBgL2AgYWx3YXlzIHJlbmRlciwgZXZlbiB3aGlsZSBzaWduZWQgaW4uXG5leHBvcnQgZGVmYXVsdCBmdW5jdGlvbiBNYXJrZXRpbmdMYXlvdXQoeyBjaGlsZHJlbiB9OiB7IGNoaWxkcmVuOiBSZWFjdC5SZWFjdE5vZGUgfSkge1xuICByZXR1cm4gKFxuICAgIDxkaXYgY2xhc3NOYW1lPVwicmYtbWFya2V0aW5nXCI+XG4gICAgICA8YVxuICAgICAgICBocmVmPVwiI21haW4tY29udGVudFwiXG4gICAgICAgIGNsYXNzTmFtZT1cInNyLW9ubHkgZm9jdXM6bm90LXNyLW9ubHkgZm9jdXM6Zml4ZWQgZm9jdXM6bGVmdC00IGZvY3VzOnRvcC00IGZvY3VzOnotNTAgZm9jdXM6cm91bmRlZC1sZyBmb2N1czpiZy13aGl0ZSBmb2N1czpweC00IGZvY3VzOnB5LTIgZm9jdXM6dGV4dC1bIzEwMjY0ZF0gZm9jdXM6c2hhZG93LWxnXCJcbiAgICAgID5cbiAgICAgICAgU2tpcCB0byBtYWluIGNvbnRlbnRcbiAgICAgIDwvYT5cbiAgICAgIDxTaXRlSGVhZGVyIC8+XG4gICAgICA8bWFpbiBpZD1cIm1haW4tY29udGVudFwiPntjaGlsZHJlbn08L21haW4+XG4gICAgICA8U2l0ZUZvb3RlciAvPlxuICAgICAgPEVkaXRvcmlhbE1vdGlvbiAvPlxuICAgIDwvZGl2PlxuICApO1xufVxuIl0sIm5hbWVzIjpbIk1hcmtldGluZ0xheW91dCIsImNoaWxkcmVuIiwiZGl2IiwiY2xhc3NOYW1lIiwiYSIsImhyZWYiLCJTaXRlSGVhZGVyIiwibWFpbiIsImlkIiwiU2l0ZUZvb3RlciIsIkVkaXRvcmlhbE1vdGlvbiJdLCJtYXBwaW5ncyI6Ijs7OzsrQkFJQSx1RUFBdUU7QUFDdkUseUVBQXlFO0FBQ3pFLDJFQUEyRTtBQUMzRSx5RUFBeUU7QUFDekUsNEVBQTRFO0FBQzVFLHNFQUFzRTtBQUN0RSwwRUFBMEU7QUFDMUUsc0RBQXNEO0FBQ3REOzs7ZUFBd0JBOzs7OzRCQVpHOzRCQUNBO2lDQUNLO0FBVWpCLFNBQVNBLGdCQUFnQixFQUFFQyxRQUFRLEVBQWlDO0lBQ2pGLHFCQUNFLHNCQUFDQztRQUFJQyxXQUFVOzswQkFDYixxQkFBQ0M7Z0JBQ0NDLE1BQUs7Z0JBQ0xGLFdBQVU7MEJBQ1g7OzBCQUdELHFCQUFDRyxzQkFBVTswQkFDWCxxQkFBQ0M7Z0JBQUtDLElBQUc7MEJBQWdCUDs7MEJBQ3pCLHFCQUFDUSxzQkFBVTswQkFDWCxxQkFBQ0MsZ0NBQWU7OztBQUd0QiJ9

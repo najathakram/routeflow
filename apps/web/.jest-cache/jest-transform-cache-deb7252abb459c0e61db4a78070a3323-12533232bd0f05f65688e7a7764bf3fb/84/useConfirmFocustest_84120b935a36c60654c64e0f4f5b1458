@@ -1,0 +1,111 @@
+b90e51201bf3d17949a94a420936695d
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+const _react1 = require("@testing-library/react");
+const _userevent = /*#__PURE__*/ _interop_require_default(require("@testing-library/user-event"));
+const _useConfirmFocus = require("./useConfirmFocus");
+function _interop_require_default(obj) {
+    return obj && obj.__esModule ? obj : {
+        default: obj
+    };
+}
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+// A3 F9: "Execute Merge" is replaced by a confirm strip, so the clicked button unmounts and focus
+// fell to <body>. The hook moves focus to the confirm action and back to the trigger.
+function Strip() {
+    const [confirming, setConfirming] = _react.useState(false);
+    const { triggerRef, confirmRef } = (0, _useConfirmFocus.useConfirmFocus)(confirming);
+    return /*#__PURE__*/ (0, _jsxruntime.jsx)("div", {
+        children: !confirming ? /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+            ref: triggerRef,
+            onClick: ()=>setConfirming(true),
+            children: "Execute Merge"
+        }) : /*#__PURE__*/ (0, _jsxruntime.jsxs)(_jsxruntime.Fragment, {
+            children: [
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                    ref: confirmRef,
+                    children: "Yes, merge"
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                    onClick: ()=>setConfirming(false),
+                    children: "Cancel"
+                })
+            ]
+        })
+    });
+}
+describe("useConfirmFocus", ()=>{
+    it("does not steal focus on the first render", ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(Strip, {}));
+        expect(document.body).toHaveFocus();
+    });
+    it("moves focus to the confirm action when the strip opens", async ()=>{
+        const user = _userevent.default.setup();
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(Strip, {}));
+        await user.click(_react1.screen.getByRole("button", {
+            name: "Execute Merge"
+        }));
+        expect(_react1.screen.getByRole("button", {
+            name: "Yes, merge"
+        })).toHaveFocus();
+    });
+    it("returns focus to the trigger when the strip closes again", async ()=>{
+        const user = _userevent.default.setup();
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(Strip, {}));
+        await user.click(_react1.screen.getByRole("button", {
+            name: "Execute Merge"
+        }));
+        await user.click(_react1.screen.getByRole("button", {
+            name: "Cancel"
+        }));
+        expect(_react1.screen.getByRole("button", {
+            name: "Execute Merge"
+        })).toHaveFocus();
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8ocGxhdGZvcm0tYWRtaW4pL19jb21wb25lbnRzL3VzZUNvbmZpcm1Gb2N1cy50ZXN0LnRzeCJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgKiBhcyBSZWFjdCBmcm9tIFwicmVhY3RcIjtcbmltcG9ydCB7IHJlbmRlciwgc2NyZWVuIH0gZnJvbSBcIkB0ZXN0aW5nLWxpYnJhcnkvcmVhY3RcIjtcbmltcG9ydCB1c2VyRXZlbnQgZnJvbSBcIkB0ZXN0aW5nLWxpYnJhcnkvdXNlci1ldmVudFwiO1xuaW1wb3J0IHsgdXNlQ29uZmlybUZvY3VzIH0gZnJvbSBcIi4vdXNlQ29uZmlybUZvY3VzXCI7XG5cbi8vIEEzIEY5OiBcIkV4ZWN1dGUgTWVyZ2VcIiBpcyByZXBsYWNlZCBieSBhIGNvbmZpcm0gc3RyaXAsIHNvIHRoZSBjbGlja2VkIGJ1dHRvbiB1bm1vdW50cyBhbmQgZm9jdXNcbi8vIGZlbGwgdG8gPGJvZHk+LiBUaGUgaG9vayBtb3ZlcyBmb2N1cyB0byB0aGUgY29uZmlybSBhY3Rpb24gYW5kIGJhY2sgdG8gdGhlIHRyaWdnZXIuXG5mdW5jdGlvbiBTdHJpcCgpIHtcbiAgY29uc3QgW2NvbmZpcm1pbmcsIHNldENvbmZpcm1pbmddID0gUmVhY3QudXNlU3RhdGUoZmFsc2UpO1xuICBjb25zdCB7IHRyaWdnZXJSZWYsIGNvbmZpcm1SZWYgfSA9IHVzZUNvbmZpcm1Gb2N1cyhjb25maXJtaW5nKTtcbiAgcmV0dXJuIChcbiAgICA8ZGl2PlxuICAgICAgeyFjb25maXJtaW5nID8gKFxuICAgICAgICA8YnV0dG9uIHJlZj17dHJpZ2dlclJlZn0gb25DbGljaz17KCkgPT4gc2V0Q29uZmlybWluZyh0cnVlKX0+XG4gICAgICAgICAgRXhlY3V0ZSBNZXJnZVxuICAgICAgICA8L2J1dHRvbj5cbiAgICAgICkgOiAoXG4gICAgICAgIDw+XG4gICAgICAgICAgPGJ1dHRvbiByZWY9e2NvbmZpcm1SZWZ9PlllcywgbWVyZ2U8L2J1dHRvbj5cbiAgICAgICAgICA8YnV0dG9uIG9uQ2xpY2s9eygpID0+IHNldENvbmZpcm1pbmcoZmFsc2UpfT5DYW5jZWw8L2J1dHRvbj5cbiAgICAgICAgPC8+XG4gICAgICApfVxuICAgIDwvZGl2PlxuICApO1xufVxuXG5kZXNjcmliZShcInVzZUNvbmZpcm1Gb2N1c1wiLCAoKSA9PiB7XG4gIGl0KFwiZG9lcyBub3Qgc3RlYWwgZm9jdXMgb24gdGhlIGZpcnN0IHJlbmRlclwiLCAoKSA9PiB7XG4gICAgcmVuZGVyKDxTdHJpcCAvPik7XG4gICAgZXhwZWN0KGRvY3VtZW50LmJvZHkpLnRvSGF2ZUZvY3VzKCk7XG4gIH0pO1xuXG4gIGl0KFwibW92ZXMgZm9jdXMgdG8gdGhlIGNvbmZpcm0gYWN0aW9uIHdoZW4gdGhlIHN0cmlwIG9wZW5zXCIsIGFzeW5jICgpID0+IHtcbiAgICBjb25zdCB1c2VyID0gdXNlckV2ZW50LnNldHVwKCk7XG4gICAgcmVuZGVyKDxTdHJpcCAvPik7XG4gICAgYXdhaXQgdXNlci5jbGljayhzY3JlZW4uZ2V0QnlSb2xlKFwiYnV0dG9uXCIsIHsgbmFtZTogXCJFeGVjdXRlIE1lcmdlXCIgfSkpO1xuICAgIGV4cGVjdChzY3JlZW4uZ2V0QnlSb2xlKFwiYnV0dG9uXCIsIHsgbmFtZTogXCJZZXMsIG1lcmdlXCIgfSkpLnRvSGF2ZUZvY3VzKCk7XG4gIH0pO1xuXG4gIGl0KFwicmV0dXJucyBmb2N1cyB0byB0aGUgdHJpZ2dlciB3aGVuIHRoZSBzdHJpcCBjbG9zZXMgYWdhaW5cIiwgYXN5bmMgKCkgPT4ge1xuICAgIGNvbnN0IHVzZXIgPSB1c2VyRXZlbnQuc2V0dXAoKTtcbiAgICByZW5kZXIoPFN0cmlwIC8+KTtcbiAgICBhd2FpdCB1c2VyLmNsaWNrKHNjcmVlbi5nZXRCeVJvbGUoXCJidXR0b25cIiwgeyBuYW1lOiBcIkV4ZWN1dGUgTWVyZ2VcIiB9KSk7XG4gICAgYXdhaXQgdXNlci5jbGljayhzY3JlZW4uZ2V0QnlSb2xlKFwiYnV0dG9uXCIsIHsgbmFtZTogXCJDYW5jZWxcIiB9KSk7XG4gICAgZXhwZWN0KHNjcmVlbi5nZXRCeVJvbGUoXCJidXR0b25cIiwgeyBuYW1lOiBcIkV4ZWN1dGUgTWVyZ2VcIiB9KSkudG9IYXZlRm9jdXMoKTtcbiAgfSk7XG59KTtcbiJdLCJuYW1lcyI6WyJTdHJpcCIsImNvbmZpcm1pbmciLCJzZXRDb25maXJtaW5nIiwiUmVhY3QiLCJ1c2VTdGF0ZSIsInRyaWdnZXJSZWYiLCJjb25maXJtUmVmIiwidXNlQ29uZmlybUZvY3VzIiwiZGl2IiwiYnV0dG9uIiwicmVmIiwib25DbGljayIsImRlc2NyaWJlIiwiaXQiLCJyZW5kZXIiLCJleHBlY3QiLCJkb2N1bWVudCIsImJvZHkiLCJ0b0hhdmVGb2N1cyIsInVzZXIiLCJ1c2VyRXZlbnQiLCJzZXR1cCIsImNsaWNrIiwic2NyZWVuIiwiZ2V0QnlSb2xlIiwibmFtZSJdLCJtYXBwaW5ncyI6Ijs7Ozs7K0RBQXVCO3dCQUNRO2tFQUNUO2lDQUNVOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7OztBQUVoQyxrR0FBa0c7QUFDbEcsc0ZBQXNGO0FBQ3RGLFNBQVNBO0lBQ1AsTUFBTSxDQUFDQyxZQUFZQyxjQUFjLEdBQUdDLE9BQU1DLFFBQVEsQ0FBQztJQUNuRCxNQUFNLEVBQUVDLFVBQVUsRUFBRUMsVUFBVSxFQUFFLEdBQUdDLElBQUFBLGdDQUFlLEVBQUNOO0lBQ25ELHFCQUNFLHFCQUFDTztrQkFDRSxDQUFDUCwyQkFDQSxxQkFBQ1E7WUFBT0MsS0FBS0w7WUFBWU0sU0FBUyxJQUFNVCxjQUFjO3NCQUFPOzJCQUk3RDs7OEJBQ0UscUJBQUNPO29CQUFPQyxLQUFLSjs4QkFBWTs7OEJBQ3pCLHFCQUFDRztvQkFBT0UsU0FBUyxJQUFNVCxjQUFjOzhCQUFROzs7OztBQUt2RDtBQUVBVSxTQUFTLG1CQUFtQjtJQUMxQkMsR0FBRyw0Q0FBNEM7UUFDN0NDLElBQUFBLGNBQU0sZ0JBQUMscUJBQUNkO1FBQ1JlLE9BQU9DLFNBQVNDLElBQUksRUFBRUMsV0FBVztJQUNuQztJQUVBTCxHQUFHLDBEQUEwRDtRQUMzRCxNQUFNTSxPQUFPQyxrQkFBUyxDQUFDQyxLQUFLO1FBQzVCUCxJQUFBQSxjQUFNLGdCQUFDLHFCQUFDZDtRQUNSLE1BQU1tQixLQUFLRyxLQUFLLENBQUNDLGNBQU0sQ0FBQ0MsU0FBUyxDQUFDLFVBQVU7WUFBRUMsTUFBTTtRQUFnQjtRQUNwRVYsT0FBT1EsY0FBTSxDQUFDQyxTQUFTLENBQUMsVUFBVTtZQUFFQyxNQUFNO1FBQWEsSUFBSVAsV0FBVztJQUN4RTtJQUVBTCxHQUFHLDREQUE0RDtRQUM3RCxNQUFNTSxPQUFPQyxrQkFBUyxDQUFDQyxLQUFLO1FBQzVCUCxJQUFBQSxjQUFNLGdCQUFDLHFCQUFDZDtRQUNSLE1BQU1tQixLQUFLRyxLQUFLLENBQUNDLGNBQU0sQ0FBQ0MsU0FBUyxDQUFDLFVBQVU7WUFBRUMsTUFBTTtRQUFnQjtRQUNwRSxNQUFNTixLQUFLRyxLQUFLLENBQUNDLGNBQU0sQ0FBQ0MsU0FBUyxDQUFDLFVBQVU7WUFBRUMsTUFBTTtRQUFTO1FBQzdEVixPQUFPUSxjQUFNLENBQUNDLFNBQVMsQ0FBQyxVQUFVO1lBQUVDLE1BQU07UUFBZ0IsSUFBSVAsV0FBVztJQUMzRTtBQUNGIn0=

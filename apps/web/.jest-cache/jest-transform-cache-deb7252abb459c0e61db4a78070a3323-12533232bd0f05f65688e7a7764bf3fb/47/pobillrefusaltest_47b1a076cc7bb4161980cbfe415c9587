@@ -1,0 +1,81 @@
+173a29227ddaaf5b41ad480cf4945703
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _pobillrefusal = require("./po-bill-refusal");
+const conflict = (data)=>({
+        response: {
+            status: 409,
+            data
+        }
+    });
+describe("getPoBillRefusal", ()=>{
+    it("returns null for any other error, so the caller toasts it", ()=>{
+        expect((0, _pobillrefusal.getPoBillRefusal)(conflict({
+            code: "PO_ALREADY_BILLED",
+            message: "x"
+        }))).toBeNull();
+        expect((0, _pobillrefusal.getPoBillRefusal)(new Error("network"))).toBeNull();
+        expect((0, _pobillrefusal.getPoBillRefusal)(undefined)).toBeNull();
+    });
+    it("turns every violation into one plain-language line", ()=>{
+        const r = (0, _pobillrefusal.getPoBillRefusal)(conflict({
+            code: "BILL_EXCEEDS_PO",
+            poNumber: "PO-0007",
+            violations: [
+                {
+                    reason: "QTY_EXCEEDS_PO",
+                    description: "Cola 24pk",
+                    billed: "30",
+                    allowed: "24"
+                },
+                {
+                    reason: "PRICE_EXCEEDS_PO",
+                    description: "Chips",
+                    billed: "1.50",
+                    allowed: "1.25"
+                },
+                {
+                    reason: "NOT_ON_PO",
+                    description: "Mints",
+                    billed: "5",
+                    allowed: ""
+                },
+                {
+                    reason: "UNMAPPED_LINE",
+                    description: "Freight",
+                    billed: "20",
+                    allowed: ""
+                },
+                {
+                    reason: "TOTAL_EXCEEDS_PO",
+                    description: "",
+                    billed: "$120.00",
+                    allowed: "$100.00"
+                }
+            ]
+        }));
+        expect(r?.poNumber).toBe("PO-0007");
+        expect(r?.lines).toEqual([
+            "“Cola 24pk”: billed 30 pcs, PO-0007 allows 24.",
+            "“Chips”: billed at 1.50 per piece, PO-0007 allows 1.25.",
+            "“Mints” is not on PO-0007.",
+            "“Freight” isn't linked to a product on PO-0007 — freight and other charges belong on their own bill.",
+            "The bill totals $120.00, PO-0007 authorised $100.00."
+        ]);
+        expect(r?.advice).toMatch(/Edit the purchase order/);
+    });
+    it("falls back to the server's message when it sends no violations", ()=>{
+        const r = (0, _pobillrefusal.getPoBillRefusal)(conflict({
+            code: "BILL_EXCEEDS_PO",
+            message: "Too much."
+        }));
+        expect(r?.lines).toEqual([
+            "Too much."
+        ]);
+        expect(r?.poNumber).toBe("the purchase order");
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2xpYi9wby1iaWxsLXJlZnVzYWwudGVzdC50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgeyBnZXRQb0JpbGxSZWZ1c2FsIH0gZnJvbSBcIi4vcG8tYmlsbC1yZWZ1c2FsXCI7XG5cbmNvbnN0IGNvbmZsaWN0ID0gKGRhdGE6IFJlY29yZDxzdHJpbmcsIHVua25vd24+KSA9PiAoeyByZXNwb25zZTogeyBzdGF0dXM6IDQwOSwgZGF0YSB9IH0pO1xuXG5kZXNjcmliZShcImdldFBvQmlsbFJlZnVzYWxcIiwgKCkgPT4ge1xuICBpdChcInJldHVybnMgbnVsbCBmb3IgYW55IG90aGVyIGVycm9yLCBzbyB0aGUgY2FsbGVyIHRvYXN0cyBpdFwiLCAoKSA9PiB7XG4gICAgZXhwZWN0KGdldFBvQmlsbFJlZnVzYWwoY29uZmxpY3QoeyBjb2RlOiBcIlBPX0FMUkVBRFlfQklMTEVEXCIsIG1lc3NhZ2U6IFwieFwiIH0pKSkudG9CZU51bGwoKTtcbiAgICBleHBlY3QoZ2V0UG9CaWxsUmVmdXNhbChuZXcgRXJyb3IoXCJuZXR3b3JrXCIpKSkudG9CZU51bGwoKTtcbiAgICBleHBlY3QoZ2V0UG9CaWxsUmVmdXNhbCh1bmRlZmluZWQpKS50b0JlTnVsbCgpO1xuICB9KTtcblxuICBpdChcInR1cm5zIGV2ZXJ5IHZpb2xhdGlvbiBpbnRvIG9uZSBwbGFpbi1sYW5ndWFnZSBsaW5lXCIsICgpID0+IHtcbiAgICBjb25zdCByID0gZ2V0UG9CaWxsUmVmdXNhbChcbiAgICAgIGNvbmZsaWN0KHtcbiAgICAgICAgY29kZTogXCJCSUxMX0VYQ0VFRFNfUE9cIixcbiAgICAgICAgcG9OdW1iZXI6IFwiUE8tMDAwN1wiLFxuICAgICAgICB2aW9sYXRpb25zOiBbXG4gICAgICAgICAgeyByZWFzb246IFwiUVRZX0VYQ0VFRFNfUE9cIiwgZGVzY3JpcHRpb246IFwiQ29sYSAyNHBrXCIsIGJpbGxlZDogXCIzMFwiLCBhbGxvd2VkOiBcIjI0XCIgfSxcbiAgICAgICAgICB7IHJlYXNvbjogXCJQUklDRV9FWENFRURTX1BPXCIsIGRlc2NyaXB0aW9uOiBcIkNoaXBzXCIsIGJpbGxlZDogXCIxLjUwXCIsIGFsbG93ZWQ6IFwiMS4yNVwiIH0sXG4gICAgICAgICAgeyByZWFzb246IFwiTk9UX09OX1BPXCIsIGRlc2NyaXB0aW9uOiBcIk1pbnRzXCIsIGJpbGxlZDogXCI1XCIsIGFsbG93ZWQ6IFwiXCIgfSxcbiAgICAgICAgICB7IHJlYXNvbjogXCJVTk1BUFBFRF9MSU5FXCIsIGRlc2NyaXB0aW9uOiBcIkZyZWlnaHRcIiwgYmlsbGVkOiBcIjIwXCIsIGFsbG93ZWQ6IFwiXCIgfSxcbiAgICAgICAgICB7IHJlYXNvbjogXCJUT1RBTF9FWENFRURTX1BPXCIsIGRlc2NyaXB0aW9uOiBcIlwiLCBiaWxsZWQ6IFwiJDEyMC4wMFwiLCBhbGxvd2VkOiBcIiQxMDAuMDBcIiB9LFxuICAgICAgICBdLFxuICAgICAgfSksXG4gICAgKTtcbiAgICBleHBlY3Qocj8ucG9OdW1iZXIpLnRvQmUoXCJQTy0wMDA3XCIpO1xuICAgIGV4cGVjdChyPy5saW5lcykudG9FcXVhbChbXG4gICAgICBcIuKAnENvbGEgMjRwa+KAnTogYmlsbGVkIDMwIHBjcywgUE8tMDAwNyBhbGxvd3MgMjQuXCIsXG4gICAgICBcIuKAnENoaXBz4oCdOiBiaWxsZWQgYXQgMS41MCBwZXIgcGllY2UsIFBPLTAwMDcgYWxsb3dzIDEuMjUuXCIsXG4gICAgICBcIuKAnE1pbnRz4oCdIGlzIG5vdCBvbiBQTy0wMDA3LlwiLFxuICAgICAgXCLigJxGcmVpZ2h04oCdIGlzbid0IGxpbmtlZCB0byBhIHByb2R1Y3Qgb24gUE8tMDAwNyDigJQgZnJlaWdodCBhbmQgb3RoZXIgY2hhcmdlcyBiZWxvbmcgb24gdGhlaXIgb3duIGJpbGwuXCIsXG4gICAgICBcIlRoZSBiaWxsIHRvdGFscyAkMTIwLjAwLCBQTy0wMDA3IGF1dGhvcmlzZWQgJDEwMC4wMC5cIixcbiAgICBdKTtcbiAgICBleHBlY3Qocj8uYWR2aWNlKS50b01hdGNoKC9FZGl0IHRoZSBwdXJjaGFzZSBvcmRlci8pO1xuICB9KTtcblxuICBpdChcImZhbGxzIGJhY2sgdG8gdGhlIHNlcnZlcidzIG1lc3NhZ2Ugd2hlbiBpdCBzZW5kcyBubyB2aW9sYXRpb25zXCIsICgpID0+IHtcbiAgICBjb25zdCByID0gZ2V0UG9CaWxsUmVmdXNhbChjb25mbGljdCh7IGNvZGU6IFwiQklMTF9FWENFRURTX1BPXCIsIG1lc3NhZ2U6IFwiVG9vIG11Y2guXCIgfSkpO1xuICAgIGV4cGVjdChyPy5saW5lcykudG9FcXVhbChbXCJUb28gbXVjaC5cIl0pO1xuICAgIGV4cGVjdChyPy5wb051bWJlcikudG9CZShcInRoZSBwdXJjaGFzZSBvcmRlclwiKTtcbiAgfSk7XG59KTtcbiJdLCJuYW1lcyI6WyJjb25mbGljdCIsImRhdGEiLCJyZXNwb25zZSIsInN0YXR1cyIsImRlc2NyaWJlIiwiaXQiLCJleHBlY3QiLCJnZXRQb0JpbGxSZWZ1c2FsIiwiY29kZSIsIm1lc3NhZ2UiLCJ0b0JlTnVsbCIsIkVycm9yIiwidW5kZWZpbmVkIiwiciIsInBvTnVtYmVyIiwidmlvbGF0aW9ucyIsInJlYXNvbiIsImRlc2NyaXB0aW9uIiwiYmlsbGVkIiwiYWxsb3dlZCIsInRvQmUiLCJsaW5lcyIsInRvRXF1YWwiLCJhZHZpY2UiLCJ0b01hdGNoIl0sIm1hcHBpbmdzIjoiOzs7OytCQUFpQztBQUVqQyxNQUFNQSxXQUFXLENBQUNDLE9BQW1DLENBQUE7UUFBRUMsVUFBVTtZQUFFQyxRQUFRO1lBQUtGO1FBQUs7SUFBRSxDQUFBO0FBRXZGRyxTQUFTLG9CQUFvQjtJQUMzQkMsR0FBRyw2REFBNkQ7UUFDOURDLE9BQU9DLElBQUFBLCtCQUFnQixFQUFDUCxTQUFTO1lBQUVRLE1BQU07WUFBcUJDLFNBQVM7UUFBSSxLQUFLQyxRQUFRO1FBQ3hGSixPQUFPQyxJQUFBQSwrQkFBZ0IsRUFBQyxJQUFJSSxNQUFNLGFBQWFELFFBQVE7UUFDdkRKLE9BQU9DLElBQUFBLCtCQUFnQixFQUFDSyxZQUFZRixRQUFRO0lBQzlDO0lBRUFMLEdBQUcsc0RBQXNEO1FBQ3ZELE1BQU1RLElBQUlOLElBQUFBLCtCQUFnQixFQUN4QlAsU0FBUztZQUNQUSxNQUFNO1lBQ05NLFVBQVU7WUFDVkMsWUFBWTtnQkFDVjtvQkFBRUMsUUFBUTtvQkFBa0JDLGFBQWE7b0JBQWFDLFFBQVE7b0JBQU1DLFNBQVM7Z0JBQUs7Z0JBQ2xGO29CQUFFSCxRQUFRO29CQUFvQkMsYUFBYTtvQkFBU0MsUUFBUTtvQkFBUUMsU0FBUztnQkFBTztnQkFDcEY7b0JBQUVILFFBQVE7b0JBQWFDLGFBQWE7b0JBQVNDLFFBQVE7b0JBQUtDLFNBQVM7Z0JBQUc7Z0JBQ3RFO29CQUFFSCxRQUFRO29CQUFpQkMsYUFBYTtvQkFBV0MsUUFBUTtvQkFBTUMsU0FBUztnQkFBRztnQkFDN0U7b0JBQUVILFFBQVE7b0JBQW9CQyxhQUFhO29CQUFJQyxRQUFRO29CQUFXQyxTQUFTO2dCQUFVO2FBQ3RGO1FBQ0g7UUFFRmIsT0FBT08sR0FBR0MsVUFBVU0sSUFBSSxDQUFDO1FBQ3pCZCxPQUFPTyxHQUFHUSxPQUFPQyxPQUFPLENBQUM7WUFDdkI7WUFDQTtZQUNBO1lBQ0E7WUFDQTtTQUNEO1FBQ0RoQixPQUFPTyxHQUFHVSxRQUFRQyxPQUFPLENBQUM7SUFDNUI7SUFFQW5CLEdBQUcsa0VBQWtFO1FBQ25FLE1BQU1RLElBQUlOLElBQUFBLCtCQUFnQixFQUFDUCxTQUFTO1lBQUVRLE1BQU07WUFBbUJDLFNBQVM7UUFBWTtRQUNwRkgsT0FBT08sR0FBR1EsT0FBT0MsT0FBTyxDQUFDO1lBQUM7U0FBWTtRQUN0Q2hCLE9BQU9PLEdBQUdDLFVBQVVNLElBQUksQ0FBQztJQUMzQjtBQUNGIn0=

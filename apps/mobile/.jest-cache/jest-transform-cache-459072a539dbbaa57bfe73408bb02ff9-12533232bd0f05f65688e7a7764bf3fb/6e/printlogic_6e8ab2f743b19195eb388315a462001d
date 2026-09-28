@@ -1,0 +1,36 @@
+f33a47a98d7ed54e807faa696aac8fa2
+"use strict";
+// Node-safe (no RN/expo imports) — kept unit-testable under the mobile Jest
+// env (see jest.config.js: pure-logic only). print-pdf.ts imports these.
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.classifyPrintError = classifyPrintError;
+exports.printTransport = printTransport;
+exports.isDownloadOk = isDownloadOk;
+/**
+ * Classifies an expo-print `Print.printAsync` rejection. Mirrors
+ * `share-error.ts`'s `classifyShareError` contract for the print flow:
+ * `Print.printAsync` rejects with a `PRINT_INCOMPLETE`-suffixed error code
+ * (and/or a "did not complete" message) when the user dismisses the native
+ * print dialog without printing — that's not a real failure and must not be
+ * toasted as one.
+ */
+function classifyPrintError(err) {
+    return /PRINT_INCOMPLETE$/.test(err?.code ?? "") || /did not complete/i.test(err?.message ?? "")
+        ? "dismissed"
+        : "failed";
+}
+/** Which transport a given `Platform.OS` should print through (R6.5). */
+function printTransport(os) {
+    return os === "web" ? "tab" : "native";
+}
+/**
+ * `FileSystem.downloadAsync` RESOLVES (never rejects) on a non-2xx HTTP
+ * response — an error page/body would otherwise be saved to disk and handed
+ * to `Print.printAsync`/`Sharing.shareAsync` as if it were the PDF (review
+ * finding F2 on PR #756). Shared by `print-pdf.ts` and `share-pdf.ts`, which
+ * each throw when this is false so their existing catch blocks toast.
+ */
+function isDownloadOk(status) {
+    return status >= 200 && status < 300;
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3ByaW50LWxvZ2ljLnRzIiwibWFwcGluZ3MiOiI7QUFBQSw0RUFBNEU7QUFDNUUseUVBQXlFOztBQVV6RSxnREFNQztBQUdELHdDQUVDO0FBU0Qsb0NBRUM7QUE5QkQ7Ozs7Ozs7R0FPRztBQUNILFNBQWdCLGtCQUFrQixDQUNoQyxHQUF5RTtJQUV6RSxPQUFPLG1CQUFtQixDQUFDLElBQUksQ0FBQyxHQUFHLEVBQUUsSUFBSSxJQUFJLEVBQUUsQ0FBQyxJQUFJLG1CQUFtQixDQUFDLElBQUksQ0FBQyxHQUFHLEVBQUUsT0FBTyxJQUFJLEVBQUUsQ0FBQztRQUM5RixDQUFDLENBQUMsV0FBVztRQUNiLENBQUMsQ0FBQyxRQUFRLENBQUM7QUFDZixDQUFDO0FBRUQseUVBQXlFO0FBQ3pFLFNBQWdCLGNBQWMsQ0FBQyxFQUFVO0lBQ3ZDLE9BQU8sRUFBRSxLQUFLLEtBQUssQ0FBQyxDQUFDLENBQUMsS0FBSyxDQUFDLENBQUMsQ0FBQyxRQUFRLENBQUM7QUFDekMsQ0FBQztBQUVEOzs7Ozs7R0FNRztBQUNILFNBQWdCLFlBQVksQ0FBQyxNQUFjO0lBQ3pDLE9BQU8sTUFBTSxJQUFJLEdBQUcsSUFBSSxNQUFNLEdBQUcsR0FBRyxDQUFDO0FBQ3ZDLENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3ByaW50LWxvZ2ljLnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8vIE5vZGUtc2FmZSAobm8gUk4vZXhwbyBpbXBvcnRzKSDigJQga2VwdCB1bml0LXRlc3RhYmxlIHVuZGVyIHRoZSBtb2JpbGUgSmVzdFxuLy8gZW52IChzZWUgamVzdC5jb25maWcuanM6IHB1cmUtbG9naWMgb25seSkuIHByaW50LXBkZi50cyBpbXBvcnRzIHRoZXNlLlxuXG4vKipcbiAqIENsYXNzaWZpZXMgYW4gZXhwby1wcmludCBgUHJpbnQucHJpbnRBc3luY2AgcmVqZWN0aW9uLiBNaXJyb3JzXG4gKiBgc2hhcmUtZXJyb3IudHNgJ3MgYGNsYXNzaWZ5U2hhcmVFcnJvcmAgY29udHJhY3QgZm9yIHRoZSBwcmludCBmbG93OlxuICogYFByaW50LnByaW50QXN5bmNgIHJlamVjdHMgd2l0aCBhIGBQUklOVF9JTkNPTVBMRVRFYC1zdWZmaXhlZCBlcnJvciBjb2RlXG4gKiAoYW5kL29yIGEgXCJkaWQgbm90IGNvbXBsZXRlXCIgbWVzc2FnZSkgd2hlbiB0aGUgdXNlciBkaXNtaXNzZXMgdGhlIG5hdGl2ZVxuICogcHJpbnQgZGlhbG9nIHdpdGhvdXQgcHJpbnRpbmcg4oCUIHRoYXQncyBub3QgYSByZWFsIGZhaWx1cmUgYW5kIG11c3Qgbm90IGJlXG4gKiB0b2FzdGVkIGFzIG9uZS5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIGNsYXNzaWZ5UHJpbnRFcnJvcihcbiAgZXJyOiB7IGNvZGU/OiBzdHJpbmcgfCBudWxsOyBtZXNzYWdlPzogc3RyaW5nIHwgbnVsbCB9IHwgbnVsbCB8IHVuZGVmaW5lZCxcbik6IFwiZGlzbWlzc2VkXCIgfCBcImZhaWxlZFwiIHtcbiAgcmV0dXJuIC9QUklOVF9JTkNPTVBMRVRFJC8udGVzdChlcnI/LmNvZGUgPz8gXCJcIikgfHwgL2RpZCBub3QgY29tcGxldGUvaS50ZXN0KGVycj8ubWVzc2FnZSA/PyBcIlwiKVxuICAgID8gXCJkaXNtaXNzZWRcIlxuICAgIDogXCJmYWlsZWRcIjtcbn1cblxuLyoqIFdoaWNoIHRyYW5zcG9ydCBhIGdpdmVuIGBQbGF0Zm9ybS5PU2Agc2hvdWxkIHByaW50IHRocm91Z2ggKFI2LjUpLiAqL1xuZXhwb3J0IGZ1bmN0aW9uIHByaW50VHJhbnNwb3J0KG9zOiBzdHJpbmcpOiBcInRhYlwiIHwgXCJuYXRpdmVcIiB7XG4gIHJldHVybiBvcyA9PT0gXCJ3ZWJcIiA/IFwidGFiXCIgOiBcIm5hdGl2ZVwiO1xufVxuXG4vKipcbiAqIGBGaWxlU3lzdGVtLmRvd25sb2FkQXN5bmNgIFJFU09MVkVTIChuZXZlciByZWplY3RzKSBvbiBhIG5vbi0yeHggSFRUUFxuICogcmVzcG9uc2Ug4oCUIGFuIGVycm9yIHBhZ2UvYm9keSB3b3VsZCBvdGhlcndpc2UgYmUgc2F2ZWQgdG8gZGlzayBhbmQgaGFuZGVkXG4gKiB0byBgUHJpbnQucHJpbnRBc3luY2AvYFNoYXJpbmcuc2hhcmVBc3luY2AgYXMgaWYgaXQgd2VyZSB0aGUgUERGIChyZXZpZXdcbiAqIGZpbmRpbmcgRjIgb24gUFIgIzc1NikuIFNoYXJlZCBieSBgcHJpbnQtcGRmLnRzYCBhbmQgYHNoYXJlLXBkZi50c2AsIHdoaWNoXG4gKiBlYWNoIHRocm93IHdoZW4gdGhpcyBpcyBmYWxzZSBzbyB0aGVpciBleGlzdGluZyBjYXRjaCBibG9ja3MgdG9hc3QuXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiBpc0Rvd25sb2FkT2soc3RhdHVzOiBudW1iZXIpOiBib29sZWFuIHtcbiAgcmV0dXJuIHN0YXR1cyA+PSAyMDAgJiYgc3RhdHVzIDwgMzAwO1xufVxuIl0sInZlcnNpb24iOjN9

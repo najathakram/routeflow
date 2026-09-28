@@ -1,0 +1,42 @@
+6d59f94c50306d335089f21f97f59884
+/**
+ * PIN (no REG token — deliberately OUTSIDE the red gate).
+ *
+ * `fmtCalendarDate` is already UTC-anchored (`formatting.ts:57-65` passes
+ * `timeZone: "UTC"`), so this assertion is zone-independent and green both before and
+ * after the B91-web fix. It is kept as a pin: WP-WEB migrates nine call sites ONTO this
+ * function, so a regression in its UTC anchoring would silently reintroduce B91.
+ *
+ * The previous version of this file carried a `REG-B91` token and a second assertion
+ * comparing against the LOCAL formatter (`fmtDate`). Both were removed by the
+ * test-remediation round: the REG token put a test that cannot fail inside the red gate,
+ * and the `fmtDate` comparator asserted today's soon-to-be-replaced behavior while being
+ * dependent on the host machine's timezone (its `process.env.TZ` pin is inert under Jest).
+ * The real B91-web regression test now lives at
+ * `app/(dashboard)/customers/_components/authorizations-expiry.logic.test.ts`.
+ */ "use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _formatting = require("./formatting");
+describe("fmtCalendarDate", ()=>{
+    it("renders a UTC-midnight calendar date as its own day, in any viewer timezone", ()=>{
+        expect((0, _formatting.fmtCalendarDate)("2026-11-01T00:00:00.000Z")).toBe("Nov 1, 2026");
+    });
+});
+describe("fmtCalendarDateWithWeekday", ()=>{
+    it("renders the UTC calendar day (short style), not the previous day", ()=>{
+        expect((0, _formatting.fmtCalendarDateWithWeekday)("2026-06-10T00:00:00.000Z", "short")).toMatch(/\b10\b/);
+        expect((0, _formatting.fmtCalendarDateWithWeekday)("2026-06-10T00:00:00.000Z", "short")).not.toMatch(/\b9\b/);
+    });
+    it("renders the UTC calendar day (long style), not the previous day", ()=>{
+        expect((0, _formatting.fmtCalendarDateWithWeekday)("2026-06-10T00:00:00.000Z", "long")).toMatch(/\b10\b/);
+        expect((0, _formatting.fmtCalendarDateWithWeekday)("2026-06-10T00:00:00.000Z", "long")).not.toMatch(/\b9\b/);
+    });
+    it("returns the same fallback as fmtCalendarDate for empty input", ()=>{
+        expect((0, _formatting.fmtCalendarDateWithWeekday)(null, "short")).toBe((0, _formatting.fmtCalendarDate)(null));
+        expect((0, _formatting.fmtCalendarDateWithWeekday)(undefined, "long")).toBe((0, _formatting.fmtCalendarDate)(undefined));
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2xpYi9mb3JtYXR0aW5nLmNhbGVuZGFyLWRhdGUudGVzdC50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqIFBJTiAobm8gUkVHIHRva2VuIOKAlCBkZWxpYmVyYXRlbHkgT1VUU0lERSB0aGUgcmVkIGdhdGUpLlxuICpcbiAqIGBmbXRDYWxlbmRhckRhdGVgIGlzIGFscmVhZHkgVVRDLWFuY2hvcmVkIChgZm9ybWF0dGluZy50czo1Ny02NWAgcGFzc2VzXG4gKiBgdGltZVpvbmU6IFwiVVRDXCJgKSwgc28gdGhpcyBhc3NlcnRpb24gaXMgem9uZS1pbmRlcGVuZGVudCBhbmQgZ3JlZW4gYm90aCBiZWZvcmUgYW5kXG4gKiBhZnRlciB0aGUgQjkxLXdlYiBmaXguIEl0IGlzIGtlcHQgYXMgYSBwaW46IFdQLVdFQiBtaWdyYXRlcyBuaW5lIGNhbGwgc2l0ZXMgT05UTyB0aGlzXG4gKiBmdW5jdGlvbiwgc28gYSByZWdyZXNzaW9uIGluIGl0cyBVVEMgYW5jaG9yaW5nIHdvdWxkIHNpbGVudGx5IHJlaW50cm9kdWNlIEI5MS5cbiAqXG4gKiBUaGUgcHJldmlvdXMgdmVyc2lvbiBvZiB0aGlzIGZpbGUgY2FycmllZCBhIGBSRUctQjkxYCB0b2tlbiBhbmQgYSBzZWNvbmQgYXNzZXJ0aW9uXG4gKiBjb21wYXJpbmcgYWdhaW5zdCB0aGUgTE9DQUwgZm9ybWF0dGVyIChgZm10RGF0ZWApLiBCb3RoIHdlcmUgcmVtb3ZlZCBieSB0aGVcbiAqIHRlc3QtcmVtZWRpYXRpb24gcm91bmQ6IHRoZSBSRUcgdG9rZW4gcHV0IGEgdGVzdCB0aGF0IGNhbm5vdCBmYWlsIGluc2lkZSB0aGUgcmVkIGdhdGUsXG4gKiBhbmQgdGhlIGBmbXREYXRlYCBjb21wYXJhdG9yIGFzc2VydGVkIHRvZGF5J3Mgc29vbi10by1iZS1yZXBsYWNlZCBiZWhhdmlvciB3aGlsZSBiZWluZ1xuICogZGVwZW5kZW50IG9uIHRoZSBob3N0IG1hY2hpbmUncyB0aW1lem9uZSAoaXRzIGBwcm9jZXNzLmVudi5UWmAgcGluIGlzIGluZXJ0IHVuZGVyIEplc3QpLlxuICogVGhlIHJlYWwgQjkxLXdlYiByZWdyZXNzaW9uIHRlc3Qgbm93IGxpdmVzIGF0XG4gKiBgYXBwLyhkYXNoYm9hcmQpL2N1c3RvbWVycy9fY29tcG9uZW50cy9hdXRob3JpemF0aW9ucy1leHBpcnkubG9naWMudGVzdC50c2AuXG4gKi9cbmltcG9ydCB7IGZtdENhbGVuZGFyRGF0ZSwgZm10Q2FsZW5kYXJEYXRlV2l0aFdlZWtkYXkgfSBmcm9tIFwiLi9mb3JtYXR0aW5nXCI7XG5cbmRlc2NyaWJlKFwiZm10Q2FsZW5kYXJEYXRlXCIsICgpID0+IHtcbiAgaXQoXCJyZW5kZXJzIGEgVVRDLW1pZG5pZ2h0IGNhbGVuZGFyIGRhdGUgYXMgaXRzIG93biBkYXksIGluIGFueSB2aWV3ZXIgdGltZXpvbmVcIiwgKCkgPT4ge1xuICAgIGV4cGVjdChmbXRDYWxlbmRhckRhdGUoXCIyMDI2LTExLTAxVDAwOjAwOjAwLjAwMFpcIikpLnRvQmUoXCJOb3YgMSwgMjAyNlwiKTtcbiAgfSk7XG59KTtcblxuZGVzY3JpYmUoXCJmbXRDYWxlbmRhckRhdGVXaXRoV2Vla2RheVwiLCAoKSA9PiB7XG4gIGl0KFwicmVuZGVycyB0aGUgVVRDIGNhbGVuZGFyIGRheSAoc2hvcnQgc3R5bGUpLCBub3QgdGhlIHByZXZpb3VzIGRheVwiLCAoKSA9PiB7XG4gICAgZXhwZWN0KGZtdENhbGVuZGFyRGF0ZVdpdGhXZWVrZGF5KFwiMjAyNi0wNi0xMFQwMDowMDowMC4wMDBaXCIsIFwic2hvcnRcIikpLnRvTWF0Y2goL1xcYjEwXFxiLyk7XG4gICAgZXhwZWN0KGZtdENhbGVuZGFyRGF0ZVdpdGhXZWVrZGF5KFwiMjAyNi0wNi0xMFQwMDowMDowMC4wMDBaXCIsIFwic2hvcnRcIikpLm5vdC50b01hdGNoKC9cXGI5XFxiLyk7XG4gIH0pO1xuXG4gIGl0KFwicmVuZGVycyB0aGUgVVRDIGNhbGVuZGFyIGRheSAobG9uZyBzdHlsZSksIG5vdCB0aGUgcHJldmlvdXMgZGF5XCIsICgpID0+IHtcbiAgICBleHBlY3QoZm10Q2FsZW5kYXJEYXRlV2l0aFdlZWtkYXkoXCIyMDI2LTA2LTEwVDAwOjAwOjAwLjAwMFpcIiwgXCJsb25nXCIpKS50b01hdGNoKC9cXGIxMFxcYi8pO1xuICAgIGV4cGVjdChmbXRDYWxlbmRhckRhdGVXaXRoV2Vla2RheShcIjIwMjYtMDYtMTBUMDA6MDA6MDAuMDAwWlwiLCBcImxvbmdcIikpLm5vdC50b01hdGNoKC9cXGI5XFxiLyk7XG4gIH0pO1xuXG4gIGl0KFwicmV0dXJucyB0aGUgc2FtZSBmYWxsYmFjayBhcyBmbXRDYWxlbmRhckRhdGUgZm9yIGVtcHR5IGlucHV0XCIsICgpID0+IHtcbiAgICBleHBlY3QoZm10Q2FsZW5kYXJEYXRlV2l0aFdlZWtkYXkobnVsbCwgXCJzaG9ydFwiKSkudG9CZShmbXRDYWxlbmRhckRhdGUobnVsbCkpO1xuICAgIGV4cGVjdChmbXRDYWxlbmRhckRhdGVXaXRoV2Vla2RheSh1bmRlZmluZWQsIFwibG9uZ1wiKSkudG9CZShmbXRDYWxlbmRhckRhdGUodW5kZWZpbmVkKSk7XG4gIH0pO1xufSk7XG4iXSwibmFtZXMiOlsiZGVzY3JpYmUiLCJpdCIsImV4cGVjdCIsImZtdENhbGVuZGFyRGF0ZSIsInRvQmUiLCJmbXRDYWxlbmRhckRhdGVXaXRoV2Vla2RheSIsInRvTWF0Y2giLCJub3QiLCJ1bmRlZmluZWQiXSwibWFwcGluZ3MiOiJBQUFBOzs7Ozs7Ozs7Ozs7Ozs7Q0FlQzs7Ozs0QkFDMkQ7QUFFNURBLFNBQVMsbUJBQW1CO0lBQzFCQyxHQUFHLCtFQUErRTtRQUNoRkMsT0FBT0MsSUFBQUEsMkJBQWUsRUFBQyw2QkFBNkJDLElBQUksQ0FBQztJQUMzRDtBQUNGO0FBRUFKLFNBQVMsOEJBQThCO0lBQ3JDQyxHQUFHLG9FQUFvRTtRQUNyRUMsT0FBT0csSUFBQUEsc0NBQTBCLEVBQUMsNEJBQTRCLFVBQVVDLE9BQU8sQ0FBQztRQUNoRkosT0FBT0csSUFBQUEsc0NBQTBCLEVBQUMsNEJBQTRCLFVBQVVFLEdBQUcsQ0FBQ0QsT0FBTyxDQUFDO0lBQ3RGO0lBRUFMLEdBQUcsbUVBQW1FO1FBQ3BFQyxPQUFPRyxJQUFBQSxzQ0FBMEIsRUFBQyw0QkFBNEIsU0FBU0MsT0FBTyxDQUFDO1FBQy9FSixPQUFPRyxJQUFBQSxzQ0FBMEIsRUFBQyw0QkFBNEIsU0FBU0UsR0FBRyxDQUFDRCxPQUFPLENBQUM7SUFDckY7SUFFQUwsR0FBRyxnRUFBZ0U7UUFDakVDLE9BQU9HLElBQUFBLHNDQUEwQixFQUFDLE1BQU0sVUFBVUQsSUFBSSxDQUFDRCxJQUFBQSwyQkFBZSxFQUFDO1FBQ3ZFRCxPQUFPRyxJQUFBQSxzQ0FBMEIsRUFBQ0csV0FBVyxTQUFTSixJQUFJLENBQUNELElBQUFBLDJCQUFlLEVBQUNLO0lBQzdFO0FBQ0YifQ==

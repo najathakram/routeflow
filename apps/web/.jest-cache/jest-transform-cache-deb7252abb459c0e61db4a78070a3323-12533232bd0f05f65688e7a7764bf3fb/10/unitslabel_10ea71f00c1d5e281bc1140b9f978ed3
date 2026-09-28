@@ -1,0 +1,44 @@
+2369761596bc9d2f19dfecc94765d1e7
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+exports.unitsLabel = unitsLabel;
+const pricing_1 = require("./pricing");
+/**
+ * "1,240 pcs (51 boxes + 16 pcs)" for a boxed product, "45.5 kg" otherwise.
+ *
+ * `Product.currentStock` (and every other stock figure — StockMovement.quantity,
+ * StockLot.qty) is stored in PIECES system-wide (see `@routeflow/pricing`).
+ * For a BOXED product (`unitsPerBox > 1`) `product.unit` is the SELLING unit noun
+ * ("case", "box") — never render a piece count next to it; the split is a display
+ * re-grouping of the summed piece count, so the raw count stays primary and the
+ * box/piece breakdown is parenthetical. For a NON-boxed product the stored figure
+ * is already in the product's own unit, so pass `unit` and it keeps its real noun
+ * ("kg", "gallon"); "pcs" is only the fallback when no unit is known.
+ *
+ * Extracted from DemandCard's original `unitsLabel()` — shared so the product
+ * detail page's on-hand figures use the identical pattern.
+ */ function unitsLabel(units, unitsPerBox, unit) {
+    // Prisma Decimal columns arrive as numeric STRINGS, and a missing field must
+    // degrade to a dash rather than throw inside a render.
+    const u = Number(units);
+    if (!Number.isFinite(u)) return "—";
+    const n = u.toLocaleString("en-US");
+    const upb = Number(unitsPerBox ?? 0);
+    // Not boxed: the figure is denominated in the product's own unit, so keep its noun.
+    if (!(upb > 1)) return `${n} ${unit?.trim() || "pcs"}`;
+    // Boxed: a piece count — `unit` is the box noun, so it must NOT be used here.
+    if (u <= 0) return `${n} pcs`;
+    const split = (0, pricing_1.normalizeBoxesPieces)({
+        qty: u,
+        unitsPerBox: upb
+    });
+    return `${n} pcs (${(0, pricing_1.formatQtySplit)({
+        qty: split.qty,
+        boxes: split.boxes,
+        pieces: split.pieces
+    })})`;
+} //# sourceMappingURL=units-label.js.map
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoidW5pdHMtbGFiZWwuanMiLCJzb3VyY2VzIjpbIi4uL3NyYy91bml0cy1sYWJlbC50cyJdLCJzb3VyY2VSb290IjoiIiwibmFtZXMiOltdLCJtYXBwaW5ncyI6Ijs7OztBQWlCQSxRQUFBLFVBQUEsR0FBQSxXQWlCQztBQWxDRCxNQUFBLFlBQUEsUUFBQSxhQUFpRTtBQUVqRTs7Ozs7Ozs7Ozs7Ozs7R0FjRyxDQUNILFNBQWdCLFVBQVUsQ0FDeEIsS0FBeUMsRUFDekMsV0FBMkIsRUFDM0IsSUFBb0I7SUFFcEIsNkVBQTZFO0lBQzdFLHVEQUF1RDtJQUN2RCxNQUFNLENBQUMsR0FBRyxNQUFNLENBQUMsS0FBSyxDQUFDLENBQUM7SUFDeEIsSUFBSSxDQUFDLE1BQU0sQ0FBQyxRQUFRLENBQUMsQ0FBQyxDQUFDLEVBQUUsT0FBTyxHQUFHLENBQUM7SUFDcEMsTUFBTSxDQUFDLEdBQUcsQ0FBQyxDQUFDLGNBQWMsQ0FBQyxPQUFPLENBQUMsQ0FBQztJQUNwQyxNQUFNLEdBQUcsR0FBRyxNQUFNLENBQUMsV0FBVyxJQUFJLENBQUMsQ0FBQyxDQUFDO0lBQ3JDLG9GQUFvRjtJQUNwRixJQUFJLENBQUMsQ0FBQyxHQUFHLElBQUcsQ0FBQyxDQUFDLENBQUUsT0FBTyxHQUFHLENBQUMsQ0FBQSxDQUFBLEVBQUksSUFBSSxFQUFFLElBQUksRUFBRSxJQUFJLEtBQUssRUFBRSxDQUFDO0lBQ3ZELDhFQUE4RTtJQUM5RSxJQUFJLENBQUMsSUFBSSxDQUFDLEVBQUUsT0FBTyxHQUFHLENBQUMsQ0FBQSxJQUFBLENBQU0sQ0FBQztJQUM5QixNQUFNLEtBQUssR0FBRyxDQUFBLEdBQUEsVUFBQSxvQkFBQSxBQUFvQixFQUFDO1FBQUUsR0FBRyxFQUFFLENBQUM7UUFBRSxXQUFXLEVBQUUsR0FBRztJQUFBLENBQUUsQ0FBQyxDQUFDO0lBQ2pFLE9BQU8sR0FBRyxDQUFDLENBQUEsTUFBQSxFQUFTLENBQUEsR0FBQSxVQUFBLGNBQUEsQUFBYyxFQUFDO1FBQUUsR0FBRyxFQUFFLEtBQUssQ0FBQyxHQUFHO1FBQUUsS0FBSyxFQUFFLEtBQUssQ0FBQyxLQUFLO1FBQUUsTUFBTSxFQUFFLEtBQUssQ0FBQyxNQUFNO0lBQUEsQ0FBRSxDQUFDLENBQUEsQ0FBQSxDQUFHLENBQUM7QUFDdEcsQ0FBQyJ9

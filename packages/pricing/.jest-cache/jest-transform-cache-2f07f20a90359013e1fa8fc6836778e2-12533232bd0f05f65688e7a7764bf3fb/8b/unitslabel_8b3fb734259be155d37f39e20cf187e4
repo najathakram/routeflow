@@ -1,0 +1,38 @@
+af776e5e30b62a4a5d2efa488b074fd1
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.unitsLabel = unitsLabel;
+const pricing_1 = require("./pricing");
+/**
+ * "1,240 pcs (51 boxes + 16 pcs)" for a boxed product, "45.5 kg" otherwise.
+ *
+ * `Product.currentStock` (and every other stock figure — StockMovement.quantity,
+ * StockLot.qty) is stored in PIECES system-wide (see `@routeflow/pricing`).
+ * For a BOXED product (`unitsPerBox > 1`) `product.unit` is the SELLING unit noun
+ * ("case", "box") — never render a piece count next to it; the split is a display
+ * re-grouping of the summed piece count, so the raw count stays primary and the
+ * box/piece breakdown is parenthetical. For a NON-boxed product the stored figure
+ * is already in the product's own unit, so pass `unit` and it keeps its real noun
+ * ("kg", "gallon"); "pcs" is only the fallback when no unit is known.
+ *
+ * Extracted from DemandCard's original `unitsLabel()` — shared so the product
+ * detail page's on-hand figures use the identical pattern.
+ */
+function unitsLabel(units, unitsPerBox, unit) {
+    // Prisma Decimal columns arrive as numeric STRINGS, and a missing field must
+    // degrade to a dash rather than throw inside a render.
+    const u = Number(units);
+    if (!Number.isFinite(u))
+        return "—";
+    const n = u.toLocaleString("en-US");
+    const upb = Number(unitsPerBox ?? 0);
+    // Not boxed: the figure is denominated in the product's own unit, so keep its noun.
+    if (!(upb > 1))
+        return `${n} ${unit?.trim() || "pcs"}`;
+    // Boxed: a piece count — `unit` is the box noun, so it must NOT be used here.
+    if (u <= 0)
+        return `${n} pcs`;
+    const split = (0, pricing_1.normalizeBoxesPieces)({ qty: u, unitsPerBox: upb });
+    return `${n} pcs (${(0, pricing_1.formatQtySplit)({ qty: split.qty, boxes: split.boxes, pieces: split.pieces })})`;
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvcGFja2FnZXMvcHJpY2luZy9zcmMvdW5pdHMtbGFiZWwudHMiLCJtYXBwaW5ncyI6Ijs7QUFpQkEsZ0NBaUJDO0FBbENELHVDQUFpRTtBQUVqRTs7Ozs7Ozs7Ozs7Ozs7R0FjRztBQUNILFNBQWdCLFVBQVUsQ0FDeEIsS0FBeUMsRUFDekMsV0FBMkIsRUFDM0IsSUFBb0I7SUFFcEIsNkVBQTZFO0lBQzdFLHVEQUF1RDtJQUN2RCxNQUFNLENBQUMsR0FBRyxNQUFNLENBQUMsS0FBSyxDQUFDLENBQUM7SUFDeEIsSUFBSSxDQUFDLE1BQU0sQ0FBQyxRQUFRLENBQUMsQ0FBQyxDQUFDO1FBQUUsT0FBTyxHQUFHLENBQUM7SUFDcEMsTUFBTSxDQUFDLEdBQUcsQ0FBQyxDQUFDLGNBQWMsQ0FBQyxPQUFPLENBQUMsQ0FBQztJQUNwQyxNQUFNLEdBQUcsR0FBRyxNQUFNLENBQUMsV0FBVyxJQUFJLENBQUMsQ0FBQyxDQUFDO0lBQ3JDLG9GQUFvRjtJQUNwRixJQUFJLENBQUMsQ0FBQyxHQUFHLEdBQUcsQ0FBQyxDQUFDO1FBQUUsT0FBTyxHQUFHLENBQUMsSUFBSSxJQUFJLEVBQUUsSUFBSSxFQUFFLElBQUksS0FBSyxFQUFFLENBQUM7SUFDdkQsOEVBQThFO0lBQzlFLElBQUksQ0FBQyxJQUFJLENBQUM7UUFBRSxPQUFPLEdBQUcsQ0FBQyxNQUFNLENBQUM7SUFDOUIsTUFBTSxLQUFLLEdBQUcsSUFBQSw4QkFBb0IsRUFBQyxFQUFFLEdBQUcsRUFBRSxDQUFDLEVBQUUsV0FBVyxFQUFFLEdBQUcsRUFBRSxDQUFDLENBQUM7SUFDakUsT0FBTyxHQUFHLENBQUMsU0FBUyxJQUFBLHdCQUFjLEVBQUMsRUFBRSxHQUFHLEVBQUUsS0FBSyxDQUFDLEdBQUcsRUFBRSxLQUFLLEVBQUUsS0FBSyxDQUFDLEtBQUssRUFBRSxNQUFNLEVBQUUsS0FBSyxDQUFDLE1BQU0sRUFBRSxDQUFDLEdBQUcsQ0FBQztBQUN0RyxDQUFDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L3BhY2thZ2VzL3ByaWNpbmcvc3JjL3VuaXRzLWxhYmVsLnRzIl0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCB7IGZvcm1hdFF0eVNwbGl0LCBub3JtYWxpemVCb3hlc1BpZWNlcyB9IGZyb20gXCIuL3ByaWNpbmdcIjtcblxuLyoqXG4gKiBcIjEsMjQwIHBjcyAoNTEgYm94ZXMgKyAxNiBwY3MpXCIgZm9yIGEgYm94ZWQgcHJvZHVjdCwgXCI0NS41IGtnXCIgb3RoZXJ3aXNlLlxuICpcbiAqIGBQcm9kdWN0LmN1cnJlbnRTdG9ja2AgKGFuZCBldmVyeSBvdGhlciBzdG9jayBmaWd1cmUg4oCUIFN0b2NrTW92ZW1lbnQucXVhbnRpdHksXG4gKiBTdG9ja0xvdC5xdHkpIGlzIHN0b3JlZCBpbiBQSUVDRVMgc3lzdGVtLXdpZGUgKHNlZSBgQHJvdXRlZmxvdy9wcmljaW5nYCkuXG4gKiBGb3IgYSBCT1hFRCBwcm9kdWN0IChgdW5pdHNQZXJCb3ggPiAxYCkgYHByb2R1Y3QudW5pdGAgaXMgdGhlIFNFTExJTkcgdW5pdCBub3VuXG4gKiAoXCJjYXNlXCIsIFwiYm94XCIpIOKAlCBuZXZlciByZW5kZXIgYSBwaWVjZSBjb3VudCBuZXh0IHRvIGl0OyB0aGUgc3BsaXQgaXMgYSBkaXNwbGF5XG4gKiByZS1ncm91cGluZyBvZiB0aGUgc3VtbWVkIHBpZWNlIGNvdW50LCBzbyB0aGUgcmF3IGNvdW50IHN0YXlzIHByaW1hcnkgYW5kIHRoZVxuICogYm94L3BpZWNlIGJyZWFrZG93biBpcyBwYXJlbnRoZXRpY2FsLiBGb3IgYSBOT04tYm94ZWQgcHJvZHVjdCB0aGUgc3RvcmVkIGZpZ3VyZVxuICogaXMgYWxyZWFkeSBpbiB0aGUgcHJvZHVjdCdzIG93biB1bml0LCBzbyBwYXNzIGB1bml0YCBhbmQgaXQga2VlcHMgaXRzIHJlYWwgbm91blxuICogKFwia2dcIiwgXCJnYWxsb25cIik7IFwicGNzXCIgaXMgb25seSB0aGUgZmFsbGJhY2sgd2hlbiBubyB1bml0IGlzIGtub3duLlxuICpcbiAqIEV4dHJhY3RlZCBmcm9tIERlbWFuZENhcmQncyBvcmlnaW5hbCBgdW5pdHNMYWJlbCgpYCDigJQgc2hhcmVkIHNvIHRoZSBwcm9kdWN0XG4gKiBkZXRhaWwgcGFnZSdzIG9uLWhhbmQgZmlndXJlcyB1c2UgdGhlIGlkZW50aWNhbCBwYXR0ZXJuLlxuICovXG5leHBvcnQgZnVuY3Rpb24gdW5pdHNMYWJlbChcbiAgdW5pdHM6IG51bWJlciB8IHN0cmluZyB8IG51bGwgfCB1bmRlZmluZWQsXG4gIHVuaXRzUGVyQm94PzogbnVtYmVyIHwgbnVsbCxcbiAgdW5pdD86IHN0cmluZyB8IG51bGwsXG4pOiBzdHJpbmcge1xuICAvLyBQcmlzbWEgRGVjaW1hbCBjb2x1bW5zIGFycml2ZSBhcyBudW1lcmljIFNUUklOR1MsIGFuZCBhIG1pc3NpbmcgZmllbGQgbXVzdFxuICAvLyBkZWdyYWRlIHRvIGEgZGFzaCByYXRoZXIgdGhhbiB0aHJvdyBpbnNpZGUgYSByZW5kZXIuXG4gIGNvbnN0IHUgPSBOdW1iZXIodW5pdHMpO1xuICBpZiAoIU51bWJlci5pc0Zpbml0ZSh1KSkgcmV0dXJuIFwi4oCUXCI7XG4gIGNvbnN0IG4gPSB1LnRvTG9jYWxlU3RyaW5nKFwiZW4tVVNcIik7XG4gIGNvbnN0IHVwYiA9IE51bWJlcih1bml0c1BlckJveCA/PyAwKTtcbiAgLy8gTm90IGJveGVkOiB0aGUgZmlndXJlIGlzIGRlbm9taW5hdGVkIGluIHRoZSBwcm9kdWN0J3Mgb3duIHVuaXQsIHNvIGtlZXAgaXRzIG5vdW4uXG4gIGlmICghKHVwYiA+IDEpKSByZXR1cm4gYCR7bn0gJHt1bml0Py50cmltKCkgfHwgXCJwY3NcIn1gO1xuICAvLyBCb3hlZDogYSBwaWVjZSBjb3VudCDigJQgYHVuaXRgIGlzIHRoZSBib3ggbm91biwgc28gaXQgbXVzdCBOT1QgYmUgdXNlZCBoZXJlLlxuICBpZiAodSA8PSAwKSByZXR1cm4gYCR7bn0gcGNzYDtcbiAgY29uc3Qgc3BsaXQgPSBub3JtYWxpemVCb3hlc1BpZWNlcyh7IHF0eTogdSwgdW5pdHNQZXJCb3g6IHVwYiB9KTtcbiAgcmV0dXJuIGAke259IHBjcyAoJHtmb3JtYXRRdHlTcGxpdCh7IHF0eTogc3BsaXQucXR5LCBib3hlczogc3BsaXQuYm94ZXMsIHBpZWNlczogc3BsaXQucGllY2VzIH0pfSlgO1xufVxuIl0sInZlcnNpb24iOjN9

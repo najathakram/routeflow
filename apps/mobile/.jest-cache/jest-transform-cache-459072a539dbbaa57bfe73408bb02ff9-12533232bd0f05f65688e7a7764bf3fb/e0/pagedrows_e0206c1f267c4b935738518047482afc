@@ -1,0 +1,45 @@
+608da84b6103b4af5bae93c67c60f558
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.flattenPages = flattenPages;
+exports.mergeProductIndex = mergeProductIndex;
+/**
+ * Flatten the pages of an infinite query into one list, dropping duplicates.
+ *
+ * Offset pagination re-emits a row when the underlying set shifts between page
+ * fetches (someone edits a product mid-scroll). Duplicate keys crash FlatList,
+ * so de-duping is not optional — `products/index.tsx` learned this the hard way.
+ */
+function flattenPages(pages) {
+    if (!pages?.length)
+        return [];
+    const seen = new Set();
+    const out = [];
+    for (const page of pages) {
+        for (const row of page?.data ?? []) {
+            if (!row?.id || seen.has(row.id))
+                continue;
+            seen.add(row.id);
+            out.push(row);
+        }
+    }
+    return out;
+}
+/**
+ * Index the rows a screen can price and total: the current page, plus snapshots
+ * of lines added earlier that the page no longer contains.
+ *
+ * The live page wins on conflict — a snapshot is only ever a fallback, so an
+ * edited price still shows through. Without the snapshot half, a line added
+ * from page 3 (or before a search narrowed the list) silently drops out of the
+ * footer total.
+ */
+function mergeProductIndex(pageRows, snapshots) {
+    const index = new Map();
+    for (const [id, snapshot] of Object.entries(snapshots))
+        index.set(id, snapshot);
+    for (const row of pageRows)
+        index.set(row.id, row);
+    return index;
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3BhZ2VkLXJvd3MudHMiLCJtYXBwaW5ncyI6Ijs7QUFPQSxvQ0FjQztBQVdELDhDQVFDO0FBeENEOzs7Ozs7R0FNRztBQUNILFNBQWdCLFlBQVksQ0FDMUIsS0FBdUM7SUFFdkMsSUFBSSxDQUFDLEtBQUssRUFBRSxNQUFNO1FBQUUsT0FBTyxFQUFFLENBQUM7SUFDOUIsTUFBTSxJQUFJLEdBQUcsSUFBSSxHQUFHLEVBQVUsQ0FBQztJQUMvQixNQUFNLEdBQUcsR0FBUSxFQUFFLENBQUM7SUFDcEIsS0FBSyxNQUFNLElBQUksSUFBSSxLQUFLLEVBQUUsQ0FBQztRQUN6QixLQUFLLE1BQU0sR0FBRyxJQUFJLElBQUksRUFBRSxJQUFJLElBQUksRUFBRSxFQUFFLENBQUM7WUFDbkMsSUFBSSxDQUFDLEdBQUcsRUFBRSxFQUFFLElBQUksSUFBSSxDQUFDLEdBQUcsQ0FBQyxHQUFHLENBQUMsRUFBRSxDQUFDO2dCQUFFLFNBQVM7WUFDM0MsSUFBSSxDQUFDLEdBQUcsQ0FBQyxHQUFHLENBQUMsRUFBRSxDQUFDLENBQUM7WUFDakIsR0FBRyxDQUFDLElBQUksQ0FBQyxHQUFHLENBQUMsQ0FBQztRQUNoQixDQUFDO0lBQ0gsQ0FBQztJQUNELE9BQU8sR0FBRyxDQUFDO0FBQ2IsQ0FBQztBQUVEOzs7Ozs7OztHQVFHO0FBQ0gsU0FBZ0IsaUJBQWlCLENBQy9CLFFBQW1DLEVBQ25DLFNBQTRCO0lBRTVCLE1BQU0sS0FBSyxHQUFHLElBQUksR0FBRyxFQUFhLENBQUM7SUFDbkMsS0FBSyxNQUFNLENBQUMsRUFBRSxFQUFFLFFBQVEsQ0FBQyxJQUFJLE1BQU0sQ0FBQyxPQUFPLENBQUMsU0FBUyxDQUFDO1FBQUUsS0FBSyxDQUFDLEdBQUcsQ0FBQyxFQUFFLEVBQUUsUUFBUSxDQUFDLENBQUM7SUFDaEYsS0FBSyxNQUFNLEdBQUcsSUFBSSxRQUFRO1FBQUUsS0FBSyxDQUFDLEdBQUcsQ0FBQyxHQUFHLENBQUMsRUFBRSxFQUFFLEdBQUcsQ0FBQyxDQUFDO0lBQ25ELE9BQU8sS0FBSyxDQUFDO0FBQ2YsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9hcHBzL21vYmlsZS9saWIvcGFnZWQtcm93cy50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqIEZsYXR0ZW4gdGhlIHBhZ2VzIG9mIGFuIGluZmluaXRlIHF1ZXJ5IGludG8gb25lIGxpc3QsIGRyb3BwaW5nIGR1cGxpY2F0ZXMuXG4gKlxuICogT2Zmc2V0IHBhZ2luYXRpb24gcmUtZW1pdHMgYSByb3cgd2hlbiB0aGUgdW5kZXJseWluZyBzZXQgc2hpZnRzIGJldHdlZW4gcGFnZVxuICogZmV0Y2hlcyAoc29tZW9uZSBlZGl0cyBhIHByb2R1Y3QgbWlkLXNjcm9sbCkuIER1cGxpY2F0ZSBrZXlzIGNyYXNoIEZsYXRMaXN0LFxuICogc28gZGUtZHVwaW5nIGlzIG5vdCBvcHRpb25hbCDigJQgYHByb2R1Y3RzL2luZGV4LnRzeGAgbGVhcm5lZCB0aGlzIHRoZSBoYXJkIHdheS5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIGZsYXR0ZW5QYWdlczxUIGV4dGVuZHMgeyBpZDogc3RyaW5nIH0+KFxuICBwYWdlczogQXJyYXk8eyBkYXRhOiBUW10gfT4gfCB1bmRlZmluZWQsXG4pOiBUW10ge1xuICBpZiAoIXBhZ2VzPy5sZW5ndGgpIHJldHVybiBbXTtcbiAgY29uc3Qgc2VlbiA9IG5ldyBTZXQ8c3RyaW5nPigpO1xuICBjb25zdCBvdXQ6IFRbXSA9IFtdO1xuICBmb3IgKGNvbnN0IHBhZ2Ugb2YgcGFnZXMpIHtcbiAgICBmb3IgKGNvbnN0IHJvdyBvZiBwYWdlPy5kYXRhID8/IFtdKSB7XG4gICAgICBpZiAoIXJvdz8uaWQgfHwgc2Vlbi5oYXMocm93LmlkKSkgY29udGludWU7XG4gICAgICBzZWVuLmFkZChyb3cuaWQpO1xuICAgICAgb3V0LnB1c2gocm93KTtcbiAgICB9XG4gIH1cbiAgcmV0dXJuIG91dDtcbn1cblxuLyoqXG4gKiBJbmRleCB0aGUgcm93cyBhIHNjcmVlbiBjYW4gcHJpY2UgYW5kIHRvdGFsOiB0aGUgY3VycmVudCBwYWdlLCBwbHVzIHNuYXBzaG90c1xuICogb2YgbGluZXMgYWRkZWQgZWFybGllciB0aGF0IHRoZSBwYWdlIG5vIGxvbmdlciBjb250YWlucy5cbiAqXG4gKiBUaGUgbGl2ZSBwYWdlIHdpbnMgb24gY29uZmxpY3Qg4oCUIGEgc25hcHNob3QgaXMgb25seSBldmVyIGEgZmFsbGJhY2ssIHNvIGFuXG4gKiBlZGl0ZWQgcHJpY2Ugc3RpbGwgc2hvd3MgdGhyb3VnaC4gV2l0aG91dCB0aGUgc25hcHNob3QgaGFsZiwgYSBsaW5lIGFkZGVkXG4gKiBmcm9tIHBhZ2UgMyAob3IgYmVmb3JlIGEgc2VhcmNoIG5hcnJvd2VkIHRoZSBsaXN0KSBzaWxlbnRseSBkcm9wcyBvdXQgb2YgdGhlXG4gKiBmb290ZXIgdG90YWwuXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiBtZXJnZVByb2R1Y3RJbmRleDxUPihcbiAgcGFnZVJvd3M6IEFycmF5PFQgJiB7IGlkOiBzdHJpbmcgfT4sXG4gIHNuYXBzaG90czogUmVjb3JkPHN0cmluZywgVD4sXG4pOiBNYXA8c3RyaW5nLCBUPiB7XG4gIGNvbnN0IGluZGV4ID0gbmV3IE1hcDxzdHJpbmcsIFQ+KCk7XG4gIGZvciAoY29uc3QgW2lkLCBzbmFwc2hvdF0gb2YgT2JqZWN0LmVudHJpZXMoc25hcHNob3RzKSkgaW5kZXguc2V0KGlkLCBzbmFwc2hvdCk7XG4gIGZvciAoY29uc3Qgcm93IG9mIHBhZ2VSb3dzKSBpbmRleC5zZXQocm93LmlkLCByb3cpO1xuICByZXR1cm4gaW5kZXg7XG59XG4iXSwidmVyc2lvbiI6M30=

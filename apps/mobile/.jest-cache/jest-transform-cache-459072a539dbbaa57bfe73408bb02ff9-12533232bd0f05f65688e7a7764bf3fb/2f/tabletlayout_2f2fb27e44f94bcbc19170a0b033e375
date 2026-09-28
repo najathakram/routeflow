@@ -1,0 +1,38 @@
+f6eabd961c79c7a09912778fcd8cb50f
+"use strict";
+/**
+ * #2311 (iPad pass, PR 1): the ONE width rule every screen shares on a wide window, so a phone
+ * layout is never stretched edge to edge on an 11- or 13-inch iPad, in portrait or landscape.
+ *
+ * Pure (window width in, layout out) so it is pinned in jest without rendering; the
+ * `ContentWidth` component (components/ContentWidth.tsx) is its only React consumer.
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.WIDE_CONTENT_MAX_WIDTH = exports.CONTENT_MAX_WIDTH = exports.TABLET_MIN_WIDTH = void 0;
+exports.isTabletWidth = isTabletWidth;
+exports.gridColumns = gridColumns;
+exports.contentWidth = contentWidth;
+/** Below this window width the device is laid out as a phone: full width, one column. */
+exports.TABLET_MIN_WIDTH = 700;
+/** The widest a single reading/form column ever gets — past this, lines get too long to scan. */
+exports.CONTENT_MAX_WIDTH = 760;
+/** The widest a multi-column list/dashboard grid gets before it centres. */
+exports.WIDE_CONTENT_MAX_WIDTH = 1180;
+function isTabletWidth(windowWidth) {
+    return windowWidth >= exports.TABLET_MIN_WIDTH;
+}
+/**
+ * How many columns a list/card grid uses at this window width: 1 on a phone, 2 on a tablet in
+ * portrait (an 11-inch iPad is 834pt wide), 3 once there is room (13-inch landscape is 1376pt).
+ */
+function gridColumns(windowWidth) {
+    if (!isTabletWidth(windowWidth))
+        return 1;
+    return windowWidth >= 1100 ? 3 : 2;
+}
+/** The content width a wrapper resolves to: the window itself on a phone, capped on a tablet. */
+function contentWidth(windowWidth, variant = "column") {
+    const cap = variant === "wide" ? exports.WIDE_CONTENT_MAX_WIDTH : exports.CONTENT_MAX_WIDTH;
+    return Math.min(windowWidth, cap);
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3RhYmxldC1sYXlvdXQudHMiLCJtYXBwaW5ncyI6IjtBQUFBOzs7Ozs7R0FNRzs7O0FBV0gsc0NBRUM7QUFNRCxrQ0FHQztBQUdELG9DQUdDO0FBMUJELHlGQUF5RjtBQUM1RSxRQUFBLGdCQUFnQixHQUFHLEdBQUcsQ0FBQztBQUVwQyxpR0FBaUc7QUFDcEYsUUFBQSxpQkFBaUIsR0FBRyxHQUFHLENBQUM7QUFFckMsNEVBQTRFO0FBQy9ELFFBQUEsc0JBQXNCLEdBQUcsSUFBSSxDQUFDO0FBRTNDLFNBQWdCLGFBQWEsQ0FBQyxXQUFtQjtJQUMvQyxPQUFPLFdBQVcsSUFBSSx3QkFBZ0IsQ0FBQztBQUN6QyxDQUFDO0FBRUQ7OztHQUdHO0FBQ0gsU0FBZ0IsV0FBVyxDQUFDLFdBQW1CO0lBQzdDLElBQUksQ0FBQyxhQUFhLENBQUMsV0FBVyxDQUFDO1FBQUUsT0FBTyxDQUFDLENBQUM7SUFDMUMsT0FBTyxXQUFXLElBQUksSUFBSSxDQUFDLENBQUMsQ0FBQyxDQUFDLENBQUMsQ0FBQyxDQUFDLENBQUMsQ0FBQztBQUNyQyxDQUFDO0FBRUQsaUdBQWlHO0FBQ2pHLFNBQWdCLFlBQVksQ0FBQyxXQUFtQixFQUFFLFVBQTZCLFFBQVE7SUFDckYsTUFBTSxHQUFHLEdBQUcsT0FBTyxLQUFLLE1BQU0sQ0FBQyxDQUFDLENBQUMsOEJBQXNCLENBQUMsQ0FBQyxDQUFDLHlCQUFpQixDQUFDO0lBQzVFLE9BQU8sSUFBSSxDQUFDLEdBQUcsQ0FBQyxXQUFXLEVBQUUsR0FBRyxDQUFDLENBQUM7QUFDcEMsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9hcHBzL21vYmlsZS9saWIvdGFibGV0LWxheW91dC50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqICMyMzExIChpUGFkIHBhc3MsIFBSIDEpOiB0aGUgT05FIHdpZHRoIHJ1bGUgZXZlcnkgc2NyZWVuIHNoYXJlcyBvbiBhIHdpZGUgd2luZG93LCBzbyBhIHBob25lXG4gKiBsYXlvdXQgaXMgbmV2ZXIgc3RyZXRjaGVkIGVkZ2UgdG8gZWRnZSBvbiBhbiAxMS0gb3IgMTMtaW5jaCBpUGFkLCBpbiBwb3J0cmFpdCBvciBsYW5kc2NhcGUuXG4gKlxuICogUHVyZSAod2luZG93IHdpZHRoIGluLCBsYXlvdXQgb3V0KSBzbyBpdCBpcyBwaW5uZWQgaW4gamVzdCB3aXRob3V0IHJlbmRlcmluZzsgdGhlXG4gKiBgQ29udGVudFdpZHRoYCBjb21wb25lbnQgKGNvbXBvbmVudHMvQ29udGVudFdpZHRoLnRzeCkgaXMgaXRzIG9ubHkgUmVhY3QgY29uc3VtZXIuXG4gKi9cblxuLyoqIEJlbG93IHRoaXMgd2luZG93IHdpZHRoIHRoZSBkZXZpY2UgaXMgbGFpZCBvdXQgYXMgYSBwaG9uZTogZnVsbCB3aWR0aCwgb25lIGNvbHVtbi4gKi9cbmV4cG9ydCBjb25zdCBUQUJMRVRfTUlOX1dJRFRIID0gNzAwO1xuXG4vKiogVGhlIHdpZGVzdCBhIHNpbmdsZSByZWFkaW5nL2Zvcm0gY29sdW1uIGV2ZXIgZ2V0cyDigJQgcGFzdCB0aGlzLCBsaW5lcyBnZXQgdG9vIGxvbmcgdG8gc2Nhbi4gKi9cbmV4cG9ydCBjb25zdCBDT05URU5UX01BWF9XSURUSCA9IDc2MDtcblxuLyoqIFRoZSB3aWRlc3QgYSBtdWx0aS1jb2x1bW4gbGlzdC9kYXNoYm9hcmQgZ3JpZCBnZXRzIGJlZm9yZSBpdCBjZW50cmVzLiAqL1xuZXhwb3J0IGNvbnN0IFdJREVfQ09OVEVOVF9NQVhfV0lEVEggPSAxMTgwO1xuXG5leHBvcnQgZnVuY3Rpb24gaXNUYWJsZXRXaWR0aCh3aW5kb3dXaWR0aDogbnVtYmVyKTogYm9vbGVhbiB7XG4gIHJldHVybiB3aW5kb3dXaWR0aCA+PSBUQUJMRVRfTUlOX1dJRFRIO1xufVxuXG4vKipcbiAqIEhvdyBtYW55IGNvbHVtbnMgYSBsaXN0L2NhcmQgZ3JpZCB1c2VzIGF0IHRoaXMgd2luZG93IHdpZHRoOiAxIG9uIGEgcGhvbmUsIDIgb24gYSB0YWJsZXQgaW5cbiAqIHBvcnRyYWl0IChhbiAxMS1pbmNoIGlQYWQgaXMgODM0cHQgd2lkZSksIDMgb25jZSB0aGVyZSBpcyByb29tICgxMy1pbmNoIGxhbmRzY2FwZSBpcyAxMzc2cHQpLlxuICovXG5leHBvcnQgZnVuY3Rpb24gZ3JpZENvbHVtbnMod2luZG93V2lkdGg6IG51bWJlcik6IDEgfCAyIHwgMyB7XG4gIGlmICghaXNUYWJsZXRXaWR0aCh3aW5kb3dXaWR0aCkpIHJldHVybiAxO1xuICByZXR1cm4gd2luZG93V2lkdGggPj0gMTEwMCA/IDMgOiAyO1xufVxuXG4vKiogVGhlIGNvbnRlbnQgd2lkdGggYSB3cmFwcGVyIHJlc29sdmVzIHRvOiB0aGUgd2luZG93IGl0c2VsZiBvbiBhIHBob25lLCBjYXBwZWQgb24gYSB0YWJsZXQuICovXG5leHBvcnQgZnVuY3Rpb24gY29udGVudFdpZHRoKHdpbmRvd1dpZHRoOiBudW1iZXIsIHZhcmlhbnQ6IFwiY29sdW1uXCIgfCBcIndpZGVcIiA9IFwiY29sdW1uXCIpOiBudW1iZXIge1xuICBjb25zdCBjYXAgPSB2YXJpYW50ID09PSBcIndpZGVcIiA/IFdJREVfQ09OVEVOVF9NQVhfV0lEVEggOiBDT05URU5UX01BWF9XSURUSDtcbiAgcmV0dXJuIE1hdGgubWluKHdpbmRvd1dpZHRoLCBjYXApO1xufVxuIl0sInZlcnNpb24iOjN9

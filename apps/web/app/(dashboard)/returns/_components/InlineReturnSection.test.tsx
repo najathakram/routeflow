@@ -24,6 +24,14 @@ jest.mock("@/lib/api/inline-returns", () => ({
   useInlineReturnQuote: () => ({ mutate: quoteMutate, isPending: quoteIsPending }),
 }));
 
+// #2695: the credit price override is role-gated; the real AuthProvider (renderWithProviders) has
+// no user, so only useOptionalAuth is swapped for a role this file controls.
+let authRole: string | undefined;
+jest.mock("@/lib/auth-context", () => ({
+  ...jest.requireActual("@/lib/auth-context"),
+  useOptionalAuth: () => (authRole ? { user: { role: authRole } } : null),
+}));
+
 function chunk(overrides: Partial<InlineReturnQuoteChunk> = {}): InlineReturnQuoteChunk {
   return {
     sourceOrderId: "order-newest",
@@ -64,6 +72,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   quoteIsPending = false;
   productResults = [PRODUCT];
+  authRole = undefined;
 });
 
 function renderSection(
@@ -214,5 +223,115 @@ describe("InlineReturnSection — each line's labels target that line's own fiel
     fireEvent.change(qty[1], { target: { value: "7" } });
     expect(qty[1].value).toBe("7");
     expect(qty[0].value).not.toBe("7");
+  });
+});
+
+describe("InlineReturnSection — #2695 staff credit price override", () => {
+  async function addProduct(pieces: string) {
+    fireEvent.change(screen.getByLabelText(/add another product/i), { target: { value: "wid" } });
+    fireEvent.click(await screen.findByText("Widget"));
+    fireEvent.change(screen.getByLabelText(/qty \(pieces\)/i), { target: { value: pieces } });
+  }
+
+  it.each([["DRIVER"], ["CUSTOMER"], [undefined]])(
+    "is never offered to %s (the server would 400 it)",
+    async (role) => {
+      authRole = role;
+      renderSection();
+      await addProduct("4");
+      expect(screen.queryByLabelText(/credit price/i)).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/why the lower price/i)).not.toBeInTheDocument();
+    },
+  );
+
+  it.each([["OPERATOR"], ["TENANT_ADMIN"]])(
+    "%s: a price + reason goes on the quote request, trimmed",
+    async (role) => {
+      authRole = role;
+      const states = renderSection();
+      await addProduct("4");
+      fireEvent.change(screen.getByLabelText(/credit price/i), { target: { value: "3.50" } });
+      fireEvent.change(screen.getByLabelText(/why the lower price/i), {
+        target: { value: "  damaged box " },
+      });
+      fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
+      await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
+      expect(quoteMutate.mock.calls[0][0].items).toEqual([
+        {
+          productId: "prod-1",
+          qty: 1,
+          boxes: 0,
+          pieces: 4,
+          creditUnitPrice: 3.5,
+          overrideReason: "damaged box",
+        },
+      ]);
+      // The host's capture reads these same lines (buildCaptureRequest), so it sends the same override.
+      expect(states[states.length - 1].lines[0]).toMatchObject({ creditUnitPrice: "3.50" });
+    },
+  );
+
+  it("a price without a reason blocks Get quote and says why", async () => {
+    authRole = "OPERATOR";
+    renderSection();
+    await addProduct("4");
+    fireEvent.change(screen.getByLabelText(/credit price/i), { target: { value: "3.50" } });
+    expect(screen.getByRole("button", { name: /get quote/i })).toBeDisabled();
+    expect(screen.getByText(/widget: say why the credit price is lower/i)).toBeInTheDocument();
+  });
+
+  it("the quote shows a lowered line as the server priced it: the new price, the default it replaced, and why", async () => {
+    authRole = "OPERATOR";
+    renderSection();
+    await addProduct("4");
+    fireEvent.change(screen.getByLabelText(/credit price/i), { target: { value: "3.50" } });
+    fireEvent.change(screen.getByLabelText(/why the lower price/i), {
+      target: { value: "dented" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
+    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
+    resolveNextQuote(
+      quoteResponse([
+        chunk({
+          pieces: 4,
+          subtotal: 14,
+          taxAmount: 0.7,
+          priceSource: "MANUAL",
+          unitPrice: 3.5,
+          originalPrice: 5,
+          overrideReason: "dented",
+        }),
+      ]),
+    );
+    expect(
+      await screen.findByText("Credit lowered to $3.50 from $5.00 — dented"),
+    ).toBeInTheDocument();
+  });
+
+  it("'Return only what was bought' re-quotes WITH the override", async () => {
+    authRole = "OPERATOR";
+    renderSection();
+    await addProduct("6");
+    fireEvent.change(screen.getByLabelText(/credit price/i), { target: { value: "3.50" } });
+    fireEvent.change(screen.getByLabelText(/why the lower price/i), {
+      target: { value: "dented" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
+    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
+    resolveNextQuote(
+      quoteResponse([chunk({ pieces: 4 }), chunk({ sourceOrderId: null, pieces: 2 })]),
+    );
+    fireEvent.click(await screen.findByLabelText(/return only what was bought/i));
+    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
+    expect(quoteMutate.mock.calls[1][0].items).toEqual([
+      {
+        productId: "prod-1",
+        qty: 1,
+        boxes: 0,
+        pieces: 4,
+        creditUnitPrice: 3.5,
+        overrideReason: "dented",
+      },
+    ]);
   });
 });

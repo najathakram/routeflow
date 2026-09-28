@@ -1,0 +1,192 @@
+3e5424964c8412cf5230e92af6db142a
+/**
+ * #2266 (SA-388d): SA-388 locks every unit line with no derivable count, and labelled them all
+ * "needs repair". But a PARTIAL Case — e.g. 40 pieces on a 12-pack delivered short — is a
+ * legitimate physical quantity (SA-178 / B652). Only SA-388d's all-empty split is a repair case:
+ * a unit line (unitLabel set, factor > 1, qty > 0) whose boxes AND pieces are both 0/null — the
+ * shape the DB CHECK refuses. A valid partial line shows whole units + remainder ("3 Cases +
+ * 4 pcs") and stays not count-editable; the save refusal stays. Fixtures are base pieces.
+ */ "use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+const _react1 = require("@testing-library/react");
+const _page = require("./page");
+const _unitlinelock = require("./_components/unit-line-lock");
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+const line = (qty, boxes, pieces, factor = 12, unitLabel = "Case")=>({
+        id: "li-1",
+        productId: "p-1",
+        product: {
+            id: "p-1",
+            name: "Widget",
+            unit: "Box",
+            unitsPerBox: factor
+        },
+        qty,
+        unitPrice: 40,
+        boxes,
+        pieces,
+        unitsPerBox: factor,
+        unitLabel,
+        status: "DELIVERED"
+    });
+describe("isEmptyUnitLineSplit — SA-388d's repair shape only (#2266)", ()=>{
+    it.each([
+        [
+            "{40, 0, 0}",
+            line(40, 0, 0)
+        ],
+        [
+            "{40, null, null}",
+            line(40, null, null)
+        ],
+        [
+            "{36, 0, 0}",
+            line(36, 0, 0)
+        ]
+    ])("%s on a 12-pack Case line ⇒ repair", (_l, li)=>{
+        expect((0, _unitlinelock.isEmptyUnitLineSplit)(li)).toBe(true);
+    });
+    it.each([
+        [
+            "a partial Case {40, 0, 40}",
+            line(40, 0, 40)
+        ],
+        [
+            "a partial Case {40, null, 40}",
+            line(40, null, 40)
+        ],
+        [
+            "a whole-Case split {36, 3, 0}",
+            line(36, 3, 0)
+        ],
+        [
+            "a factor-1 Each line stores no split {5, 0, 0}",
+            line(5, 0, 0, 1, "Each")
+        ],
+        [
+            "a pack line (no unitLabel) {40, 0, 0}",
+            line(40, 0, 0, 12, null)
+        ],
+        [
+            "a zero-qty row {0, 0, 0}",
+            line(0, 0, 0)
+        ]
+    ])("%s ⇒ not repair", (_l, li)=>{
+        expect((0, _unitlinelock.isEmptyUnitLineSplit)(li)).toBe(false);
+    });
+});
+describe("lockedUnitLineDisplay (#2266)", ()=>{
+    it("a valid partial line reads as whole units + remainder", ()=>{
+        expect((0, _unitlinelock.lockedUnitLineDisplay)(line(40, 0, 40))).toEqual({
+            needsRepair: false,
+            text: "3 Cases + 4 pcs"
+        });
+        expect((0, _unitlinelock.lockedUnitLineDisplay)(line(4, null, 4))).toEqual({
+            needsRepair: false,
+            text: "4 pcs"
+        });
+    });
+    it("the all-empty split still needs repair", ()=>{
+        expect((0, _unitlinelock.lockedUnitLineDisplay)(line(40, 0, 0))).toEqual({
+            needsRepair: true,
+            text: null
+        });
+    });
+});
+describe("LockedUnitLineBadge (#2266)", ()=>{
+    it("a partial line shows its quantity, not 'needs repair'", ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_unitlinelock.LockedUnitLineBadge, {
+            display: {
+                needsRepair: false,
+                text: "3 Cases + 4 pcs"
+            }
+        }));
+        expect(_react1.screen.getByRole("status").textContent).toBe("3 Cases + 4 pcs");
+        expect(_react1.screen.queryByText(/needs repair/)).toBeNull();
+    });
+    it("a repair line keeps 'This line needs repair'", ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_unitlinelock.LockedUnitLineBadge, {
+            display: {
+                needsRepair: true,
+                text: null
+            }
+        }));
+        expect(_react1.screen.getByRole("status").textContent).toBe("This line needs repair");
+    });
+});
+describe("buildEditItemFromLine carries the display; the lock itself is unchanged (#2266)", ()=>{
+    it("a partial Case is still LOCKED (not count-editable) but displays 3 Cases + 4 pcs", ()=>{
+        const seeded = (0, _page.buildEditItemFromLine)(line(40, 0, 40));
+        expect(seeded.countLocked).toBe(true);
+        expect(seeded.lockedDisplay).toEqual({
+            needsRepair: false,
+            text: "3 Cases + 4 pcs"
+        });
+    });
+    it("an unlocked line carries no locked display", ()=>{
+        expect((0, _page.buildEditItemFromLine)(line(36, 3, 0)).lockedDisplay).toBeUndefined();
+    });
+});
+describe("the save refusal names the right reason (#2266)", ()=>{
+    it("a partial line: can't be edited as a count; cancel and re-add", ()=>{
+        const msg = (0, _unitlinelock.lockedUnitLineRefusal)("Widget", {
+            needsRepair: false,
+            text: "3 Cases + 4 pcs"
+        });
+        expect(msg).toMatch(/Widget is a partial quantity \(3 Cases \+ 4 pcs\)/);
+        expect(msg).not.toMatch(/needs repair/);
+        expect(msg).toMatch(/Nothing was saved\.$/);
+    });
+    it("a repair line keeps the needs-repair message", ()=>{
+        expect((0, _unitlinelock.lockedUnitLineRefusal)("Widget", {
+            needsRepair: true,
+            text: null
+        })).toMatch(/^Widget needs repair/);
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS9vcmRlcnMvW2lkXS91bml0LWxpbmUtcGFydGlhbC50ZXN0LnRzeCJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqICMyMjY2IChTQS0zODhkKTogU0EtMzg4IGxvY2tzIGV2ZXJ5IHVuaXQgbGluZSB3aXRoIG5vIGRlcml2YWJsZSBjb3VudCwgYW5kIGxhYmVsbGVkIHRoZW0gYWxsXG4gKiBcIm5lZWRzIHJlcGFpclwiLiBCdXQgYSBQQVJUSUFMIENhc2Ug4oCUIGUuZy4gNDAgcGllY2VzIG9uIGEgMTItcGFjayBkZWxpdmVyZWQgc2hvcnQg4oCUIGlzIGFcbiAqIGxlZ2l0aW1hdGUgcGh5c2ljYWwgcXVhbnRpdHkgKFNBLTE3OCAvIEI2NTIpLiBPbmx5IFNBLTM4OGQncyBhbGwtZW1wdHkgc3BsaXQgaXMgYSByZXBhaXIgY2FzZTpcbiAqIGEgdW5pdCBsaW5lICh1bml0TGFiZWwgc2V0LCBmYWN0b3IgPiAxLCBxdHkgPiAwKSB3aG9zZSBib3hlcyBBTkQgcGllY2VzIGFyZSBib3RoIDAvbnVsbCDigJQgdGhlXG4gKiBzaGFwZSB0aGUgREIgQ0hFQ0sgcmVmdXNlcy4gQSB2YWxpZCBwYXJ0aWFsIGxpbmUgc2hvd3Mgd2hvbGUgdW5pdHMgKyByZW1haW5kZXIgKFwiMyBDYXNlcyArXG4gKiA0IHBjc1wiKSBhbmQgc3RheXMgbm90IGNvdW50LWVkaXRhYmxlOyB0aGUgc2F2ZSByZWZ1c2FsIHN0YXlzLiBGaXh0dXJlcyBhcmUgYmFzZSBwaWVjZXMuXG4gKi9cbmltcG9ydCAqIGFzIFJlYWN0IGZyb20gXCJyZWFjdFwiO1xuaW1wb3J0IHsgcmVuZGVyLCBzY3JlZW4gfSBmcm9tIFwiQHRlc3RpbmctbGlicmFyeS9yZWFjdFwiO1xuaW1wb3J0IHsgYnVpbGRFZGl0SXRlbUZyb21MaW5lIH0gZnJvbSBcIi4vcGFnZVwiO1xuaW1wb3J0IHtcbiAgTG9ja2VkVW5pdExpbmVCYWRnZSxcbiAgbG9ja2VkVW5pdExpbmVEaXNwbGF5LFxuICBsb2NrZWRVbml0TGluZVJlZnVzYWwsXG4gIGlzRW1wdHlVbml0TGluZVNwbGl0LFxufSBmcm9tIFwiLi9fY29tcG9uZW50cy91bml0LWxpbmUtbG9ja1wiO1xuaW1wb3J0IHR5cGUgeyBPcmRlckl0ZW0gfSBmcm9tIFwiQC9saWIvYXBpL29yZGVyc1wiO1xuXG5jb25zdCBsaW5lID0gKFxuICBxdHk6IG51bWJlcixcbiAgYm94ZXM6IG51bWJlciB8IG51bGwsXG4gIHBpZWNlczogbnVtYmVyIHwgbnVsbCxcbiAgZmFjdG9yID0gMTIsXG4gIHVuaXRMYWJlbDogc3RyaW5nIHwgbnVsbCA9IFwiQ2FzZVwiLFxuKTogT3JkZXJJdGVtID0+XG4gICh7XG4gICAgaWQ6IFwibGktMVwiLFxuICAgIHByb2R1Y3RJZDogXCJwLTFcIixcbiAgICBwcm9kdWN0OiB7IGlkOiBcInAtMVwiLCBuYW1lOiBcIldpZGdldFwiLCB1bml0OiBcIkJveFwiLCB1bml0c1BlckJveDogZmFjdG9yIH0sXG4gICAgcXR5LFxuICAgIHVuaXRQcmljZTogNDAsXG4gICAgYm94ZXMsXG4gICAgcGllY2VzLFxuICAgIHVuaXRzUGVyQm94OiBmYWN0b3IsXG4gICAgdW5pdExhYmVsLFxuICAgIHN0YXR1czogXCJERUxJVkVSRURcIixcbiAgfSkgYXMgT3JkZXJJdGVtO1xuXG5kZXNjcmliZShcImlzRW1wdHlVbml0TGluZVNwbGl0IOKAlCBTQS0zODhkJ3MgcmVwYWlyIHNoYXBlIG9ubHkgKCMyMjY2KVwiLCAoKSA9PiB7XG4gIGl0LmVhY2goW1xuICAgIFtcIns0MCwgMCwgMH1cIiwgbGluZSg0MCwgMCwgMCldLFxuICAgIFtcIns0MCwgbnVsbCwgbnVsbH1cIiwgbGluZSg0MCwgbnVsbCwgbnVsbCldLFxuICAgIFtcInszNiwgMCwgMH1cIiwgbGluZSgzNiwgMCwgMCldLFxuICBdKShcIiVzIG9uIGEgMTItcGFjayBDYXNlIGxpbmUg4oeSIHJlcGFpclwiLCAoX2wsIGxpKSA9PiB7XG4gICAgZXhwZWN0KGlzRW1wdHlVbml0TGluZVNwbGl0KGxpKSkudG9CZSh0cnVlKTtcbiAgfSk7XG5cbiAgaXQuZWFjaChbXG4gICAgW1wiYSBwYXJ0aWFsIENhc2UgezQwLCAwLCA0MH1cIiwgbGluZSg0MCwgMCwgNDApXSxcbiAgICBbXCJhIHBhcnRpYWwgQ2FzZSB7NDAsIG51bGwsIDQwfVwiLCBsaW5lKDQwLCBudWxsLCA0MCldLFxuICAgIFtcImEgd2hvbGUtQ2FzZSBzcGxpdCB7MzYsIDMsIDB9XCIsIGxpbmUoMzYsIDMsIDApXSxcbiAgICBbXCJhIGZhY3Rvci0xIEVhY2ggbGluZSBzdG9yZXMgbm8gc3BsaXQgezUsIDAsIDB9XCIsIGxpbmUoNSwgMCwgMCwgMSwgXCJFYWNoXCIpXSxcbiAgICBbXCJhIHBhY2sgbGluZSAobm8gdW5pdExhYmVsKSB7NDAsIDAsIDB9XCIsIGxpbmUoNDAsIDAsIDAsIDEyLCBudWxsKV0sXG4gICAgW1wiYSB6ZXJvLXF0eSByb3cgezAsIDAsIDB9XCIsIGxpbmUoMCwgMCwgMCldLFxuICBdKShcIiVzIOKHkiBub3QgcmVwYWlyXCIsIChfbCwgbGkpID0+IHtcbiAgICBleHBlY3QoaXNFbXB0eVVuaXRMaW5lU3BsaXQobGkpKS50b0JlKGZhbHNlKTtcbiAgfSk7XG59KTtcblxuZGVzY3JpYmUoXCJsb2NrZWRVbml0TGluZURpc3BsYXkgKCMyMjY2KVwiLCAoKSA9PiB7XG4gIGl0KFwiYSB2YWxpZCBwYXJ0aWFsIGxpbmUgcmVhZHMgYXMgd2hvbGUgdW5pdHMgKyByZW1haW5kZXJcIiwgKCkgPT4ge1xuICAgIGV4cGVjdChsb2NrZWRVbml0TGluZURpc3BsYXkobGluZSg0MCwgMCwgNDApKSkudG9FcXVhbCh7XG4gICAgICBuZWVkc1JlcGFpcjogZmFsc2UsXG4gICAgICB0ZXh0OiBcIjMgQ2FzZXMgKyA0IHBjc1wiLFxuICAgIH0pO1xuICAgIGV4cGVjdChsb2NrZWRVbml0TGluZURpc3BsYXkobGluZSg0LCBudWxsLCA0KSkpLnRvRXF1YWwoeyBuZWVkc1JlcGFpcjogZmFsc2UsIHRleHQ6IFwiNCBwY3NcIiB9KTtcbiAgfSk7XG5cbiAgaXQoXCJ0aGUgYWxsLWVtcHR5IHNwbGl0IHN0aWxsIG5lZWRzIHJlcGFpclwiLCAoKSA9PiB7XG4gICAgZXhwZWN0KGxvY2tlZFVuaXRMaW5lRGlzcGxheShsaW5lKDQwLCAwLCAwKSkpLnRvRXF1YWwoeyBuZWVkc1JlcGFpcjogdHJ1ZSwgdGV4dDogbnVsbCB9KTtcbiAgfSk7XG59KTtcblxuZGVzY3JpYmUoXCJMb2NrZWRVbml0TGluZUJhZGdlICgjMjI2NilcIiwgKCkgPT4ge1xuICBpdChcImEgcGFydGlhbCBsaW5lIHNob3dzIGl0cyBxdWFudGl0eSwgbm90ICduZWVkcyByZXBhaXInXCIsICgpID0+IHtcbiAgICByZW5kZXIoPExvY2tlZFVuaXRMaW5lQmFkZ2UgZGlzcGxheT17eyBuZWVkc1JlcGFpcjogZmFsc2UsIHRleHQ6IFwiMyBDYXNlcyArIDQgcGNzXCIgfX0gLz4pO1xuICAgIGV4cGVjdChzY3JlZW4uZ2V0QnlSb2xlKFwic3RhdHVzXCIpLnRleHRDb250ZW50KS50b0JlKFwiMyBDYXNlcyArIDQgcGNzXCIpO1xuICAgIGV4cGVjdChzY3JlZW4ucXVlcnlCeVRleHQoL25lZWRzIHJlcGFpci8pKS50b0JlTnVsbCgpO1xuICB9KTtcblxuICBpdChcImEgcmVwYWlyIGxpbmUga2VlcHMgJ1RoaXMgbGluZSBuZWVkcyByZXBhaXInXCIsICgpID0+IHtcbiAgICByZW5kZXIoPExvY2tlZFVuaXRMaW5lQmFkZ2UgZGlzcGxheT17eyBuZWVkc1JlcGFpcjogdHJ1ZSwgdGV4dDogbnVsbCB9fSAvPik7XG4gICAgZXhwZWN0KHNjcmVlbi5nZXRCeVJvbGUoXCJzdGF0dXNcIikudGV4dENvbnRlbnQpLnRvQmUoXCJUaGlzIGxpbmUgbmVlZHMgcmVwYWlyXCIpO1xuICB9KTtcbn0pO1xuXG5kZXNjcmliZShcImJ1aWxkRWRpdEl0ZW1Gcm9tTGluZSBjYXJyaWVzIHRoZSBkaXNwbGF5OyB0aGUgbG9jayBpdHNlbGYgaXMgdW5jaGFuZ2VkICgjMjI2NilcIiwgKCkgPT4ge1xuICBpdChcImEgcGFydGlhbCBDYXNlIGlzIHN0aWxsIExPQ0tFRCAobm90IGNvdW50LWVkaXRhYmxlKSBidXQgZGlzcGxheXMgMyBDYXNlcyArIDQgcGNzXCIsICgpID0+IHtcbiAgICBjb25zdCBzZWVkZWQgPSBidWlsZEVkaXRJdGVtRnJvbUxpbmUobGluZSg0MCwgMCwgNDApKTtcbiAgICBleHBlY3Qoc2VlZGVkLmNvdW50TG9ja2VkKS50b0JlKHRydWUpO1xuICAgIGV4cGVjdChzZWVkZWQubG9ja2VkRGlzcGxheSkudG9FcXVhbCh7IG5lZWRzUmVwYWlyOiBmYWxzZSwgdGV4dDogXCIzIENhc2VzICsgNCBwY3NcIiB9KTtcbiAgfSk7XG5cbiAgaXQoXCJhbiB1bmxvY2tlZCBsaW5lIGNhcnJpZXMgbm8gbG9ja2VkIGRpc3BsYXlcIiwgKCkgPT4ge1xuICAgIGV4cGVjdChidWlsZEVkaXRJdGVtRnJvbUxpbmUobGluZSgzNiwgMywgMCkpLmxvY2tlZERpc3BsYXkpLnRvQmVVbmRlZmluZWQoKTtcbiAgfSk7XG59KTtcblxuZGVzY3JpYmUoXCJ0aGUgc2F2ZSByZWZ1c2FsIG5hbWVzIHRoZSByaWdodCByZWFzb24gKCMyMjY2KVwiLCAoKSA9PiB7XG4gIGl0KFwiYSBwYXJ0aWFsIGxpbmU6IGNhbid0IGJlIGVkaXRlZCBhcyBhIGNvdW50OyBjYW5jZWwgYW5kIHJlLWFkZFwiLCAoKSA9PiB7XG4gICAgY29uc3QgbXNnID0gbG9ja2VkVW5pdExpbmVSZWZ1c2FsKFwiV2lkZ2V0XCIsIHsgbmVlZHNSZXBhaXI6IGZhbHNlLCB0ZXh0OiBcIjMgQ2FzZXMgKyA0IHBjc1wiIH0pO1xuICAgIGV4cGVjdChtc2cpLnRvTWF0Y2goL1dpZGdldCBpcyBhIHBhcnRpYWwgcXVhbnRpdHkgXFwoMyBDYXNlcyBcXCsgNCBwY3NcXCkvKTtcbiAgICBleHBlY3QobXNnKS5ub3QudG9NYXRjaCgvbmVlZHMgcmVwYWlyLyk7XG4gICAgZXhwZWN0KG1zZykudG9NYXRjaCgvTm90aGluZyB3YXMgc2F2ZWRcXC4kLyk7XG4gIH0pO1xuXG4gIGl0KFwiYSByZXBhaXIgbGluZSBrZWVwcyB0aGUgbmVlZHMtcmVwYWlyIG1lc3NhZ2VcIiwgKCkgPT4ge1xuICAgIGV4cGVjdChsb2NrZWRVbml0TGluZVJlZnVzYWwoXCJXaWRnZXRcIiwgeyBuZWVkc1JlcGFpcjogdHJ1ZSwgdGV4dDogbnVsbCB9KSkudG9NYXRjaChcbiAgICAgIC9eV2lkZ2V0IG5lZWRzIHJlcGFpci8sXG4gICAgKTtcbiAgfSk7XG59KTtcbiJdLCJuYW1lcyI6WyJsaW5lIiwicXR5IiwiYm94ZXMiLCJwaWVjZXMiLCJmYWN0b3IiLCJ1bml0TGFiZWwiLCJpZCIsInByb2R1Y3RJZCIsInByb2R1Y3QiLCJuYW1lIiwidW5pdCIsInVuaXRzUGVyQm94IiwidW5pdFByaWNlIiwic3RhdHVzIiwiZGVzY3JpYmUiLCJpdCIsImVhY2giLCJfbCIsImxpIiwiZXhwZWN0IiwiaXNFbXB0eVVuaXRMaW5lU3BsaXQiLCJ0b0JlIiwibG9ja2VkVW5pdExpbmVEaXNwbGF5IiwidG9FcXVhbCIsIm5lZWRzUmVwYWlyIiwidGV4dCIsInJlbmRlciIsIkxvY2tlZFVuaXRMaW5lQmFkZ2UiLCJkaXNwbGF5Iiwic2NyZWVuIiwiZ2V0QnlSb2xlIiwidGV4dENvbnRlbnQiLCJxdWVyeUJ5VGV4dCIsInRvQmVOdWxsIiwic2VlZGVkIiwiYnVpbGRFZGl0SXRlbUZyb21MaW5lIiwiY291bnRMb2NrZWQiLCJsb2NrZWREaXNwbGF5IiwidG9CZVVuZGVmaW5lZCIsIm1zZyIsImxvY2tlZFVuaXRMaW5lUmVmdXNhbCIsInRvTWF0Y2giLCJub3QiXSwibWFwcGluZ3MiOiJBQUFBOzs7Ozs7O0NBT0M7Ozs7OytEQUNzQjt3QkFDUTtzQkFDTzs4QkFNL0I7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7OztBQUdQLE1BQU1BLE9BQU8sQ0FDWEMsS0FDQUMsT0FDQUMsUUFDQUMs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

@@ -1,0 +1,30 @@
+52adc60ae5e1a0f881ba19dae1b6a157
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __exportStar = (this && this.__exportStar) || function(m, exports) {
+    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+// ─── Return-key generation is a caller concern, not a package opinion ─────────
+//
+// `buildCaptureRequest` itself never generates a returnKey — it takes one as a plain parameter
+// and only carries whatever the caller already minted. This package DOES export one generation
+// helper, `mintReturnKey` (a fresh random identifier per capture attempt, held in memory) — but
+// that is web's own strategy, offered here because web happens to use it, not this package's
+// opinion on how every consumer must generate a key. A caller that has to survive an app kill
+// and replay the same submission cannot use `mintReturnKey` at all, since a replay must
+// reproduce the SAME key rather than mint a new one — it derives one instead, entirely outside
+// this package. Either strategy is valid; the seam is that `buildCaptureRequest` only ever
+// receives the result, never the strategy.
+__exportStar(require("./inline-return-state"), exports);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvcGFja2FnZXMvcmV0dXJucy9zcmMvaW5kZXgudHMiLCJtYXBwaW5ncyI6Ijs7Ozs7Ozs7Ozs7Ozs7OztBQUFBLGlGQUFpRjtBQUNqRixFQUFFO0FBQ0YsK0ZBQStGO0FBQy9GLCtGQUErRjtBQUMvRixnR0FBZ0c7QUFDaEcsNkZBQTZGO0FBQzdGLDhGQUE4RjtBQUM5Rix3RkFBd0Y7QUFDeEYsK0ZBQStGO0FBQy9GLDJGQUEyRjtBQUMzRiwyQ0FBMkM7QUFDM0Msd0RBQXNDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L3BhY2thZ2VzL3JldHVybnMvc3JjL2luZGV4LnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8vIOKUgOKUgOKUgCBSZXR1cm4ta2V5IGdlbmVyYXRpb24gaXMgYSBjYWxsZXIgY29uY2Vybiwgbm90IGEgcGFja2FnZSBvcGluaW9uIOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgFxuLy9cbi8vIGBidWlsZENhcHR1cmVSZXF1ZXN0YCBpdHNlbGYgbmV2ZXIgZ2VuZXJhdGVzIGEgcmV0dXJuS2V5IOKAlCBpdCB0YWtlcyBvbmUgYXMgYSBwbGFpbiBwYXJhbWV0ZXJcbi8vIGFuZCBvbmx5IGNhcnJpZXMgd2hhdGV2ZXIgdGhlIGNhbGxlciBhbHJlYWR5IG1pbnRlZC4gVGhpcyBwYWNrYWdlIERPRVMgZXhwb3J0IG9uZSBnZW5lcmF0aW9uXG4vLyBoZWxwZXIsIGBtaW50UmV0dXJuS2V5YCAoYSBmcmVzaCByYW5kb20gaWRlbnRpZmllciBwZXIgY2FwdHVyZSBhdHRlbXB0LCBoZWxkIGluIG1lbW9yeSkg4oCUIGJ1dFxuLy8gdGhhdCBpcyB3ZWIncyBvd24gc3RyYXRlZ3ksIG9mZmVyZWQgaGVyZSBiZWNhdXNlIHdlYiBoYXBwZW5zIHRvIHVzZSBpdCwgbm90IHRoaXMgcGFja2FnZSdzXG4vLyBvcGluaW9uIG9uIGhvdyBldmVyeSBjb25zdW1lciBtdXN0IGdlbmVyYXRlIGEga2V5LiBBIGNhbGxlciB0aGF0IGhhcyB0byBzdXJ2aXZlIGFuIGFwcCBraWxsXG4vLyBhbmQgcmVwbGF5IHRoZSBzYW1lIHN1Ym1pc3Npb24gY2Fubm90IHVzZSBgbWludFJldHVybktleWAgYXQgYWxsLCBzaW5jZSBhIHJlcGxheSBtdXN0XG4vLyByZXByb2R1Y2UgdGhlIFNBTUUga2V5IHJhdGhlciB0aGFuIG1pbnQgYSBuZXcgb25lIOKAlCBpdCBkZXJpdmVzIG9uZSBpbnN0ZWFkLCBlbnRpcmVseSBvdXRzaWRlXG4vLyB0aGlzIHBhY2thZ2UuIEVpdGhlciBzdHJhdGVneSBpcyB2YWxpZDsgdGhlIHNlYW0gaXMgdGhhdCBgYnVpbGRDYXB0dXJlUmVxdWVzdGAgb25seSBldmVyXG4vLyByZWNlaXZlcyB0aGUgcmVzdWx0LCBuZXZlciB0aGUgc3RyYXRlZ3kuXG5leHBvcnQgKiBmcm9tIFwiLi9pbmxpbmUtcmV0dXJuLXN0YXRlXCI7XG4iXSwidmVyc2lvbiI6M30=

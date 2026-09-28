@@ -1,0 +1,30 @@
+2fda9fc738d184f8e1aece25eb65ea72
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _fs = require("fs");
+const _path = require("path");
+/**
+ * B674/SA-144 — the invoice edit page's hydration must recover a legacy boxed line's pack
+ * (unitsPerBox never snapshotted, boxes stored) from its OWN split via `packFromOwnSplit`,
+ * never fall back to the live product — which, if the product was repacked since the sale,
+ * silently re-splits the line's pieces at the new pack on the next save. This page has no
+ * existing render-test coverage (a pre-existing gap, not backfilled here); source-pinned
+ * instead so the wiring can't silently regress to the old live-product fallback.
+ */ describe("B674/SA-144: invoice edit page hydration recovers a legacy line's pack from its own split", ()=>{
+    const src = (0, _fs.readFileSync)((0, _path.join)(__dirname, "page.tsx"), "utf8");
+    it("imports packFromOwnSplit from @routeflow/pricing", ()=>{
+        expect(src).toMatch(/import\s*{[^}]*packFromOwnSplit[^}]*}\s*from\s*"@routeflow\/pricing"/);
+    });
+    it("the hydration's upb falls back to packFromOwnSplit, never the live product.unitsPerBox", ()=>{
+        const at = src.indexOf("const isBoxSplit = it.boxes != null;");
+        expect(at).toBeGreaterThan(-1);
+        const block = src.slice(at, at + 400);
+        expect(block).toMatch(/it\.unitsPerBox\s*\?\?\s*\n?\s*packFromOwnSplit\(/);
+        // Never the old shape: a live-product fallback for an EXISTING (already-stored) line.
+        expect(block).not.toContain("it.product?.unitsPerBox");
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS9pbnZvaWNlcy9baWRdL2VkaXQvcGFjay1oeWRyYXRpb24ucGlucy50ZXN0LnRzIl0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCB7IHJlYWRGaWxlU3luYyB9IGZyb20gXCJmc1wiO1xuaW1wb3J0IHsgam9pbiB9IGZyb20gXCJwYXRoXCI7XG5cbi8qKlxuICogQjY3NC9TQS0xNDQg4oCUIHRoZSBpbnZvaWNlIGVkaXQgcGFnZSdzIGh5ZHJhdGlvbiBtdXN0IHJlY292ZXIgYSBsZWdhY3kgYm94ZWQgbGluZSdzIHBhY2tcbiAqICh1bml0c1BlckJveCBuZXZlciBzbmFwc2hvdHRlZCwgYm94ZXMgc3RvcmVkKSBmcm9tIGl0cyBPV04gc3BsaXQgdmlhIGBwYWNrRnJvbU93blNwbGl0YCxcbiAqIG5ldmVyIGZhbGwgYmFjayB0byB0aGUgbGl2ZSBwcm9kdWN0IOKAlCB3aGljaCwgaWYgdGhlIHByb2R1Y3Qgd2FzIHJlcGFja2VkIHNpbmNlIHRoZSBzYWxlLFxuICogc2lsZW50bHkgcmUtc3BsaXRzIHRoZSBsaW5lJ3MgcGllY2VzIGF0IHRoZSBuZXcgcGFjayBvbiB0aGUgbmV4dCBzYXZlLiBUaGlzIHBhZ2UgaGFzIG5vXG4gKiBleGlzdGluZyByZW5kZXItdGVzdCBjb3ZlcmFnZSAoYSBwcmUtZXhpc3RpbmcgZ2FwLCBub3QgYmFja2ZpbGxlZCBoZXJlKTsgc291cmNlLXBpbm5lZFxuICogaW5zdGVhZCBzbyB0aGUgd2lyaW5nIGNhbid0IHNpbGVudGx5IHJlZ3Jlc3MgdG8gdGhlIG9sZCBsaXZlLXByb2R1Y3QgZmFsbGJhY2suXG4gKi9cbmRlc2NyaWJlKFwiQjY3NC9TQS0xNDQ6IGludm9pY2UgZWRpdCBwYWdlIGh5ZHJhdGlvbiByZWNvdmVycyBhIGxlZ2FjeSBsaW5lJ3MgcGFjayBmcm9tIGl0cyBvd24gc3BsaXRcIiwgKCkgPT4ge1xuICBjb25zdCBzcmMgPSByZWFkRmlsZVN5bmMoam9pbihfX2Rpcm5hbWUsIFwicGFnZS50c3hcIiksIFwidXRmOFwiKTtcblxuICBpdChcImltcG9ydHMgcGFja0Zyb21Pd25TcGxpdCBmcm9tIEByb3V0ZWZsb3cvcHJpY2luZ1wiLCAoKSA9PiB7XG4gICAgZXhwZWN0KHNyYykudG9NYXRjaCgvaW1wb3J0XFxzKntbXn1dKnBhY2tGcm9tT3duU3BsaXRbXn1dKn1cXHMqZnJvbVxccypcIkByb3V0ZWZsb3dcXC9wcmljaW5nXCIvKTtcbiAgfSk7XG5cbiAgaXQoXCJ0aGUgaHlkcmF0aW9uJ3MgdXBiIGZhbGxzIGJhY2sgdG8gcGFja0Zyb21Pd25TcGxpdCwgbmV2ZXIgdGhlIGxpdmUgcHJvZHVjdC51bml0c1BlckJveFwiLCAoKSA9PiB7XG4gICAgY29uc3QgYXQgPSBzcmMuaW5kZXhPZihcImNvbnN0IGlzQm94U3BsaXQgPSBpdC5ib3hlcyAhPSBudWxsO1wiKTtcbiAgICBleHBlY3QoYXQpLnRvQmVHcmVhdGVyVGhhbigtMSk7XG4gICAgY29uc3QgYmxvY2sgPSBzcmMuc2xpY2UoYXQsIGF0ICsgNDAwKTtcbiAgICBleHBlY3QoYmxvY2spLnRvTWF0Y2goL2l0XFwudW5pdHNQZXJCb3hcXHMqXFw/XFw/XFxzKlxcbj9cXHMqcGFja0Zyb21Pd25TcGxpdFxcKC8pO1xuICAgIC8vIE5ldmVyIHRoZSBvbGQgc2hhcGU6IGEgbGl2ZS1wcm9kdWN0IGZhbGxiYWNrIGZvciBhbiBFWElTVElORyAoYWxyZWFkeS1zdG9yZWQpIGxpbmUuXG4gICAgZXhwZWN0KGJsb2NrKS5ub3QudG9Db250YWluKFwiaXQucHJvZHVjdD8udW5pdHNQZXJCb3hcIik7XG4gIH0pO1xufSk7XG4iXSwibmFtZXMiOlsiZGVzY3JpYmUiLCJzcmMiLCJyZWFkRmlsZVN5bmMiLCJqb2luIiwiX19kaXJuYW1lIiwiaXQiLCJleHBlY3QiLCJ0b01hdGNoIiwiYXQiLCJpbmRleE9mIiwidG9CZUdyZWF0ZXJUaGFuIiwiYmxvY2siLCJzbGljZSIsIm5vdCIsInRvQ29udGFpbiJdLCJtYXBwaW5ncyI6Ijs7OztvQkFBNkI7c0JBQ1I7QUFFckI7Ozs7Ozs7Q0FPQyxHQUNEQSxTQUFTLDZGQUE2RjtJQUNwRyxNQUFNQyxNQUFNQyxJQUFBQSxnQkFBWSxFQUFDQyxJQUFBQSxVQUFJLEVBQUNDLFdBQVcsYUFBYTtJQUV0REMsR0FBRyxvREFBb0Q7UUFDckRDLE9BQU9MLEtBQUtNLE9BQU8sQ0FBQztJQUN0QjtJQUVBRixHQUFHLDBGQUEwRjtRQUMzRixNQUFNRyxLQUFLUCxJQUFJUSxPQUFPLENBQUM7UUFDdkJILE9BQU9FLElBQUlFLGVBQWUsQ0FBQyxDQUFDO1FBQzVCLE1BQU1DLFFBQVFWLElBQUlXLEtBQUssQ0FBQ0osSUFBSUEsS0FBSztRQUNqQ0YsT0FBT0ssT0FBT0osT0FBTyxDQUFDO1FBQ3RCLHNGQUFzRjtRQUN0RkQsT0FBT0ssT0FBT0UsR0FBRyxDQUFDQyxTQUFTLENBQUM7SUFDOUI7QUFDRiJ9

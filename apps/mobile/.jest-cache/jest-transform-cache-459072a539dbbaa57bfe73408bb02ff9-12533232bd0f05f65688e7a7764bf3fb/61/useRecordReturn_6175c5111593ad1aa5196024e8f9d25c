@@ -1,0 +1,26 @@
+c35cbb7c6ee1cfd4f03e21eac13a4640
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.useRecordReturn = useRecordReturn;
+const expo_router_1 = require("expo-router");
+const addons_1 = require("../lib/api/addons");
+const inline_return_screen_1 = require("../lib/inline-return-screen");
+/**
+ * #2420 review (required fold): the "Record return" entry point, mirroring web's
+ * RecordReturnAction — it exists only when the tenant has the orders_inline_returns add-on
+ * (null while loading or blocked, so the row renders nothing), and is never gated on the order's
+ * status. Returns the press handler; each screen renders its own row in its own style.
+ */
+function useRecordReturn(args) {
+    const router = (0, expo_router_1.useRouter)();
+    const gate = (0, inline_return_screen_1.inlineReturnsGate)((0, addons_1.useInlineReturnsAddon)());
+    if (gate !== "allowed" || !args.customerId)
+        return null;
+    const href = (0, inline_return_screen_1.inlineReturnHref)({
+        customerId: args.customerId,
+        orderId: args.orderId,
+        customerName: args.customerName,
+    });
+    return () => router.push(href);
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvaG9va3MvdXNlUmVjb3JkUmV0dXJuLnRzIiwibWFwcGluZ3MiOiI7O0FBVUEsMENBY0M7QUF4QkQsNkNBQXdDO0FBQ3hDLDhDQUEwRDtBQUMxRCxzRUFBa0Y7QUFFbEY7Ozs7O0dBS0c7QUFDSCxTQUFnQixlQUFlLENBQUMsSUFJL0I7SUFDQyxNQUFNLE1BQU0sR0FBRyxJQUFBLHVCQUFTLEdBQUUsQ0FBQztJQUMzQixNQUFNLElBQUksR0FBRyxJQUFBLHdDQUFpQixFQUFDLElBQUEsOEJBQXFCLEdBQUUsQ0FBQyxDQUFDO0lBQ3hELElBQUksSUFBSSxLQUFLLFNBQVMsSUFBSSxDQUFDLElBQUksQ0FBQyxVQUFVO1FBQUUsT0FBTyxJQUFJLENBQUM7SUFDeEQsTUFBTSxJQUFJLEdBQUcsSUFBQSx1Q0FBZ0IsRUFBQztRQUM1QixVQUFVLEVBQUUsSUFBSSxDQUFDLFVBQVU7UUFDM0IsT0FBTyxFQUFFLElBQUksQ0FBQyxPQUFPO1FBQ3JCLFlBQVksRUFBRSxJQUFJLENBQUMsWUFBWTtLQUNoQyxDQUFDLENBQUM7SUFDSCxPQUFPLEdBQUcsRUFBRSxDQUFDLE1BQU0sQ0FBQyxJQUFJLENBQUMsSUFBYSxDQUFDLENBQUM7QUFDMUMsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9hcHBzL21vYmlsZS9ob29rcy91c2VSZWNvcmRSZXR1cm4udHMiXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IHsgdXNlUm91dGVyIH0gZnJvbSBcImV4cG8tcm91dGVyXCI7XG5pbXBvcnQgeyB1c2VJbmxpbmVSZXR1cm5zQWRkb24gfSBmcm9tIFwiLi4vbGliL2FwaS9hZGRvbnNcIjtcbmltcG9ydCB7IGlubGluZVJldHVybkhyZWYsIGlubGluZVJldHVybnNHYXRlIH0gZnJvbSBcIi4uL2xpYi9pbmxpbmUtcmV0dXJuLXNjcmVlblwiO1xuXG4vKipcbiAqICMyNDIwIHJldmlldyAocmVxdWlyZWQgZm9sZCk6IHRoZSBcIlJlY29yZCByZXR1cm5cIiBlbnRyeSBwb2ludCwgbWlycm9yaW5nIHdlYidzXG4gKiBSZWNvcmRSZXR1cm5BY3Rpb24g4oCUIGl0IGV4aXN0cyBvbmx5IHdoZW4gdGhlIHRlbmFudCBoYXMgdGhlIG9yZGVyc19pbmxpbmVfcmV0dXJucyBhZGQtb25cbiAqIChudWxsIHdoaWxlIGxvYWRpbmcgb3IgYmxvY2tlZCwgc28gdGhlIHJvdyByZW5kZXJzIG5vdGhpbmcpLCBhbmQgaXMgbmV2ZXIgZ2F0ZWQgb24gdGhlIG9yZGVyJ3NcbiAqIHN0YXR1cy4gUmV0dXJucyB0aGUgcHJlc3MgaGFuZGxlcjsgZWFjaCBzY3JlZW4gcmVuZGVycyBpdHMgb3duIHJvdyBpbiBpdHMgb3duIHN0eWxlLlxuICovXG5leHBvcnQgZnVuY3Rpb24gdXNlUmVjb3JkUmV0dXJuKGFyZ3M6IHtcbiAgY3VzdG9tZXJJZD86IHN0cmluZyB8IG51bGw7XG4gIG9yZGVySWQ/OiBzdHJpbmcgfCBudWxsO1xuICBjdXN0b21lck5hbWU/OiBzdHJpbmcgfCBudWxsO1xufSk6ICgoKSA9PiB2b2lkKSB8IG51bGwge1xuICBjb25zdCByb3V0ZXIgPSB1c2VSb3V0ZXIoKTtcbiAgY29uc3QgZ2F0ZSA9IGlubGluZVJldHVybnNHYXRlKHVzZUlubGluZVJldHVybnNBZGRvbigpKTtcbiAgaWYgKGdhdGUgIT09IFwiYWxsb3dlZFwiIHx8ICFhcmdzLmN1c3RvbWVySWQpIHJldHVybiBudWxsO1xuICBjb25zdCBocmVmID0gaW5saW5lUmV0dXJuSHJlZih7XG4gICAgY3VzdG9tZXJJZDogYXJncy5jdXN0b21lcklkLFxuICAgIG9yZGVySWQ6IGFyZ3Mub3JkZXJJZCxcbiAgICBjdXN0b21lck5hbWU6IGFyZ3MuY3VzdG9tZXJOYW1lLFxuICB9KTtcbiAgcmV0dXJuICgpID0+IHJvdXRlci5wdXNoKGhyZWYgYXMgbmV2ZXIpO1xufVxuIl0sInZlcnNpb24iOjN9

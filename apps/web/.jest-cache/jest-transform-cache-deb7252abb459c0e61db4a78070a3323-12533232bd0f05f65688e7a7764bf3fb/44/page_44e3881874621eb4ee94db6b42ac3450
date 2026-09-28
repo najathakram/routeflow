@@ -1,0 +1,283 @@
+c21280659f2ae136e5c0ed2d41b4719e
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, {
+        enumerable: true,
+        get: Object.getOwnPropertyDescriptor(all, name).get
+    });
+}
+_export(exports, {
+    get default () {
+        return RetailersPage;
+    },
+    get metadata () {
+        return metadata;
+    }
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _link = /*#__PURE__*/ _interop_require_default(require("next/link"));
+const _lucidereact = require("lucide-react");
+const _site = require("../lib/site");
+const _marketing = require("../components/marketing");
+const _faq = require("../components/faq");
+const _technologyart = require("../components/technology-art");
+const _authlinks = require("../components/auth-links");
+function _interop_require_default(obj) {
+    return obj && obj.__esModule ? obj : {
+        default: obj
+    };
+}
+// Copy verbatim from the redesign's app/[page]/page.tsx `Retailers()` (M1 §2c).
+const route = _site.routes.find((r)=>r.slug === "retailers");
+const metadata = {
+    title: route.title,
+    description: route.description,
+    alternates: {
+        canonical: "/retailers"
+    },
+    openGraph: {
+        title: route.title,
+        description: route.description,
+        url: "/retailers",
+        siteName: _site.site.name,
+        type: "website"
+    }
+};
+const BENEFITS = [
+    [
+        _lucidereact.ShoppingBag,
+        "Browse your suppliers",
+        "Find the catalogs and prices available through your supplier connections."
+    ],
+    [
+        _lucidereact.Users,
+        "One login, every supplier",
+        "Order from every distributor you buy from on RouteFlow with a single account — switch between sellers from the same portal."
+    ],
+    [
+        _lucidereact.Package,
+        "Put your order together",
+        "Select the products you need and review the order before placing it."
+    ],
+    [
+        _lucidereact.ReceiptText,
+        "See what you owe",
+        "Every invoice, itemized against exactly what was delivered."
+    ],
+    [
+        _lucidereact.MapPin,
+        "Track your delivery",
+        "Know your order's status, driver, and how many stops are ahead, plus your scheduled delivery window."
+    ],
+    [
+        _lucidereact.CreditCard,
+        "Pay your way",
+        "Pay by card right in the portal when your seller has that turned on, or settle up with them directly the way you always have."
+    ]
+];
+function RetailersPage() {
+    return /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+        className: "retailer-page glass-page",
+        children: [
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("section", {
+                className: "retailer-hero",
+                children: /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                    className: "wrap split-hero",
+                    children: [
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                            children: [
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)(_marketing.Eyebrow, {
+                                    children: "FOR RETAILERS"
+                                }),
+                                /*#__PURE__*/ (0, _jsxruntime.jsxs)("h1", {
+                                    children: [
+                                        "Restock your shelves. ",
+                                        /*#__PURE__*/ (0, _jsxruntime.jsx)("br", {}),
+                                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("em", {
+                                            children: [
+                                                "Skip the back ",
+                                                /*#__PURE__*/ (0, _jsxruntime.jsx)("br", {}),
+                                                "and forth."
+                                            ]
+                                        })
+                                    ]
+                                }),
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                    className: "lead",
+                                    children: "Order from every supplier you buy from with one login, see what you owe, and track your deliveries — without a single call to their order desk."
+                                }),
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("div", {
+                                    className: "hero-actions",
+                                    children: /*#__PURE__*/ (0, _jsxruntime.jsxs)(_link.default, {
+                                        className: "button button-green",
+                                        href: _authlinks.authLinks.retailerSignUp,
+                                        children: [
+                                            "Create a retailer account ",
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.ArrowUpRight, {
+                                                size: 18
+                                            })
+                                        ]
+                                    })
+                                }),
+                                /*#__PURE__*/ (0, _jsxruntime.jsxs)("p", {
+                                    className: "hero-note",
+                                    children: [
+                                        /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.Globe, {
+                                            size: 16
+                                        }),
+                                        " Use the web portal. No app download required."
+                                    ]
+                                }),
+                                /*#__PURE__*/ (0, _jsxruntime.jsxs)(_link.default, {
+                                    className: "retailer-login text-link",
+                                    href: _authlinks.authLinks.retailerSignIn,
+                                    children: [
+                                        "Already have an account? Sign in ",
+                                        /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.ArrowRight, {
+                                            size: 16
+                                        })
+                                    ]
+                                })
+                            ]
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)(_technologyart.RetailerArt, {})
+                    ]
+                })
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsxs)("section", {
+                className: "section wrap",
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                        className: "section-heading",
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)(_marketing.Eyebrow, {
+                                children: "YOUR SUPPLIERS, WITHIN REACH"
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("h2", {
+                                children: [
+                                    "Order with the details",
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("br", {}),
+                                    "in front of you."
+                                ]
+                            })
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("div", {
+                        className: "benefit-grid",
+                        children: BENEFITS.map(([Icon, title, text])=>/*#__PURE__*/ (0, _jsxruntime.jsxs)("article", {
+                                children: [
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)(Icon, {
+                                        size: 28
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("h3", {
+                                        children: title
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                        children: text
+                                    })
+                                ]
+                            }, title))
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("img", {
+                        src: "/marketing/invoice-detail.webp",
+                        alt: "RouteFlow buyer-portal invoice detail showing itemized line items, balance due, and a Pay this invoice card-payment button.",
+                        width: 1400,
+                        height: 933,
+                        loading: "lazy",
+                        decoding: "async",
+                        className: "invoice-screenshot"
+                    })
+                ]
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsxs)("section", {
+                className: "retailer-start wrap",
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)(_marketing.Eyebrow, {
+                                children: "BEFORE YOUR FIRST ORDER"
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("h2", {
+                                children: [
+                                    "Connect with",
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("br", {}),
+                                    "your distributor."
+                                ]
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                children: "Your supplier connection determines the catalogs, pricing, and ordering options available to you. Ask your distributor how to get connected."
+                            })
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("ol", {
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                                children: [
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                        children: "01"
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("h3", {
+                                                children: "Create your retailer account"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                                children: "Use the retailer registration page."
+                                            })
+                                        ]
+                                    })
+                                ]
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                                children: [
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                        children: "02"
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("h3", {
+                                                children: "Connect to your supplier"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                                children: "Follow your distributor’s connection instructions."
+                                            })
+                                        ]
+                                    })
+                                ]
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                                children: [
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                        children: "03"
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("h3", {
+                                                children: "Place your first order"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                                children: "Browse the available catalog and review your items."
+                                            })
+                                        ]
+                                    })
+                                ]
+                            })
+                        ]
+                    })
+                ]
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)(_technologyart.RetailerDetail, {}),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)(_faq.FAQ, {
+                retail: true
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)(_marketing.CTA, {
+                retailer: true
+            })
+        ]
+    });
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8obWFya2V0aW5nKS9yZXRhaWxlcnMvcGFnZS50c3giXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IHR5cGUgeyBNZXRhZGF0YSB9IGZyb20gXCJuZXh0XCI7XG5pbXBvcnQgTGluayBmcm9tIFwibmV4dC9saW5rXCI7XG5pbXBvcnQge1xuICBBcnJvd1JpZ2h0LFxuICBBcnJvd1VwUmlnaHQsXG4gIEdsb2JlLFxuICBQYWNrYWdlLFxuICBTaG9wcGluZ0JhZyxcbiAgVXNlcnMsXG4gIFJlY2VpcHRUZXh0LFxuICBNYXBQaW4sXG4gIENyZWRpdENhcmQsXG59IGZyb20gXCJsdWNpZGUtcmVhY3RcIjtcbmltcG9ydCB7IHJvdXRlcywgc2l0ZSB9IGZyb20gXCIuLi9saWIvc2l0ZVwiO1xuaW1wb3J0IHsgQ1RBLCBFeWVicm93IH0gZnJvbSBcIi4uL2NvbXBvbmVudHMvbWFya2V0aW5nXCI7XG5pbXBvcnQgeyBGQVEgfSBmcm9tIFwiLi4vY29tcG9uZW50cy9mYXFcIjtcbmltcG9ydCB7IFJldGFpbGVyQXJ0LCBSZXRhaWxlckRldGFpbCB9IGZyb20gXCIuLi9jb21wb25lbnRzL3RlY2hub2xvZ3ktYXJ0XCI7XG5pbXBvcnQgeyBhdXRoTGlua3MgfSBmcm9tIFwiLi4vY29tcG9uZW50cy9hdXRoLWxpbmtzXCI7XG5cbi8vIENvcHkgdmVyYmF0aW0gZnJvbSB0aGUgcmVkZXNpZ24ncyBhcHAvW3BhZ2VdL3BhZ2UudHN4IGBSZXRhaWxlcnMoKWAgKE0xIMKnMmMpLlxuXG5jb25zdCByb3V0ZSA9IHJvdXRlcy5maW5kKChyKSA9PiByLnNsdWcgPT09IFwicmV0YWlsZXJzXCIpITtcblxuZXhwb3J0IGNvbnN0IG1ldGFkYXRhOiBNZXRhZGF0YSA9IHtcbiAgdGl0bGU6IHJvdXRlLnRpdGxlLFxuICBkZXNjcmlwdGlvbjogcm91dGUuZGVzY3JpcHRpb24sXG4gIGFsdGVybmF0ZXM6IHsgY2Fub25pY2FsOiBcIi9yZXRhaWxlcnNcIiB9LFxuICBvcGVuR3JhcGg6IHtcbiAgICB0aXRsZTogcm91dGUudGl0bGUsXG4gICAgZGVzY3JpcHRpb246IHJvdXRlLmRlc2NyaXB0aW9uLFxuICAgIHVybDogXCIvcmV0YWlsZXJzXCIsXG4gICAgc2l0ZU5hbWU6IHNpdGUubmFtZSxcbiAgICB0eXBlOiBcIndlYnNpdGVcIixcbiAgfSxcbn07XG5cbmNvbnN0IEJFTkVGSVRTOiBBcnJheTxbdHlwZW9mIFBhY2thZ2UsIHN0cmluZywgc3RyaW5nXT4gPSBbXG4gIFtcbiAgICBTaG9wcGluZ0JhZyxcbiAgICBcIkJyb3dzZSB5b3VyIHN1cHBsaWVyc1wiLFxuICAgIFwiRmluZCB0aGUgY2F0YWxvZ3MgYW5kIHByaWNlcyBhdmFpbGFibGUgdGhyb3VnaCB5b3VyIHN1cHBsaWVyIGNvbm5lY3Rpb25zLlwiLFxuICBdLFxuICBbXG4gICAgVXNlcnMsXG4gICAgXCJPbmUgbG9naW4sIGV2ZXJ5IHN1cHBsaWVyXCIsXG4gICAgXCJPcmRlciBmcm9tIGV2ZXJ5IGRpc3RyaWJ1dG9yIHlvdSBidXkgZnJvbSBvbiBSb3V0ZUZsb3cgd2l0aCBhIHNpbmdsZSBhY2NvdW50IOKAlCBzd2l0Y2ggYmV0d2VlbiBzZWxsZXJzIGZyb20gdGhlIHNhbWUgcG9ydGFsLlwiLFxuICBdLFxuICBbXG4gICAgUGFja2FnZSxcbiAgICBcIlB1dCB5b3VyIG9yZGVyIHRvZ2V0aGVyXCIsXG4gICAgXCJTZWxlY3QgdGhlIHByb2R1Y3RzIHlvdSBuZWVkIGFuZCByZXZpZXcgdGhlIG9yZGVyIGJlZm9yZSBwbGFjaW5nIGl0LlwiLFxuICBdLFxuICBbUmVjZWlwdFRleHQsIFwiU2VlIHdoYXQgeW91IG93ZVwiLCBcIkV2ZXJ5IGludm9pY2UsIGl0ZW1pemVkIGFnYWluc3QgZXhhY3RseSB3aGF0IHdhcyBkZWxpdmVyZWQuXCJdLFxuICBbXG4gICAgTWFwUGluLFxuICAgIFwiVHJhY2sgeW91ciBkZWxpdmVyeVwiLFxuICAgIFwiS25vdyB5b3VyIG9yZGVyJ3Mgc3RhdHVzLCBkcml2ZXIsIGFuZCBob3cgbWFueSBzdG9wcyBhcmUgYWhlYWQsIHBsdXMgeW91ciBzY2hlZHVsZWQgZGVsaXZlcnkgd2luZG93LlwiLFxuICBdLFxuICBbXG4gICAgQ3JlZGl0Q2FyZCxcbiAgICBcIlBheSB5b3VyIHdheVwiLFxuICAgIFwiUGF5IGJ5IGNhcmQgcmlnaHQgaW4gdGhlIHBvcnRhbCB3aGVuIHlvdXIgc2VsbGVyIGhhcyB0aGF0IHR1cm5lZCBvbiwgb3Igc2V0dGxlIHVwIHdpdGggdGhlbSBkaXJlY3RseSB0aGUgd2F5IHlvdSBhbHdheXMgaGF2ZS5cIixcbiAgXSxcbl07XG5cbmV4cG9ydCBkZWZhdWx0IGZ1bmN0aW9uIFJldGFpbGVyc1BhZ2UoKSB7XG4gIHJldHVybiAoXG4gICAgPGRpdiBjbGFzc05hbWU9XCJyZXRhaWxlci1wYWdlIGdsYXNzLXBhZ2VcIj5cbiAgICAgIDxzZWN0aW9uIGNsYXNzTmFtZT1cInJldGFpbGVyLWhlcm9cIj5cbiAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJ3cmFwIHNwbGl0LWhlcm9cIj5cbiAgICAgICAgICA8ZGl2PlxuICAgICAgICAgICAgPEV5ZWJyb3c+Rk9SIFJFVEFJTEVSUzwvRXllYnJvdz5cbiAgICAgICAgICAgIDxoMT5cbiAgICAgICAgICAgICAgUmVzdG9jayB5b3VyIHNoZWx2ZXMuIDxiciAvPlxuICAgICAgICAgICAgICA8ZW0+XG4gICAgICAgICAgICAgICAgU2tpcCB0aGUgYmFjayA8YnIgLz5cbiAgICAgICAgICAgICAgICBhbmQgZm9ydGguXG4gICAgICAgICAgICAgIDwvZW0+XG4gICAgICAgICAgICA8L2gxPlxuICAgICAgICAgICAgPHAgY2xhc3NOYW1lPVwibGVhZFwiPlxuICAgICAgICAgICAgICBPcmRlciBmcm9tIGV2ZXJ5IHN1cHBsaWVyIHlvdSBidXkgZnJvbSB3aXRoIG9uZSBsb2dpbiwgc2VlIHdoYXQgeW91IG93ZSwgYW5kIHRyYWNrXG4gICAgICAgICAgICAgIHlvdXIgZGVsaXZlcmllcyDigJQgd2l0aG91dCBhIHNpbmdsZSBjYWxsIHRvIHRoZWlyIG9yZGVyIGRlc2suXG4gICAgICAgICAgICA8L3A+XG4gICAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cImhlcm8tYWN0aW9uc1wiPlxuICAgICAgICAgICAgICA8TGluayBjbGFzc05hbWU9XCJidXR0b24gYnV0dG9uLWdyZWVuXCIgaHJlZj17YXV0aExpbmtzLnJldGFpbGVyU2lnblVwfT5cbiAgICAgICAgICAgICAgICBDcmVhdGUgYSByZXRhaWxlciBhY2NvdW50IDxBcnJvd1VwUmlnaHQgc2l6ZT17MTh9IC8+XG4gICAgICAgICAgICAgIDwvTGluaz5cbiAgICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgICAgPHAgY2xhc3NOYW1lPVwiaGVyby1ub3RlXCI+XG4gICAgICAgICAgICAgIDxHbG9iZSBzaXplPXsxNn0gLz4gVXNlIHRoZSB3ZWIgcG9ydGFsLiBObyBhcHAgZG93bmxvYWQgcmVxdWlyZWQuXG4gICAgICAgICAgICA8L3A+XG4gICAgICAgICAgICA8TGluayBjbGFzc05hbWU9XCJyZXRhaWxlci1sb2dpbiB0ZXh0LWxpbmtcIiBocmVmPXthdXRoTGlua3MucmV0YWlsZXJTaWduSW59PlxuICAgICAgICAgICAgICBBbHJlYWR5IGhhdmUgYW4gYWNjb3VudD8gU2lnbiBpbiA8QXJyb3dSaWdodCBzaXplPXsxNn0gLz5cbiAgICAgICAgICAgIDwvTGluaz5cbiAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgICA8UmV0YWlsZXJBcnQgLz5cbiAgICAgICAgPC9kaXY+XG4gICAgICA8L3NlY3Rpb24+XG4gICAgICA8c2VjdGlvbiBjbGFzc05hbWU9XCJzZWN0aW9uIHdyYXBcIj5cbiAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJzZWN0aW9uLWhlYWRpbmdcIj5cbiAgICAgICAgICA8RXllYnJvdz5ZT1VSIFNVUFBMSUVSUywgV0lUSElOIFJFQUNIPC9FeWVicm93PlxuICAgICAgICAgIDxoMj5cbiAgICAgICAgICAgIE9yZGVyIHdpdGggdGhlIGRldGFpbHNcbiAgICAgICAgICAgIDxiciAvPlxuICAgICAgICAgICAgaW4gZnJvbnQgb2YgeW91LlxuICAgICAgICAgIDwvaDI+XG4gICAgICAgIDwvZGl2PlxuICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cImJlbmVmaXQtZ3JpZFwiPlxuICAgICAgICAgIHtCRU5FRklUUy5tYXAoKFtJY29uLCB0aXRsZSwgdGV4dF0pID0+IChcbiAgICAgICAgICAgIDxhcnRpY2xlIGtleT17dGl0bGV9PlxuICAgICAgICAgICAgICA8SWNvbiBzaXplPXsyOH0gLz5cbiAgICAgICAgICAgICAgPGgzPnt0aXRsZX08L2gzPlxuICAgICAgICAgICAgICA8cD57dGV4dH08L3A+XG4gICAgICAgICAgICA8L2FydGljbGU+XG4gICAgICAgICAgKSl9XG4gICAgICAgIDwvZGl2PlxuICAgICAgICB7LyogUGxhaW4gPGltZz4sIG5vdCBuZXh0L2ltYWdlIChydWxpbmcgQjEsIG1hdGNoaW5nIHdhcmVob3VzZS53ZWJwIHVzYWdlXG4gICAgICAgICAgICBlbHNld2hlcmUgaW4gdGhlIG1hcmtldGluZyBwb3J0KTsgYmVsb3cgdGhlIGZvbGQsIHNvIGxhenkuICovfVxuICAgICAgICB7LyogZXNsaW50LWRpc2FibGUtbmV4dC1saW5lIEBuZXh0L25leHQvbm8taW1nLWVsZW1lbnQgLS0gc2VlIGFib3ZlICovfVxuICAgICAgICA8aW1nXG4gICAgICAgICAgc3JjPVwiL21hcmtldGluZy9pbnZvaWNlLWRldGFpbC53ZWJwXCJcbiAgICAgICAgICBhbHQ9XCJSb3V0ZUZsb3cgYnV5ZXItcG9ydGFsIGludm9pY2UgZGV0YWlsIHNob3dpbmcgaXRlbWl6ZWQgbGluZSBpdGVtcywgYmFsYW5jZSBkdWUsIGFuZCBhIFBheSB0aGlzIGludm9pY2UgY2FyZC1wYXltZW50IGJ1dHRvbi5cIlxuICAgICAgICAgIHdpZHRoPXsxNDAwfVxuICAgICAgICAgIGhlaWdodD17OTMzfVxuICAgICAgICAgIGxvYWRpbmc9XCJsYXp5XCJcbiAgICAgICAgICBkZWNvZGluZz1cImFzeW5jXCJcbiAgICAgICAgICBjbGFzc05hbWU9XCJpbnZvaWNlLXNjcmVlbnNob3RcIlxuICAgICAgICAvPlxuICAgICAgPC9zZWN0aW9uPlxuICAgICAgPHNlY3Rpb24gY2xhc3NOYW1lPVwicmV0YWlsZXItc3RhcnQgd3JhcFwiPlxuICAgICAgICA8ZGl2PlxuICAgICAgICAgIDxFeWVicm93PkJFRk9SRSBZT1VSIEZJUlNUIE9SREVSPC9FeWVicm93PlxuICAgICAgICAgIDxoMj5cbiAgICAgICAgICAgIENvbm5lY3Qgd2l0aFxuICAgICAgICAgICAgPGJyIC8+XG4gICAgICAgICAgICB5b3VyIGRpc3RyaWJ1dG9yLlxuICAgICAgICAgIDwvaDI+XG4gICAgICAgICAgPHA+XG4gICAgICAgICAgICBZb3VyIHN1cHBsaWVyIGNvbm5lY3Rpb24gZGV0ZXJtaW5lcyB0aGUgY2F0YWxvZ3MsIHByaWNpbmcsIGFuZCBvcmRlcmluZyBvcHRpb25zXG4gICAgICAgICAgICBhdmFpbGFibGUgdG8geW91LiBBc2sgeW91ciBkaXN0cmlidXRvciBob3cgdG8gZ2V0IGNvbm5lY3RlZC5cbiAgICAgICAgICA8L3A+XG4gICAgICAgIDwvZGl2PlxuICAgICAgICA8b2w+XG4gICAgICAgICAgPGxpPlxuICAgICAgICAgICAgPHNwYW4+MDE8L3NwYW4+XG4gICAgICAgICAgICA8ZGl2PlxuICAgICAgICAgICAgICA8aDM+Q3JlYXRlIHlvdXIgcmV0YWlsZXIgYWNjb3VudDwvaDM+XG4gICAgICAgICAgICAgIDxwPlVzZSB0aGUgcmV0YWlsZXIgcmVnaXN0cmF0aW9uIHBhZ2UuPC9wPlxuICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgPC9saT5cbiAgICAgICAgICA8bGk+XG4gICAgICAgICAgICA8c3Bhbj4wMjwvc3Bhbj5cbiAgICAgICAgICAgIDxkaXY+XG4gICAgICAgICAgICAgIDxoMz5Db25uZWN0IHRvIHlvdXIgc3VwcGxpZXI8L2gzPlxuICAgICAgICAgICAgICA8cD5Gb2xsb3cgeW91ciBkaXN0cmlidXRvcuKAmXMgY29ubmVjdGlvbiBpbnN0cnVjdGlvbnMuPC9wPlxuICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgPC9saT5cbiAgICAgICAgICA8bGk+XG4gICAgICAgICAgICA8c3Bhbj4wMzwvc3Bhbj5cbiAgICAgICAgICAgIDxkaXY+XG4gICAgICAgICAgICAgIDxoMz5QbGFjZSB5b3VyIGZpcnN0IG9yZGVyPC9oMz5cbiAgICAgICAgICAgICAgPHA+QnJvd3NlIHRoZSBhdmFpbGFibGUgY2F0YWxvZyBhbmQgcmV2aWV3IHlvdXIgaXRlbXMuPC9wPlxuICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgPC9saT5cbiAgICAgICAgPC9vbD5cbiAgICAgIDwvc2VjdGlvbj5cbiAgICAgIDxSZXRhaWxlckRldGFpbCAvPlxuICAgICAgPEZBUSByZXRhaWwgLz5cbiAgICAgIDxDVEEgcmV0YWlsZXIgLz5cbiAgICA8L2Rpdj5cbiAgKTtcbn1cbiJdLCJuYW1lcyI6WyJSZXRhaWxlcnNQYWdlIiwibWV0YWRhdGEiLCJyb3V0ZSIsInJvdXRlcyIsImZpbmQiLCJyIiwic2x1ZyIsInRpdGxlIiwiZGVzY3JpcHRpb24iLCJhbHRlcm5hdGVzIiwiY2Fub25pY2FsIiwib3BlbkdyYXBoIiwidXJsIiwic2l0ZU5hbWUiLCJzaXRlIiwibmFtZSIsInR5cGUiLCJCRU5FRklUUyIsIlNob3BwaW5nQmFnIiwiVXNlcnMiLCJQYWNrYWdlIiwiUmVjZWlwdFRleHQiLCJNYXBQaW4iLCJDcmVkaXRDYXJkIiwiZGl2IiwiY2xhc3NOYW1lIiwic2VjdGlvbiIsIkV5ZWJyb3ciLCJoMSIsImJyIiwiZW0iLCJwIiwiTGluayIsImhyZWYiLCJhdXRoTGlua3MiLCJyZXRhaWxlclNpZ25VcCIsIkFycm93VXBSaWdodCIsInNpemUiLCJHbG9iZSIsInJldGFpbGVyU2lnbkluIiwiQXJyb3dSaWdodCIsIlJldGFpbGVyQXJ0IiwiaDIiLCJtYXAiLCJJY29uIiwidGV4dCIsImFydGljbGUiLCJoMyIsImltZyIsInNyYyIsImFsdCIsIndpZHRoIiwiaGVpZ2h0IiwibG9hZGluZyIsImRlY29kaW5nIiwib2wiLCJsaSIsInNwYW4iLCJSZXRhaWxlckRldGFpbCIsIkZBUSIsInJldGFpbCIsIkNUQSIsInJldGFpbGVyIl0sIm1hcHBpbmdzIjoiOzs7Ozs7Ozs7OztRQWlFQTtlQUF3QkE7O1FBMUNYQztlQUFBQTs7Ozs2REF0Qkk7NkJBV1Y7c0JBQ3NCOzJCQUNBO3FCQUNUOytCQUN3QjsyQkFDbEI7Ozs7OztBQUUxQixnRkFBZ0Y7QUFFaEYsTUFBTUMsUUFBUUMsWUFBTSxDQUFDQyxJQUFJLENBQUMsQ0FBQ0MsSUFBTUEsRUFBRUMsSUFBSSxLQUFLO0FBRXJDLE1BQU1MLFdBQXFCO0lBQ2hDTSxPQUFPTCxNQUFNSyxLQUFLO0lBQ2xCQyxhQUFhTixNQUFNTSxXQUFXO0lBQzlCQyxZQUFZO1FBQUVDLFdBQVc7SUFBYTtJQUN0Q0MsV0FBVztRQUNUSixPQUFPTCxNQUFNSyxLQUFLO1FBQ2xCQyxhQUFhTixNQUFNTSxXQUFXO1FBQzlCSSxLQUFLO1FBQ0xDLFVBQVVDLFVBQUksQ0FBQ0MsSUFBSTtRQUNuQkMsTUFBTTtJQUNSO0FBQ0Y7QUFFQSxNQUFNQyxXQUFvRDtJQUN4RDtRQUNFQyx3QkFBVztRQUNYO1FBQ0E7S0FDRDtJQUNEO1FBQ0VDLGtCQUFLO1FBQ0w7UUFDQTtLQUNEO0lBQ0Q7UUFDRUMsb0JBQU87UUFDUDtRQUNBO0tBQ0Q7SUFDRDtRQUFDQyx3QkFBVztRQUFFO1FBQW9CO0tBQThEO0lBQ2hHO1FBQ0VDLG1CQUFNO1FBQ047UUFDQTtLQUNEO0lBQ0Q7UUFDRUMsdUJBQVU7UUFDVjtRQUNBO0tBQ0Q7Q0FDRjtBQUVjLFNBQVN2QjtJQUN0QixxQkFDRSxzQkFBQ3dCO1FBQUlDLFdBQVU7OzBCQUNiLHFCQUFDQztnQkFBUUQsV0FBVTswQkFDakIsY0FBQSxzQkFBQ0Q7b0JBQUlDLFdBQVU7O3NDQUNiLHNCQUFDRDs7OENBQ0MscUJBQUNHLGtCQUFPOzhDQUFDOzs4Q0FDVCxzQkFBQ0M7O3dDQUFHO3NEQUNvQixxQkFBQ0M7c0RBQ3ZCLHNCQUFDQzs7Z0RBQUc7OERBQ1kscUJBQUNEO2dEQUFLOzs7Ozs4Q0FJeEIscUJBQUNFO29DQUFFTixXQUFVOzhDQUFPOzs4Q0FJcEIscUJBQUNEO29DQUFJQyxXQUFVOzhDQUNiLGNBQUEsc0JBQUNPLGFBQUk7d0NBQUNQLFdBQVU7d0NBQXNCUSxNQUFNQyxvQkFBUyxDQUFDQyxjQUFjOzs0Q0FBRTswREFDMUMscUJBQUNDLHlCQUFZO2dEQUFDQyxNQUFNOzs7Ozs4Q0FHbEQsc0JBQUNOO29DQUFFTixXQUFVOztzREFDWCxxQkFBQ2Esa0JBQUs7NENBQUNELE1BQU07O3dDQUFNOzs7OENBRXJCLHNCQUFDTCxhQUFJO29DQUFDUCxXQUFVO29DQUEyQlEsTUFBTUMsb0JBQVMsQ0FBQ0ssY0FBYzs7d0NBQUU7c0RBQ3hDLHFCQUFDQyx1QkFBVTs0Q0FBQ0gsTUFBTTs7Ozs7O3NDQUd2RCxxQkFBQ0ksMEJBQVc7Ozs7MEJBR2hCLHNCQUFDZjtnQkFBUUQsV0FBVTs7a0NBQ2pCLHNCQUFDRDt3QkFBSUMsV0FBVTs7MENBQ2IscUJBQUNFLGtCQUFPOzBDQUFDOzswQ0FDVCxzQkFBQ2U7O29DQUFHO2tEQUVGLHFCQUFDYjtvQ0FBSzs7Ozs7a0NBSVYscUJBQUNMO3dCQUFJQyxXQUFVO2tDQUNaUixTQUFTMEIsR0FBRyxDQUFDLENBQUMsQ0FBQ0MsTUFBTXJDLE9BQU9zQyxLQUFLLGlCQUNoQyxzQkFBQ0M7O2tEQUNDLHFCQUFDRjt3Q0FBS1AsTUFBTTs7a0RBQ1oscUJBQUNVO2tEQUFJeEM7O2tEQUNMLHFCQUFDd0I7a0RBQUdjOzs7K0JBSFF0Qzs7a0NBVWxCLHFCQUFDeUM7d0JBQ0NDLEtBQUk7d0JBQ0pDLEtBQUk7d0JBQ0pDLE9BQU87d0JBQ1BDLFFBQVE7d0JBQ1JDLFNBQVE7d0JBQ1JDLFVBQVM7d0JBQ1Q3QixXQUFVOzs7OzBCQUdkLHNCQUFDQztnQkFBUUQsV0FBVTs7a0NBQ2pCLHNCQUFDRDs7MENBQ0MscUJBQUNHLGtCQUFPOzBDQUFDOzswQ0FDVCxzQkFBQ2U7O29DQUFHO2tEQUVGLHFCQUFDYjtvQ0FBSzs7OzBDQUdSLHFCQUFDRTswQ0FBRTs7OztrQ0FLTCxzQkFBQ3dCOzswQ0FDQyxzQkFBQ0M7O2tEQUNDLHFCQUFDQztrREFBSzs7a0RBQ04sc0JBQUNqQzs7MERBQ0MscUJBQUN1QjswREFBRzs7MERBQ0oscUJBQUNoQjswREFBRTs7Ozs7OzBDQUdQLHNCQUFDeUI7O2tEQUNDLHFCQUFDQztrREFBSzs7a0RBQ04sc0JBQUNqQzs7MERBQ0MscUJBQUN1QjswREFBRzs7MERBQ0oscUJBQUNoQjswREFBRTs7Ozs7OzBDQUdQLHNCQUFDeUI7O2tEQUNDLHFCQUFDQztrREFBSzs7a0RBQ04sc0JBQUNqQzs7MERBQ0MscUJBQUN1QjswREFBRzs7MERBQ0oscUJBQUNoQjswREFBRTs7Ozs7Ozs7OzswQkFLWCxxQkFBQzJCLDZCQUFjOzBCQUNmLHFCQUFDQyxRQUFHO2dCQUFDQyxNQUFNOzswQkFDWCxxQkFBQ0MsY0FBRztnQkFBQ0MsUUFBUTs7OztBQUduQiJ9

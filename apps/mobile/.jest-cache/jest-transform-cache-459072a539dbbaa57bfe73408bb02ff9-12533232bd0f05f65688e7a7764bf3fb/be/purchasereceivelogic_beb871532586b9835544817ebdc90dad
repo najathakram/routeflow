@@ -1,0 +1,26 @@
+57d6eeaf5b8242282f4705dcf2afc63d
+"use strict";
+/**
+ * PO quick-receive form (record.tsx) pure logic. Split out so the
+ * cost-prefill rule is unit-testable (R8) rather than only a source-text pin
+ * on an inline closure.
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.nextUnitCost = nextUnitCost;
+/**
+ * The cost field's next value after picking/scanning a product (F4,
+ * independent review, PR-3). A picked product prefills the field UNLESS the
+ * operator already typed a cost FOR THAT SAME PRODUCT — picking a DIFFERENT
+ * product always overwrites, since keeping the field only on "empty" let a
+ * stale cost survive a straight scan-A-then-scan-B: B's receipt recorded at
+ * A's cost, an `averageCost` write.
+ */
+function nextUnitCost(currentCost, isNewProduct, prefill) {
+    if (!Number.isFinite(prefill))
+        return currentCost;
+    if (isNewProduct || currentCost.trim() === "") {
+        return String(Number(prefill.toFixed(4)));
+    }
+    return currentCost;
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3B1cmNoYXNlLXJlY2VpdmUtbG9naWMudHMiLCJtYXBwaW5ncyI6IjtBQUFBOzs7O0dBSUc7O0FBVUgsb0NBTUM7QUFkRDs7Ozs7OztHQU9HO0FBQ0gsU0FBZ0IsWUFBWSxDQUFDLFdBQW1CLEVBQUUsWUFBcUIsRUFBRSxPQUFlO0lBQ3RGLElBQUksQ0FBQyxNQUFNLENBQUMsUUFBUSxDQUFDLE9BQU8sQ0FBQztRQUFFLE9BQU8sV0FBVyxDQUFDO0lBQ2xELElBQUksWUFBWSxJQUFJLFdBQVcsQ0FBQyxJQUFJLEVBQUUsS0FBSyxFQUFFLEVBQUUsQ0FBQztRQUM5QyxPQUFPLE1BQU0sQ0FBQyxNQUFNLENBQUMsT0FBTyxDQUFDLE9BQU8sQ0FBQyxDQUFDLENBQUMsQ0FBQyxDQUFDLENBQUM7SUFDNUMsQ0FBQztJQUNELE9BQU8sV0FBVyxDQUFDO0FBQ3JCLENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3B1cmNoYXNlLXJlY2VpdmUtbG9naWMudHMiXSwic291cmNlc0NvbnRlbnQiOlsiLyoqXG4gKiBQTyBxdWljay1yZWNlaXZlIGZvcm0gKHJlY29yZC50c3gpIHB1cmUgbG9naWMuIFNwbGl0IG91dCBzbyB0aGVcbiAqIGNvc3QtcHJlZmlsbCBydWxlIGlzIHVuaXQtdGVzdGFibGUgKFI4KSByYXRoZXIgdGhhbiBvbmx5IGEgc291cmNlLXRleHQgcGluXG4gKiBvbiBhbiBpbmxpbmUgY2xvc3VyZS5cbiAqL1xuXG4vKipcbiAqIFRoZSBjb3N0IGZpZWxkJ3MgbmV4dCB2YWx1ZSBhZnRlciBwaWNraW5nL3NjYW5uaW5nIGEgcHJvZHVjdCAoRjQsXG4gKiBpbmRlcGVuZGVudCByZXZpZXcsIFBSLTMpLiBBIHBpY2tlZCBwcm9kdWN0IHByZWZpbGxzIHRoZSBmaWVsZCBVTkxFU1MgdGhlXG4gKiBvcGVyYXRvciBhbHJlYWR5IHR5cGVkIGEgY29zdCBGT1IgVEhBVCBTQU1FIFBST0RVQ1Qg4oCUIHBpY2tpbmcgYSBESUZGRVJFTlRcbiAqIHByb2R1Y3QgYWx3YXlzIG92ZXJ3cml0ZXMsIHNpbmNlIGtlZXBpbmcgdGhlIGZpZWxkIG9ubHkgb24gXCJlbXB0eVwiIGxldCBhXG4gKiBzdGFsZSBjb3N0IHN1cnZpdmUgYSBzdHJhaWdodCBzY2FuLUEtdGhlbi1zY2FuLUI6IEIncyByZWNlaXB0IHJlY29yZGVkIGF0XG4gKiBBJ3MgY29zdCwgYW4gYGF2ZXJhZ2VDb3N0YCB3cml0ZS5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIG5leHRVbml0Q29zdChjdXJyZW50Q29zdDogc3RyaW5nLCBpc05ld1Byb2R1Y3Q6IGJvb2xlYW4sIHByZWZpbGw6IG51bWJlcik6IHN0cmluZyB7XG4gIGlmICghTnVtYmVyLmlzRmluaXRlKHByZWZpbGwpKSByZXR1cm4gY3VycmVudENvc3Q7XG4gIGlmIChpc05ld1Byb2R1Y3QgfHwgY3VycmVudENvc3QudHJpbSgpID09PSBcIlwiKSB7XG4gICAgcmV0dXJuIFN0cmluZyhOdW1iZXIocHJlZmlsbC50b0ZpeGVkKDQpKSk7XG4gIH1cbiAgcmV0dXJuIGN1cnJlbnRDb3N0O1xufVxuIl0sInZlcnNpb24iOjN9

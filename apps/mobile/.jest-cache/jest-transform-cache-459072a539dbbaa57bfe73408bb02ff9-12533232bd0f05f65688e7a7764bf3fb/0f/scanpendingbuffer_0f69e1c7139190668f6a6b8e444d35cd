@@ -1,0 +1,11 @@
+6a603c7b937f16dc15ee0f70acf70d63
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.pushScan = exports.PENDING_BUFFER_DEPTH = exports.createPendingBuffer = exports.completeResolve = void 0;
+/** Moved to `@routeflow/scanning`; this path is kept so existing `../lib/scan-pending-buffer` imports still resolve. */
+var scanning_1 = require("@routeflow/scanning");
+Object.defineProperty(exports, "completeResolve", { enumerable: true, get: function () { return scanning_1.completeResolve; } });
+Object.defineProperty(exports, "createPendingBuffer", { enumerable: true, get: function () { return scanning_1.createPendingBuffer; } });
+Object.defineProperty(exports, "PENDING_BUFFER_DEPTH", { enumerable: true, get: function () { return scanning_1.PENDING_BUFFER_DEPTH; } });
+Object.defineProperty(exports, "pushScan", { enumerable: true, get: function () { return scanning_1.pushScan; } });
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3NjYW4tcGVuZGluZy1idWZmZXIudHMiLCJtYXBwaW5ncyI6Ijs7O0FBQUEsd0hBQXdIO0FBQ3hILGdEQUs2QjtBQUozQiwyR0FBQSxlQUFlLE9BQUE7QUFDZiwrR0FBQSxtQkFBbUIsT0FBQTtBQUNuQixnSEFBQSxvQkFBb0IsT0FBQTtBQUNwQixvR0FBQSxRQUFRLE9BQUEiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3NjYW4tcGVuZGluZy1idWZmZXIudHMiXSwic291cmNlc0NvbnRlbnQiOlsiLyoqIE1vdmVkIHRvIGBAcm91dGVmbG93L3NjYW5uaW5nYDsgdGhpcyBwYXRoIGlzIGtlcHQgc28gZXhpc3RpbmcgYC4uL2xpYi9zY2FuLXBlbmRpbmctYnVmZmVyYCBpbXBvcnRzIHN0aWxsIHJlc29sdmUuICovXG5leHBvcnQge1xuICBjb21wbGV0ZVJlc29sdmUsXG4gIGNyZWF0ZVBlbmRpbmdCdWZmZXIsXG4gIFBFTkRJTkdfQlVGRkVSX0RFUFRILFxuICBwdXNoU2Nhbixcbn0gZnJvbSBcIkByb3V0ZWZsb3cvc2Nhbm5pbmdcIjtcbmV4cG9ydCB0eXBlIHsgUGVuZGluZ0J1ZmZlclJlc3VsdCwgUGVuZGluZ0J1ZmZlclN0YXRlIH0gZnJvbSBcIkByb3V0ZWZsb3cvc2Nhbm5pbmdcIjtcbiJdLCJ2ZXJzaW9uIjozfQ==

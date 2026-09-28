@@ -1,0 +1,39 @@
+0e098ac7da898815cf4d452cfc599a66
+"use strict";
+/**
+ * B389/F12-003 (#712) — the mobile web-export runner used to be plain
+ * `nginx:alpine` with no `USER` directive, which serves as root inside the
+ * container. The fix swaps the runner stage to `nginxinc/nginx-unprivileged:alpine`
+ * (nginx's own hardened, already-non-root image), ends on `USER nginx`, and
+ * moves the listen port from the image's old default of 80 to 8080 (a
+ * non-root process can't bind :80). See `apps/mobile/Dockerfile`'s runner
+ * stage comment for the full rationale.
+ *
+ * This is a tripwire, not a Docker build: it asserts on the TEXT of the
+ * Dockerfile so a future edit can't silently regress the runner back to a
+ * root user or the old port without failing a fast, daemon-free Jest run.
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+const fs_1 = require("fs");
+const path_1 = require("path");
+describe("REG-B389 mobile Dockerfile runner drops root", () => {
+    const dockerfile = (0, fs_1.readFileSync)((0, path_1.join)(__dirname, "..", "Dockerfile"), "utf8");
+    it("the runner stage is nginxinc/nginx-unprivileged:alpine", () => {
+        expect(dockerfile).toMatch(/^FROM nginxinc\/nginx-unprivileged:alpine AS runner$/m);
+    });
+    it("the LAST USER directive in the file is USER nginx", () => {
+        const userLines = dockerfile.match(/^USER .+$/gm) ?? [];
+        expect(userLines.length).toBeGreaterThan(0);
+        expect(userLines[userLines.length - 1]).toBe("USER nginx");
+    });
+    it("exposes 8080", () => {
+        expect(dockerfile).toMatch(/^EXPOSE 8080$/m);
+    });
+    it("defaults PORT to 8080", () => {
+        expect(dockerfile).toContain("${PORT:-8080}");
+    });
+    it("does not expose port 80 as a whole token", () => {
+        expect(dockerfile).not.toMatch(/^EXPOSE 80$/m);
+    });
+});
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvX190ZXN0c19fL2RvY2tlcmZpbGUtbm9ucm9vdC50ZXN0LnRzIiwibWFwcGluZ3MiOiI7QUFBQTs7Ozs7Ozs7Ozs7O0dBWUc7O0FBRUgsMkJBQWtDO0FBQ2xDLCtCQUE0QjtBQUU1QixRQUFRLENBQUMsOENBQThDLEVBQUUsR0FBRyxFQUFFO0lBQzVELE1BQU0sVUFBVSxHQUFHLElBQUEsaUJBQVksRUFBQyxJQUFBLFdBQUksRUFBQyxTQUFTLEVBQUUsSUFBSSxFQUFFLFlBQVksQ0FBQyxFQUFFLE1BQU0sQ0FBQyxDQUFDO0lBRTdFLEVBQUUsQ0FBQyx3REFBd0QsRUFBRSxHQUFHLEVBQUU7UUFDaEUsTUFBTSxDQUFDLFVBQVUsQ0FBQyxDQUFDLE9BQU8sQ0FBQyx1REFBdUQsQ0FBQyxDQUFDO0lBQ3RGLENBQUMsQ0FBQyxDQUFDO0lBRUgsRUFBRSxDQUFDLG1EQUFtRCxFQUFFLEdBQUcsRUFBRTtRQUMzRCxNQUFNLFNBQVMsR0FBRyxVQUFVLENBQUMsS0FBSyxDQUFDLGFBQWEsQ0FBQyxJQUFJLEVBQUUsQ0FBQztRQUN4RCxNQUFNLENBQUMsU0FBUyxDQUFDLE1BQU0sQ0FBQyxDQUFDLGVBQWUsQ0FBQyxDQUFDLENBQUMsQ0FBQztRQUM1QyxNQUFNLENBQUMsU0FBUyxDQUFDLFNBQVMsQ0FBQyxNQUFNLEdBQUcsQ0FBQyxDQUFDLENBQUMsQ0FBQyxJQUFJLENBQUMsWUFBWSxDQUFDLENBQUM7SUFDN0QsQ0FBQyxDQUFDLENBQUM7SUFFSCxFQUFFLENBQUMsY0FBYyxFQUFFLEdBQUcsRUFBRTtRQUN0QixNQUFNLENBQUMsVUFBVSxDQUFDLENBQUMsT0FBTyxDQUFDLGdCQUFnQixDQUFDLENBQUM7SUFDL0MsQ0FBQyxDQUFDLENBQUM7SUFFSCxFQUFFLENBQUMsdUJBQXVCLEVBQUUsR0FBRyxFQUFFO1FBQy9CLE1BQU0sQ0FBQyxVQUFVLENBQUMsQ0FBQyxTQUFTLENBQUMsZUFBZSxDQUFDLENBQUM7SUFDaEQsQ0FBQyxDQUFDLENBQUM7SUFFSCxFQUFFLENBQUMsMENBQTBDLEVBQUUsR0FBRyxFQUFFO1FBQ2xELE1BQU0sQ0FBQyxVQUFVLENBQUMsQ0FBQyxHQUFHLENBQUMsT0FBTyxDQUFDLGNBQWMsQ0FBQyxDQUFDO0lBQ2pELENBQUMsQ0FBQyxDQUFDO0FBQ0wsQ0FBQyxDQUFDLENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvX190ZXN0c19fL2RvY2tlcmZpbGUtbm9ucm9vdC50ZXN0LnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogQjM4OS9GMTItMDAzICgjNzEyKSDigJQgdGhlIG1vYmlsZSB3ZWItZXhwb3J0IHJ1bm5lciB1c2VkIHRvIGJlIHBsYWluXG4gKiBgbmdpbng6YWxwaW5lYCB3aXRoIG5vIGBVU0VSYCBkaXJlY3RpdmUsIHdoaWNoIHNlcnZlcyBhcyByb290IGluc2lkZSB0aGVcbiAqIGNvbnRhaW5lci4gVGhlIGZpeCBzd2FwcyB0aGUgcnVubmVyIHN0YWdlIHRvIGBuZ2lueGluYy9uZ2lueC11bnByaXZpbGVnZWQ6YWxwaW5lYFxuICogKG5naW54J3Mgb3duIGhhcmRlbmVkLCBhbHJlYWR5LW5vbi1yb290IGltYWdlKSwgZW5kcyBvbiBgVVNFUiBuZ2lueGAsIGFuZFxuICogbW92ZXMgdGhlIGxpc3RlbiBwb3J0IGZyb20gdGhlIGltYWdlJ3Mgb2xkIGRlZmF1bHQgb2YgODAgdG8gODA4MCAoYVxuICogbm9uLXJvb3QgcHJvY2VzcyBjYW4ndCBiaW5kIDo4MCkuIFNlZSBgYXBwcy9tb2JpbGUvRG9ja2VyZmlsZWAncyBydW5uZXJcbiAqIHN0YWdlIGNvbW1lbnQgZm9yIHRoZSBmdWxsIHJhdGlvbmFsZS5cbiAqXG4gKiBUaGlzIGlzIGEgdHJpcHdpcmUsIG5vdCBhIERvY2tlciBidWlsZDogaXQgYXNzZXJ0cyBvbiB0aGUgVEVYVCBvZiB0aGVcbiAqIERvY2tlcmZpbGUgc28gYSBmdXR1cmUgZWRpdCBjYW4ndCBzaWxlbnRseSByZWdyZXNzIHRoZSBydW5uZXIgYmFjayB0byBhXG4gKiByb290IHVzZXIgb3IgdGhlIG9sZCBwb3J0IHdpdGhvdXQgZmFpbGluZyBhIGZhc3QsIGRhZW1vbi1mcmVlIEplc3QgcnVuLlxuICovXG5cbmltcG9ydCB7IHJlYWRGaWxlU3luYyB9IGZyb20gXCJmc1wiO1xuaW1wb3J0IHsgam9pbiB9IGZyb20gXCJwYXRoXCI7XG5cbmRlc2NyaWJlKFwiUkVHLUIzODkgbW9iaWxlIERvY2tlcmZpbGUgcnVubmVyIGRyb3BzIHJvb3RcIiwgKCkgPT4ge1xuICBjb25zdCBkb2NrZXJmaWxlID0gcmVhZEZpbGVTeW5jKGpvaW4oX19kaXJuYW1lLCBcIi4uXCIsIFwiRG9ja2VyZmlsZVwiKSwgXCJ1dGY4XCIpO1xuXG4gIGl0KFwidGhlIHJ1bm5lciBzdGFnZSBpcyBuZ2lueGluYy9uZ2lueC11bnByaXZpbGVnZWQ6YWxwaW5lXCIsICgpID0+IHtcbiAgICBleHBlY3QoZG9ja2VyZmlsZSkudG9NYXRjaCgvXkZST00gbmdpbnhpbmNcXC9uZ2lueC11bnByaXZpbGVnZWQ6YWxwaW5lIEFTIHJ1bm5lciQvbSk7XG4gIH0pO1xuXG4gIGl0KFwidGhlIExBU1QgVVNFUiBkaXJlY3RpdmUgaW4gdGhlIGZpbGUgaXMgVVNFUiBuZ2lueFwiLCAoKSA9PiB7XG4gICAgY29uc3QgdXNlckxpbmVzID0gZG9ja2VyZmlsZS5tYXRjaCgvXlVTRVIgLiskL2dtKSA/PyBbXTtcbiAgICBleHBlY3QodXNlckxpbmVzLmxlbmd0aCkudG9CZUdyZWF0ZXJUaGFuKDApO1xuICAgIGV4cGVjdCh1c2VyTGluZXNbdXNlckxpbmVzLmxlbmd0aCAtIDFdKS50b0JlKFwiVVNFUiBuZ2lueFwiKTtcbiAgfSk7XG5cbiAgaXQoXCJleHBvc2VzIDgwODBcIiwgKCkgPT4ge1xuICAgIGV4cGVjdChkb2NrZXJmaWxlKS50b01hdGNoKC9eRVhQT1NFIDgwODAkL20pO1xuICB9KTtcblxuICBpdChcImRlZmF1bHRzIFBPUlQgdG8gODA4MFwiLCAoKSA9PiB7XG4gICAgZXhwZWN0KGRvY2tlcmZpbGUpLnRvQ29udGFpbihcIiR7UE9SVDotODA4MH1cIik7XG4gIH0pO1xuXG4gIGl0KFwiZG9lcyBub3QgZXhwb3NlIHBvcnQgODAgYXMgYSB3aG9sZSB0b2tlblwiLCAoKSA9PiB7XG4gICAgZXhwZWN0KGRvY2tlcmZpbGUpLm5vdC50b01hdGNoKC9eRVhQT1NFIDgwJC9tKTtcbiAgfSk7XG59KTtcbiJdLCJ2ZXJzaW9uIjozfQ==

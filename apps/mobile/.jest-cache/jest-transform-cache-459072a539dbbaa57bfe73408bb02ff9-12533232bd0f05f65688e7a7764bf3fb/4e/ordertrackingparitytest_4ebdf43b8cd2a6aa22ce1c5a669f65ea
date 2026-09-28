@@ -1,0 +1,32 @@
+7cb70978462221c0f7aa71dde5dfe235
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+/**
+ * #2095 — the buyer tracking card refreshes in exactly the same states on mobile (every 20 s,
+ * `trackingRefetchInterval`) and on the web (every 60 s). The web reads the shared
+ * `isTrackingLive` (packages/types/api/order-tracking.ts); this pins mobile's own rule to it,
+ * state for state, across every order status and every run status (plus "not on a run").
+ *
+ * Required by path: jest.config.js maps "@routeflow/types" to a hand stub for runtime values,
+ * and a copy of the rule in that stub would only test the copy.
+ */
+const order_tracking_logic_1 = require("../lib/order-tracking-logic");
+const order_tracking_1 = require("../../../packages/types/api/order-tracking");
+const enums_1 = require("../../../packages/types/api/enums");
+const cases = enums_1.ORDER_STATUS_VALUES.flatMap((status) => [
+    { status, tracking: null },
+    ...enums_1.ROUTE_RUN_STATUS_VALUES.map((runStatus) => ({ status, tracking: { runStatus } })),
+]);
+describe("buyer tracking poll: mobile and web refresh in the same states (#2095)", () => {
+    it("covers every order status x run state", () => {
+        expect(cases).toHaveLength(enums_1.ORDER_STATUS_VALUES.length * (enums_1.ROUTE_RUN_STATUS_VALUES.length + 1));
+    });
+    it.each(cases)("status $status, tracking $tracking", (data) => {
+        expect((0, order_tracking_logic_1.trackingRefetchInterval)(data) !== false).toBe((0, order_tracking_1.isTrackingLive)(data));
+    });
+    it("no data: neither polls", () => {
+        expect((0, order_tracking_logic_1.trackingRefetchInterval)(undefined)).toBe(false);
+        expect((0, order_tracking_1.isTrackingLive)(undefined)).toBe(false);
+    });
+});
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvX190ZXN0c19fL29yZGVyLXRyYWNraW5nLXBhcml0eS50ZXN0LnRzIiwibWFwcGluZ3MiOiI7O0FBQUE7Ozs7Ozs7O0dBUUc7QUFDSCxzRUFBc0U7QUFDdEUsK0VBQTRFO0FBQzVFLDZEQUFpRztBQUVqRyxNQUFNLEtBQUssR0FBRywyQkFBbUIsQ0FBQyxPQUFPLENBQUMsQ0FBQyxNQUFNLEVBQUUsRUFBRSxDQUFDO0lBQ3BELEVBQUUsTUFBTSxFQUFFLFFBQVEsRUFBRSxJQUFvQyxFQUFFO0lBQzFELEdBQUcsK0JBQXVCLENBQUMsR0FBRyxDQUFDLENBQUMsU0FBUyxFQUFFLEVBQUUsQ0FBQyxDQUFDLEVBQUUsTUFBTSxFQUFFLFFBQVEsRUFBRSxFQUFFLFNBQVMsRUFBRSxFQUFFLENBQUMsQ0FBQztDQUNyRixDQUFDLENBQUM7QUFFSCxRQUFRLENBQUMsd0VBQXdFLEVBQUUsR0FBRyxFQUFFO0lBQ3RGLEVBQUUsQ0FBQyx1Q0FBdUMsRUFBRSxHQUFHLEVBQUU7UUFDL0MsTUFBTSxDQUFDLEtBQUssQ0FBQyxDQUFDLFlBQVksQ0FBQywyQkFBbUIsQ0FBQyxNQUFNLEdBQUcsQ0FBQywrQkFBdUIsQ0FBQyxNQUFNLEdBQUcsQ0FBQyxDQUFDLENBQUMsQ0FBQztJQUNoRyxDQUFDLENBQUMsQ0FBQztJQUVILEVBQUUsQ0FBQyxJQUFJLENBQUMsS0FBSyxDQUFDLENBQUMsb0NBQW9DLEVBQUUsQ0FBQyxJQUFJLEVBQUUsRUFBRTtRQUM1RCxNQUFNLENBQUMsSUFBQSw4Q0FBdUIsRUFBQyxJQUFJLENBQUMsS0FBSyxLQUFLLENBQUMsQ0FBQyxJQUFJLENBQUMsSUFBQSwrQkFBYyxFQUFDLElBQUksQ0FBQyxDQUFDLENBQUM7SUFDN0UsQ0FBQyxDQUFDLENBQUM7SUFFSCxFQUFFLENBQUMsd0JBQXdCLEVBQUUsR0FBRyxFQUFFO1FBQ2hDLE1BQU0sQ0FBQyxJQUFBLDhDQUF1QixFQUFDLFNBQVMsQ0FBQyxDQUFDLENBQUMsSUFBSSxDQUFDLEtBQUssQ0FBQyxDQUFDO1FBQ3ZELE1BQU0sQ0FBQyxJQUFBLCtCQUFjLEVBQUMsU0FBUyxDQUFDLENBQUMsQ0FBQyxJQUFJLENBQUMsS0FBSyxDQUFDLENBQUM7SUFDaEQsQ0FBQyxDQUFDLENBQUM7QUFDTCxDQUFDLENBQUMsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9hcHBzL21vYmlsZS9fX3Rlc3RzX18vb3JkZXItdHJhY2tpbmctcGFyaXR5LnRlc3QudHMiXSwic291cmNlc0NvbnRlbnQiOlsiLyoqXG4gKiAjMjA5NSDigJQgdGhlIGJ1eWVyIHRyYWNraW5nIGNhcmQgcmVmcmVzaGVzIGluIGV4YWN0bHkgdGhlIHNhbWUgc3RhdGVzIG9uIG1vYmlsZSAoZXZlcnkgMjAgcyxcbiAqIGB0cmFja2luZ1JlZmV0Y2hJbnRlcnZhbGApIGFuZCBvbiB0aGUgd2ViIChldmVyeSA2MCBzKS4gVGhlIHdlYiByZWFkcyB0aGUgc2hhcmVkXG4gKiBgaXNUcmFja2luZ0xpdmVgIChwYWNrYWdlcy90eXBlcy9hcGkvb3JkZXItdHJhY2tpbmcudHMpOyB0aGlzIHBpbnMgbW9iaWxlJ3Mgb3duIHJ1bGUgdG8gaXQsXG4gKiBzdGF0ZSBmb3Igc3RhdGUsIGFjcm9zcyBldmVyeSBvcmRlciBzdGF0dXMgYW5kIGV2ZXJ5IHJ1biBzdGF0dXMgKHBsdXMgXCJub3Qgb24gYSBydW5cIikuXG4gKlxuICogUmVxdWlyZWQgYnkgcGF0aDogamVzdC5jb25maWcuanMgbWFwcyBcIkByb3V0ZWZsb3cvdHlwZXNcIiB0byBhIGhhbmQgc3R1YiBmb3IgcnVudGltZSB2YWx1ZXMsXG4gKiBhbmQgYSBjb3B5IG9mIHRoZSBydWxlIGluIHRoYXQgc3R1YiB3b3VsZCBvbmx5IHRlc3QgdGhlIGNvcHkuXG4gKi9cbmltcG9ydCB7IHRyYWNraW5nUmVmZXRjaEludGVydmFsIH0gZnJvbSBcIi4uL2xpYi9vcmRlci10cmFja2luZy1sb2dpY1wiO1xuaW1wb3J0IHsgaXNUcmFja2luZ0xpdmUgfSBmcm9tIFwiLi4vLi4vLi4vcGFja2FnZXMvdHlwZXMvYXBpL29yZGVyLXRyYWNraW5nXCI7XG5pbXBvcnQgeyBPUkRFUl9TVEFUVVNfVkFMVUVTLCBST1VURV9SVU5fU1RBVFVTX1ZBTFVFUyB9IGZyb20gXCIuLi8uLi8uLi9wYWNrYWdlcy90eXBlcy9hcGkvZW51bXNcIjtcblxuY29uc3QgY2FzZXMgPSBPUkRFUl9TVEFUVVNfVkFMVUVTLmZsYXRNYXAoKHN0YXR1cykgPT4gW1xuICB7IHN0YXR1cywgdHJhY2tpbmc6IG51bGwgYXMgeyBydW5TdGF0dXM6IHN0cmluZyB9IHwgbnVsbCB9LFxuICAuLi5ST1VURV9SVU5fU1RBVFVTX1ZBTFVFUy5tYXAoKHJ1blN0YXR1cykgPT4gKHsgc3RhdHVzLCB0cmFja2luZzogeyBydW5TdGF0dXMgfSB9KSksXG5dKTtcblxuZGVzY3JpYmUoXCJidXllciB0cmFja2luZyBwb2xsOiBtb2JpbGUgYW5kIHdlYiByZWZyZXNoIGluIHRoZSBzYW1lIHN0YXRlcyAoIzIwOTUpXCIsICgpID0+IHtcbiAgaXQoXCJjb3ZlcnMgZXZlcnkgb3JkZXIgc3RhdHVzIHggcnVuIHN0YXRlXCIsICgpID0+IHtcbiAgICBleHBlY3QoY2FzZXMpLnRvSGF2ZUxlbmd0aChPUkRFUl9TVEFUVVNfVkFMVUVTLmxlbmd0aCAqIChST1VURV9SVU5fU1RBVFVTX1ZBTFVFUy5sZW5ndGggKyAxKSk7XG4gIH0pO1xuXG4gIGl0LmVhY2goY2FzZXMpKFwic3RhdHVzICRzdGF0dXMsIHRyYWNraW5nICR0cmFja2luZ1wiLCAoZGF0YSkgPT4ge1xuICAgIGV4cGVjdCh0cmFja2luZ1JlZmV0Y2hJbnRlcnZhbChkYXRhKSAhPT0gZmFsc2UpLnRvQmUoaXNUcmFja2luZ0xpdmUoZGF0YSkpO1xuICB9KTtcblxuICBpdChcIm5vIGRhdGE6IG5laXRoZXIgcG9sbHNcIiwgKCkgPT4ge1xuICAgIGV4cGVjdCh0cmFja2luZ1JlZmV0Y2hJbnRlcnZhbCh1bmRlZmluZWQpKS50b0JlKGZhbHNlKTtcbiAgICBleHBlY3QoaXNUcmFja2luZ0xpdmUodW5kZWZpbmVkKSkudG9CZShmYWxzZSk7XG4gIH0pO1xufSk7XG4iXSwidmVyc2lvbiI6M30=

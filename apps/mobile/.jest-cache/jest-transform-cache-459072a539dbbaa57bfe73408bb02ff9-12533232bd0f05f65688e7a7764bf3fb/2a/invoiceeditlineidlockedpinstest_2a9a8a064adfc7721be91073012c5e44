@@ -1,0 +1,33 @@
+2c318a0b09618bdd80878ec3c6faa211
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const fs_1 = require("fs");
+const path_1 = require("path");
+/**
+ * SA-184/186/189 — the operator invoice EDIT screen sends each stored line's `id`, hydrates an
+ * unrecoverable legacy box line LOCKED, and only ever sends an operator-attested `unitsPerBox`.
+ * RN screens aren't renderable in this lane, so the wiring is source-pinned.
+ */
+describe("SA-186/189: invoice edit sends line ids, locks unrecoverable lines, attests packs", () => {
+    const src = (0, fs_1.readFileSync)((0, path_1.join)(__dirname, "..", "app/(operator)/(tabs)/invoices/[id]/edit.tsx"), "utf8");
+    it("hydration carries the stored row id", () => {
+        const at = src.search(/const hydratedLines = \(invoice\.items \?\? \[\]\)\.map/);
+        expect(at).toBeGreaterThan(-1);
+        expect(src.slice(at, at + 200)).toMatch(/id:\s*it\.id/);
+    });
+    it("an unrecoverable box line hydrates locked with its stored figures", () => {
+        expect(src).toMatch(/locked:\s*true,\s*storedBoxes:\s*Number\(it\.boxes\)/);
+    });
+    it("the save payload sends the id, the stored split for a locked line, and only an attested pack", () => {
+        const at = src.indexOf("items: lines.map((l) => ({");
+        expect(at).toBeGreaterThan(-1);
+        const block = src.slice(at, at + 900);
+        expect(block).toMatch(/l\.id \? \{ id: l\.id \}/);
+        expect(block).toMatch(/l\.locked \? \{ boxes: l\.storedBoxes/);
+        expect(block).toMatch(/l\.attestedPack \? \{ unitsPerBox: l\.attestedPack \}/);
+    });
+    it("unlocking requires an integer pack >= 2", () => {
+        expect(src).toMatch(/Number\.isInteger\(n\) && n >= 2/);
+    });
+});
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvX190ZXN0c19fL2ludm9pY2UtZWRpdC1saW5lLWlkLWxvY2tlZC5waW5zLnRlc3QudHMiLCJtYXBwaW5ncyI6Ijs7QUFBQSwyQkFBa0M7QUFDbEMsK0JBQTRCO0FBRTVCOzs7O0dBSUc7QUFDSCxRQUFRLENBQUMsbUZBQW1GLEVBQUUsR0FBRyxFQUFFO0lBQ2pHLE1BQU0sR0FBRyxHQUFHLElBQUEsaUJBQVksRUFDdEIsSUFBQSxXQUFJLEVBQUMsU0FBUyxFQUFFLElBQUksRUFBRSw4Q0FBOEMsQ0FBQyxFQUNyRSxNQUFNLENBQ1AsQ0FBQztJQUVGLEVBQUUsQ0FBQyxxQ0FBcUMsRUFBRSxHQUFHLEVBQUU7UUFDN0MsTUFBTSxFQUFFLEdBQUcsR0FBRyxDQUFDLE1BQU0sQ0FBQyx5REFBeUQsQ0FBQyxDQUFDO1FBQ2pGLE1BQU0sQ0FBQyxFQUFFLENBQUMsQ0FBQyxlQUFlLENBQUMsQ0FBQyxDQUFDLENBQUMsQ0FBQztRQUMvQixNQUFNLENBQUMsR0FBRyxDQUFDLEtBQUssQ0FBQyxFQUFFLEVBQUUsRUFBRSxHQUFHLEdBQUcsQ0FBQyxDQUFDLENBQUMsT0FBTyxDQUFDLGNBQWMsQ0FBQyxDQUFDO0lBQzFELENBQUMsQ0FBQyxDQUFDO0lBRUgsRUFBRSxDQUFDLG1FQUFtRSxFQUFFLEdBQUcsRUFBRTtRQUMzRSxNQUFNLENBQUMsR0FBRyxDQUFDLENBQUMsT0FBTyxDQUFDLHNEQUFzRCxDQUFDLENBQUM7SUFDOUUsQ0FBQyxDQUFDLENBQUM7SUFFSCxFQUFFLENBQUMsOEZBQThGLEVBQUUsR0FBRyxFQUFFO1FBQ3RHLE1BQU0sRUFBRSxHQUFHLEdBQUcsQ0FBQyxPQUFPLENBQUMsNEJBQTRCLENBQUMsQ0FBQztRQUNyRCxNQUFNLENBQUMsRUFBRSxDQUFDLENBQUMsZUFBZSxDQUFDLENBQUMsQ0FBQyxDQUFDLENBQUM7UUFDL0IsTUFBTSxLQUFLLEdBQUcsR0FBRyxDQUFDLEtBQUssQ0FBQyxFQUFFLEVBQUUsRUFBRSxHQUFHLEdBQUcsQ0FBQyxDQUFDO1FBQ3RDLE1BQU0sQ0FBQyxLQUFLLENBQUMsQ0FBQyxPQUFPLENBQUMsMEJBQTBCLENBQUMsQ0FBQztRQUNsRCxNQUFNLENBQUMsS0FBSyxDQUFDLENBQUMsT0FBTyxDQUFDLHVDQUF1QyxDQUFDLENBQUM7UUFDL0QsTUFBTSxDQUFDLEtBQUssQ0FBQyxDQUFDLE9BQU8sQ0FBQyx1REFBdUQsQ0FBQyxDQUFDO0lBQ2pGLENBQUMsQ0FBQyxDQUFDO0lBRUgsRUFBRSxDQUFDLHlDQUF5QyxFQUFFLEdBQUcsRUFBRTtRQUNqRCxNQUFNLENBQUMsR0FBRyxDQUFDLENBQUMsT0FBTyxDQUFDLGtDQUFrQyxDQUFDLENBQUM7SUFDMUQsQ0FBQyxDQUFDLENBQUM7QUFDTCxDQUFDLENBQUMsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9hcHBzL21vYmlsZS9fX3Rlc3RzX18vaW52b2ljZS1lZGl0LWxpbmUtaWQtbG9ja2VkLnBpbnMudGVzdC50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgeyByZWFkRmlsZVN5bmMgfSBmcm9tIFwiZnNcIjtcbmltcG9ydCB7IGpvaW4gfSBmcm9tIFwicGF0aFwiO1xuXG4vKipcbiAqIFNBLTE4NC8xODYvMTg5IOKAlCB0aGUgb3BlcmF0b3IgaW52b2ljZSBFRElUIHNjcmVlbiBzZW5kcyBlYWNoIHN0b3JlZCBsaW5lJ3MgYGlkYCwgaHlkcmF0ZXMgYW5cbiAqIHVucmVjb3ZlcmFibGUgbGVnYWN5IGJveCBsaW5lIExPQ0tFRCwgYW5kIG9ubHkgZXZlciBzZW5kcyBhbiBvcGVyYXRvci1hdHRlc3RlZCBgdW5pdHNQZXJCb3hgLlxuICogUk4gc2NyZWVucyBhcmVuJ3QgcmVuZGVyYWJsZSBpbiB0aGlzIGxhbmUsIHNvIHRoZSB3aXJpbmcgaXMgc291cmNlLXBpbm5lZC5cbiAqL1xuZGVzY3JpYmUoXCJTQS0xODYvMTg5OiBpbnZvaWNlIGVkaXQgc2VuZHMgbGluZSBpZHMsIGxvY2tzIHVucmVjb3ZlcmFibGUgbGluZXMsIGF0dGVzdHMgcGFja3NcIiwgKCkgPT4ge1xuICBjb25zdCBzcmMgPSByZWFkRmlsZVN5bmMoXG4gICAgam9pbihfX2Rpcm5hbWUsIFwiLi5cIiwgXCJhcHAvKG9wZXJhdG9yKS8odGFicykvaW52b2ljZXMvW2lkXS9lZGl0LnRzeFwiKSxcbiAgICBcInV0ZjhcIixcbiAgKTtcblxuICBpdChcImh5ZHJhdGlvbiBjYXJyaWVzIHRoZSBzdG9yZWQgcm93IGlkXCIsICgpID0+IHtcbiAgICBjb25zdCBhdCA9IHNyYy5zZWFyY2goL2NvbnN0IGh5ZHJhdGVkTGluZXMgPSBcXChpbnZvaWNlXFwuaXRlbXMgXFw/XFw/IFxcW1xcXVxcKVxcLm1hcC8pO1xuICAgIGV4cGVjdChhdCkudG9CZUdyZWF0ZXJUaGFuKC0xKTtcbiAgICBleHBlY3Qoc3JjLnNsaWNlKGF0LCBhdCArIDIwMCkpLnRvTWF0Y2goL2lkOlxccyppdFxcLmlkLyk7XG4gIH0pO1xuXG4gIGl0KFwiYW4gdW5yZWNvdmVyYWJsZSBib3ggbGluZSBoeWRyYXRlcyBsb2NrZWQgd2l0aCBpdHMgc3RvcmVkIGZpZ3VyZXNcIiwgKCkgPT4ge1xuICAgIGV4cGVjdChzcmMpLnRvTWF0Y2goL2xvY2tlZDpcXHMqdHJ1ZSxcXHMqc3RvcmVkQm94ZXM6XFxzKk51bWJlclxcKGl0XFwuYm94ZXNcXCkvKTtcbiAgfSk7XG5cbiAgaXQoXCJ0aGUgc2F2ZSBwYXlsb2FkIHNlbmRzIHRoZSBpZCwgdGhlIHN0b3JlZCBzcGxpdCBmb3IgYSBsb2NrZWQgbGluZSwgYW5kIG9ubHkgYW4gYXR0ZXN0ZWQgcGFja1wiLCAoKSA9PiB7XG4gICAgY29uc3QgYXQgPSBzcmMuaW5kZXhPZihcIml0ZW1zOiBsaW5lcy5tYXAoKGwpID0+ICh7XCIpO1xuICAgIGV4cGVjdChhdCkudG9CZUdyZWF0ZXJUaGFuKC0xKTtcbiAgICBjb25zdCBibG9jayA9IHNyYy5zbGljZShhdCwgYXQgKyA5MDApO1xuICAgIGV4cGVjdChibG9jaykudG9NYXRjaCgvbFxcLmlkIFxcPyBcXHsgaWQ6IGxcXC5pZCBcXH0vKTtcbiAgICBleHBlY3QoYmxvY2spLnRvTWF0Y2goL2xcXC5sb2NrZWQgXFw/IFxceyBib3hlczogbFxcLnN0b3JlZEJveGVzLyk7XG4gICAgZXhwZWN0KGJsb2NrKS50b01hdGNoKC9sXFwuYXR0ZXN0ZWRQYWNrIFxcPyBcXHsgdW5pdHNQZXJCb3g6IGxcXC5hdHRlc3RlZFBhY2sgXFx9Lyk7XG4gIH0pO1xuXG4gIGl0KFwidW5sb2NraW5nIHJlcXVpcmVzIGFuIGludGVnZXIgcGFjayA+PSAyXCIsICgpID0+IHtcbiAgICBleHBlY3Qoc3JjKS50b01hdGNoKC9OdW1iZXJcXC5pc0ludGVnZXJcXChuXFwpICYmIG4gPj0gMi8pO1xuICB9KTtcbn0pO1xuIl0sInZlcnNpb24iOjN9

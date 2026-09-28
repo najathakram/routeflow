@@ -1,0 +1,328 @@
+f7f5476e9030ccc78f782d850e56b9f6
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _unitcascade = require("./unit-cascade");
+const unit = (id, label, prices = [
+    null,
+    null,
+    null,
+    null,
+    null
+])=>({
+        id,
+        label,
+        factorToBase: 12,
+        price: prices[0],
+        priceTier2: prices[1],
+        priceTier3: prices[2],
+        priceTier4: prices[3],
+        priceTier5: prices[4],
+        isDefaultSelling: false,
+        sortOrder: 0
+    });
+const N = null;
+describe("proposeCascade — every tier, each independently", ()=>{
+    const units = [
+        unit("case", "Case", [
+            "42.00",
+            "40.00",
+            N,
+            N,
+            N
+        ]),
+        unit("pallet", "Pallet", [
+            "480.00",
+            "450.00",
+            "420.00",
+            N,
+            N
+        ]),
+        unit("derived", "Derived")
+    ];
+    it("a tier-1 edit offers each OTHER level's explicit tier-1 price the same ratio, rounded once", ()=>{
+        // Case tier 1: 42 -> 40 (x 40/42). Pallet 480 -> 457.14. Edited + derived rows excluded.
+        expect((0, _unitcascade.proposeCascade)(units, "case", [
+            42,
+            N,
+            N,
+            N,
+            N
+        ], [
+            40,
+            N,
+            N,
+            N,
+            N
+        ])).toEqual([
+            {
+                unitId: "pallet",
+                label: "Pallet",
+                changes: [
+                    {
+                        field: "price",
+                        tier: 1,
+                        from: 480,
+                        to: 457.14
+                    }
+                ]
+            }
+        ]);
+    });
+    it("a tier-2 edit offers tier 2 (and only tier 2) — it never touches anyone's tier 1", ()=>{
+        const out = (0, _unitcascade.proposeCascade)(units, "case", [
+            42,
+            40,
+            N,
+            N,
+            N
+        ], [
+            42,
+            36,
+            N,
+            N,
+            N
+        ]); // tier 2: 40 -> 36 (x 0.9)
+        expect(out).toEqual([
+            {
+                unitId: "pallet",
+                label: "Pallet",
+                changes: [
+                    {
+                        field: "priceTier2",
+                        tier: 2,
+                        from: 450,
+                        to: 405
+                    }
+                ]
+            }
+        ]);
+    });
+    it("several tiers edited at once each get their OWN ratio", ()=>{
+        const out = (0, _unitcascade.proposeCascade)(units, "case", [
+            42,
+            40,
+            N,
+            N,
+            N
+        ], [
+            21,
+            20,
+            N,
+            N,
+            N
+        ]); // both halved
+        expect(out[0].changes).toEqual([
+            {
+                field: "price",
+                tier: 1,
+                from: 480,
+                to: 240
+            },
+            {
+                field: "priceTier2",
+                tier: 2,
+                from: 450,
+                to: 225
+            }
+        ]);
+    });
+    it("a level with no explicit price at the edited tier is skipped (it derives and follows automatically)", ()=>{
+        // Pallet has no tier 4; Case has no tier 3. Editing tier 3 of the edited level offers Pallet's tier 3 only.
+        const out = (0, _unitcascade.proposeCascade)(units, "case", [
+            N,
+            N,
+            40,
+            N,
+            N
+        ], [
+            N,
+            N,
+            36,
+            N,
+            N
+        ]);
+        expect(out).toEqual([
+            {
+                unitId: "pallet",
+                label: "Pallet",
+                changes: [
+                    {
+                        field: "priceTier3",
+                        tier: 3,
+                        from: 420,
+                        to: 378
+                    }
+                ]
+            }
+        ]);
+        expect((0, _unitcascade.proposeCascade)(units, "case", [
+            N,
+            N,
+            N,
+            10,
+            N
+        ], [
+            N,
+            N,
+            N,
+            9,
+            N
+        ])).toEqual([]);
+    });
+    it.each([
+        [
+            "no change",
+            [
+                42,
+                N,
+                N,
+                N,
+                N
+            ],
+            [
+                42,
+                N,
+                N,
+                N,
+                N
+            ]
+        ],
+        [
+            "price newly set (no old ratio)",
+            [
+                N,
+                N,
+                N,
+                N,
+                N
+            ],
+            [
+                40,
+                N,
+                N,
+                N,
+                N
+            ]
+        ],
+        [
+            "price cleared (back to derived)",
+            [
+                42,
+                N,
+                N,
+                N,
+                N
+            ],
+            [
+                N,
+                N,
+                N,
+                N,
+                N
+            ]
+        ],
+        [
+            "zero old price",
+            [
+                0,
+                N,
+                N,
+                N,
+                N
+            ],
+            [
+                40,
+                N,
+                N,
+                N,
+                N
+            ]
+        ],
+        [
+            "zero new price",
+            [
+                42,
+                N,
+                N,
+                N,
+                N
+            ],
+            [
+                0,
+                N,
+                N,
+                N,
+                N
+            ]
+        ]
+    ])("proposes nothing for %s", (_n, o, n)=>{
+        expect((0, _unitcascade.proposeCascade)(units, "case", o, n)).toEqual([]);
+    });
+    it("skips a price that would not move after rounding", ()=>{
+        const tiny = [
+            unit("a", "A", [
+                "0.01",
+                N,
+                N,
+                N,
+                N
+            ]),
+            unit("b", "B", [
+                "10.00",
+                N,
+                N,
+                N,
+                N
+            ])
+        ];
+        expect((0, _unitcascade.proposeCascade)(tiny, "edited", [
+            42,
+            N,
+            N,
+            N,
+            N
+        ], [
+            41,
+            N,
+            N,
+            N,
+            N
+        ])).toEqual([
+            {
+                unitId: "b",
+                label: "B",
+                changes: [
+                    {
+                        field: "price",
+                        tier: 1,
+                        from: 10,
+                        to: 9.76
+                    }
+                ]
+            }
+        ]);
+    });
+    it("cascadePatch turns a proposal into one PATCH body over just the changed fields", ()=>{
+        const [p] = (0, _unitcascade.proposeCascade)(units, "case", [
+            42,
+            40,
+            N,
+            N,
+            N
+        ], [
+            21,
+            20,
+            N,
+            N,
+            N
+        ]);
+        expect((0, _unitcascade.cascadePatch)(p)).toEqual({
+            price: 240,
+            priceTier2: 225
+        });
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2xpYi91bml0LWNhc2NhZGUudGVzdC50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgdHlwZSB7IFByb2R1Y3RVbml0TGV2ZWwgfSBmcm9tIFwiQHJvdXRlZmxvdy90eXBlc1wiO1xuaW1wb3J0IHsgY2FzY2FkZVBhdGNoLCBwcm9wb3NlQ2FzY2FkZSB9IGZyb20gXCIuL3VuaXQtY2FzY2FkZVwiO1xuXG5jb25zdCB1bml0ID0gKFxuICBpZDogc3RyaW5nLFxuICBsYWJlbDogc3RyaW5nLFxuICBwcmljZXM6IEFycmF5PHN0cmluZyB8IG51bGw+ID0gW251bGwsIG51bGwsIG51bGwsIG51bGwsIG51bGxdLFxuKTogUHJvZHVjdFVuaXRMZXZlbCA9PiAoe1xuICBpZCxcbiAgbGFiZWwsXG4gIGZhY3RvclRvQmFzZTogMTIsXG4gIHByaWNlOiBwcmljZXNbMF0sXG4gIHByaWNlVGllcjI6IHByaWNlc1sxXSxcbiAgcHJpY2VUaWVyMzogcHJpY2VzWzJdLFxuICBwcmljZVRpZXI0OiBwcmljZXNbM10sXG4gIHByaWNlVGllcjU6IHByaWNlc1s0XSxcbiAgaXNEZWZhdWx0U2VsbGluZzogZmFsc2UsXG4gIHNvcnRPcmRlcjogMCxcbn0pO1xuXG5jb25zdCBOID0gbnVsbDtcblxuZGVzY3JpYmUoXCJwcm9wb3NlQ2FzY2FkZSDigJQgZXZlcnkgdGllciwgZWFjaCBpbmRlcGVuZGVudGx5XCIsICgpID0+IHtcbiAgY29uc3QgdW5pdHMgPSBbXG4gICAgdW5pdChcImNhc2VcIiwgXCJDYXNlXCIsIFtcIjQyLjAwXCIsIFwiNDAuMDBcIiwgTiwgTiwgTl0pLFxuICAgIHVuaXQoXCJwYWxsZXRcIiwgXCJQYWxsZXRcIiwgW1wiNDgwLjAwXCIsIFwiNDUwLjAwXCIsIFwiNDIwLjAwXCIsIE4sIE5dKSxcbiAgICB1bml0KFwiZGVyaXZlZFwiLCBcIkRlcml2ZWRcIiksXG4gIF07XG5cbiAgaXQoXCJhIHRpZXItMSBlZGl0IG9mZmVycyBlYWNoIE9USEVSIGxldmVsJ3MgZXhwbGljaXQgdGllci0xIHByaWNlIHRoZSBzYW1lIHJhdGlvLCByb3VuZGVkIG9uY2VcIiwgKCkgPT4ge1xuICAgIC8vIENhc2UgdGllciAxOiA0MiAtPiA0MCAoeCA0MC80MikuIFBhbGxldCA0ODAgLT4gNDU3LjE0LiBFZGl0ZWQgKyBkZXJpdmVkIHJvd3MgZXhjbHVkZWQuXG4gICAgZXhwZWN0KHByb3Bvc2VDYXNjYWRlKHVuaXRzLCBcImNhc2VcIiwgWzQyLCBOLCBOLCBOLCBOXSwgWzQwLCBOLCBOLCBOLCBOXSkpLnRvRXF1YWwoW1xuICAgICAge1xuICAgICAgICB1bml0SWQ6IFwicGFsbGV0XCIsXG4gICAgICAgIGxhYmVsOiBcIlBhbGxldFwiLFxuICAgICAgICBjaGFuZ2VzOiBbeyBmaWVsZDogXCJwcmljZVwiLCB0aWVyOiAxLCBmcm9tOiA0ODAsIHRvOiA0NTcuMTQgfV0sXG4gICAgICB9LFxuICAgIF0pO1xuICB9KTtcblxuICBpdChcImEgdGllci0yIGVkaXQgb2ZmZXJzIHRpZXIgMiAoYW5kIG9ubHkgdGllciAyKSDigJQgaXQgbmV2ZXIgdG91Y2hlcyBhbnlvbmUncyB0aWVyIDFcIiwgKCkgPT4ge1xuICAgIGNvbnN0IG91dCA9IHByb3Bvc2VDYXNjYWRlKHVuaXRzLCBcImNhc2VcIiwgWzQyLCA0MCwgTiwgTiwgTl0sIFs0MiwgMzYsIE4sIE4sIE5dKTsgLy8gdGllciAyOiA0MCAtPiAzNiAoeCAwLjkpXG4gICAgZXhwZWN0KG91dCkudG9FcXVhbChbXG4gICAgICB7XG4gICAgICAgIHVuaXRJZDogXCJwYWxsZXRcIixcbiAgICAgICAgbGFiZWw6IFwiUGFsbGV0XCIsXG4gICAgICAgIGNoYW5nZXM6IFt7IGZpZWxkOiBcInByaWNlVGllcjJcIiwgdGllcjogMiwgZnJvbTogNDUwLCB0bzogNDA1IH1dLFxuICAgICAgfSxcbiAgICBdKTtcbiAgfSk7XG5cbiAgaXQoXCJzZXZlcmFsIHRpZXJzIGVkaXRlZCBhdCBvbmNlIGVhY2ggZ2V0IHRoZWlyIE9XTiByYXRpb1wiLCAoKSA9PiB7XG4gICAgY29uc3Qgb3V0ID0gcHJvcG9zZUNhc2NhZGUodW5pdHMsIFwiY2FzZVwiLCBbNDIsIDQwLCBOLCBOLCBOXSwgWzIxLCAyMCwgTiwgTiwgTl0pOyAvLyBib3RoIGhhbHZlZFxuICAgIGV4cGVjdChvdXRbMF0uY2hhbmdlcykudG9FcXVhbChbXG4gICAgICB7IGZpZWxkOiBcInByaWNlXCIsIHRpZXI6IDEsIGZyb206IDQ4MCwgdG86IDI0MCB9LFxuICAgICAgeyBmaWVsZDogXCJwcmljZVRpZXIyXCIsIHRpZXI6IDIsIGZyb206IDQ1MCwgdG86IDIyNSB9LFxuICAgIF0pO1xuICB9KTtcblxuICBpdChcImEgbGV2ZWwgd2l0aCBubyBleHBsaWNpdCBwcmljZSBhdCB0aGUgZWRpdGVkIHRpZXIgaXMgc2tpcHBlZCAoaXQgZGVyaXZlcyBhbmQgZm9sbG93cyBhdXRvbWF0aWNhbGx5KVwiLCAoKSA9PiB7XG4gICAgLy8gUGFsbGV0IGhhcyBubyB0aWVyIDQ7IENhc2UgaGFzIG5vIHRpZXIgMy4gRWRpdGluZyB0aWVyIDMgb2YgdGhlIGVkaXRlZCBsZXZlbCBvZmZlcnMgUGFsbGV0J3MgdGllciAzIG9ubHkuXG4gICAgY29uc3Qgb3V0ID0gcHJvcG9zZUNhc2NhZGUodW5pdHMsIFwiY2FzZVwiLCBbTiwgTiwgNDAsIE4sIE5dLCBbTiwgTiwgMzYsIE4sIE5dKTtcbiAgICBleHBlY3Qob3V0KS50b0VxdWFsKFtcbiAgICAgIHtcbiAgICAgICAgdW5pdElkOiBcInBhbGxldFwiLFxuICAgICAgICBsYWJlbDogXCJQYWxsZXRcIixcbiAgICAgICAgY2hhbmdlczogW3sgZmllbGQ6IFwicHJpY2VUaWVyM1wiLCB0aWVyOiAzLCBmcm9tOiA0MjAsIHRvOiAzNzggfV0sXG4gICAgICB9LFxuICAgIF0pO1xuICAgIGV4cGVjdChwcm9wb3NlQ2FzY2FkZSh1bml0cywgXCJjYXNlXCIsIFtOLCBOLCBOLCAxMCwgTl0sIFtOLCBOLCBOLCA5LCBOXSkpLnRvRXF1YWwoW10pO1xuICB9KTtcblxuICBpdC5lYWNoKFtcbiAgICBbXCJubyBjaGFuZ2VcIiwgWzQyLCBOLCBOLCBOLCBOXSwgWzQyLCBOLCBOLCBOLCBOXV0sXG4gICAgW1wicHJpY2UgbmV3bHkgc2V0IChubyBvbGQgcmF0aW8pXCIsIFtOLCBOLCBOLCBOLCBOXSwgWzQwLCBOLCBOLCBOLCBOXV0sXG4gICAgW1wicHJpY2UgY2xlYXJlZCAoYmFjayB0byBkZXJpdmVkKVwiLCBbNDIsIE4sIE4sIE4sIE5dLCBbTiwgTiwgTiwgTiwgTl1dLFxuICAgIFtcInplcm8gb2xkIHByaWNlXCIsIFswLCBOLCBOLCBOLCBOXSwgWzQwLCBOLCBOLCBOLCBOXV0sXG4gICAgW1wiemVybyBuZXcgcHJpY2VcIiwgWzQyLCBOLCBOLCBOLCBOXSwgWzAsIE4sIE4sIE4sIE5dXSxcbiAgXSkoXCJwcm9wb3NlcyBub3RoaW5nIGZvciAlc1wiLCAoX24sIG8sIG4pID0+IHtcbiAgICBleHBlY3QocHJvcG9zZUNhc2NhZGUodW5pdHMsIFwiY2FzZVwiLCBvIGFzIG5ldmVyLCBuIGFzIG5ldmVyKSkudG9FcXVhbChbXSk7XG4gIH0pO1xuXG4gIGl0KFwic2tpcHMgYSBwcmljZSB0aGF0IHdvdWxkIG5vdCBtb3ZlIGFmdGVyIHJvdW5kaW5nXCIsICgpID0+IHtcbiAgICBjb25zdCB0aW55ID0gW3VuaXQoXCJhXCIsIFwiQVwiLCBbXCIwLjAxXCIsIE4sIE4sIE4sIE5dKSwgdW5pdChcImJcIiwgXCJCXCIsIFtcIjEwLjAwXCIsIE4sIE4sIE4sIE5dKV07XG4gICAgZXhwZWN0KHByb3Bvc2VDYXNjYWRlKHRpbnksIFwiZWRpdGVkXCIsIFs0MiwgTiwgTiwgTiwgTl0sIFs0MSwgTiwgTiwgTiwgTl0pKS50b0VxdWFsKFtcbiAgICAgIHsgdW5pdElkOiBcImJcIiwgbGFiZWw6IFwiQlwiLCBjaGFuZ2VzOiBbeyBmaWVsZDogXCJwcmljZVwiLCB0aWVyOiAxLCBmcm9tOiAxMCwgdG86IDkuNzYgfV0gfSxcbiAgICBdKTtcbiAgfSk7XG5cbiAgaXQoXCJjYXNjYWRlUGF0Y2ggdHVybnMgYSBwcm9wb3NhbCBpbnRvIG9uZSBQQVRDSCBib2R5IG92ZXIganVzdCB0aGUgY2hhbmdlZCBmaWVsZHNcIiwgKCkgPT4ge1xuICAgIGNvbnN0IFtwXSA9IHByb3Bvc2VDYXNjYWRlKHVuaXRzLCBcImNhc2VcIiwgWzQyLCA0MCwgTiwgTiwgTl0sIFsyMSwgMjAsIE4sIE4sIE5dKTtcbiAgICBleHBlY3QoY2FzY2FkZVBhdGNoKHApKS50b0VxdWFsKHsgcHJpY2U6IDI0MCwgcHJpY2VUaWVyMjogMjI1IH0pO1xuICB9KTtcbn0pO1xuIl0sIm5hbWVzIjpbInVuaXQiLCJpZCIsImxhYmVsIiwicHJpY2VzIiwiZmFjdG9yVG9CYXNlIiwicHJpY2UiLCJwcmljZVRpZXIyIiwicHJpY2VUaWVyMyIsInByaWNlVGllcjQiLCJwcmljZVRpZXI1IiwiaXNEZWZhdWx0U2VsbGluZyIsInNvcnRPcmRlciIsIk4iLCJkZXNjcmliZSIsInVuaXRzIiwiaXQiLCJleHBlY3QiLCJwcm9wb3NlQ2FzY2FkZSIsInRvRXF1YWwiLCJ1bml0SWQiLCJjaGFuZ2VzIiwiZmllbGQiLCJ0aWVyIiwiZnJvbSIsInRvIiwib3V0IiwiZWFjaCIsIl9uIiwibyIsIm4iLCJ0aW55IiwicCIsImNhc2NhZGVQYXRjaCJdLCJtYXBwaW5ncyI6Ijs7Ozs2QkFDNkM7QUFFN0MsTUFBTUEsT0FBTyxDQUNYQyxJQUNBQyxPQUNBQyxTQUErQjtJQUFDO0lBQU07SUFBTTtJQUFNO0lBQU07Q0FBSyxHQUN2QyxDQUFBO1FBQ3RCRjtRQUNBQztRQUNBRSxjQUFjO1FBQ2RDLE9BQU9GLE1BQU0sQ0FBQyxFQUFFO1FBQ2hCRyxZQUFZSCxNQUFNLENBQUMsRUFBRTtRQUNyQkksWUFBWUosTUFBTSxDQUFDLEVBQUU7UUFDckJLLFlBQVlMLE1BQU0sQ0FBQyxFQUFFO1FBQ3JCTSxZQUFZTixNQUFNLENBQUMsRUFBRTtRQUNyQk8sa0JBQWtCO1FBQ2xCQyxXQUFX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

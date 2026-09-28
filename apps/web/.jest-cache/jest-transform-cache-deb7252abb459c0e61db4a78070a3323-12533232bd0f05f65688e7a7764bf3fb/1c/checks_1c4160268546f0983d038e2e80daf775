@@ -1,0 +1,46 @@
+407706ce6cc4f5d079dd85d70ffc6593
+// Post-dated check payments PR-1 (2026-09-15) — the ONE canonical export of the check-lifecycle
+// forward-transition table.
+//
+// Until this file, the SAME table was hand-written three times: apps/api/src/invoices/
+// invoices.service.ts (a local `CHECK_TRANSITIONS` const), apps/web/app/(dashboard)/invoices/
+// [id]/page.tsx (an identical local const, "so the dropdown greys out illegal jumps"), and
+// apps/mobile/lib/payments-logic.ts (an identical local const + a local `CheckStatus` type) —
+// three independent hand-maintained copies of the exact same values, the drift risk this file
+// removes. All three now import from here instead.
+//
+// V1 ONLY — a deliberate, pure de-duplication. An independent Opus review of the design was
+// explicit: PR-1 exports ONLY the current V1 table (byte-identical to the three mirrors above)
+// — do NOT add a `CHECK_TRANSITIONS_V2` export here. A future PR introduces V2 (reverse
+// transitions) behind a dedicated `CheckTransitionService`; shipping V2 — or wiring web/mobile
+// to a V2 shape — now would let a client offer a transition (e.g. a reverse move) the API
+// doesn't support yet and would 400.
+//
+// Re-uses the existing `CheckStatus` type from `./enums` (`CHECK_STATUS_VALUES`) rather than
+// redeclaring it — one source for the four values, not two.
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+Object.defineProperty(exports, "CHECK_TRANSITIONS", {
+    enumerable: true,
+    get: function() {
+        return CHECK_TRANSITIONS;
+    }
+});
+const CHECK_TRANSITIONS = {
+    RECORDED: [
+        "DEPOSITED",
+        "BOUNCED"
+    ],
+    DEPOSITED: [
+        "CLEARED",
+        "BOUNCED"
+    ],
+    CLEARED: [
+        "BOUNCED"
+    ],
+    BOUNCED: []
+};
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L3BhY2thZ2VzL3R5cGVzL2FwaS9jaGVja3MudHMiXSwic291cmNlc0NvbnRlbnQiOlsiLy8gUG9zdC1kYXRlZCBjaGVjayBwYXltZW50cyBQUi0xICgyMDI2LTA5LTE1KSDigJQgdGhlIE9ORSBjYW5vbmljYWwgZXhwb3J0IG9mIHRoZSBjaGVjay1saWZlY3ljbGVcbi8vIGZvcndhcmQtdHJhbnNpdGlvbiB0YWJsZS5cbi8vXG4vLyBVbnRpbCB0aGlzIGZpbGUsIHRoZSBTQU1FIHRhYmxlIHdhcyBoYW5kLXdyaXR0ZW4gdGhyZWUgdGltZXM6IGFwcHMvYXBpL3NyYy9pbnZvaWNlcy9cbi8vIGludm9pY2VzLnNlcnZpY2UudHMgKGEgbG9jYWwgYENIRUNLX1RSQU5TSVRJT05TYCBjb25zdCksIGFwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS9pbnZvaWNlcy9cbi8vIFtpZF0vcGFnZS50c3ggKGFuIGlkZW50aWNhbCBsb2NhbCBjb25zdCwgXCJzbyB0aGUgZHJvcGRvd24gZ3JleXMgb3V0IGlsbGVnYWwganVtcHNcIiksIGFuZFxuLy8gYXBwcy9tb2JpbGUvbGliL3BheW1lbnRzLWxvZ2ljLnRzIChhbiBpZGVudGljYWwgbG9jYWwgY29uc3QgKyBhIGxvY2FsIGBDaGVja1N0YXR1c2AgdHlwZSkg4oCUXG4vLyB0aHJlZSBpbmRlcGVuZGVudCBoYW5kLW1haW50YWluZWQgY29waWVzIG9mIHRoZSBleGFjdCBzYW1lIHZhbHVlcywgdGhlIGRyaWZ0IHJpc2sgdGhpcyBmaWxlXG4vLyByZW1vdmVzLiBBbGwgdGhyZWUgbm93IGltcG9ydCBmcm9tIGhlcmUgaW5zdGVhZC5cbi8vXG4vLyBWMSBPTkxZIOKAlCBhIGRlbGliZXJhdGUsIHB1cmUgZGUtZHVwbGljYXRpb24uIEFuIGluZGVwZW5kZW50IE9wdXMgcmV2aWV3IG9mIHRoZSBkZXNpZ24gd2FzXG4vLyBleHBsaWNpdDogUFItMSBleHBvcnRzIE9OTFkgdGhlIGN1cnJlbnQgVjEgdGFibGUgKGJ5dGUtaWRlbnRpY2FsIHRvIHRoZSB0aHJlZSBtaXJyb3JzIGFib3ZlKVxuLy8g4oCUIGRvIE5PVCBhZGQgYSBgQ0hFQ0tfVFJBTlNJVElPTlNfVjJgIGV4cG9ydCBoZXJlLiBBIGZ1dHVyZSBQUiBpbnRyb2R1Y2VzIFYyIChyZXZlcnNlXG4vLyB0cmFuc2l0aW9ucykgYmVoaW5kIGEgZGVkaWNhdGVkIGBDaGVja1RyYW5zaXRpb25TZXJ2aWNlYDsgc2hpcHBpbmcgVjIg4oCUIG9yIHdpcmluZyB3ZWIvbW9iaWxlXG4vLyB0byBhIFYyIHNoYXBlIOKAlCBub3cgd291bGQgbGV0IGEgY2xpZW50IG9mZmVyIGEgdHJhbnNpdGlvbiAoZS5nLiBhIHJldmVyc2UgbW92ZSkgdGhlIEFQSVxuLy8gZG9lc24ndCBzdXBwb3J0IHlldCBhbmQgd291bGQgNDAwLlxuLy9cbi8vIFJlLXVzZXMgdGhlIGV4aXN0aW5nIGBDaGVja1N0YXR1c2AgdHlwZSBmcm9tIGAuL2VudW1zYCAoYENIRUNLX1NUQVRVU19WQUxVRVNgKSByYXRoZXIgdGhhblxuLy8gcmVkZWNsYXJpbmcgaXQg4oCUIG9uZSBzb3VyY2UgZm9yIHRoZSBmb3VyIHZhbHVlcywgbm90IHR3by5cbmltcG9ydCB0eXBlIHsgQ2hlY2tTdGF0dXMgfSBmcm9tIFwiLi9lbnVtc1wiO1xuXG5leHBvcnQgdHlwZSB7IENoZWNrU3RhdHVzIH07XG5cbi8qKlxuICogTGVnYWwgRk9SV0FSRCB0cmFuc2l0aW9ucyBmb3IgdGhlIGNoZWNrIGxpZmVjeWNsZTogUkVDT1JERUQg4oaSIERFUE9TSVRFRCDihpIgQ0xFQVJFRCAoc3RyaWN0XG4gKiBzZXF1ZW5jZSk7IGFueSBub24tYm91bmNlZCBzdGF0ZSBjYW4gZ28gdG8gQk9VTkNFRCAoYSBkZXBvc2l0ZWQgb3IgZXZlbiBjbGVhcmVkIGNoZWNrIGNhbiBiZVxuICogcmV0dXJuZWQgYnkgdGhlIGJhbmspLiBCT1VOQ0VEIGlzIHRlcm1pbmFsLiBWYWx1ZXMgYXJlIGJ5dGUtaWRlbnRpY2FsIHRvIHRoZSB0aHJlZSBtaXJyb3JzXG4gKiB0aGlzIGZpbGUgcmVwbGFjZXMg4oCUIHRoaXMgUFIgb25seSBkZS1kdXBsaWNhdGVzLCBpdCBuZXZlciBjaGFuZ2VzIHRoZSBtYXAuXG4gKi9cbmV4cG9ydCBjb25zdCBDSEVDS19UUkFOU0lUSU9OUzogUmVjb3JkPENoZWNrU3RhdHVzLCByZWFkb25seSBDaGVja1N0YXR1c1tdPiA9IHtcbiAgUkVDT1JERUQ6IFtcIkRFUE9TSVRFRFwiLCBcIkJPVU5DRURcIl0sXG4gIERFUE9TSVRFRDogW1wiQ0xFQVJFRFwiLCBcIkJPVU5DRURcIl0sXG4gIENMRUFSRUQ6IFtcIkJPVU5DRURcIl0sXG4gIEJPVU5DRUQ6IFtdLFxufTtcbiJdLCJuYW1lcyI6WyJDSEVDS19UUkFOU0lUSU9OUyIsIlJFQ09SREVEIiwiREVQT1NJVEVEIiwiQ0xFQVJFRCIsIkJPVU5DRUQiXSwibWFwcGluZ3MiOiJBQUFBLGdHQUFnRztBQUNoRyw0QkFBNEI7QUFDNUIsRUFBRTtBQUNGLHVGQUF1RjtBQUN2Riw4RkFBOEY7QUFDOUYsMkZBQTJGO0FBQzNGLDhGQUE4RjtBQUM5Riw4RkFBOEY7QUFDOUYsbURBQW1EO0FBQ25ELEVBQUU7QUFDRiw0RkFBNEY7QUFDNUYsK0ZBQStGO0FBQy9GLHdGQUF3RjtBQUN4RiwrRkFBK0Y7QUFDL0YsMEZBQTBGO0FBQzFGLHFDQUFxQztBQUNyQyxFQUFFO0FBQ0YsNkZBQTZGO0FBQzdGLDREQUE0RDs7Ozs7K0JBVy9DQTs7O2VBQUFBOzs7QUFBTixNQUFNQSxvQkFBaUU7SUFDNUVDLFVBQVU7UUFBQztRQUFhO0tBQVU7SUFDbENDLFdBQVc7UUFBQztRQUFXO0tBQVU7SUFDakNDLFNBQVM7UUFBQztLQUFVO0lBQ3BCQyxTQUFTLEVBQUU7QUFDYiJ9

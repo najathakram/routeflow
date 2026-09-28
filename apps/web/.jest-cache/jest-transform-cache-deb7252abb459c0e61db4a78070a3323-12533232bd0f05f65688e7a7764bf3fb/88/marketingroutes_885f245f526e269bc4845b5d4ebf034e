@@ -1,0 +1,48 @@
+b5ea7787a33b00ead99d80fb0b985ee6
+/**
+ * The public marketing page paths, in one place.
+ *
+ * Single source for every consumer that has to answer "is this URL a public
+ * marketing page?" — `lib/api-client.ts` and `lib/auth-context.tsx` (never
+ * punt a visitor on a public page to /login). Hand-typed mirrors of this list
+ * are exactly how the `/privacy` + `/terms` miss shipped — never restate it
+ * elsewhere (lesson L-072); import it.
+ *
+ * Kept set-equal to the marketing `routes` table in
+ * `app/(marketing)/lib/site.ts` (plus "/" and "/distributors", which have no
+ * `routes` row) by the parity test in
+ * `app/(marketing)/middleware.marketing.test.ts`.
+ *
+ * MARKETING_AUTH_PATHS, WEB_ONLY_EXACT_PATHS/WEB_ONLY_PATH_PREFIX/
+ * isWebOnlyPath, and MARKETING_ASSET_PREFIXES/MARKETING_ASSET_FILES/
+ * isMarketingAsset used to live here too, alongside this list — all four were
+ * exemptions for `middleware.ts`'s mobile-UA proxy to the Expo mobile-web
+ * build. Owner ruling: phones now get the same redesigned Next web site as
+ * desktop (drivers use the installed app instead), so the proxy — and every
+ * carve-out that existed only to route around it — is gone. Removed rather
+ * than kept dead: confirmed via grep across both `apps/web` and `apps/mobile`
+ * that nothing else imported any of the four.
+ */ "use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+Object.defineProperty(exports, "MARKETING_PAGE_PATHS", {
+    enumerable: true,
+    get: function() {
+        return MARKETING_PAGE_PATHS;
+    }
+});
+const MARKETING_PAGE_PATHS = [
+    "/",
+    "/product",
+    "/wholesalers",
+    "/retailers",
+    "/pricing",
+    "/company",
+    "/contact",
+    "/privacy",
+    "/terms",
+    "/distributors"
+];
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2xpYi9tYXJrZXRpbmctcm91dGVzLnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogVGhlIHB1YmxpYyBtYXJrZXRpbmcgcGFnZSBwYXRocywgaW4gb25lIHBsYWNlLlxuICpcbiAqIFNpbmdsZSBzb3VyY2UgZm9yIGV2ZXJ5IGNvbnN1bWVyIHRoYXQgaGFzIHRvIGFuc3dlciBcImlzIHRoaXMgVVJMIGEgcHVibGljXG4gKiBtYXJrZXRpbmcgcGFnZT9cIiDigJQgYGxpYi9hcGktY2xpZW50LnRzYCBhbmQgYGxpYi9hdXRoLWNvbnRleHQudHN4YCAobmV2ZXJcbiAqIHB1bnQgYSB2aXNpdG9yIG9uIGEgcHVibGljIHBhZ2UgdG8gL2xvZ2luKS4gSGFuZC10eXBlZCBtaXJyb3JzIG9mIHRoaXMgbGlzdFxuICogYXJlIGV4YWN0bHkgaG93IHRoZSBgL3ByaXZhY3lgICsgYC90ZXJtc2AgbWlzcyBzaGlwcGVkIOKAlCBuZXZlciByZXN0YXRlIGl0XG4gKiBlbHNld2hlcmUgKGxlc3NvbiBMLTA3Mik7IGltcG9ydCBpdC5cbiAqXG4gKiBLZXB0IHNldC1lcXVhbCB0byB0aGUgbWFya2V0aW5nIGByb3V0ZXNgIHRhYmxlIGluXG4gKiBgYXBwLyhtYXJrZXRpbmcpL2xpYi9zaXRlLnRzYCAocGx1cyBcIi9cIiBhbmQgXCIvZGlzdHJpYnV0b3JzXCIsIHdoaWNoIGhhdmUgbm9cbiAqIGByb3V0ZXNgIHJvdykgYnkgdGhlIHBhcml0eSB0ZXN0IGluXG4gKiBgYXBwLyhtYXJrZXRpbmcpL21pZGRsZXdhcmUubWFya2V0aW5nLnRlc3QudHNgLlxuICpcbiAqIE1BUktFVElOR19BVVRIX1BBVEhTLCBXRUJfT05MWV9FWEFDVF9QQVRIUy9XRUJfT05MWV9QQVRIX1BSRUZJWC9cbiAqIGlzV2ViT25seVBhdGgsIGFuZCBNQVJLRVRJTkdfQVNTRVRfUFJFRklYRVMvTUFSS0VUSU5HX0FTU0VUX0ZJTEVTL1xuICogaXNNYXJrZXRpbmdBc3NldCB1c2VkIHRvIGxpdmUgaGVyZSB0b28sIGFsb25nc2lkZSB0aGlzIGxpc3Qg4oCUIGFsbCBmb3VyIHdlcmVcbiAqIGV4ZW1wdGlvbnMgZm9yIGBtaWRkbGV3YXJlLnRzYCdzIG1vYmlsZS1VQSBwcm94eSB0byB0aGUgRXhwbyBtb2JpbGUtd2ViXG4gKiBidWlsZC4gT3duZXIgcnVsaW5nOiBwaG9uZXMgbm93IGdldCB0aGUgc2FtZSByZWRlc2lnbmVkIE5leHQgd2ViIHNpdGUgYXNcbiAqIGRlc2t0b3AgKGRyaXZlcnMgdXNlIHRoZSBpbnN0YWxsZWQgYXBwIGluc3RlYWQpLCBzbyB0aGUgcHJveHkg4oCUIGFuZCBldmVyeVxuICogY2FydmUtb3V0IHRoYXQgZXhpc3RlZCBvbmx5IHRvIHJvdXRlIGFyb3VuZCBpdCDigJQgaXMgZ29uZS4gUmVtb3ZlZCByYXRoZXJcbiAqIHRoYW4ga2VwdCBkZWFkOiBjb25maXJtZWQgdmlhIGdyZXAgYWNyb3NzIGJvdGggYGFwcHMvd2ViYCBhbmQgYGFwcHMvbW9iaWxlYFxuICogdGhhdCBub3RoaW5nIGVsc2UgaW1wb3J0ZWQgYW55IG9mIHRoZSBmb3VyLlxuICovXG5leHBvcnQgY29uc3QgTUFSS0VUSU5HX1BBR0VfUEFUSFMgPSBbXG4gIFwiL1wiLFxuICBcIi9wcm9kdWN0XCIsXG4gIFwiL3dob2xlc2FsZXJzXCIsXG4gIFwiL3JldGFpbGVyc1wiLFxuICBcIi9wcmljaW5nXCIsXG4gIFwiL2NvbXBhbnlcIixcbiAgXCIvY29udGFjdFwiLFxuICBcIi9wcml2YWN5XCIsXG4gIFwiL3Rlcm1zXCIsXG4gIFwiL2Rpc3RyaWJ1dG9yc1wiLFxuXSBhcyBjb25zdDtcbiJdLCJuYW1lcyI6WyJNQVJLRVRJTkdfUEFHRV9QQVRIUyJdLCJtYXBwaW5ncyI6IkFBQUE7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7O0NBdUJDOzs7OytCQUNZQTs7O2VBQUFBOzs7QUFBTixNQUFNQSx1QkFBdUI7SUFDbEM7SUFDQTtJQUNBO0lBQ0E7SUFDQTtJQUNBO0lBQ0E7SUFDQTtJQUNBO0lBQ0E7Q0FDRCJ9

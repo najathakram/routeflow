@@ -1,0 +1,236 @@
+a05007b08c45af7e0a418536a2da6de2
+"use client";
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+Object.defineProperty(exports, "StripeConnectCard", {
+    enumerable: true,
+    get: function() {
+        return StripeConnectCard;
+    }
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+const _navigation = require("next/navigation");
+const _lucidereact = require("lucide-react");
+const _web = require("@routeflow/ui/web");
+const _ConfirmDialog = require("../../../../components/ConfirmDialog");
+const _authcontext = require("../../../../lib/auth-context");
+const _stripeconnect = require("../../../../lib/api/stripe-connect");
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+const maskAccount = (id)=>id.length > 8 ? `${id.slice(0, 7)}…${id.slice(-4)}` : id;
+function extractErrorMessage(err) {
+    return err?.response?.data?.message || err?.message;
+}
+function StripeConnectCard() {
+    const { toast } = (0, _web.useToast)();
+    const { user } = (0, _authcontext.useAuth)();
+    // The status route is @Roles(OPERATOR), but CUSTOMER/DRIVER users may open /settings —
+    // don't fire a request that only ever 403s for them, and don't render the card at all.
+    const canManage = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN" || user?.role === "SUPER_ADMIN";
+    const { data, isLoading, isError } = (0, _stripeconnect.useStripeConnectStatus)({
+        enabled: canManage
+    });
+    const startConnect = (0, _stripeconnect.useStartStripeConnect)();
+    const disconnect = (0, _stripeconnect.useDisconnectStripe)();
+    const [confirmOpen, setConfirmOpen] = _react.useState(false);
+    const params = (0, _navigation.useSearchParams)();
+    const flag = params.get("stripe");
+    const reason = params.get("reason");
+    // `connected` here means the OAuth leg returned — charges may still be pending.
+    const banner = flag === "connected" ? {
+        tone: "success",
+        text: params.get("charges") === "enabled" ? "Stripe connected — you can now accept card payments." : "Stripe connected. Finish your details in Stripe before cards work."
+    } : flag === "error" ? {
+        tone: "error",
+        text: reason ?? "Could not connect Stripe."
+    } : null;
+    const handleDisconnect = ()=>{
+        disconnect.mutate(undefined, {
+            onSuccess: ()=>{
+                setConfirmOpen(false);
+                toast({
+                    title: "Stripe disconnected",
+                    variant: "success"
+                });
+            },
+            onError: (err)=>toast({
+                    title: "Couldn't disconnect Stripe",
+                    description: extractErrorMessage(err),
+                    variant: "error"
+                })
+        });
+    };
+    if (!canManage || isLoading) return null;
+    const configured = data?.configured ?? false;
+    const connected = data?.connected ?? false;
+    const chargesEnabled = data?.chargesEnabled ?? false;
+    const testMode = connected && data?.livemode === false;
+    return /*#__PURE__*/ (0, _jsxruntime.jsxs)(_web.Card, {
+        className: "flex flex-col gap-4",
+        children: [
+            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                className: "flex flex-wrap items-center gap-2",
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.CreditCard, {
+                        className: "h-5 w-5 text-brand-600"
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("h3", {
+                        className: "text-base font-semibold text-navy",
+                        children: "Card payments (Stripe)"
+                    }),
+                    connected && chargesEnabled && /*#__PURE__*/ (0, _jsxruntime.jsx)(_web.Badge, {
+                        variant: "success",
+                        label: "Active"
+                    }),
+                    connected && !chargesEnabled && /*#__PURE__*/ (0, _jsxruntime.jsx)(_web.Badge, {
+                        variant: "warning",
+                        label: "Finishing setup"
+                    }),
+                    testMode && /*#__PURE__*/ (0, _jsxruntime.jsx)(_web.Badge, {
+                        variant: "neutral",
+                        label: "Test mode"
+                    })
+                ]
+            }),
+            banner && /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                className: (0, _web.cn)("flex items-start gap-2 rounded-ctl px-3 py-2 text-sm", banner.tone === "success" ? "bg-success-bg text-success" : "bg-danger-bg text-danger"),
+                children: [
+                    banner.tone === "success" ? /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.CheckCircle2, {
+                        className: "mt-0.5 h-4 w-4 flex-none"
+                    }) : /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.AlertCircle, {
+                        className: "mt-0.5 h-4 w-4 flex-none"
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                        children: banner.text
+                    })
+                ]
+            }),
+            isError && /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                className: "text-sm text-navy/50",
+                children: "Couldn't load Stripe status. Try again shortly."
+            }),
+            !isError && !configured && /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                className: "text-sm text-navy/50",
+                children: "Card payments aren't enabled on this platform yet."
+            }),
+            configured && !connected && /*#__PURE__*/ (0, _jsxruntime.jsxs)(_jsxruntime.Fragment, {
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                        className: "text-sm text-navy/70",
+                        children: "Connect your own Stripe account so customers can pay their invoices by card. Payments go straight into your Stripe account — RouteFlow takes no fee."
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("div", {
+                        children: /*#__PURE__*/ (0, _jsxruntime.jsx)(_web.Button, {
+                            onClick: ()=>startConnect.mutate(),
+                            loading: startConnect.isPending,
+                            children: "Connect Stripe"
+                        })
+                    })
+                ]
+            }),
+            connected && /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                className: "flex flex-col gap-3",
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("p", {
+                        className: "text-sm text-navy/70",
+                        children: [
+                            "Connected account",
+                            " ",
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                className: "font-mono font-medium text-navy",
+                                children: data?.stripeAccountId ? maskAccount(data.stripeAccountId) : "—"
+                            }),
+                            data?.connectedAt && /*#__PURE__*/ (0, _jsxruntime.jsxs)(_jsxruntime.Fragment, {
+                                children: [
+                                    " ",
+                                    "\xb7 connected",
+                                    " ",
+                                    new Date(data.connectedAt).toLocaleDateString("en-US", {
+                                        month: "short",
+                                        day: "numeric",
+                                        year: "numeric"
+                                    })
+                                ]
+                            })
+                        ]
+                    }),
+                    !chargesEnabled && /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                        className: "flex items-start gap-2 rounded-ctl bg-warning-bg px-3 py-2 text-sm text-warning",
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.AlertTriangle, {
+                                className: "mt-0.5 h-4 w-4 flex-none"
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                children: "Stripe still needs a few more details from you before cards can be accepted."
+                            })
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("div", {
+                        children: /*#__PURE__*/ (0, _jsxruntime.jsx)(_web.Button, {
+                            variant: "secondary",
+                            onClick: ()=>setConfirmOpen(true),
+                            leftIcon: /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.Trash2, {
+                                className: "h-4 w-4"
+                            }),
+                            children: "Disconnect"
+                        })
+                    })
+                ]
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)(_ConfirmDialog.ConfirmDialog, {
+                open: confirmOpen,
+                onClose: ()=>setConfirmOpen(false),
+                onConfirm: handleDisconnect,
+                title: "Disconnect Stripe?",
+                description: "Customers won't be able to pay by card until you reconnect. Cash payment declarations are unaffected.",
+                confirmLabel: "Disconnect",
+                variant: "danger",
+                loading: disconnect.isPending
+            })
+        ]
+    });
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS9zZXR0aW5ncy9fY29tcG9uZW50cy9TdHJpcGVDb25uZWN0Q2FyZC50c3giXSwic291cmNlc0NvbnRlbnQiOlsiXCJ1c2UgY2xpZW50XCI7XG5cbmltcG9ydCAqIGFzIFJlYWN0IGZyb20gXCJyZWFjdFwiO1xuaW1wb3J0IHsgdXNlU2VhcmNoUGFyYW1zIH0gZnJvbSBcIm5leHQvbmF2aWdhdGlvblwiO1xuaW1wb3J0IHsgQ3JlZGl0Q2FyZCwgQ2hlY2tDaXJjbGUyLCBBbGVydENpcmNsZSwgQWxlcnRUcmlhbmdsZSwgVHJhc2gyIH0gZnJvbSBcImx1Y2lkZS1yZWFjdFwiO1xuaW1wb3J0IHsgQ2FyZCwgQmFkZ2UsIEJ1dHRvbiwgdXNlVG9hc3QsIGNuIH0gZnJvbSBcIkByb3V0ZWZsb3cvdWkvd2ViXCI7XG5pbXBvcnQgeyBDb25maXJtRGlhbG9nIH0gZnJvbSBcIkAvY29tcG9uZW50cy9Db25maXJtRGlhbG9nXCI7XG5pbXBvcnQgeyB1c2VBdXRoIH0gZnJvbSBcIkAvbGliL2F1dGgtY29udGV4dFwiO1xuaW1wb3J0IHtcbiAgdXNlU3RyaXBlQ29ubmVjdFN0YXR1cyxcbiAgdXNlU3RhcnRTdHJpcGVDb25uZWN0LFxuICB1c2VEaXNjb25uZWN0U3RyaXBlLFxufSBmcm9tIFwiQC9saWIvYXBpL3N0cmlwZS1jb25uZWN0XCI7XG5cbmNvbnN0IG1hc2tBY2NvdW50ID0gKGlkOiBzdHJpbmcpID0+IChpZC5sZW5ndGggPiA4ID8gYCR7aWQuc2xpY2UoMCwgNyl94oCmJHtpZC5zbGljZSgtNCl9YCA6IGlkKTtcblxuZnVuY3Rpb24gZXh0cmFjdEVycm9yTWVzc2FnZShlcnI6IHVua25vd24pOiBzdHJpbmcgfCB1bmRlZmluZWQge1xuICByZXR1cm4gKFxuICAgIChlcnIgYXMgeyByZXNwb25zZT86IHsgZGF0YT86IHsgbWVzc2FnZT86IHN0cmluZyB9IH0gfSk/LnJlc3BvbnNlPy5kYXRhPy5tZXNzYWdlIHx8XG4gICAgKGVyciBhcyB7IG1lc3NhZ2U/OiBzdHJpbmcgfSk/Lm1lc3NhZ2VcbiAgKTtcbn1cblxuLyoqXG4gKiBUZW5hbnQgU2V0dGluZ3MgXCJQYXltZW50c1wiIGNhcmQg4oCUIGxpbmsgdGhlIHRlbmFudCdzIE9XTiBTdHJpcGUgYWNjb3VudCAoQ29ubmVjdFxuICogU3RhbmRhcmQsIGRpcmVjdCBjaGFyZ2VzLCBubyBwbGF0Zm9ybSBmZWUpIHNvIGJ1eWVyIGNhcmQgcGF5bWVudHMgc2V0dGxlIHN0cmFpZ2h0XG4gKiBpbnRvIGl0LiBSZW5kZXJzIG9uZSBvZiBmaXZlIHN0YXRlcyBkZXBlbmRpbmcgb24gcGxhdGZvcm0gY29uZmlnICsgY29ubmVjdGlvblxuICogc3RhdHVzLCBwbHVzIGFuIGlubGluZSBiYW5uZXIgd2hlbiB0aGUgYnJvd3NlciBqdXN0IHJldHVybmVkIGZyb20gdGhlIFN0cmlwZSBPQXV0aFxuICogZmxvdyAoP3N0cmlwZT1jb25uZWN0ZWQmY2hhcmdlcz0uLi4gfCA/c3RyaXBlPWVycm9yJnJlYXNvbj0uLi4pLlxuICovXG5leHBvcnQgZnVuY3Rpb24gU3RyaXBlQ29ubmVjdENhcmQoKSB7XG4gIGNvbnN0IHsgdG9hc3QgfSA9IHVzZVRvYXN0KCk7XG4gIGNvbnN0IHsgdXNlciB9ID0gdXNlQXV0aCgpO1xuICAvLyBUaGUgc3RhdHVzIHJvdXRlIGlzIEBSb2xlcyhPUEVSQVRPUiksIGJ1dCBDVVNUT01FUi9EUklWRVIgdXNlcnMgbWF5IG9wZW4gL3NldHRpbmdzIOKAlFxuICAvLyBkb24ndCBmaXJlIGEgcmVxdWVzdCB0aGF0IG9ubHkgZXZlciA0MDNzIGZvciB0aGVtLCBhbmQgZG9uJ3QgcmVuZGVyIHRoZSBjYXJkIGF0IGFsbC5cbiAgY29uc3QgY2FuTWFuYWdlID1cbiAgICB1c2VyPy5yb2xlID09PSBcIk9QRVJBVE9SXCIgfHwgdXNlcj8ucm9sZSA9PT0gXCJURU5BTlRfQURNSU5cIiB8fCB1c2VyPy5yb2xlID09PSBcIlNVUEVSX0FETUlOXCI7XG4gIGNvbnN0IHsgZGF0YSwgaXNMb2FkaW5nLCBpc0Vycm9yIH0gPSB1c2VTdHJpcGVDb25uZWN0U3RhdHVzKHsgZW5hYmxlZDogY2FuTWFuYWdlIH0pO1xuICBjb25zdCBzdGFydENvbm5lY3QgPSB1c2VTdGFydFN0cmlwZUNvbm5lY3QoKTtcbiAgY29uc3QgZGlzY29ubmVjdCA9IHVzZURpc2Nvbm5lY3RTdHJpcGUoKTtcbiAgY29uc3QgW2NvbmZpcm1PcGVuLCBzZXRDb25maXJtT3Blbl0gPSBSZWFjdC51c2VTdGF0ZShmYWxzZSk7XG5cbiAgY29uc3QgcGFyYW1zID0gdXNlU2VhcmNoUGFyYW1zKCk7XG4gIGNvbnN0IGZsYWcgPSBwYXJhbXMuZ2V0KFwic3RyaXBlXCIpO1xuICBjb25zdCByZWFzb24gPSBwYXJhbXMuZ2V0KFwicmVhc29uXCIpO1xuICAvLyBgY29ubmVjdGVkYCBoZXJlIG1lYW5zIHRoZSBPQXV0aCBsZWcgcmV0dXJuZWQg4oCUIGNoYXJnZXMgbWF5IHN0aWxsIGJlIHBlbmRpbmcuXG4gIGNvbnN0IGJhbm5lciA9XG4gICAgZmxhZyA9PT0gXCJjb25uZWN0ZWRcIlxuICAgICAgPyB7XG4gICAgICAgICAgdG9uZTogXCJzdWNjZXNzXCIgYXMgY29uc3QsXG4gICAgICAgICAgdGV4dDpcbiAgICAgICAgICAgIHBhcmFtcy5nZXQoXCJjaGFyZ2VzXCIpID09PSBcImVuYWJsZWRcIlxuICAgICAgICAgICAgICA/IFwiU3RyaXBlIGNvbm5lY3RlZCDigJQgeW91IGNhbiBub3cgYWNjZXB0IGNhcmQgcGF5bWVudHMuXCJcbiAgICAgICAgICAgICAgOiBcIlN0cmlwZSBjb25uZWN0ZWQuIEZpbmlzaCB5b3VyIGRldGFpbHMgaW4gU3RyaXBlIGJlZm9yZSBjYXJkcyB3b3JrLlwiLFxuICAgICAgICB9XG4gICAgICA6IGZsYWcgPT09IFwiZXJyb3JcIlxuICAgICAgICA/IHsgdG9uZTogXCJlcnJvclwiIGFzIGNvbnN0LCB0ZXh0OiByZWFzb24gPz8gXCJDb3VsZCBub3QgY29ubmVjdCBTdHJpcGUuXCIgfVxuICAgICAgICA6IG51bGw7XG5cbiAgY29uc3QgaGFuZGxlRGlzY29ubmVjdCA9ICgpID0+IHtcbiAgICBkaXNjb25uZWN0Lm11dGF0ZSh1bmRlZmluZWQsIHtcbiAgICAgIG9uU3VjY2VzczogKCkgPT4ge1xuICAgICAgICBzZXRDb25maXJtT3BlbihmYWxzZSk7XG4gICAgICAgIHRvYXN0KHsgdGl0bGU6IFwiU3RyaXBlIGRpc2Nvbm5lY3RlZFwiLCB2YXJpYW50OiBcInN1Y2Nlc3NcIiB9KTtcbiAgICAgIH0sXG4gICAgICBvbkVycm9yOiAoZXJyOiB1bmtub3duKSA9PlxuICAgICAgICB0b2FzdCh7XG4gICAgICAgICAgdGl0bGU6IFwiQ291bGRuJ3QgZGlzY29ubmVjdCBTdHJpcGVcIixcbiAgICAgICAgICBkZXNjcmlwdGlvbjogZXh0cmFjdEVycm9yTWVzc2FnZShlcnIpLFxuICAgICAgICAgIHZhcmlhbnQ6IFwiZXJyb3JcIixcbiAgICAgICAgfSksXG4gICAgfSk7XG4gIH07XG5cbiAgaWYgKCFjYW5NYW5hZ2UgfHwgaXNMb2FkaW5nKSByZXR1cm4gbnVsbDtcblxuICBjb25zdCBjb25maWd1cmVkID0gZGF0YT8uY29uZmlndXJlZCA/PyBmYWxzZTtcbiAgY29uc3QgY29ubmVjdGVkID0gZGF0YT8uY29ubmVjdGVkID8/IGZhbHNlO1xuICBjb25zdCBjaGFyZ2VzRW5hYmxlZCA9IGRhdGE/LmNoYXJnZXNFbmFibGVkID8/IGZhbHNlO1xuICBjb25zdCB0ZXN0TW9kZSA9IGNvbm5lY3RlZCAmJiBkYXRhPy5saXZlbW9kZSA9PT0gZmFsc2U7XG5cbiAgcmV0dXJuIChcbiAgICA8Q2FyZCBjbGFzc05hbWU9XCJmbGV4IGZsZXgtY29sIGdhcC00XCI+XG4gICAgICA8ZGl2IGNsYXNzTmFtZT1cImZsZXggZmxleC13cmFwIGl0ZW1zLWNlbnRlciBnYXAtMlwiPlxuICAgICAgICA8Q3JlZGl0Q2FyZCBjbGFzc05hbWU9XCJoLTUgdy01IHRleHQtYnJhbmQtNjAwXCIgLz5cbiAgICAgICAgPGgzIGNsYXNzTmFtZT1cInRleHQtYmFzZSBmb250LXNlbWlib2xkIHRleHQtbmF2eVwiPkNhcmQgcGF5bWVudHMgKFN0cmlwZSk8L2gzPlxuICAgICAgICB7Y29ubmVjdGVkICYmIGNoYXJnZXNFbmFibGVkICYmIDxCYWRnZSB2YXJpYW50PVwic3VjY2Vzc1wiIGxhYmVsPVwiQWN0aXZlXCIgLz59XG4gICAgICAgIHtjb25uZWN0ZWQgJiYgIWNoYXJnZXNFbmFibGVkICYmIDxCYWRnZSB2YXJpYW50PVwid2FybmluZ1wiIGxhYmVsPVwiRmluaXNoaW5nIHNldHVwXCIgLz59XG4gICAgICAgIHt0ZXN0TW9kZSAmJiA8QmFkZ2UgdmFyaWFudD1cIm5ldXRyYWxcIiBsYWJlbD1cIlRlc3QgbW9kZVwiIC8+fVxuICAgICAgPC9kaXY+XG5cbiAgICAgIHtiYW5uZXIgJiYgKFxuICAgICAgICA8ZGl2XG4gICAgICAgICAgY2xhc3NOYW1lPXtjbihcbiAgICAgICAgICAgIFwiZmxleCBpdGVtcy1zdGFydCBnYXAtMiByb3VuZGVkLWN0bCBweC0zIHB5LTIgdGV4dC1zbVwiLFxuICAgICAgICAgICAgYmFubmVyLnRvbmUgPT09IFwic3VjY2Vzc1wiID8gXCJiZy1zdWNjZXNzLWJnIHRleHQtc3VjY2Vzc1wiIDogXCJiZy1kYW5nZXItYmcgdGV4dC1kYW5nZXJcIixcbiAgICAgICAgICApfVxuICAgICAgICA+XG4gICAgICAgICAge2Jhbm5lci50b25lID09PSBcInN1Y2Nlc3NcIiA/IChcbiAgICAgICAgICAgIDxDaGVja0NpcmNsZTIgY2xhc3NOYW1lPVwibXQtMC41IGgtNCB3LTQgZmxleC1ub25lXCIgLz5cbiAgICAgICAgICApIDogKFxuICAgICAgICAgICAgPEFsZXJ0Q2lyY2xlIGNsYXNzTmFtZT1cIm10LTAuNSBoLTQgdy00IGZsZXgtbm9uZVwiIC8+XG4gICAgICAgICAgKX1cbiAgICAgICAgICA8c3Bhbj57YmFubmVyLnRleHR9PC9zcGFuPlxuICAgICAgICA8L2Rpdj5cbiAgICAgICl9XG5cbiAgICAgIHsvKiBUaGUgc3RhdHVzIGZldGNoIGZhaWxlZCDigJQgYSBsb2FkIGVycm9yIG11c3Qgbm90IHJlYWQgYXMgXCJ0aGUgcGxhdGZvcm1cbiAgICAgICAgICBkb2Vzbid0IGRvIGNhcmRzXCIsIHdoaWNoIGlzIHdoYXQgdGhlIG5vdC1jb25maWd1cmVkIGNvcHkgYmVsb3cgd291bGQgc2F5LiAqL31cbiAgICAgIHtpc0Vycm9yICYmIChcbiAgICAgICAgPHAgY2xhc3NOYW1lPVwidGV4dC1zbSB0ZXh0LW5hdnkvNTBcIj5Db3VsZG4mYXBvczt0IGxvYWQgU3RyaXBlIHN0YXR1cy4gVHJ5IGFnYWluIHNob3J0bHkuPC9wPlxuICAgICAgKX1cblxuICAgICAgey8qIE5vdCBjb25maWd1cmVkIG9uIHRoZSBwbGF0Zm9ybSDigJQgbm90aGluZyBhIHRlbmFudCBjYW4gZG8gaGVyZSB5ZXQuICovfVxuICAgICAgeyFpc0Vycm9yICYmICFjb25maWd1cmVkICYmIChcbiAgICAgICAgPHAgY2xhc3NOYW1lPVwidGV4dC1zbSB0ZXh0LW5hdnkvNTBcIj5cbiAgICAgICAgICBDYXJkIHBheW1lbnRzIGFyZW4mYXBvczt0IGVuYWJsZWQgb24gdGhpcyBwbGF0Zm9ybSB5ZXQuXG4gICAgICAgIDwvcD5cbiAgICAgICl9XG5cbiAgICAgIHsvKiBDb25maWd1cmVkLCBub3QgeWV0IGNvbm5lY3RlZCDigJQgb2ZmZXIgdG8gbGluay4gKi99XG4gICAgICB7Y29uZmlndXJlZCAmJiAhY29ubmVjdGVkICYmIChcbiAgICAgICAgPD5cbiAgICAgICAgICA8cCBjbGFzc05hbWU9XCJ0ZXh0LXNtIHRleHQtbmF2eS83MFwiPlxuICAgICAgICAgICAgQ29ubmVjdCB5b3VyIG93biBTdHJpcGUgYWNjb3VudCBzbyBjdXN0b21lcnMgY2FuIHBheSB0aGVpciBpbnZvaWNlcyBieSBjYXJkLiBQYXltZW50cyBnb1xuICAgICAgICAgICAgc3RyYWlnaHQgaW50byB5b3VyIFN0cmlwZSBhY2NvdW50IOKAlCBSb3V0ZUZsb3cgdGFrZXMgbm8gZmVlLlxuICAgICAgICAgIDwvcD5cbiAgICAgICAgICA8ZGl2PlxuICAgICAgICAgICAgPEJ1dHRvbiBvbkNsaWNrPXsoKSA9PiBzdGFydENvbm5lY3QubXV0YXRlKCl9IGxvYWRpbmc9e3N0YXJ0Q29ubmVjdC5pc1BlbmRpbmd9PlxuICAgICAgICAgICAgICBDb25uZWN0IFN0cmlwZVxuICAgICAgICAgICAgPC9CdXR0b24+XG4gICAgICAgICAgPC9kaXY+XG4gICAgICAgIDwvPlxuICAgICAgKX1cblxuICAgICAgey8qIENvbm5lY3RlZCDigJQgYWNjb3VudCBkZXRhaWxzICsgZGlzY29ubmVjdCwgd2l0aCB0aGUgY2hhcmdlcy1wZW5kaW5nIGNhc2VcbiAgICAgICAgICBnZXR0aW5nIGFuIGV4dHJhIGV4cGxhaW5lci4gKi99XG4gICAgICB7Y29ubmVjdGVkICYmIChcbiAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJmbGV4IGZsZXgtY29sIGdhcC0zXCI+XG4gICAgICAgICAgPHAgY2xhc3NOYW1lPVwidGV4dC1zbSB0ZXh0LW5hdnkvNzBcIj5cbiAgICAgICAgICAgIENvbm5lY3RlZCBhY2NvdW50e1wiIFwifVxuICAgICAgICAgICAgPHNwYW4gY2xhc3NOYW1lPVwiZm9udC1tb25vIGZvbnQtbWVkaXVtIHRleHQtbmF2eVwiPlxuICAgICAgICAgICAgICB7ZGF0YT8uc3RyaXBlQWNjb3VudElkID8gbWFza0FjY291bnQoZGF0YS5zdHJpcGVBY2NvdW50SWQpIDogXCLigJRcIn1cbiAgICAgICAgICAgIDwvc3Bhbj5cbiAgICAgICAgICAgIHtkYXRhPy5jb25uZWN0ZWRBdCAmJiAoXG4gICAgICAgICAgICAgIDw+XG4gICAgICAgICAgICAgICAge1wiIFwifVxuICAgICAgICAgICAgICAgIMK3IGNvbm5lY3RlZHtcIiBcIn1cbiAgICAgICAgICAgICAgICB7bmV3IERhdGUoZGF0YS5jb25uZWN0ZWRBdCkudG9Mb2NhbGVEYXRlU3RyaW5nKFwiZW4tVVNcIiwge1xuICAgICAgICAgICAgICAgICAgbW9udGg6IFwic2hvcnRcIixcbiAgICAgICAgICAgICAgICAgIGRheTogXCJudW1lcmljXCIsXG4gICAgICAgICAgICAgICAgICB5ZWFyOiBcIm51bWVyaWNcIixcbiAgICAgICAgICAgICAgICB9KX1cbiAgICAgICAgICAgICAgPC8+XG4gICAgICAgICAgICApfVxuICAgICAgICAgIDwvcD5cblxuICAgICAgICAgIHshY2hhcmdlc0VuYWJsZWQgJiYgKFxuICAgICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJmbGV4IGl0ZW1zLXN0YXJ0IGdhcC0yIHJvdW5kZWQtY3RsIGJnLXdhcm5pbmctYmcgcHgtMyBweS0yIHRleHQtc20gdGV4dC13YXJuaW5nXCI+XG4gICAgICAgICAgICAgIDxBbGVydFRyaWFuZ2xlIGNsYXNzTmFtZT1cIm10LTAuNSBoLTQgdy00IGZsZXgtbm9uZVwiIC8+XG4gICAgICAgICAgICAgIDxzcGFuPlxuICAgICAgICAgICAgICAgIFN0cmlwZSBzdGlsbCBuZWVkcyBhIGZldyBtb3JlIGRldGFpbHMgZnJvbSB5b3UgYmVmb3JlIGNhcmRzIGNhbiBiZSBhY2NlcHRlZC5cbiAgICAgICAgICAgICAgPC9zcGFuPlxuICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgKX1cblxuICAgICAgICAgIDxkaXY+XG4gICAgICAgICAgICA8QnV0dG9uXG4gICAgICAgICAgICAgIHZhcmlhbnQ9XCJzZWNvbmRhcnlcIlxuICAgICAgICAgICAgICBvbkNsaWNrPXsoKSA9PiBzZXRDb25maXJtT3Blbih0cnVlKX1cbiAgICAgICAgICAgICAgbGVmdEljb249ezxUcmFzaDIgY2xhc3NOYW1lPVwiaC00IHctNFwiIC8+fVxuICAgICAgICAgICAgPlxuICAgICAgICAgICAgICBEaXNjb25uZWN0XG4gICAgICAgICAgICA8L0J1dHRvbj5cbiAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgPC9kaXY+XG4gICAgICApfVxuXG4gICAgICA8Q29uZmlybURpYWxvZ1xuICAgICAgICBvcGVuPXtjb25maXJtT3Blbn1cbiAgICAgICAgb25DbG9zZT17KCkgPT4gc2V0Q29uZmlybU9wZW4oZmFsc2UpfVxuICAgICAgICBvbkNvbmZpcm09e2hhbmRsZURpc2Nvbm5lY3R9XG4gICAgICAgIHRpdGxlPVwiRGlzY29ubmVjdCBTdHJpcGU/XCJcbiAgICAgICAgZGVzY3JpcHRpb249XCJDdXN0b21lcnMgd29uJ3QgYmUgYWJsZSB0byBwYXkgYnkgY2FyZCB1bnRpbCB5b3UgcmVjb25uZWN0LiBDYXNoIHBheW1lbnQgZGVjbGFyYXRpb25zIGFyZSB1bmFmZmVjdGVkLlwiXG4gICAgICAgIGNvbmZpcm1MYWJlbD1cIkRpc2Nvbm5lY3RcIlxuICAgICAgICB2YXJpYW50PVwiZGFuZ2VyXCJcbiAgICAgICAgbG9hZGluZz17ZGlzY29ubmVjdC5pc1BlbmRpbmd9XG4gICAgICAvPlxuICAgIDwvQ2FyZD5cbiAgKTtcbn1cbiJdLCJuYW1lcyI6WyJTdHJpcGVDb25uZWN0Q2FyZCIsIm1hc2tBY2NvdW50IiwiaWQiLCJsZW5ndGgiLCJzbGljZSIsImV4dHJhY3RFcnJvck1lc3NhZ2UiLCJlcnIiLCJyZXNwb25zZSIsImRhdGEiLCJtZXNzYWdlIiwidG9hc3QiLCJ1c2VUb2FzdCIsInVzZXIiLCJ1c2VBdXRoIiwiY2FuTWFuYWdlIiwicm9sZSIsImlzTG9hZGluZyIsImlzRXJyb3IiLCJ1c2VTdHJpcGVDb25uZWN0U3RhdHVzIiwiZW5hYmxlZCIsInN0YXJ0Q29ubmVjdCIsInVzZVN0YXJ0U3RyaXBlQ29ubmVjdCIsImRpc2Nvbm5lY3QiLCJ1c2VEaXNjb25uZWN0U3RyaXBlIiwiY29uZmlybU9wZW4iLCJzZXRDb25maXJtT3BlbiIsIlJlYWN0IiwidXNlU3RhdGUiLCJwYXJhbXMiLCJ1c2VTZWFyY2hQYXJhbXMiLCJmbGFnIiwiZ2V0IiwicmVhc29uIiwiYmFubmVyIiwidG9uZSIsInRleHQiLCJoYW5kbGVEaXNjb25uZWN0IiwibXV0YXRlIiwidW5kZWZpbmVkIiwib25TdWNjZXNzIiwidGl0bGUiLCJ2YXJpYW50Iiwib25FcnJvciIsImRlc2NyaXB0aW9uIiwiY29uZmlndXJlZCIsImNvbm5lY3RlZCIsImNoYXJnZXNFbmFibGVkIiwidGVzdE1vZGUiLCJsaXZlbW9kZSIsIkNhcmQiLCJjbGFzc05hbWUiLCJkaXYiLCJDcmVkaXRDYXJkIiwiaDMiLCJCYWRnZSIsImxhYmVsIiwiY24iLCJDaGVja0NpcmNsZTIiLCJBbGVydENpcmNsZSIsInNwYW4iLCJwIiwiQnV0dG9uIiwib25DbGljayIsImxvYWRpbmciLCJpc1BlbmRpbmciLCJzdHJpcGVBY2NvdW50SWQiLCJjb25uZWN0ZWRBdCIsIkRhdGUiLCJ0b0xvY2FsZURhdGVTdHJpbmciLCJtb250aCIsImRheSIsInllYXIiLCJBbGVydFRyaWFuZ2xlIiwibGVmdEljb24iLCJUcmFzaDIiLCJDb25maXJtRGlhbG9nIiwib3BlbiIsIm9uQ2xvc2UiLCJvbkNvbmZpcm0iLCJjb25maXJtTGFiZWwiXSwibWFwcGluZ3MiOiJBQUFBOzs7OzsrQkE4QmdCQTs7O2VBQUFBOzs7OytEQTVCTzs0QkFDUzs2QkFDNkM7cUJBQzNCOytCQUNwQjs2QkFDTjsrQkFLakI7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7OztBQUVQLE1BQU1DLGNBQWMsQ0FBQ0MsS0FBZ0JBLEdBQUdDLE1BQU0sR0FBRyxJQUFJLEdBQUdELEdBQUdFLEtBQUssQ0FBQyxHQUFHLEdBQUcsQ0FBQyxFQUFFRixHQUFHRSxLQUFLLENBQUMsQ0FBQyxJQUFJLEdBQUdGO0FBRTNGLFNBQVNHLG9CQUFvQkMsR0FBWTtJQUN2QyxPQUNFLEFBQUNBLEtBQXdEQyxVQUFVQyxNQUFNQyxXQUN4RUgsS0FBOEJHO0FBRW5DO0FBU08sU0FBU1Q7SUFDZCxNQUFNLEVBQUVVLEtBQUssRUFBRSxHQUFHQyxJQUFBQSxhQUFRO0lBQzFCLE1BQU0sRUFBRUMsSUFBSSxFQUFFLEdBQUdDLElBQUFBLG9CQUFPO0lBQ3hCLHVGQUF1RjtJQUN2Rix1RkFB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

@@ -1,0 +1,74 @@
+ffae65d0004bf000932e0b899451f366
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.BOGO_FALLBACK_BANNER = void 0;
+exports.sellingUnits = sellingUnits;
+exports.freeUnitsLabel = freeUnitsLabel;
+exports.bogoBannerText = bogoBannerText;
+exports.matchingBogoPromo = matchingBogoPromo;
+/**
+ * BUY_N_GET_M ("buy N, get the next M free") display helpers — pure logic,
+ * Jest-tested, no RN imports. Shared by the buyer cart (`buyer-cart-pricing.ts`)
+ * and the catalogue tile (`catalog-tile-logic.ts`) so both derive the promo's
+ * `qtyUnits` gate and the free-units label/chip the same way. Mirrors the web
+ * buyer cart + shop tile (web is golden) — display parity only; all pricing
+ * math (the floor formula, the exact subtotal) stays in `lib/pricing.ts`.
+ */
+const pricing_1 = require("@routeflow/pricing");
+/**
+ * Whole SELLING units on a line — feeds `PromoContext.qtyUnits`: full boxes
+ * for a boxed line (loose pieces below a box NEVER count toward BUY_N_GET_M —
+ * a mixed 5-boxes-+-40-pieces line stays 0 free until the 6th whole box),
+ * plain qty (pieces) for a non-boxed line. Mirrors how `qtyPieces` is sourced
+ * today (`normalizeBoxesPieces`), just expressed in selling units instead.
+ */
+function sellingUnits({ qty, boxes, pieces, unitsPerBox }) {
+    const upb = Number(unitsPerBox ?? 0);
+    if (upb > 1)
+        return Math.max(0, Math.trunc(Number(boxes ?? 0)));
+    return Math.max(0, Math.trunc(Number(qty ?? 0)));
+}
+/** "2 free" line label — null when nothing is free (never render an empty chip). */
+function freeUnitsLabel(freeUnits) {
+    const n = Math.trunc(Number(freeUnits ?? 0));
+    return n > 0 ? `${n} free` : null;
+}
+/** Generic chip fallback when a BUY_N_GET_M promo has no admin-authored `bannerText`. */
+exports.BOGO_FALLBACK_BANNER = "Buy N get M free";
+/**
+ * Chip text for a BUY_N_GET_M promo: its own `bannerText` when set, else the
+ * generic fallback. Never a fake "-N%" — this promo type never changes the
+ * unit price (see `PromoResult.freeUnits`).
+ */
+function bogoBannerText(promo) {
+    const text = (promo.bannerText ?? "").trim();
+    return text.length > 0 ? text : exports.BOGO_FALLBACK_BANNER;
+}
+/**
+ * A BUY_N_GET_M promo that scope-matches this product, independent of the
+ * current quantity — so a shopper sees the deal chip before they've added
+ * enough to actually earn a free unit (the tile/detail chip is qty-agnostic;
+ * only the cart/order line's `freeUnits` count depends on qty). Ties broken
+ * by id, same as `applyBestPromotion`, when more than one BOGO promo matches.
+ *
+ * Wave E / imp-10b, L-072: `BuyerPromotion.type` now derives from the shared,
+ * schema-pinned `PromotionType` (`@routeflow/types`), so the literal comparison
+ * below type-checks natively — no widening cast needed any more (this used to
+ * carry an `as PromotionType` cast to work around `BuyerPromotion.type`
+ * omitting `"BUY_N_GET_M"`; that value never changed at runtime, only the type
+ * hole did).
+ */
+function matchingBogoPromo(promos, ctx) {
+    const scopeCtx = { ...ctx, qtyPieces: 0, qtyUnits: 0 };
+    let best = null;
+    for (const p of promos ?? []) {
+        if (p.type !== "BUY_N_GET_M")
+            continue;
+        if (!(0, pricing_1.promotionMatchesProduct)(p, scopeCtx))
+            continue;
+        if (best == null || p.id < best.id)
+            best = p;
+    }
+    return best;
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL2J1eWVyLWNhcnQtbG9naWMudHMiLCJtYXBwaW5ncyI6Ijs7O0FBeUJBLG9DQUlDO0FBR0Qsd0NBR0M7QUFVRCx3Q0FHQztBQWdCRCw4Q0FZQztBQTVFRDs7Ozs7OztHQU9HO0FBQ0gsZ0RBQW9HO0FBVXBHOzs7Ozs7R0FNRztBQUNILFNBQWdCLFlBQVksQ0FBQyxFQUFFLEdBQUcsRUFBRSxLQUFLLEVBQUUsTUFBTSxFQUFFLFdBQVcsRUFBcUI7SUFDakYsTUFBTSxHQUFHLEdBQUcsTUFBTSxDQUFDLFdBQVcsSUFBSSxDQUFDLENBQUMsQ0FBQztJQUNyQyxJQUFJLEdBQUcsR0FBRyxDQUFDO1FBQUUsT0FBTyxJQUFJLENBQUMsR0FBRyxDQUFDLENBQUMsRUFBRSxJQUFJLENBQUMsS0FBSyxDQUFDLE1BQU0sQ0FBQyxLQUFLLElBQUksQ0FBQyxDQUFDLENBQUMsQ0FBQyxDQUFDO0lBQ2hFLE9BQU8sSUFBSSxDQUFDLEdBQUcsQ0FBQyxDQUFDLEVBQUUsSUFBSSxDQUFDLEtBQUssQ0FBQyxNQUFNLENBQUMsR0FBRyxJQUFJLENBQUMsQ0FBQyxDQUFDLENBQUMsQ0FBQztBQUNuRCxDQUFDO0FBRUQsb0ZBQW9GO0FBQ3BGLFNBQWdCLGNBQWMsQ0FBQyxTQUFvQztJQUNqRSxNQUFNLENBQUMsR0FBRyxJQUFJLENBQUMsS0FBSyxDQUFDLE1BQU0sQ0FBQyxTQUFTLElBQUksQ0FBQyxDQUFDLENBQUMsQ0FBQztJQUM3QyxPQUFPLENBQUMsR0FBRyxDQUFDLENBQUMsQ0FBQyxDQUFDLEdBQUcsQ0FBQyxPQUFPLENBQUMsQ0FBQyxDQUFDLElBQUksQ0FBQztBQUNwQyxDQUFDO0FBRUQseUZBQXlGO0FBQzVFLFFBQUEsb0JBQW9CLEdBQUcsa0JBQWtCLENBQUM7QUFFdkQ7Ozs7R0FJRztBQUNILFNBQWdCLGNBQWMsQ0FBQyxLQUF5QztJQUN0RSxNQUFNLElBQUksR0FBRyxDQUFDLEtBQUssQ0FBQyxVQUFVLElBQUksRUFBRSxDQUFDLENBQUMsSUFBSSxFQUFFLENBQUM7SUFDN0MsT0FBTyxJQUFJLENBQUMsTUFBTSxHQUFHLENBQUMsQ0FBQyxDQUFDLENBQUMsSUFBSSxDQUFDLENBQUMsQ0FBQyw0QkFBb0IsQ0FBQztBQUN2RCxDQUFDO0FBRUQ7Ozs7Ozs7Ozs7Ozs7R0FhRztBQUNILFNBQWdCLGlCQUFpQixDQUMvQixNQUFvQyxFQUNwQyxHQUFvRDtJQUVwRCxNQUFNLFFBQVEsR0FBaUIsRUFBRSxHQUFHLEdBQUcsRUFBRSxTQUFTLEVBQUUsQ0FBQyxFQUFFLFFBQVEsRUFBRSxDQUFDLEVBQUUsQ0FBQztJQUNyRSxJQUFJLElBQUksR0FBMEIsSUFBSSxDQUFDO0lBQ3ZDLEtBQUssTUFBTSxDQUFDLElBQUksTUFBTSxJQUFJLEVBQUUsRUFBRSxDQUFDO1FBQzdCLElBQUksQ0FBQyxDQUFDLElBQUksS0FBSyxhQUFhO1lBQUUsU0FBUztRQUN2QyxJQUFJLENBQUMsSUFBQSxpQ0FBdUIsRUFBQyxDQUFDLEVBQUUsUUFBUSxDQUFDO1lBQUUsU0FBUztRQUNwRCxJQUFJLElBQUksSUFBSSxJQUFJLElBQUksQ0FBQyxDQUFDLEVBQUUsR0FBRyxJQUFJLENBQUMsRUFBRTtZQUFFLElBQUksR0FBRyxDQUFDLENBQUM7SUFDL0MsQ0FBQztJQUNELE9BQU8sSUFBSSxDQUFDO0FBQ2QsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9hcHBzL21vYmlsZS9saWIvYnV5ZXItY2FydC1sb2dpYy50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqIEJVWV9OX0dFVF9NIChcImJ1eSBOLCBnZXQgdGhlIG5leHQgTSBmcmVlXCIpIGRpc3BsYXkgaGVscGVycyDigJQgcHVyZSBsb2dpYyxcbiAqIEplc3QtdGVzdGVkLCBubyBSTiBpbXBvcnRzLiBTaGFyZWQgYnkgdGhlIGJ1eWVyIGNhcnQgKGBidXllci1jYXJ0LXByaWNpbmcudHNgKVxuICogYW5kIHRoZSBjYXRhbG9ndWUgdGlsZSAoYGNhdGFsb2ctdGlsZS1sb2dpYy50c2ApIHNvIGJvdGggZGVyaXZlIHRoZSBwcm9tbydzXG4gKiBgcXR5VW5pdHNgIGdhdGUgYW5kIHRoZSBmcmVlLXVuaXRzIGxhYmVsL2NoaXAgdGhlIHNhbWUgd2F5LiBNaXJyb3JzIHRoZSB3ZWJcbiAqIGJ1eWVyIGNhcnQgKyBzaG9wIHRpbGUgKHdlYiBpcyBnb2xkZW4pIOKAlCBkaXNwbGF5IHBhcml0eSBvbmx5OyBhbGwgcHJpY2luZ1xuICogbWF0aCAodGhlIGZsb29yIGZvcm11bGEsIHRoZSBleGFjdCBzdWJ0b3RhbCkgc3RheXMgaW4gYGxpYi9wcmljaW5nLnRzYC5cbiAqL1xuaW1wb3J0IHsgcHJvbW90aW9uTWF0Y2hlc1Byb2R1Y3QsIHR5cGUgUHJvbW9Db250ZXh0LCB0eXBlIFByb21vdGlvblR5cGUgfSBmcm9tIFwiQHJvdXRlZmxvdy9wcmljaW5nXCI7XG5pbXBvcnQgdHlwZSB7IEJ1eWVyUHJvbW90aW9uIH0gZnJvbSBcIi4vYXBpL2J1eWVyXCI7XG5cbmV4cG9ydCBpbnRlcmZhY2UgU2VsbGluZ1VuaXRzSW5wdXQge1xuICBxdHk6IG51bWJlcjtcbiAgYm94ZXM/OiBudW1iZXIgfCBudWxsO1xuICBwaWVjZXM/OiBudW1iZXIgfCBudWxsO1xuICB1bml0c1BlckJveD86IG51bWJlciB8IG51bGw7XG59XG5cbi8qKlxuICogV2hvbGUgU0VMTElORyB1bml0cyBvbiBhIGxpbmUg4oCUIGZlZWRzIGBQcm9tb0NvbnRleHQucXR5VW5pdHNgOiBmdWxsIGJveGVzXG4gKiBmb3IgYSBib3hlZCBsaW5lIChsb29zZSBwaWVjZXMgYmVsb3cgYSBib3ggTkVWRVIgY291bnQgdG93YXJkIEJVWV9OX0dFVF9NIOKAlFxuICogYSBtaXhlZCA1LWJveGVzLSstNDAtcGllY2VzIGxpbmUgc3RheXMgMCBmcmVlIHVudGlsIHRoZSA2dGggd2hvbGUgYm94KSxcbiAqIHBsYWluIHF0eSAocGllY2VzKSBmb3IgYSBub24tYm94ZWQgbGluZS4gTWlycm9ycyBob3cgYHF0eVBpZWNlc2AgaXMgc291cmNlZFxuICogdG9kYXkgKGBub3JtYWxpemVCb3hlc1BpZWNlc2ApLCBqdXN0IGV4cHJlc3NlZCBpbiBzZWxsaW5nIHVuaXRzIGluc3RlYWQuXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiBzZWxsaW5nVW5pdHMoeyBxdHksIGJveGVzLCBwaWVjZXMsIHVuaXRzUGVyQm94IH06IFNlbGxpbmdVbml0c0lucHV0KTogbnVtYmVyIHtcbiAgY29uc3QgdXBiID0gTnVtYmVyKHVuaXRzUGVyQm94ID8/IDApO1xuICBpZiAodXBiID4gMSkgcmV0dXJuIE1hdGgubWF4KDAsIE1hdGgudHJ1bmMoTnVtYmVyKGJveGVzID8/IDApKSk7XG4gIHJldHVybiBNYXRoLm1heCgwLCBNYXRoLnRydW5jKE51bWJlcihxdHkgPz8gMCkpKTtcbn1cblxuLyoqIFwiMiBmcmVlXCIgbGluZSBsYWJlbCDigJQgbnVsbCB3aGVuIG5vdGhpbmcgaXMgZnJlZSAobmV2ZXIgcmVuZGVyIGFuIGVtcHR5IGNoaXApLiAqL1xuZXhwb3J0IGZ1bmN0aW9uIGZyZWVVbml0c0xhYmVsKGZyZWVVbml0czogbnVtYmVyIHwgbnVsbCB8IHVuZGVmaW5lZCk6IHN0cmluZyB8IG51bGwge1xuICBjb25zdCBuID0gTWF0aC50cnVuYyhOdW1iZXIoZnJlZVVuaXRzID8/IDApKTtcbiAgcmV0dXJuIG4gPiAwID8gYCR7bn0gZnJlZWAgOiBudWxsO1xufVxuXG4vKiogR2VuZXJpYyBjaGlwIGZhbGxiYWNrIHdoZW4gYSBCVVlfTl9HRVRfTSBwcm9tbyBoYXMgbm8gYWRtaW4tYXV0aG9yZWQgYGJhbm5lclRleHRgLiAqL1xuZXhwb3J0IGNvbnN0IEJPR09fRkFMTEJBQ0tfQkFOTkVSID0gXCJCdXkgTiBnZXQgTSBmcmVlXCI7XG5cbi8qKlxuICogQ2hpcCB0ZXh0IGZvciBhIEJVWV9OX0dFVF9NIHByb21vOiBpdHMgb3duIGBiYW5uZXJUZXh0YCB3aGVuIHNldCwgZWxzZSB0aGVcbiAqIGdlbmVyaWMgZmFsbGJhY2suIE5ldmVyIGEgZmFrZSBcIi1OJVwiIOKAlCB0aGlzIHByb21vIHR5cGUgbmV2ZXIgY2hhbmdlcyB0aGVcbiAqIHVuaXQgcHJpY2UgKHNlZSBgUHJvbW9SZXN1bHQuZnJlZVVuaXRzYCkuXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiBib2dvQmFubmVyVGV4dChwcm9tbzogUGljazxCdXllclByb21vdGlvbiwgXCJiYW5uZXJUZXh0XCI+KTogc3RyaW5nIHtcbiAgY29uc3QgdGV4dCA9IChwcm9tby5iYW5uZXJUZXh0ID8/IFwiXCIpLnRyaW0oKTtcbiAgcmV0dXJuIHRleHQubGVuZ3RoID4gMCA/IHRleHQgOiBCT0dPX0ZBTExCQUNLX0JBTk5FUjtcbn1cblxuLyoqXG4gKiBBIEJVWV9OX0dFVF9NIHByb21vIHRoYXQgc2NvcGUtbWF0Y2hlcyB0aGlzIHByb2R1Y3QsIGluZGVwZW5kZW50IG9mIHRoZVxuICogY3VycmVudCBxdWFudGl0eSDigJQgc28gYSBzaG9wcGVyIHNlZXMgdGhlIGRlYWwgY2hpcCBiZWZvcmUgdGhleSd2ZSBhZGRlZFxuICogZW5vdWdoIHRvIGFjdHVhbGx5IGVhcm4gYSBmcmVlIHVuaXQgKHRoZSB0aWxlL2RldGFpbCBjaGlwIGlzIHF0eS1hZ25vc3RpYztcbiAqIG9ubHkgdGhlIGNhcnQvb3JkZXIgbGluZSdzIGBmcmVlVW5pdHNgIGNvdW50IGRlcGVuZHMgb24gcXR5KS4gVGllcyBicm9rZW5cbiAqIGJ5IGlkLCBzYW1lIGFzIGBhcHBseUJlc3RQcm9tb3Rpb25gLCB3aGVuIG1vcmUgdGhhbiBvbmUgQk9HTyBwcm9tbyBtYXRjaGVzLlxuICpcbiAqIFdhdmUgRSAvIGltcC0xMGIsIEwtMDcyOiBgQnV5ZXJQcm9tb3Rpb24udHlwZWAgbm93IGRlcml2ZXMgZnJvbSB0aGUgc2hhcmVkLFxuICogc2NoZW1hLXBpbm5lZCBgUHJvbW90aW9uVHlwZWAgKGBAcm91dGVmbG93L3R5cGVzYCksIHNvIHRoZSBsaXRlcmFsIGNvbXBhcmlzb25cbiAqIGJlbG93IHR5cGUtY2hlY2tzIG5hdGl2ZWx5IOKAlCBubyB3aWRlbmluZyBjYXN0IG5lZWRlZCBhbnkgbW9yZSAodGhpcyB1c2VkIHRvXG4gKiBjYXJyeSBhbiBgYXMgUHJvbW90aW9uVHlwZWAgY2FzdCB0byB3b3JrIGFyb3VuZCBgQnV5ZXJQcm9tb3Rpb24udHlwZWBcbiAqIG9taXR0aW5nIGBcIkJVWV9OX0dFVF9NXCJgOyB0aGF0IHZhbHVlIG5ldmVyIGNoYW5nZWQgYXQgcnVudGltZSwgb25seSB0aGUgdHlwZVxuICogaG9sZSBkaWQpLlxuICovXG5leHBvcnQgZnVuY3Rpb24gbWF0Y2hpbmdCb2dvUHJvbW8oXG4gIHByb21vczogQnV5ZXJQcm9tb3Rpb25bXSB8IHVuZGVmaW5lZCxcbiAgY3R4OiB7IHByb2R1Y3RJZDogc3RyaW5nOyBjYXRlZ29yeT86IHN0cmluZyB8IG51bGwgfSxcbik6IEJ1eWVyUHJvbW90aW9uIHwgbnVsbCB7XG4gIGNvbnN0IHNjb3BlQ3R4OiBQcm9tb0NvbnRleHQgPSB7IC4uLmN0eCwgcXR5UGllY2VzOiAwLCBxdHlVbml0czogMCB9O1xuICBsZXQgYmVzdDogQnV5ZXJQcm9tb3Rpb24gfCBudWxsID0gbnVsbDtcbiAgZm9yIChjb25zdCBwIG9mIHByb21vcyA/PyBbXSkge1xuICAgIGlmIChwLnR5cGUgIT09IFwiQlVZX05fR0VUX01cIikgY29udGludWU7XG4gICAgaWYgKCFwcm9tb3Rpb25NYXRjaGVzUHJvZHVjdChwLCBzY29wZUN0eCkpIGNvbnRpbnVlO1xuICAgIGlmIChiZXN0ID09IG51bGwgfHwgcC5pZCA8IGJlc3QuaWQpIGJlc3QgPSBwO1xuICB9XG4gIHJldHVybiBiZXN0O1xufVxuIl0sInZlcnNpb24iOjN9

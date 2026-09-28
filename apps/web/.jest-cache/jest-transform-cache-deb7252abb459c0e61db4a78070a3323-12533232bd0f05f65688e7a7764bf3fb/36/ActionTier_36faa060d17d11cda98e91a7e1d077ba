@@ -1,0 +1,97 @@
+64d50ca1d01daaa4f026b81f51da0e13
+"use client";
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+Object.defineProperty(exports, "ActionTier", {
+    enumerable: true,
+    get: function() {
+        return ActionTier;
+    }
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+const _web = require("@routeflow/ui/web");
+const _addons = require("../../../../../lib/api/addons");
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+/**
+ * Visual weight tiers for the order-detail action bar (order-ui-redesign-spec §8.4, T7).
+ *
+ * The bar used to render every action at the same size and weight in one wrapping row — five
+ * controls on a phone, one of which permanently destroys the order. Each group of existing
+ * buttons is wrapped in a tier; with `order_ui_v2` on the tiers stack as
+ *
+ *   primary   — the one action that advances the order (full width on a phone)
+ *   secondary — reversible actions (Edit, Unconfirm, Return to Confirmed, Reopen)
+ *   danger    — Cancel / Delete, on their own ruled-off row (hidden when the group is empty, e.g.
+ *               Delete is not offered once the order is closed or invoiced)
+ *
+ * There is deliberately NO "you can reopen it later" caption under Cancel: cancelling voids the
+ * order's live invoices, `reopenOrder` does not un-void them, can be refused when an invoice is
+ * paid, and returns the order to PENDING — a reassurance there would sit above the only real
+ * warning (the cancel-impact dialog).
+ *
+ * WITH THE FLAG OFF THIS IS A PLAIN FRAGMENT: the same children in the same order, no wrapper
+ * element, so the page renders exactly as before. It only re-groups and re-orders JSX the page
+ * already renders — no handler, gating condition or confirm step lives here or moves.
+ */ const TIER_CLASSES = {
+    primary: "order-1 flex items-center gap-2 max-sm:w-full max-sm:[&>*]:flex-1 max-sm:[&_button]:w-full",
+    secondary: "order-2 flex flex-wrap items-center gap-2 max-sm:w-full",
+    danger: "order-3 mt-1 flex w-full flex-wrap items-center gap-2 border-t border-surface-border pt-3 empty:hidden"
+};
+function ActionTier({ tier, children }) {
+    const { enabled } = (0, _addons.useOrderUiV2)();
+    if (!enabled) return /*#__PURE__*/ (0, _jsxruntime.jsx)(_jsxruntime.Fragment, {
+        children: children
+    });
+    return /*#__PURE__*/ (0, _jsxruntime.jsx)("div", {
+        // `data-tier` (not a test id): several secondary tiers can share one bar.
+        "data-tier": tier,
+        // 44px touch targets under sm (spec §9) without touching the shared Button.
+        className: (0, _web.cn)(TIER_CLASSES[tier], "max-sm:[&_button]:min-h-11"),
+        children: children
+    });
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS9vcmRlcnMvW2lkXS9fY29tcG9uZW50cy9BY3Rpb25UaWVyLnRzeCJdLCJzb3VyY2VzQ29udGVudCI6WyJcInVzZSBjbGllbnRcIjtcblxuaW1wb3J0ICogYXMgUmVhY3QgZnJvbSBcInJlYWN0XCI7XG5pbXBvcnQgeyBjbiB9IGZyb20gXCJAcm91dGVmbG93L3VpL3dlYlwiO1xuaW1wb3J0IHsgdXNlT3JkZXJVaVYyIH0gZnJvbSBcIkAvbGliL2FwaS9hZGRvbnNcIjtcblxuZXhwb3J0IHR5cGUgQWN0aW9uVGllck5hbWUgPSBcInByaW1hcnlcIiB8IFwic2Vjb25kYXJ5XCIgfCBcImRhbmdlclwiO1xuXG4vKipcbiAqIFZpc3VhbCB3ZWlnaHQgdGllcnMgZm9yIHRoZSBvcmRlci1kZXRhaWwgYWN0aW9uIGJhciAob3JkZXItdWktcmVkZXNpZ24tc3BlYyDCpzguNCwgVDcpLlxuICpcbiAqIFRoZSBiYXIgdXNlZCB0byByZW5kZXIgZXZlcnkgYWN0aW9uIGF0IHRoZSBzYW1lIHNpemUgYW5kIHdlaWdodCBpbiBvbmUgd3JhcHBpbmcgcm93IOKAlCBmaXZlXG4gKiBjb250cm9scyBvbiBhIHBob25lLCBvbmUgb2Ygd2hpY2ggcGVybWFuZW50bHkgZGVzdHJveXMgdGhlIG9yZGVyLiBFYWNoIGdyb3VwIG9mIGV4aXN0aW5nXG4gKiBidXR0b25zIGlzIHdyYXBwZWQgaW4gYSB0aWVyOyB3aXRoIGBvcmRlcl91aV92MmAgb24gdGhlIHRpZXJzIHN0YWNrIGFzXG4gKlxuICogICBwcmltYXJ5ICAg4oCUIHRoZSBvbmUgYWN0aW9uIHRoYXQgYWR2YW5jZXMgdGhlIG9yZGVyIChmdWxsIHdpZHRoIG9uIGEgcGhvbmUpXG4gKiAgIHNlY29uZGFyeSDigJQgcmV2ZXJzaWJsZSBhY3Rpb25zIChFZGl0LCBVbmNvbmZpcm0sIFJldHVybiB0byBDb25maXJtZWQsIFJlb3BlbilcbiAqICAgZGFuZ2VyICAgIOKAlCBDYW5jZWwgLyBEZWxldGUsIG9uIHRoZWlyIG93biBydWxlZC1vZmYgcm93IChoaWRkZW4gd2hlbiB0aGUgZ3JvdXAgaXMgZW1wdHksIGUuZy5cbiAqICAgICAgICAgICAgICAgRGVsZXRlIGlzIG5vdCBvZmZlcmVkIG9uY2UgdGhlIG9yZGVyIGlzIGNsb3NlZCBvciBpbnZvaWNlZClcbiAqXG4gKiBUaGVyZSBpcyBkZWxpYmVyYXRlbHkgTk8gXCJ5b3UgY2FuIHJlb3BlbiBpdCBsYXRlclwiIGNhcHRpb24gdW5kZXIgQ2FuY2VsOiBjYW5jZWxsaW5nIHZvaWRzIHRoZVxuICogb3JkZXIncyBsaXZlIGludm9pY2VzLCBgcmVvcGVuT3JkZXJgIGRvZXMgbm90IHVuLXZvaWQgdGhlbSwgY2FuIGJlIHJlZnVzZWQgd2hlbiBhbiBpbnZvaWNlIGlzXG4gKiBwYWlkLCBhbmQgcmV0dXJucyB0aGUgb3JkZXIgdG8gUEVORElORyDigJQgYSByZWFzc3VyYW5jZSB0aGVyZSB3b3VsZCBzaXQgYWJvdmUgdGhlIG9ubHkgcmVhbFxuICogd2FybmluZyAodGhlIGNhbmNlbC1pbXBhY3QgZGlhbG9nKS5cbiAqXG4gKiBXSVRIIFRIRSBGTEFHIE9GRiBUSElTIElTIEEgUExBSU4gRlJBR01FTlQ6IHRoZSBzYW1lIGNoaWxkcmVuIGluIHRoZSBzYW1lIG9yZGVyLCBubyB3cmFwcGVyXG4gKiBlbGVtZW50LCBzbyB0aGUgcGFnZSByZW5kZXJzIGV4YWN0bHkgYXMgYmVmb3JlLiBJdCBvbmx5IHJlLWdyb3VwcyBhbmQgcmUtb3JkZXJzIEpTWCB0aGUgcGFnZVxuICogYWxyZWFkeSByZW5kZXJzIOKAlCBubyBoYW5kbGVyLCBnYXRpbmcgY29uZGl0aW9uIG9yIGNvbmZpcm0gc3RlcCBsaXZlcyBoZXJlIG9yIG1vdmVzLlxuICovXG5jb25zdCBUSUVSX0NMQVNTRVM6IFJlY29yZDxBY3Rpb25UaWVyTmFtZSwgc3RyaW5nPiA9IHtcbiAgcHJpbWFyeTpcbiAgICBcIm9yZGVyLTEgZmxleCBpdGVtcy1jZW50ZXIgZ2FwLTIgbWF4LXNtOnctZnVsbCBtYXgtc206WyY+Kl06ZmxleC0xIG1heC1zbTpbJl9idXR0b25dOnctZnVsbFwiLFxuICBzZWNvbmRhcnk6IFwib3JkZXItMiBmbGV4IGZsZXgtd3JhcCBpdGVtcy1jZW50ZXIgZ2FwLTIgbWF4LXNtOnctZnVsbFwiLFxuICBkYW5nZXI6XG4gICAgXCJvcmRlci0zIG10LTEgZmxleCB3LWZ1bGwgZmxleC13cmFwIGl0ZW1zLWNlbnRlciBnYXAtMiBib3JkZXItdCBib3JkZXItc3VyZmFjZS1ib3JkZXIgcHQtMyBlbXB0eTpoaWRkZW5cIixcbn07XG5cbmV4cG9ydCBmdW5jdGlvbiBBY3Rpb25UaWVyKHtcbiAgdGllcixcbiAgY2hpbGRyZW4sXG59OiB7XG4gIHRpZXI6IEFjdGlvblRpZXJOYW1lO1xuICBjaGlsZHJlbjogUmVhY3QuUmVhY3ROb2RlO1xufSkge1xuICBjb25zdCB7IGVuYWJsZWQgfSA9IHVzZU9yZGVyVWlWMigpO1xuICBpZiAoIWVuYWJsZWQpIHJldHVybiA8PntjaGlsZHJlbn08Lz47XG5cbiAgcmV0dXJuIChcbiAgICA8ZGl2XG4gICAgICAvLyBgZGF0YS10aWVyYCAobm90IGEgdGVzdCBpZCk6IHNldmVyYWwgc2Vjb25kYXJ5IHRpZXJzIGNhbiBzaGFyZSBvbmUgYmFyLlxuICAgICAgZGF0YS10aWVyPXt0aWVyfVxuICAgICAgLy8gNDRweCB0b3VjaCB0YXJnZXRzIHVuZGVyIHNtIChzcGVjIMKnOSkgd2l0aG91dCB0b3VjaGluZyB0aGUgc2hhcmVkIEJ1dHRvbi5cbiAgICAgIGNsYXNzTmFtZT17Y24oVElFUl9DTEFTU0VTW3RpZXJdLCBcIm1heC1zbTpbJl9idXR0b25dOm1pbi1oLTExXCIpfVxuICAgID5cbiAgICAgIHtjaGlsZHJlbn1cbiAgICA8L2Rpdj5cbiAgKTtcbn1cbiJdLCJuYW1lcyI6WyJBY3Rpb25UaWVyIiwiVElFUl9DTEFTU0VTIiwicHJpbWFyeSIsInNlY29uZGFyeSIsImRhbmdlciIsInRpZXIiLCJjaGlsZHJlbiIsImVuYWJsZWQiLCJ1c2VPcmRlclVpVjIiLCJkaXYiLCJkYXRhLXRpZXIiLCJjbGFzc05hbWUiLCJjbiJdLCJtYXBwaW5ncyI6IkFBQUE7Ozs7OytCQXFDZ0JBOzs7ZUFBQUE7Ozs7K0RBbkNPO3FCQUNKO3dCQUNVOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7QUFJN0I7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7O0NBb0JDLEdBQ0QsTUFBTUMsZUFBK0M7SUFDbkRDLFNBQ0U7SUFDRkMsV0FBVztJQUNYQyxRQUNFO0FBQ0o7QUFFTyxTQUFTSixXQUFXLEVBQ3pCSyxJQUFJLEVBQ0pDLFFBQVEsRUFJVDtJQUNDLE1BQU0sRUFBRUMsT0FBTyxFQUFFLEdBQUdDLElBQUFBLG9CQUFZO0lBQ2hDLElBQUksQ0FBQ0QsU0FBUyxxQkFBTztrQkFBR0Q7O0lBRXhCLHFCQUNFLHFCQUFDRztRQUNDLDBFQUEwRTtRQUMxRUMsYUFBV0w7UUFDWCw0RUFBNEU7UUFDNUVNLFdBQVdDLElBQUFBLE9BQUUsRUFBQ1gsWUFBWSxDQUFDSSxLQUFLLEVBQUU7a0JBRWpDQzs7QUFHUCJ9

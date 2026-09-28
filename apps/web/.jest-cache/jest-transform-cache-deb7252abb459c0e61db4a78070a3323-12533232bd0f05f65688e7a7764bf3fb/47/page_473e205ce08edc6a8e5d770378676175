@@ -1,0 +1,192 @@
+770a35d919becd501624fc20a056ad93
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, {
+        enumerable: true,
+        get: Object.getOwnPropertyDescriptor(all, name).get
+    });
+}
+_export(exports, {
+    get default () {
+        return ContactPage;
+    },
+    get metadata () {
+        return metadata;
+    }
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _link = /*#__PURE__*/ _interop_require_default(require("next/link"));
+const _lucidereact = require("lucide-react");
+const _site = require("../lib/site");
+const _marketing = require("../components/marketing");
+function _interop_require_default(obj) {
+    return obj && obj.__esModule ? obj : {
+        default: obj
+    };
+}
+// Copy verbatim from the redesign's app/[page]/page.tsx `Contact()` (M1 §2f).
+// Inside the marketing chrome; the old `app/contact/page.tsx` is deleted
+// (spec.md R8).
+//
+// Layout ruling (owner, 2026-09-16, PR-3): retire the email-draft DemoForm —
+// the PR-2 booking page (real Google-Calendar availability) replaces it.
+// Two cards instead, matching the reference study's contact() exactly:
+// "Product demos & pricing" links to /book-a-demo, "General enquiries" is a
+// mailto. `direct-contact` (the old "Prefer to email?" link) is dropped as
+// now-duplicative of the General Enquiries card. `demo-agenda` is kept —
+// unique, useful content the reference page never had, no reason to drop it.
+// components/demo-form.tsx is left in place, unused — not deleted, since
+// nothing here asked for that; flagged separately as a dead-code candidate.
+const route = _site.routes.find((r)=>r.slug === "contact");
+const metadata = {
+    title: route.title,
+    description: route.description,
+    alternates: {
+        canonical: "/contact"
+    },
+    openGraph: {
+        title: route.title,
+        description: route.description,
+        url: "/contact",
+        siteName: _site.site.name,
+        type: "website"
+    }
+};
+const AGENDA = [
+    [
+        _lucidereact.MessageSquare,
+        "Start with your process",
+        "The orders, handoffs, and customer questions you handle."
+    ],
+    [
+        _lucidereact.Route,
+        "See the connected workflow",
+        "From order intake through dispatch and delivery."
+    ],
+    [
+        _lucidereact.CalendarDays,
+        "Discuss the next step",
+        "Review pricing, setup, and the details you need to decide."
+    ]
+];
+function ContactPage() {
+    return /*#__PURE__*/ (0, _jsxruntime.jsx)("div", {
+        className: "glass-page",
+        children: /*#__PURE__*/ (0, _jsxruntime.jsxs)("section", {
+            className: "contact-section wrap",
+            children: [
+                /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                    className: "contact-copy",
+                    children: [
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)(_marketing.Eyebrow, {
+                            children: "SEE ROUTEFLOW IN ACTION"
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("h1", {
+                            children: [
+                                "Let’s talk about ",
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("br", {}),
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("em", {
+                                    children: "your delivery day."
+                                })
+                            ]
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                            className: "lead",
+                            children: "Bring your workflow and your questions. Explore how RouteFlow could fit the way your team takes orders and runs deliveries."
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                            className: "demo-agenda",
+                            children: [
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("h2", {
+                                    children: "Make the walkthrough yours."
+                                }),
+                                AGENDA.map(([Icon, title, text])=>/*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)(Icon, {
+                                                size: 23
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("span", {
+                                                children: [
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                                        children: title
+                                                    }),
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                                        children: text
+                                                    })
+                                                ]
+                                            })
+                                        ]
+                                    }, title))
+                            ]
+                        })
+                    ]
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                    className: "contact-grid",
+                    children: [
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("article", {
+                            className: "contact-card",
+                            children: [
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                    className: "g-tile",
+                                    children: /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.CalendarDays, {
+                                        size: 22
+                                    })
+                                }),
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("h2", {
+                                    children: "Product demos & pricing"
+                                }),
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                    children: "Review your orders, delivery process, and customer accounts. Ask about features, setup, and the price for your operation."
+                                }),
+                                /*#__PURE__*/ (0, _jsxruntime.jsxs)(_link.default, {
+                                    className: "button",
+                                    href: "/book-a-demo",
+                                    children: [
+                                        "Book a demo ",
+                                        /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.ArrowUpRight, {
+                                            size: 18
+                                        })
+                                    ]
+                                })
+                            ]
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("article", {
+                            className: "contact-card",
+                            children: [
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                    className: "g-tile",
+                                    children: /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.Users, {
+                                        size: 22
+                                    })
+                                }),
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("h2", {
+                                    children: "General enquiries"
+                                }),
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                    children: "For product questions, account help, or partnership enquiries, email the RouteFlow team. Include your company and a short description of what you need."
+                                }),
+                                /*#__PURE__*/ (0, _jsxruntime.jsxs)("a", {
+                                    className: "button button-outline",
+                                    href: `mailto:${_site.site.email}`,
+                                    children: [
+                                        _site.site.email,
+                                        " ",
+                                        /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.ArrowUpRight, {
+                                            size: 18
+                                        })
+                                    ]
+                                })
+                            ]
+                        })
+                    ]
+                })
+            ]
+        })
+    });
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8obWFya2V0aW5nKS9jb250YWN0L3BhZ2UudHN4Il0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCB0eXBlIHsgTWV0YWRhdGEgfSBmcm9tIFwibmV4dFwiO1xuaW1wb3J0IExpbmsgZnJvbSBcIm5leHQvbGlua1wiO1xuaW1wb3J0IHsgQXJyb3dVcFJpZ2h0LCBDYWxlbmRhckRheXMsIE1lc3NhZ2VTcXVhcmUsIFJvdXRlLCBVc2VycyB9IGZyb20gXCJsdWNpZGUtcmVhY3RcIjtcbmltcG9ydCB7IHJvdXRlcywgc2l0ZSB9IGZyb20gXCIuLi9saWIvc2l0ZVwiO1xuaW1wb3J0IHsgRXllYnJvdyB9IGZyb20gXCIuLi9jb21wb25lbnRzL21hcmtldGluZ1wiO1xuXG4vLyBDb3B5IHZlcmJhdGltIGZyb20gdGhlIHJlZGVzaWduJ3MgYXBwL1twYWdlXS9wYWdlLnRzeCBgQ29udGFjdCgpYCAoTTEgwqcyZikuXG4vLyBJbnNpZGUgdGhlIG1hcmtldGluZyBjaHJvbWU7IHRoZSBvbGQgYGFwcC9jb250YWN0L3BhZ2UudHN4YCBpcyBkZWxldGVkXG4vLyAoc3BlYy5tZCBSOCkuXG4vL1xuLy8gTGF5b3V0IHJ1bGluZyAob3duZXIsIDIwMjYtMDktMTYsIFBSLTMpOiByZXRpcmUgdGhlIGVtYWlsLWRyYWZ0IERlbW9Gb3JtIOKAlFxuLy8gdGhlIFBSLTIgYm9va2luZyBwYWdlIChyZWFsIEdvb2dsZS1DYWxlbmRhciBhdmFpbGFiaWxpdHkpIHJlcGxhY2VzIGl0LlxuLy8gVHdvIGNhcmRzIGluc3RlYWQsIG1hdGNoaW5nIHRoZSByZWZlcmVuY2Ugc3R1ZHkncyBjb250YWN0KCkgZXhhY3RseTpcbi8vIFwiUHJvZHVjdCBkZW1vcyAmIHByaWNpbmdcIiBsaW5rcyB0byAvYm9vay1hLWRlbW8sIFwiR2VuZXJhbCBlbnF1aXJpZXNcIiBpcyBhXG4vLyBtYWlsdG8uIGBkaXJlY3QtY29udGFjdGAgKHRoZSBvbGQgXCJQcmVmZXIgdG8gZW1haWw/XCIgbGluaykgaXMgZHJvcHBlZCBhc1xuLy8gbm93LWR1cGxpY2F0aXZlIG9mIHRoZSBHZW5lcmFsIEVucXVpcmllcyBjYXJkLiBgZGVtby1hZ2VuZGFgIGlzIGtlcHQg4oCUXG4vLyB1bmlxdWUsIHVzZWZ1bCBjb250ZW50IHRoZSByZWZlcmVuY2UgcGFnZSBuZXZlciBoYWQsIG5vIHJlYXNvbiB0byBkcm9wIGl0LlxuLy8gY29tcG9uZW50cy9kZW1vLWZvcm0udHN4IGlzIGxlZnQgaW4gcGxhY2UsIHVudXNlZCDigJQgbm90IGRlbGV0ZWQsIHNpbmNlXG4vLyBub3RoaW5nIGhlcmUgYXNrZWQgZm9yIHRoYXQ7IGZsYWdnZWQgc2VwYXJhdGVseSBhcyBhIGRlYWQtY29kZSBjYW5kaWRhdGUuXG5cbmNvbnN0IHJvdXRlID0gcm91dGVzLmZpbmQoKHIpID0+IHIuc2x1ZyA9PT0gXCJjb250YWN0XCIpITtcblxuZXhwb3J0IGNvbnN0IG1ldGFkYXRhOiBNZXRhZGF0YSA9IHtcbiAgdGl0bGU6IHJvdXRlLnRpdGxlLFxuICBkZXNjcmlwdGlvbjogcm91dGUuZGVzY3JpcHRpb24sXG4gIGFsdGVybmF0ZXM6IHsgY2Fub25pY2FsOiBcIi9jb250YWN0XCIgfSxcbiAgb3BlbkdyYXBoOiB7XG4gICAgdGl0bGU6IHJvdXRlLnRpdGxlLFxuICAgIGRlc2NyaXB0aW9uOiByb3V0ZS5kZXNjcmlwdGlvbixcbiAgICB1cmw6IFwiL2NvbnRhY3RcIixcbiAgICBzaXRlTmFtZTogc2l0ZS5uYW1lLFxuICAgIHR5cGU6IFwid2Vic2l0ZVwiLFxuICB9LFxufTtcblxuY29uc3QgQUdFTkRBOiBBcnJheTxbdHlwZW9mIFJvdXRlLCBzdHJpbmcsIHN0cmluZ10+ID0gW1xuICBbXG4gICAgTWVzc2FnZVNxdWFyZSxcbiAgICBcIlN0YXJ0IHdpdGggeW91ciBwcm9jZXNzXCIsXG4gICAgXCJUaGUgb3JkZXJzLCBoYW5kb2ZmcywgYW5kIGN1c3RvbWVyIHF1ZXN0aW9ucyB5b3UgaGFuZGxlLlwiLFxuICBdLFxuICBbUm91dGUsIFwiU2VlIHRoZSBjb25uZWN0ZWQgd29ya2Zsb3dcIiwgXCJGcm9tIG9yZGVyIGludGFrZSB0aHJvdWdoIGRpc3BhdGNoIGFuZCBkZWxpdmVyeS5cIl0sXG4gIFtcbiAgICBDYWxlbmRhckRheXMsXG4gICAgXCJEaXNjdXNzIHRoZSBuZXh0IHN0ZXBcIixcbiAgICBcIlJldmlldyBwcmljaW5nLCBzZXR1cCwgYW5kIHRoZSBkZXRhaWxzIHlvdSBuZWVkIHRvIGRlY2lkZS5cIixcbiAgXSxcbl07XG5cbmV4cG9ydCBkZWZhdWx0IGZ1bmN0aW9uIENvbnRhY3RQYWdlKCkge1xuICByZXR1cm4gKFxuICAgIDxkaXYgY2xhc3NOYW1lPVwiZ2xhc3MtcGFnZVwiPlxuICAgICAgPHNlY3Rpb24gY2xhc3NOYW1lPVwiY29udGFjdC1zZWN0aW9uIHdyYXBcIj5cbiAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJjb250YWN0LWNvcHlcIj5cbiAgICAgICAgICA8RXllYnJvdz5TRUUgUk9VVEVGTE9XIElOIEFDVElPTjwvRXllYnJvdz5cbiAgICAgICAgICA8aDE+XG4gICAgICAgICAgICBMZXTigJlzIHRhbGsgYWJvdXQgPGJyIC8+XG4gICAgICAgICAgICA8ZW0+eW91ciBkZWxpdmVyeSBkYXkuPC9lbT5cbiAgICAgICAgICA8L2gxPlxuICAgICAgICAgIDxwIGNsYXNzTmFtZT1cImxlYWRcIj5cbiAgICAgICAgICAgIEJyaW5nIHlvdXIgd29ya2Zsb3cgYW5kIHlvdXIgcXVlc3Rpb25zLiBFeHBsb3JlIGhvdyBSb3V0ZUZsb3cgY291bGQgZml0IHRoZSB3YXkgeW91clxuICAgICAgICAgICAgdGVhbSB0YWtlcyBvcmRlcnMgYW5kIHJ1bnMgZGVsaXZlcmllcy5cbiAgICAgICAgICA8L3A+XG4gICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJkZW1vLWFnZW5kYVwiPlxuICAgICAgICAgICAgPGgyPk1ha2UgdGhlIHdhbGt0aHJvdWdoIHlvdXJzLjwvaDI+XG4gICAgICAgICAgICB7QUdFTkRBLm1hcCgoW0ljb24sIHRpdGxlLCB0ZXh0XSkgPT4gKFxuICAgICAgICAgICAgICA8ZGl2IGtleT17dGl0bGV9PlxuICAgICAgICAgICAgICAgIDxJY29uIHNpemU9ezIzfSAvPlxuICAgICAgICAgICAgICAgIDxzcGFuPlxuICAgICAgICAgICAgICAgICAgPHN0cm9uZz57dGl0bGV9PC9zdHJvbmc+XG4gICAgICAgICAgICAgICAgICA8cD57dGV4dH08L3A+XG4gICAgICAgICAgICAgICAgPC9zcGFuPlxuICAgICAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgICAgICkpfVxuICAgICAgICAgIDwvZGl2PlxuICAgICAgICA8L2Rpdj5cbiAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJjb250YWN0LWdyaWRcIj5cbiAgICAgICAgICA8YXJ0aWNsZSBjbGFzc05hbWU9XCJjb250YWN0LWNhcmRcIj5cbiAgICAgICAgICAgIDxzcGFuIGNsYXNzTmFtZT1cImctdGlsZVwiPlxuICAgICAgICAgICAgICA8Q2FsZW5kYXJEYXlzIHNpemU9ezIyfSAvPlxuICAgICAgICAgICAgPC9zcGFuPlxuICAgICAgICAgICAgPGgyPlByb2R1Y3QgZGVtb3MgJmFtcDsgcHJpY2luZzwvaDI+XG4gICAgICAgICAgICA8cD5cbiAgICAgICAgICAgICAgUmV2aWV3IHlvdXIgb3JkZXJzLCBkZWxpdmVyeSBwcm9jZXNzLCBhbmQgY3VzdG9tZXIgYWNjb3VudHMuIEFzayBhYm91dCBmZWF0dXJlcyxcbiAgICAgICAgICAgICAgc2V0dXAsIGFuZCB0aGUgcHJpY2UgZm9yIHlvdXIgb3BlcmF0aW9uLlxuICAgICAgICAgICAgPC9wPlxuICAgICAgICAgICAgPExpbmsgY2xhc3NOYW1lPVwiYnV0dG9uXCIgaHJlZj1cIi9ib29rLWEtZGVtb1wiPlxuICAgICAgICAgICAgICBCb29rIGEgZGVtbyA8QXJyb3dVcFJpZ2h0IHNpemU9ezE4fSAvPlxuICAgICAgICAgICAgPC9MaW5rPlxuICAgICAgICAgIDwvYXJ0aWNsZT5cbiAgICAgICAgICA8YXJ0aWNsZSBjbGFzc05hbWU9XCJjb250YWN0LWNhcmRcIj5cbiAgICAgICAgICAgIDxzcGFuIGNsYXNzTmFtZT1cImctdGlsZVwiPlxuICAgICAgICAgICAgICA8VXNlcnMgc2l6ZT17MjJ9IC8+XG4gICAgICAgICAgICA8L3NwYW4+XG4gICAgICAgICAgICA8aDI+R2VuZXJhbCBlbnF1aXJpZXM8L2gyPlxuICAgICAgICAgICAgPHA+XG4gICAgICAgICAgICAgIEZvciBwcm9kdWN0IHF1ZXN0aW9ucywgYWNjb3VudCBoZWxwLCBvciBwYXJ0bmVyc2hpcCBlbnF1aXJpZXMsIGVtYWlsIHRoZSBSb3V0ZUZsb3dcbiAgICAgICAgICAgICAgdGVhbS4gSW5jbHVkZSB5b3VyIGNvbXBhbnkgYW5kIGEgc2hvcnQgZGVzY3JpcHRpb24gb2Ygd2hhdCB5b3UgbmVlZC5cbiAgICAgICAgICAgIDwvcD5cbiAgICAgICAgICAgIDxhIGNsYXNzTmFtZT1cImJ1dHRvbiBidXR0b24tb3V0bGluZVwiIGhyZWY9e2BtYWlsdG86JHtzaXRlLmVtYWlsfWB9PlxuICAgICAgICAgICAgICB7c2l0ZS5lbWFpbH0gPEFycm93VXBSaWdodCBzaXplPXsxOH0gLz5cbiAgICAgICAgICAgIDwvYT5cbiAgICAgICAgICA8L2FydGljbGU+XG4gICAgICAgIDwvZGl2PlxuICAgICAgPC9zZWN0aW9uPlxuICAgIDwvZGl2PlxuICApO1xufVxuIl0sIm5hbWVzIjpbIkNvbnRhY3RQYWdlIiwibWV0YWRhdGEiLCJyb3V0ZSIsInJvdXRlcyIsImZpbmQiLCJyIiwic2x1ZyIsInRpdGxlIiwiZGVzY3JpcHRpb24iLCJhbHRlcm5hdGVzIiwiY2Fub25pY2FsIiwib3BlbkdyYXBoIiwidXJsIiwic2l0ZU5hbWUiLCJzaXRlIiwibmFtZSIsInR5cGUiLCJBR0VOREEiLCJNZXNzYWdlU3F1YXJlIiwiUm91dGUiLCJDYWxlbmRhckRheXMiLCJkaXYiLCJjbGFzc05hbWUiLCJzZWN0aW9uIiwiRXllYnJvdyIsImgxIiwiYnIiLCJlbSIsInAiLCJoMiIsIm1hcCIsIkljb24iLCJ0ZXh0Iiwic2l6ZSIsInNwYW4iLCJzdHJvbmciLCJhcnRpY2xlIiwiTGluayIsImhyZWYiLCJBcnJvd1VwUmlnaHQiLCJVc2VycyIsImEiLCJlbWFpbCJdLCJtYXBwaW5ncyI6Ijs7Ozs7Ozs7Ozs7UUFpREE7ZUFBd0JBOztRQTNCWEM7ZUFBQUE7Ozs7NkRBckJJOzZCQUN1RDtzQkFDM0M7MkJBQ0w7Ozs7OztBQUV4Qiw4RUFBOEU7QUFDOUUseUVBQXlFO0FBQ3pFLGdCQUFnQjtBQUNoQixFQUFFO0FBQ0YsNkVBQTZFO0FBQzdFLHlFQUF5RTtBQUN6RSx1RUFBdUU7QUFDdkUsNEVBQTRFO0FBQzVFLDJFQUEyRTtBQUMzRSx5RUFBeUU7QUFDekUsNkVBQTZFO0FBQzdFLHlFQUF5RTtBQUN6RSw0RUFBNEU7QUFFNUUsTUFBTUMsUUFBUUMsWUFBTSxDQUFDQyxJQUFJLENBQUMsQ0FBQ0MsSUFBTUEsRUFBRUMsSUFBSSxLQUFLO0FBRXJDLE1BQU1MLFdBQXFCO0lBQ2hDTSxPQUFPTCxNQUFNSyxLQUFLO0lBQ2xCQyxhQUFhTixNQUFNTSxXQUFXO0lBQzlCQyxZQUFZO1FBQUVDLFdBQVc7SUFBVztJQUNwQ0MsV0FBVztRQUNUSixPQUFPTCxNQUFNSyxLQUFLO1FBQ2xCQyxhQUFhTixNQUFNTSxXQUFXO1FBQzlCSSxLQUFLO1FBQ0xDLFVBQVVDLFVBQUksQ0FBQ0MsSUFBSTtRQUNuQkMsTUFBTTtJQUNSO0FBQ0Y7QUFFQSxNQUFNQyxTQUFnRDtJQUNwRDtRQUNFQywwQkFBYTtRQUNiO1FBQ0E7S0FDRDtJQUNEO1FBQUNDLGtCQUFLO1FBQUU7UUFBOEI7S0FBbUQ7SUFDekY7UUFDRUMseUJBQVk7UUFDWjtRQUNBO0tBQ0Q7Q0FDRjtBQUVjLFNBQVNwQjtJQUN0QixxQkFDRSxxQkFBQ3FCO1FBQUlDLFdBQVU7a0JBQ2IsY0FBQSxzQkFBQ0M7WUFBUUQsV0FBVTs7OEJBQ2pCLHNCQUFDRDtvQkFBSUMsV0FBVTs7c0NBQ2IscUJBQUNFLGtCQUFPO3NDQUFDOztzQ0FDVCxzQkFBQ0M7O2dDQUFHOzhDQUNlLHFCQUFDQzs4Q0FDbEIscUJBQUNDOzhDQUFHOzs7O3NDQUVOLHFCQUFDQzs0QkFBRU4sV0FBVTtzQ0FBTzs7c0NBSXBCLHNCQUFDRDs0QkFBSUMsV0FBVTs7OENBQ2IscUJBQUNPOzhDQUFHOztnQ0FDSFosT0FBT2EsR0FBRyxDQUFDLENBQUMsQ0FBQ0MsTUFBTXhCLE9BQU95QixLQUFLLGlCQUM5QixzQkFBQ1g7OzBEQUNDLHFCQUFDVTtnREFBS0UsTUFBTTs7MERBQ1osc0JBQUNDOztrRUFDQyxxQkFBQ0M7a0VBQVE1Qjs7a0VBQ1QscUJBQUNxQjtrRUFBR0k7Ozs7O3VDQUpFekI7Ozs7OzhCQVVoQixzQkFBQ2M7b0JBQUlDLFdBQVU7O3NDQUNiLHNCQUFDYzs0QkFBUWQsV0FBVTs7OENBQ2pCLHFCQUFDWTtvQ0FBS1osV0FBVTs4Q0FDZCxjQUFBLHFCQUFDRix5QkFBWTt3Q0FBQ2EsTUFBTTs7OzhDQUV0QixxQkFBQ0o7OENBQUc7OzhDQUNKLHFCQUFDRDs4Q0FBRTs7OENBSUgsc0JBQUNTLGFBQUk7b0NBQUNmLFdBQVU7b0NBQVNnQixNQUFLOzt3Q0FBZTtzREFDL0IscUJBQUNDLHlCQUFZOzRDQUFDTixNQUFNOzs7Ozs7c0NBR3BDLHNCQUFDRzs0QkFBUWQsV0FBVTs7OENBQ2pCLHFCQUFDWTtvQ0FBS1osV0FBVTs4Q0FDZCxjQUFBLHFCQUFDa0Isa0JBQUs7d0NBQUNQLE1BQU07Ozs4Q0FFZixxQkFBQ0o7OENBQUc7OzhDQUNKLHFCQUFDRDs4Q0FBRTs7OENBSUgsc0JBQUNhO29DQUFFbkIsV0FBVTtvQ0FBd0JnQixNQUFNLENBQUMsT0FBTyxFQUFFeEIsVUFBSSxDQUFDNEIsS0FBSyxFQUFFOzt3Q0FDOUQ1QixVQUFJLENBQUM0QixLQUFLO3dDQUFDO3NEQUFDLHFCQUFDSCx5QkFBWTs0Q0FBQ04sTUFBTTs7Ozs7Ozs7Ozs7QUFPL0MifQ==

@@ -1,0 +1,53 @@
+a5dc713a84fc527fc5a1decf275e9f7f
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+/**
+ * Late-route predicate (B90) — a run scheduled for "today" is flagged as late because the
+ * comparison floors the scheduled ISO instant to the RUNTIME's local calendar day, which
+ * lands a day early for any negative-UTC-offset viewer.
+ *
+ * NO `process.env.TZ` PIN: an in-file assignment is inert under Jest (the worker gets a
+ * sandboxed `process.env`, so Node's timezone-reconfiguration hook never fires — proved by
+ * the RED-gate audit, where `TZ=UTC npx jest run-lateness.test` turned this file GREEN
+ * despite its former `process.env.TZ = "America/New_York"` line). The zone is passed as
+ * DATA instead, via `isRunPastDue`'s third argument, which now actually drives "today"
+ * (via `Intl.DateTimeFormat` in that zone) instead of being discarded — so the red below
+ * does not depend on the machine running the suite.
+ */
+const run_lateness_1 = require("../lib/run-lateness");
+const NY = "America/New_York";
+describe("isRunPastDue", () => {
+    it("REG-B90 does not flag a run scheduled for today as late", () => {
+        // 2026-06-10T00:00:00.000Z is the run's stored calendar day; "now" is 09:00 EDT on
+        // that same day. Today's local floor reads the scheduled instant as 2026-06-09 in NY.
+        const result = (0, run_lateness_1.isRunPastDue)("2026-06-10T00:00:00.000Z", new Date("2026-06-10T13:00:00Z"), NY);
+        expect(result).toBe(false);
+    });
+    // GUARD (not REG): passes today AND after the fix — it holds the opposite direction so
+    // the fix cannot simply return false always. Deliberately NOT tagged REG-B, so the
+    // `-t "REG-B"` red gate does not select a test that is expected to pass.
+    it("GUARD-B90 still flags a genuinely past run as late", () => {
+        const result = (0, run_lateness_1.isRunPastDue)("2026-06-08T00:00:00.000Z", new Date("2026-06-10T13:00:00Z"), NY);
+        expect(result).toBe(true);
+    });
+    // REG-B90 (zone-discriminating): identical arguments, opposite zones, opposite verdicts —
+    // this is the case that catches a `void timeZone` regression on a UTC CI runner, because
+    // the host's own local day (UTC) cannot produce both outcomes from one fixed `now`.
+    it("REG-B90 keeps a run current in a zone still on the earlier calendar day", () => {
+        // 2026-06-10T03:00:00Z is 2026-06-09 evening in New York (UTC-4) but already
+        // 2026-06-10 on a UTC host — a fake zone-agnostic predicate reads it as UTC's day.
+        const result = (0, run_lateness_1.isRunPastDue)("2026-06-09T00:00:00.000Z", new Date("2026-06-10T03:00:00Z"), NY);
+        expect(result).toBe(false);
+    });
+    it("REG-B90 flags the same run as late in a zone already on the later calendar day", () => {
+        // Auckland (UTC+12/+13) is already 2026-06-11 at this same instant.
+        const result = (0, run_lateness_1.isRunPastDue)("2026-06-09T00:00:00.000Z", new Date("2026-06-10T03:00:00Z"), "Pacific/Auckland");
+        expect(result).toBe(true);
+    });
+    it("falls back to the device-local day on an invalid IANA zone instead of throwing", () => {
+        const now = new Date("2026-06-10T13:00:00Z");
+        expect(() => (0, run_lateness_1.isRunPastDue)("2026-06-10T00:00:00.000Z", now, "Not/AZone")).not.toThrow();
+        expect((0, run_lateness_1.isRunPastDue)("2026-06-10T00:00:00.000Z", now, "Not/AZone")).toBe((0, run_lateness_1.isRunPastDue)("2026-06-10T00:00:00.000Z", now));
+    });
+});
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvX190ZXN0c19fL3J1bi1sYXRlbmVzcy50ZXN0LnRzIiwibWFwcGluZ3MiOiI7O0FBQUE7Ozs7Ozs7Ozs7OztHQVlHO0FBQ0gsc0RBQW1EO0FBRW5ELE1BQU0sRUFBRSxHQUFHLGtCQUFrQixDQUFDO0FBRTlCLFFBQVEsQ0FBQyxjQUFjLEVBQUUsR0FBRyxFQUFFO0lBQzVCLEVBQUUsQ0FBQyx5REFBeUQsRUFBRSxHQUFHLEVBQUU7UUFDakUsbUZBQW1GO1FBQ25GLHNGQUFzRjtRQUN0RixNQUFNLE1BQU0sR0FBRyxJQUFBLDJCQUFZLEVBQUMsMEJBQTBCLEVBQUUsSUFBSSxJQUFJLENBQUMsc0JBQXNCLENBQUMsRUFBRSxFQUFFLENBQUMsQ0FBQztRQUM5RixNQUFNLENBQUMsTUFBTSxDQUFDLENBQUMsSUFBSSxDQUFDLEtBQUssQ0FBQyxDQUFDO0lBQzdCLENBQUMsQ0FBQyxDQUFDO0lBRUgsdUZBQXVGO0lBQ3ZGLG1GQUFtRjtJQUNuRix5RUFBeUU7SUFDekUsRUFBRSxDQUFDLG9EQUFvRCxFQUFFLEdBQUcsRUFBRTtRQUM1RCxNQUFNLE1BQU0sR0FBRyxJQUFBLDJCQUFZLEVBQUMsMEJBQTBCLEVBQUUsSUFBSSxJQUFJLENBQUMsc0JBQXNCLENBQUMsRUFBRSxFQUFFLENBQUMsQ0FBQztRQUM5RixNQUFNLENBQUMsTUFBTSxDQUFDLENBQUMsSUFBSSxDQUFDLElBQUksQ0FBQyxDQUFDO0lBQzVCLENBQUMsQ0FBQyxDQUFDO0lBRUgsMEZBQTBGO0lBQzFGLHlGQUF5RjtJQUN6RixvRkFBb0Y7SUFDcEYsRUFBRSxDQUFDLHlFQUF5RSxFQUFFLEdBQUcsRUFBRTtRQUNqRiw2RUFBNkU7UUFDN0UsbUZBQW1GO1FBQ25GLE1BQU0sTUFBTSxHQUFHLElBQUEsMkJBQVksRUFBQywwQkFBMEIsRUFBRSxJQUFJLElBQUksQ0FBQyxzQkFBc0IsQ0FBQyxFQUFFLEVBQUUsQ0FBQyxDQUFDO1FBQzlGLE1BQU0sQ0FBQyxNQUFNLENBQUMsQ0FBQyxJQUFJLENBQUMsS0FBSyxDQUFDLENBQUM7SUFDN0IsQ0FBQyxDQUFDLENBQUM7SUFFSCxFQUFFLENBQUMsZ0ZBQWdGLEVBQUUsR0FBRyxFQUFFO1FBQ3hGLG9FQUFvRTtRQUNwRSxNQUFNLE1BQU0sR0FBRyxJQUFBLDJCQUFZLEVBQ3pCLDBCQUEwQixFQUMxQixJQUFJLElBQUksQ0FBQyxzQkFBc0IsQ0FBQyxFQUNoQyxrQkFBa0IsQ0FDbkIsQ0FBQztRQUNGLE1BQU0sQ0FBQyxNQUFNLENBQUMsQ0FBQyxJQUFJLENBQUMsSUFBSSxDQUFDLENBQUM7SUFDNUIsQ0FBQyxDQUFDLENBQUM7SUFFSCxFQUFFLENBQUMsZ0ZBQWdGLEVBQUUsR0FBRyxFQUFFO1FBQ3hGLE1BQU0sR0FBRyxHQUFHLElBQUksSUFBSSxDQUFDLHNCQUFzQixDQUFDLENBQUM7UUFDN0MsTUFBTSxDQUFDLEdBQUcsRUFBRSxDQUFDLElBQUEsMkJBQVksRUFBQywwQkFBMEIsRUFBRSxHQUFHLEVBQUUsV0FBVyxDQUFDLENBQUMsQ0FBQyxHQUFHLENBQUMsT0FBTyxFQUFFLENBQUM7UUFDdkYsTUFBTSxDQUFDLElBQUEsMkJBQVksRUFBQywwQkFBMEIsRUFBRSxHQUFHLEVBQUUsV0FBVyxDQUFDLENBQUMsQ0FBQyxJQUFJLENBQ3JFLElBQUEsMkJBQVksRUFBQywwQkFBMEIsRUFBRSxHQUFHLENBQUMsQ0FDOUMsQ0FBQztJQUNKLENBQUMsQ0FBQyxDQUFDO0FBQ0wsQ0FBQyxDQUFDLENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvX190ZXN0c19fL3J1bi1sYXRlbmVzcy50ZXN0LnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogTGF0ZS1yb3V0ZSBwcmVkaWNhdGUgKEI5MCkg4oCUIGEgcnVuIHNjaGVkdWxlZCBmb3IgXCJ0b2RheVwiIGlzIGZsYWdnZWQgYXMgbGF0ZSBiZWNhdXNlIHRoZVxuICogY29tcGFyaXNvbiBmbG9vcnMgdGhlIHNjaGVkdWxlZCBJU08gaW5zdGFudCB0byB0aGUgUlVOVElNRSdzIGxvY2FsIGNhbGVuZGFyIGRheSwgd2hpY2hcbiAqIGxhbmRzIGEgZGF5IGVhcmx5IGZvciBhbnkgbmVnYXRpdmUtVVRDLW9mZnNldCB2aWV3ZXIuXG4gKlxuICogTk8gYHByb2Nlc3MuZW52LlRaYCBQSU46IGFuIGluLWZpbGUgYXNzaWdubWVudCBpcyBpbmVydCB1bmRlciBKZXN0ICh0aGUgd29ya2VyIGdldHMgYVxuICogc2FuZGJveGVkIGBwcm9jZXNzLmVudmAsIHNvIE5vZGUncyB0aW1lem9uZS1yZWNvbmZpZ3VyYXRpb24gaG9vayBuZXZlciBmaXJlcyDigJQgcHJvdmVkIGJ5XG4gKiB0aGUgUkVELWdhdGUgYXVkaXQsIHdoZXJlIGBUWj1VVEMgbnB4IGplc3QgcnVuLWxhdGVuZXNzLnRlc3RgIHR1cm5lZCB0aGlzIGZpbGUgR1JFRU5cbiAqIGRlc3BpdGUgaXRzIGZvcm1lciBgcHJvY2Vzcy5lbnYuVFogPSBcIkFtZXJpY2EvTmV3X1lvcmtcImAgbGluZSkuIFRoZSB6b25lIGlzIHBhc3NlZCBhc1xuICogREFUQSBpbnN0ZWFkLCB2aWEgYGlzUnVuUGFzdER1ZWAncyB0aGlyZCBhcmd1bWVudCwgd2hpY2ggbm93IGFjdHVhbGx5IGRyaXZlcyBcInRvZGF5XCJcbiAqICh2aWEgYEludGwuRGF0ZVRpbWVGb3JtYXRgIGluIHRoYXQgem9uZSkgaW5zdGVhZCBvZiBiZWluZyBkaXNjYXJkZWQg4oCUIHNvIHRoZSByZWQgYmVsb3dcbiAqIGRvZXMgbm90IGRlcGVuZCBvbiB0aGUgbWFjaGluZSBydW5uaW5nIHRoZSBzdWl0ZS5cbiAqL1xuaW1wb3J0IHsgaXNSdW5QYXN0RHVlIH0gZnJvbSBcIi4uL2xpYi9ydW4tbGF0ZW5lc3NcIjtcblxuY29uc3QgTlkgPSBcIkFtZXJpY2EvTmV3X1lvcmtcIjtcblxuZGVzY3JpYmUoXCJpc1J1blBhc3REdWVcIiwgKCkgPT4ge1xuICBpdChcIlJFRy1COTAgZG9lcyBub3QgZmxhZyBhIHJ1biBzY2hlZHVsZWQgZm9yIHRvZGF5IGFzIGxhdGVcIiwgKCkgPT4ge1xuICAgIC8vIDIwMjYtMDYtMTBUMDA6MDA6MDAuMDAwWiBpcyB0aGUgcnVuJ3Mgc3RvcmVkIGNhbGVuZGFyIGRheTsgXCJub3dcIiBpcyAwOTowMCBFRFQgb25cbiAgICAvLyB0aGF0IHNhbWUgZGF5LiBUb2RheSdzIGxvY2FsIGZsb29yIHJlYWRzIHRoZSBzY2hlZHVsZWQgaW5zdGFudCBhcyAyMDI2LTA2LTA5IGluIE5ZLlxuICAgIGNvbnN0IHJlc3VsdCA9IGlzUnVuUGFzdER1ZShcIjIwMjYtMDYtMTBUMDA6MDA6MDAuMDAwWlwiLCBuZXcgRGF0ZShcIjIwMjYtMDYtMTBUMTM6MDA6MDBaXCIpLCBOWSk7XG4gICAgZXhwZWN0KHJlc3VsdCkudG9CZShmYWxzZSk7XG4gIH0pO1xuXG4gIC8vIEdVQVJEIChub3QgUkVHKTogcGFzc2VzIHRvZGF5IEFORCBhZnRlciB0aGUgZml4IOKAlCBpdCBob2xkcyB0aGUgb3Bwb3NpdGUgZGlyZWN0aW9uIHNvXG4gIC8vIHRoZSBmaXggY2Fubm90IHNpbXBseSByZXR1cm4gZmFsc2UgYWx3YXlzLiBEZWxpYmVyYXRlbHkgTk9UIHRhZ2dlZCBSRUctQiwgc28gdGhlXG4gIC8vIGAtdCBcIlJFRy1CXCJgIHJlZCBnYXRlIGRvZXMgbm90IHNlbGVjdCBhIHRlc3QgdGhhdCBpcyBleHBlY3RlZCB0byBwYXNzLlxuICBpdChcIkdVQVJELUI5MCBzdGlsbCBmbGFncyBhIGdlbnVpbmVseSBwYXN0IHJ1biBhcyBsYXRlXCIsICgpID0+IHtcbiAgICBjb25zdCByZXN1bHQgPSBpc1J1blBhc3REdWUoXCIyMDI2LTA2LTA4VDAwOjAwOjAwLjAwMFpcIiwgbmV3IERhdGUoXCIyMDI2LTA2LTEwVDEzOjAwOjAwWlwiKSwgTlkpO1xuICAgIGV4cGVjdChyZXN1bHQpLnRvQmUodHJ1ZSk7XG4gIH0pO1xuXG4gIC8vIFJFRy1COTAgKHpvbmUtZGlzY3JpbWluYXRpbmcpOiBpZGVudGljYWwgYXJndW1lbnRzLCBvcHBvc2l0ZSB6b25lcywgb3Bwb3NpdGUgdmVyZGljdHMg4oCUXG4gIC8vIHRoaXMgaXMgdGhlIGNhc2UgdGhhdCBjYXRjaGVzIGEgYHZvaWQgdGltZVpvbmVgIHJlZ3Jlc3Npb24gb24gYSBVVEMgQ0kgcnVubmVyLCBiZWNhdXNlXG4gIC8vIHRoZSBob3N0J3Mgb3duIGxvY2FsIGRheSAoVVRDKSBjYW5ub3QgcHJvZHVjZSBib3RoIG91dGNvbWVzIGZyb20gb25lIGZpeGVkIGBub3dgLlxuICBpdChcIlJFRy1COTAga2VlcHMgYSBydW4gY3VycmVudCBpbiBhIHpvbmUgc3RpbGwgb24gdGhlIGVhcmxpZXIgY2FsZW5kYXIgZGF5XCIsICgpID0+IHtcbiAgICAvLyAyMDI2LTA2LTEwVDAzOjAwOjAwWiBpcyAyMDI2LTA2LTA5IGV2ZW5pbmcgaW4gTmV3IFlvcmsgKFVUQy00KSBidXQgYWxyZWFkeVxuICAgIC8vIDIwMjYtMDYtMTAgb24gYSBVVEMgaG9zdCDigJQgYSBmYWtlIHpvbmUtYWdub3N0aWMgcHJlZGljYXRlIHJlYWRzIGl0IGFzIFVUQydzIGRheS5cbiAgICBjb25zdCByZXN1bHQgPSBpc1J1blBhc3REdWUoXCIyMDI2LTA2LTA5VDAwOjAwOjAwLjAwMFpcIiwgbmV3IERhdGUoXCIyMDI2LTA2LTEwVDAzOjAwOjAwWlwiKSwgTlkpO1xuICAgIGV4cGVjdChyZXN1bHQpLnRvQmUoZmFsc2UpO1xuICB9KTtcblxuICBpdChcIlJFRy1COTAgZmxhZ3MgdGhlIHNhbWUgcnVuIGFzIGxhdGUgaW4gYSB6b25lIGFscmVhZHkgb24gdGhlIGxhdGVyIGNhbGVuZGFyIGRheVwiLCAoKSA9PiB7XG4gICAgLy8gQXVja2xhbmQgKFVUQysxMi8rMTMpIGlzIGFscmVhZHkgMjAyNi0wNi0xMSBhdCB0aGlzIHNhbWUgaW5zdGFudC5cbiAgICBjb25zdCByZXN1bHQgPSBpc1J1blBhc3REdWUoXG4gICAgICBcIjIwMjYtMDYtMDlUMDA6MDA6MDAuMDAwWlwiLFxuICAgICAgbmV3IERhdGUoXCIyMDI2LTA2LTEwVDAzOjAwOjAwWlwiKSxcbiAgICAgIFwiUGFjaWZpYy9BdWNrbGFuZFwiLFxuICAgICk7XG4gICAgZXhwZWN0KHJlc3VsdCkudG9CZSh0cnVlKTtcbiAgfSk7XG5cbiAgaXQoXCJmYWxscyBiYWNrIHRvIHRoZSBkZXZpY2UtbG9jYWwgZGF5IG9uIGFuIGludmFsaWQgSUFOQSB6b25lIGluc3RlYWQgb2YgdGhyb3dpbmdcIiwgKCkgPT4ge1xuICAgIGNvbnN0IG5vdyA9IG5ldyBEYXRlKFwiMjAyNi0wNi0xMFQxMzowMDowMFpcIik7XG4gICAgZXhwZWN0KCgpID0+IGlzUnVuUGFzdER1ZShcIjIwMjYtMDYtMTBUMDA6MDA6MDAuMDAwWlwiLCBub3csIFwiTm90L0Fab25lXCIpKS5ub3QudG9UaHJvdygpO1xuICAgIGV4cGVjdChpc1J1blBhc3REdWUoXCIyMDI2LTA2LTEwVDAwOjAwOjAwLjAwMFpcIiwgbm93LCBcIk5vdC9BWm9uZVwiKSkudG9CZShcbiAgICAgIGlzUnVuUGFzdER1ZShcIjIwMjYtMDYtMTBUMDA6MDA6MDAuMDAwWlwiLCBub3cpLFxuICAgICk7XG4gIH0pO1xufSk7XG4iXSwidmVyc2lvbiI6M30=

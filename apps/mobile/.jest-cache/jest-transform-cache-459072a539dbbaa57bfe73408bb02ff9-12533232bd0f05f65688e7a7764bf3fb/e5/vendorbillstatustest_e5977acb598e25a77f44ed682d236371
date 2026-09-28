@@ -1,0 +1,42 @@
+ae3cde0f80d2d41fb075884a7e96945d
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+/**
+ * Wave E / imp-10b, L-072 — locks `vendorBillPillFor` (extracted from three
+ * byte-identical copies in the vendor-bills screens) against the shared,
+ * schema-pinned `VendorBillStatus` union. Before the fix, the local union had
+ * an invented `"FULL"` value (not a real Prisma value — the real PAID state)
+ * and no `"OVERDUE"` branch at all — this spec pins both: every real status
+ * has a branch, and `"FULL"` never lands on the "Paid" pill. X4 (review F5)
+ * also made the function total: any unrecognized status (including "FULL")
+ * now falls through to a neutral `{ variant: "gray", label: <the raw status> }`
+ * default instead of returning `undefined`.
+ */
+const vendor_bill_logic_1 = require("../lib/vendor-bill-logic");
+const types_1 = require("@routeflow/types");
+describe("vendorBillPillFor", () => {
+    it.each(types_1.VENDOR_BILL_STATUS_VALUES)("handles every real VendorBillStatus value: %s", (status) => {
+        const pill = (0, vendor_bill_logic_1.vendorBillPillFor)(status);
+        expect(pill).toBeDefined();
+        expect(typeof pill.label).toBe("string");
+        expect(pill.label.length).toBeGreaterThan(0);
+    });
+    it("maps PAID to a green 'Paid' pill (not the phantom 'FULL' branch)", () => {
+        expect((0, vendor_bill_logic_1.vendorBillPillFor)("PAID")).toEqual({ variant: "green", label: "Paid" });
+    });
+    it("maps OVERDUE to a red 'Overdue' pill — the value both apps used to omit", () => {
+        expect((0, vendor_bill_logic_1.vendorBillPillFor)("OVERDUE")).toEqual({ variant: "red", label: "Overdue" });
+    });
+    it("has no 'FULL' branch — an invented value from the pre-fix local union falls through to the neutral default, never the 'Paid' pill", () => {
+        expect((0, vendor_bill_logic_1.vendorBillPillFor)("FULL")).toEqual({
+            variant: "gray",
+            label: "FULL",
+        });
+    });
+    it("an unknown status returns a defined neutral pill with label = the input (X4: total return)", () => {
+        const pill = (0, vendor_bill_logic_1.vendorBillPillFor)("SOME_FUTURE_STATUS");
+        expect(pill).toBeDefined();
+        expect(pill.label).toBe("SOME_FUTURE_STATUS");
+    });
+});
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvX190ZXN0c19fL3ZlbmRvci1iaWxsLXN0YXR1cy50ZXN0LnRzIiwibWFwcGluZ3MiOiI7O0FBQUE7Ozs7Ozs7Ozs7R0FVRztBQUNILGdFQUE2RDtBQUU3RCw0Q0FBNkQ7QUFFN0QsUUFBUSxDQUFDLG1CQUFtQixFQUFFLEdBQUcsRUFBRTtJQUNqQyxFQUFFLENBQUMsSUFBSSxDQUFDLGlDQUF5QixDQUFDLENBQUMsK0NBQStDLEVBQUUsQ0FBQyxNQUFNLEVBQUUsRUFBRTtRQUM3RixNQUFNLElBQUksR0FBRyxJQUFBLHFDQUFpQixFQUFDLE1BQTBCLENBQUMsQ0FBQztRQUMzRCxNQUFNLENBQUMsSUFBSSxDQUFDLENBQUMsV0FBVyxFQUFFLENBQUM7UUFDM0IsTUFBTSxDQUFDLE9BQU8sSUFBSSxDQUFDLEtBQUssQ0FBQyxDQUFDLElBQUksQ0FBQyxRQUFRLENBQUMsQ0FBQztRQUN6QyxNQUFNLENBQUMsSUFBSSxDQUFDLEtBQUssQ0FBQyxNQUFNLENBQUMsQ0FBQyxlQUFlLENBQUMsQ0FBQyxDQUFDLENBQUM7SUFDL0MsQ0FBQyxDQUFDLENBQUM7SUFFSCxFQUFFLENBQUMsa0VBQWtFLEVBQUUsR0FBRyxFQUFFO1FBQzFFLE1BQU0sQ0FBQyxJQUFBLHFDQUFpQixFQUFDLE1BQU0sQ0FBQyxDQUFDLENBQUMsT0FBTyxDQUFDLEVBQUUsT0FBTyxFQUFFLE9BQU8sRUFBRSxLQUFLLEVBQUUsTUFBTSxFQUFFLENBQUMsQ0FBQztJQUNqRixDQUFDLENBQUMsQ0FBQztJQUVILEVBQUUsQ0FBQyx5RUFBeUUsRUFBRSxHQUFHLEVBQUU7UUFDakYsTUFBTSxDQUFDLElBQUEscUNBQWlCLEVBQUMsU0FBUyxDQUFDLENBQUMsQ0FBQyxPQUFPLENBQUMsRUFBRSxPQUFPLEVBQUUsS0FBSyxFQUFFLEtBQUssRUFBRSxTQUFTLEVBQUUsQ0FBQyxDQUFDO0lBQ3JGLENBQUMsQ0FBQyxDQUFDO0lBRUgsRUFBRSxDQUFDLG1JQUFtSSxFQUFFLEdBQUcsRUFBRTtRQUMzSSxNQUFNLENBQUMsSUFBQSxxQ0FBaUIsRUFBQyxNQUEwQixDQUFDLENBQUMsQ0FBQyxPQUFPLENBQUM7WUFDNUQsT0FBTyxFQUFFLE1BQU07WUFDZixLQUFLLEVBQUUsTUFBTTtTQUNkLENBQUMsQ0FBQztJQUNMLENBQUMsQ0FBQyxDQUFDO0lBRUgsRUFBRSxDQUFDLDRGQUE0RixFQUFFLEdBQUcsRUFBRTtRQUNwRyxNQUFNLElBQUksR0FBRyxJQUFBLHFDQUFpQixFQUFDLG9CQUF3QyxDQUFDLENBQUM7UUFDekUsTUFBTSxDQUFDLElBQUksQ0FBQyxDQUFDLFdBQVcsRUFBRSxDQUFDO1FBQzNCLE1BQU0sQ0FBQyxJQUFJLENBQUMsS0FBSyxDQUFDLENBQUMsSUFBSSxDQUFDLG9CQUFvQixDQUFDLENBQUM7SUFDaEQsQ0FBQyxDQUFDLENBQUM7QUFDTCxDQUFDLENBQUMsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9hcHBzL21vYmlsZS9fX3Rlc3RzX18vdmVuZG9yLWJpbGwtc3RhdHVzLnRlc3QudHMiXSwic291cmNlc0NvbnRlbnQiOlsiLyoqXG4gKiBXYXZlIEUgLyBpbXAtMTBiLCBMLTA3MiDigJQgbG9ja3MgYHZlbmRvckJpbGxQaWxsRm9yYCAoZXh0cmFjdGVkIGZyb20gdGhyZWVcbiAqIGJ5dGUtaWRlbnRpY2FsIGNvcGllcyBpbiB0aGUgdmVuZG9yLWJpbGxzIHNjcmVlbnMpIGFnYWluc3QgdGhlIHNoYXJlZCxcbiAqIHNjaGVtYS1waW5uZWQgYFZlbmRvckJpbGxTdGF0dXNgIHVuaW9uLiBCZWZvcmUgdGhlIGZpeCwgdGhlIGxvY2FsIHVuaW9uIGhhZFxuICogYW4gaW52ZW50ZWQgYFwiRlVMTFwiYCB2YWx1ZSAobm90IGEgcmVhbCBQcmlzbWEgdmFsdWUg4oCUIHRoZSByZWFsIFBBSUQgc3RhdGUpXG4gKiBhbmQgbm8gYFwiT1ZFUkRVRVwiYCBicmFuY2ggYXQgYWxsIOKAlCB0aGlzIHNwZWMgcGlucyBib3RoOiBldmVyeSByZWFsIHN0YXR1c1xuICogaGFzIGEgYnJhbmNoLCBhbmQgYFwiRlVMTFwiYCBuZXZlciBsYW5kcyBvbiB0aGUgXCJQYWlkXCIgcGlsbC4gWDQgKHJldmlldyBGNSlcbiAqIGFsc28gbWFkZSB0aGUgZnVuY3Rpb24gdG90YWw6IGFueSB1bnJlY29nbml6ZWQgc3RhdHVzIChpbmNsdWRpbmcgXCJGVUxMXCIpXG4gKiBub3cgZmFsbHMgdGhyb3VnaCB0byBhIG5ldXRyYWwgYHsgdmFyaWFudDogXCJncmF5XCIsIGxhYmVsOiA8dGhlIHJhdyBzdGF0dXM+IH1gXG4gKiBkZWZhdWx0IGluc3RlYWQgb2YgcmV0dXJuaW5nIGB1bmRlZmluZWRgLlxuICovXG5pbXBvcnQgeyB2ZW5kb3JCaWxsUGlsbEZvciB9IGZyb20gXCIuLi9saWIvdmVuZG9yLWJpbGwtbG9naWNcIjtcbmltcG9ydCB0eXBlIHsgVmVuZG9yQmlsbFN0YXR1cyB9IGZyb20gXCIuLi9saWIvYXBpL3ZlbmRvci1iaWxsc1wiO1xuaW1wb3J0IHsgVkVORE9SX0JJTExfU1RBVFVTX1ZBTFVFUyB9IGZyb20gXCJAcm91dGVmbG93L3R5cGVzXCI7XG5cbmRlc2NyaWJlKFwidmVuZG9yQmlsbFBpbGxGb3JcIiwgKCkgPT4ge1xuICBpdC5lYWNoKFZFTkRPUl9CSUxMX1NUQVRVU19WQUxVRVMpKFwiaGFuZGxlcyBldmVyeSByZWFsIFZlbmRvckJpbGxTdGF0dXMgdmFsdWU6ICVzXCIsIChzdGF0dXMpID0+IHtcbiAgICBjb25zdCBwaWxsID0gdmVuZG9yQmlsbFBpbGxGb3Ioc3RhdHVzIGFzIFZlbmRvckJpbGxTdGF0dXMpO1xuICAgIGV4cGVjdChwaWxsKS50b0JlRGVmaW5lZCgpO1xuICAgIGV4cGVjdCh0eXBlb2YgcGlsbC5sYWJlbCkudG9CZShcInN0cmluZ1wiKTtcbiAgICBleHBlY3QocGlsbC5sYWJlbC5sZW5ndGgpLnRvQmVHcmVhdGVyVGhhbigwKTtcbiAgfSk7XG5cbiAgaXQoXCJtYXBzIFBBSUQgdG8gYSBncmVlbiAnUGFpZCcgcGlsbCAobm90IHRoZSBwaGFudG9tICdGVUxMJyBicmFuY2gpXCIsICgpID0+IHtcbiAgICBleHBlY3QodmVuZG9yQmlsbFBpbGxGb3IoXCJQQUlEXCIpKS50b0VxdWFsKHsgdmFyaWFudDogXCJncmVlblwiLCBsYWJlbDogXCJQYWlkXCIgfSk7XG4gIH0pO1xuXG4gIGl0KFwibWFwcyBPVkVSRFVFIHRvIGEgcmVkICdPdmVyZHVlJyBwaWxsIOKAlCB0aGUgdmFsdWUgYm90aCBhcHBzIHVzZWQgdG8gb21pdFwiLCAoKSA9PiB7XG4gICAgZXhwZWN0KHZlbmRvckJpbGxQaWxsRm9yKFwiT1ZFUkRVRVwiKSkudG9FcXVhbCh7IHZhcmlhbnQ6IFwicmVkXCIsIGxhYmVsOiBcIk92ZXJkdWVcIiB9KTtcbiAgfSk7XG5cbiAgaXQoXCJoYXMgbm8gJ0ZVTEwnIGJyYW5jaCDigJQgYW4gaW52ZW50ZWQgdmFsdWUgZnJvbSB0aGUgcHJlLWZpeCBsb2NhbCB1bmlvbiBmYWxscyB0aHJvdWdoIHRvIHRoZSBuZXV0cmFsIGRlZmF1bHQsIG5ldmVyIHRoZSAnUGFpZCcgcGlsbFwiLCAoKSA9PiB7XG4gICAgZXhwZWN0KHZlbmRvckJpbGxQaWxsRm9yKFwiRlVMTFwiIGFzIFZlbmRvckJpbGxTdGF0dXMpKS50b0VxdWFsKHtcbiAgICAgIHZhcmlhbnQ6IFwiZ3JheVwiLFxuICAgICAgbGFiZWw6IFwiRlVMTFwiLFxuICAgIH0pO1xuICB9KTtcblxuICBpdChcImFuIHVua25vd24gc3RhdHVzIHJldHVybnMgYSBkZWZpbmVkIG5ldXRyYWwgcGlsbCB3aXRoIGxhYmVsID0gdGhlIGlucHV0IChYNDogdG90YWwgcmV0dXJuKVwiLCAoKSA9PiB7XG4gICAgY29uc3QgcGlsbCA9IHZlbmRvckJpbGxQaWxsRm9yKFwiU09NRV9GVVRVUkVfU1RBVFVTXCIgYXMgVmVuZG9yQmlsbFN0YXR1cyk7XG4gICAgZXhwZWN0KHBpbGwpLnRvQmVEZWZpbmVkKCk7XG4gICAgZXhwZWN0KHBpbGwubGFiZWwpLnRvQmUoXCJTT01FX0ZVVFVSRV9TVEFUVVNcIik7XG4gIH0pO1xufSk7XG4iXSwidmVyc2lvbiI6M30=

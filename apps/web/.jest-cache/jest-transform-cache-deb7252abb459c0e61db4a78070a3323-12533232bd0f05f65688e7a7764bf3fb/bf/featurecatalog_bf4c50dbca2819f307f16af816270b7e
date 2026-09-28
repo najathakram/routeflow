@@ -1,0 +1,269 @@
+956f97efd22ea97a452b39fddbcdfd23
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, {
+        enumerable: true,
+        get: Object.getOwnPropertyDescriptor(all, name).get
+    });
+}
+_export(exports, {
+    get CapabilityStrip () {
+        return CapabilityStrip;
+    },
+    get FeatureCatalog () {
+        return FeatureCatalog;
+    }
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _link = /*#__PURE__*/ _interop_require_default(require("next/link"));
+const _lucidereact = require("lucide-react");
+const _marketing = require("./marketing");
+function _interop_require_default(obj) {
+    return obj && obj.__esModule ? obj : {
+        default: obj
+    };
+}
+// Copy and data are verbatim from the redesign's components/feature-catalog.tsx
+// (M1 §10) — the 9-card capability grid, the 6-item wholesale-extras grid, and
+// the 9-chip capability strip.
+const capabilities = [
+    {
+        icon: _lucidereact.Warehouse,
+        name: "Inventory & purchasing",
+        text: "Manage products, stock counts, suppliers, and purchase orders in your distribution workspace.",
+        tag: "KNOW WHAT YOU HAVE"
+    },
+    {
+        icon: _lucidereact.Package,
+        name: "Order management",
+        text: "Keep customer orders, items, delivery details, and status together from intake to dispatch.",
+        tag: "KEEP WORK MOVING"
+    },
+    {
+        icon: _lucidereact.Route,
+        name: "Route planning & dispatch",
+        text: "Organize stops, assign drivers, and prepare delivery manifests with a Google Maps handoff.",
+        tag: "GIVE DRIVERS A CLEAR PLAN"
+    },
+    {
+        icon: _lucidereact.Wallet,
+        name: "Customer accounts",
+        text: "Find addresses, order history, balances, documents, and agreed pricing in the customer record.",
+        tag: "ANSWER WITH CONTEXT"
+    },
+    {
+        icon: _lucidereact.ReceiptText,
+        name: "Invoices & payments",
+        text: "Work with invoices, recorded payments, payment requests, statements, and credit notes.",
+        tag: "FOLLOW THE MONEY"
+    },
+    {
+        icon: _lucidereact.BarChart3,
+        name: "Analytics & reporting",
+        text: "Review sales, products, customers, and operations through dedicated reporting views.",
+        tag: "SEE THE BUSINESS"
+    },
+    {
+        icon: _lucidereact.Store,
+        name: "Retailer ordering platform",
+        text: "Give connected retailers a place to browse supplier catalogs, place orders, and review their purchases.",
+        tag: "CONNECT YOUR CUSTOMERS"
+    },
+    {
+        icon: _lucidereact.BrainCircuit,
+        name: "AI purchase-invoice scanning",
+        text: "Scan purchase invoices from multiple vendors to simplify inventory updates and costing, with less manual data entry.",
+        tag: "FROM INVOICE TO INVENTORY"
+    },
+    {
+        icon: _lucidereact.ShieldCheck,
+        name: "Regulated-goods workflows",
+        text: "Dedicated tobacco inventory, purchase and sales records, monthly reporting, and customer license records.",
+        tag: "HANDLE THE EXTRA REQUIREMENTS"
+    }
+];
+const featureKeys = [
+    "inventory",
+    "orders",
+    "routes",
+    "accounts",
+    "invoices",
+    "analytics",
+    "retailer-platform",
+    "ai-invoice-scanning",
+    "regulated-goods"
+];
+const details = [
+    {
+        icon: _lucidereact.Tags,
+        title: "Customer-specific pricing",
+        text: "Keep agreed prices with the account."
+    },
+    {
+        icon: _lucidereact.Repeat2,
+        title: "Standing orders",
+        text: "Keep repeat-order information within reach."
+    },
+    {
+        icon: _lucidereact.ShoppingCart,
+        title: "Suppliers & vendor bills",
+        text: "Cover the purchasing side of the operation."
+    },
+    {
+        icon: _lucidereact.RotateCcw,
+        title: "Returns & credit notes",
+        text: "Keep the exceptions connected to the sale."
+    },
+    {
+        icon: _lucidereact.HandCoins,
+        title: "Sales-agent commissions",
+        text: "Review agent rates and commission records."
+    },
+    {
+        icon: _lucidereact.FileUp,
+        title: "Imports & migration setup",
+        text: "Plan how existing records enter RouteFlow."
+    }
+];
+function FeatureCatalog({ heading = false } = {}) {
+    return /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+        className: "capability-catalog",
+        id: "capabilities",
+        children: [
+            heading && /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                className: "section-heading split-heading",
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)(_marketing.Eyebrow, {
+                                children: "THE FEATURES BEHIND THE FLOW"
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("h2", {
+                                children: [
+                                    "More than a delivery tool.",
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("br", {}),
+                                    "Your wholesale operation."
+                                ]
+                            })
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                        children: "From the stock you buy to the account you collect. See the connected tools your team can work with."
+                    })
+                ]
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("div", {
+                className: "capability-grid",
+                children: capabilities.map((f, i)=>/*#__PURE__*/ (0, _jsxruntime.jsxs)("article", {
+                        id: "feature-" + featureKeys[i],
+                        className: "capability-card capability-" + i,
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)(f.icon, {
+                                size: 27
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                children: f.tag
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("h3", {
+                                children: f.name
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                children: f.text
+                            })
+                        ]
+                    }, f.name))
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                className: "wholesale-extras",
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)(_marketing.Eyebrow, {
+                                children: "THE WHOLESALE DETAILS MATTER"
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("h3", {
+                                children: "Built for the work around the order, too."
+                            })
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("div", {
+                        className: "extras-grid",
+                        children: details.map((f)=>/*#__PURE__*/ (0, _jsxruntime.jsxs)("article", {
+                                children: [
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)(f.icon, {
+                                        size: 20
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("h4", {
+                                                children: f.title
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                                children: f.text
+                                            })
+                                        ]
+                                    })
+                                ]
+                            }, f.title))
+                    })
+                ]
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                className: "capability-scope",
+                children: "Review feature availability, AI configuration, and regulated-item reporting requirements for your plan and operation. Reporting tools do not guarantee regulatory compliance."
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsxs)(_link.default, {
+                className: "text-link",
+                href: "/book-a-demo",
+                children: [
+                    "Show us the features that matter to your team ",
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.ArrowUpRight, {
+                        size: 17
+                    })
+                ]
+            })
+        ]
+    });
+}
+function CapabilityStrip() {
+    const icons = [
+        _lucidereact.Warehouse,
+        _lucidereact.Package,
+        _lucidereact.Route,
+        _lucidereact.Wallet,
+        _lucidereact.ReceiptText,
+        _lucidereact.BarChart3,
+        _lucidereact.Store,
+        _lucidereact.BrainCircuit,
+        _lucidereact.ShieldCheck
+    ];
+    const labels = [
+        "Inventory",
+        "Orders",
+        "Routes",
+        "Accounts",
+        "Invoicing",
+        "Analytics",
+        "Retailer portal",
+        "AI assistance",
+        "Regulated goods"
+    ];
+    return /*#__PURE__*/ (0, _jsxruntime.jsx)("section", {
+        className: "capability-strip wrap",
+        "aria-label": "RouteFlow capabilities",
+        children: icons.map((Icon, i)=>/*#__PURE__*/ (0, _jsxruntime.jsxs)(_link.default, {
+                href: "/product#feature-" + featureKeys[i],
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)(Icon, {
+                        size: 18
+                    }),
+                    labels[i]
+                ]
+            }, featureKeys[i]))
+    });
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8obWFya2V0aW5nKS9jb21wb25lbnRzL2ZlYXR1cmUtY2F0YWxvZy50c3giXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IExpbmsgZnJvbSBcIm5leHQvbGlua1wiO1xuaW1wb3J0IHtcbiAgV2FyZWhvdXNlLFxuICBQYWNrYWdlLFxuICBSb3V0ZSxcbiAgUmVjZWlwdFRleHQsXG4gIFdhbGxldCxcbiAgQmFyQ2hhcnQzLFxuICBTdG9yZSxcbiAgQnJhaW5DaXJjdWl0LFxuICBTaGllbGRDaGVjayxcbiAgVGFncyxcbiAgUmVwZWF0MixcbiAgUm90YXRlQ2N3LFxuICBIYW5kQ29pbnMsXG4gIEZpbGVVcCxcbiAgU2hvcHBpbmdDYXJ0LFxuICBBcnJvd1VwUmlnaHQsXG59IGZyb20gXCJsdWNpZGUtcmVhY3RcIjtcbmltcG9ydCB7IEV5ZWJyb3cgfSBmcm9tIFwiLi9tYXJrZXRpbmdcIjtcblxuLy8gQ29weSBhbmQgZGF0YSBhcmUgdmVyYmF0aW0gZnJvbSB0aGUgcmVkZXNpZ24ncyBjb21wb25lbnRzL2ZlYXR1cmUtY2F0YWxvZy50c3hcbi8vIChNMSDCpzEwKSDigJQgdGhlIDktY2FyZCBjYXBhYmlsaXR5IGdyaWQsIHRoZSA2LWl0ZW0gd2hvbGVzYWxlLWV4dHJhcyBncmlkLCBhbmRcbi8vIHRoZSA5LWNoaXAgY2FwYWJpbGl0eSBzdHJpcC5cblxuY29uc3QgY2FwYWJpbGl0aWVzID0gW1xuICB7XG4gICAgaWNvbjogV2FyZWhvdXNlLFxuICAgIG5hbWU6IFwiSW52ZW50b3J5ICYgcHVyY2hhc2luZ1wiLFxuICAgIHRleHQ6IFwiTWFuYWdlIHByb2R1Y3RzLCBzdG9jayBjb3VudHMsIHN1cHBsaWVycywgYW5kIHB1cmNoYXNlIG9yZGVycyBpbiB5b3VyIGRpc3RyaWJ1dGlvbiB3b3Jrc3BhY2UuXCIsXG4gICAgdGFnOiBcIktOT1cgV0hBVCBZT1UgSEFWRVwiLFxuICB9LFxuICB7XG4gICAgaWNvbjogUGFja2FnZSxcbiAgICBuYW1lOiBcIk9yZGVyIG1hbmFnZW1lbnRcIixcbiAgICB0ZXh0OiBcIktlZXAgY3VzdG9tZXIgb3JkZXJzLCBpdGVtcywgZGVsaXZlcnkgZGV0YWlscywgYW5kIHN0YXR1cyB0b2dldGhlciBmcm9tIGludGFrZSB0byBkaXNwYXRjaC5cIixcbiAgICB0YWc6IFwiS0VFUCBXT1JLIE1PVklOR1wiLFxuICB9LFxuICB7XG4gICAgaWNvbjogUm91dGUsXG4gICAgbmFtZTogXCJSb3V0ZSBwbGFubmluZyAmIGRpc3BhdGNoXCIsXG4gICAgdGV4dDogXCJPcmdhbml6ZSBzdG9wcywgYXNzaWduIGRyaXZlcnMsIGFuZCBwcmVwYXJlIGRlbGl2ZXJ5IG1hbmlmZXN0cyB3aXRoIGEgR29vZ2xlIE1hcHMgaGFuZG9mZi5cIixcbiAgICB0YWc6IFwiR0lWRSBEUklWRVJTIEEgQ0xFQVIgUExBTlwiLFxuICB9LFxuICB7XG4gICAgaWNvbjogV2FsbGV0LFxuICAgIG5hbWU6IFwiQ3VzdG9tZXIgYWNjb3VudHNcIixcbiAgICB0ZXh0OiBcIkZpbmQgYWRkcmVzc2VzLCBvcmRlciBoaXN0b3J5LCBiYWxhbmNlcywgZG9jdW1lbnRzLCBhbmQgYWdyZWVkIHByaWNpbmcgaW4gdGhlIGN1c3RvbWVyIHJlY29yZC5cIixcbiAgICB0YWc6IFwiQU5TV0VSIFdJVEggQ09OVEVYVFwiLFxuICB9LFxuICB7XG4gICAgaWNvbjogUmVjZWlwdFRleHQsXG4gICAgbmFtZTogXCJJbnZvaWNlcyAmIHBheW1lbnRzXCIsXG4gICAgdGV4dDogXCJXb3JrIHdpdGggaW52b2ljZXMsIHJlY29yZGVkIHBheW1lbnRzLCBwYXltZW50IHJlcXVlc3RzLCBzdGF0ZW1lbnRzLCBhbmQgY3JlZGl0IG5vdGVzLlwiLFxuICAgIHRhZzogXCJGT0xMT1cgVEhFIE1PTkVZXCIsXG4gIH0sXG4gIHtcbiAgICBpY29uOiBCYXJDaGFydDMsXG4gICAgbmFtZTogXCJBbmFseXRpY3MgJiByZXBvcnRpbmdcIixcbiAgICB0ZXh0OiBcIlJldmlldyBzYWxlcywgcHJvZHVjdHMsIGN1c3RvbWVycywgYW5kIG9wZXJhdGlvbnMgdGhyb3VnaCBkZWRpY2F0ZWQgcmVwb3J0aW5nIHZpZXdzLlwiLFxuICAgIHRhZzogXCJTRUUgVEhFIEJVU0lORVNTXCIsXG4gIH0sXG4gIHtcbiAgICBpY29uOiBTdG9yZSxcbiAgICBuYW1lOiBcIlJldGFpbGVyIG9yZGVyaW5nIHBsYXRmb3JtXCIsXG4gICAgdGV4dDogXCJHaXZlIGNvbm5lY3RlZCByZXRhaWxlcnMgYSBwbGFjZSB0byBicm93c2Ugc3VwcGxpZXIgY2F0YWxvZ3MsIHBsYWNlIG9yZGVycywgYW5kIHJldmlldyB0aGVpciBwdXJjaGFzZXMuXCIsXG4gICAgdGFnOiBcIkNPTk5FQ1QgWU9VUiBDVVNUT01FUlNcIixcbiAgfSxcbiAge1xuICAgIGljb246IEJyYWluQ2lyY3VpdCxcbiAgICBuYW1lOiBcIkFJIHB1cmNoYXNlLWludm9pY2Ugc2Nhbm5pbmdcIixcbiAgICB0ZXh0OiBcIlNjYW4gcHVyY2hhc2UgaW52b2ljZXMgZnJvbSBtdWx0aXBsZSB2ZW5kb3JzIHRvIHNpbXBsaWZ5IGludmVudG9yeSB1cGRhdGVzIGFuZCBjb3N0aW5nLCB3aXRoIGxlc3MgbWFudWFsIGRhdGEgZW50cnkuXCIsXG4gICAgdGFnOiBcIkZST00gSU5WT0lDRSBUTyBJTlZFTlRPUllcIixcbiAgfSxcbiAge1xuICAgIGljb246IFNoaWVsZENoZWNrLFxuICAgIG5hbWU6IFwiUmVndWxhdGVkLWdvb2RzIHdvcmtmbG93c1wiLFxuICAgIHRleHQ6IFwiRGVkaWNhdGVkIHRvYmFjY28gaW52ZW50b3J5LCBwdXJjaGFzZSBhbmQgc2FsZXMgcmVjb3JkcywgbW9udGhseSByZXBvcnRpbmcsIGFuZCBjdXN0b21lciBsaWNlbnNlIHJlY29yZHMuXCIsXG4gICAgdGFnOiBcIkhBTkRMRSBUSEUgRVhUUkEgUkVRVUlSRU1FTlRTXCIsXG4gIH0sXG5dO1xuXG5jb25zdCBmZWF0dXJlS2V5cyA9IFtcbiAgXCJpbnZlbnRvcnlcIixcbiAgXCJvcmRlcnNcIixcbiAgXCJyb3V0ZXNcIixcbiAgXCJhY2NvdW50c1wiLFxuICBcImludm9pY2VzXCIsXG4gIFwiYW5hbHl0aWNzXCIsXG4gIFwicmV0YWlsZXItcGxhdGZvcm1cIixcbiAgXCJhaS1pbnZvaWNlLXNjYW5uaW5nXCIsXG4gIFwicmVndWxhdGVkLWdvb2RzXCIsXG5dO1xuXG5jb25zdCBkZXRhaWxzID0gW1xuICB7XG4gICAgaWNvbjogVGFncyxcbiAgICB0aXRsZTogXCJDdXN0b21lci1zcGVjaWZpYyBwcmljaW5nXCIsXG4gICAgdGV4dDogXCJLZWVwIGFncmVlZCBwcmljZXMgd2l0aCB0aGUgYWNjb3VudC5cIixcbiAgfSxcbiAge1xuICAgIGljb246IFJlcGVhdDIsXG4gICAgdGl0bGU6IFwiU3RhbmRpbmcgb3JkZXJzXCIsXG4gICAgdGV4dDogXCJLZWVwIHJlcGVhdC1vcmRlciBpbmZvcm1hdGlvbiB3aXRoaW4gcmVhY2guXCIsXG4gIH0sXG4gIHtcbiAgICBpY29uOiBTaG9wcGluZ0NhcnQsXG4gICAgdGl0bGU6IFwiU3VwcGxpZXJzICYgdmVuZG9yIGJpbGxzXCIsXG4gICAgdGV4dDogXCJDb3ZlciB0aGUgcHVyY2hhc2luZyBzaWRlIG9mIHRoZSBvcGVyYXRpb24uXCIsXG4gIH0sXG4gIHtcbiAgICBpY29uOiBSb3RhdGVDY3csXG4gICAgdGl0bGU6IFwiUmV0dXJucyAmIGNyZWRpdCBub3Rlc1wiLFxuICAgIHRleHQ6IFwiS2VlcCB0aGUgZXhjZXB0aW9ucyBjb25uZWN0ZWQgdG8gdGhlIHNhbGUuXCIsXG4gIH0sXG4gIHtcbiAgICBpY29uOiBIYW5kQ29pbnMsXG4gICAgdGl0bGU6IFwiU2FsZXMtYWdlbnQgY29tbWlzc2lvbnNcIixcbiAgICB0ZXh0OiBcIlJldmlldyBhZ2VudCByYXRlcyBhbmQgY29tbWlzc2lvbiByZWNvcmRzLlwiLFxuICB9LFxuICB7XG4gICAgaWNvbjogRmlsZVVwLFxuICAgIHRpdGxlOiBcIkltcG9ydHMgJiBtaWdyYXRpb24gc2V0dXBcIixcbiAgICB0ZXh0OiBcIlBsYW4gaG93IGV4aXN0aW5nIHJlY29yZHMgZW50ZXIgUm91dGVGbG93LlwiLFxuICB9LFxuXTtcblxuZXhwb3J0IGZ1bmN0aW9uIEZlYXR1cmVDYXRhbG9nKHsgaGVhZGluZyA9IGZhbHNlIH06IHsgaGVhZGluZz86IGJvb2xlYW4gfSA9IHt9KSB7XG4gIHJldHVybiAoXG4gICAgPGRpdiBjbGFzc05hbWU9XCJjYXBhYmlsaXR5LWNhdGFsb2dcIiBpZD1cImNhcGFiaWxpdGllc1wiPlxuICAgICAge2hlYWRpbmcgJiYgKFxuICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cInNlY3Rpb24taGVhZGluZyBzcGxpdC1oZWFkaW5nXCI+XG4gICAgICAgICAgPGRpdj5cbiAgICAgICAgICAgIDxFeWVicm93PlRIRSBGRUFUVVJFUyBCRUhJTkQgVEhFIEZMT1c8L0V5ZWJyb3c+XG4gICAgICAgICAgICA8aDI+XG4gICAgICAgICAgICAgIE1vcmUgdGhhbiBhIGRlbGl2ZXJ5IHRvb2wuXG4gICAgICAgICAgICAgIDxiciAvPlxuICAgICAgICAgICAgICBZb3VyIHdob2xlc2FsZSBvcGVyYXRpb24uXG4gICAgICAgICAgICA8L2gyPlxuICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgIDxwPlxuICAgICAgICAgICAgRnJvbSB0aGUgc3RvY2sgeW91IGJ1eSB0byB0aGUgYWNjb3VudCB5b3UgY29sbGVjdC4gU2VlIHRoZSBjb25uZWN0ZWQgdG9vbHMgeW91ciB0ZWFtIGNhblxuICAgICAgICAgICAgd29yayB3aXRoLlxuICAgICAgICAgIDwvcD5cbiAgICAgICAgPC9kaXY+XG4gICAgICApfVxuICAgICAgPGRpdiBjbGFzc05hbWU9XCJjYXBhYmlsaXR5LWdyaWRcIj5cbiAgICAgICAge2NhcGFiaWxpdGllcy5tYXAoKGYsIGkpID0+IChcbiAgICAgICAgICA8YXJ0aWNsZVxuICAgICAgICAgICAga2V5PXtmLm5hbWV9XG4gICAgICAgICAgICBpZD17XCJmZWF0dXJlLVwiICsgZmVhdHVyZUtleXNbaV19XG4gICAgICAgICAgICBjbGFzc05hbWU9e1wiY2FwYWJpbGl0eS1jYXJkIGNhcGFiaWxpdHktXCIgKyBpfVxuICAgICAgICAgID5cbiAgICAgICAgICAgIDxmLmljb24gc2l6ZT17Mjd9IC8+XG4gICAgICAgICAgICA8c3Bhbj57Zi50YWd9PC9zcGFuPlxuICAgICAgICAgICAgPGgzPntmLm5hbWV9PC9oMz5cbiAgICAgICAgICAgIDxwPntmLnRleHR9PC9wPlxuICAgICAgICAgIDwvYXJ0aWNsZT5cbiAgICAgICAgKSl9XG4gICAgICA8L2Rpdj5cbiAgICAgIDxkaXYgY2xhc3NOYW1lPVwid2hvbGVzYWxlLWV4dHJhc1wiPlxuICAgICAgICA8ZGl2PlxuICAgICAgICAgIDxFeWVicm93PlRIRSBXSE9MRVNBTEUgREVUQUlMUyBNQVRURVI8L0V5ZWJyb3c+XG4gICAgICAgICAgPGgzPkJ1aWx0IGZvciB0aGUgd29yayBhcm91bmQgdGhlIG9yZGVyLCB0b28uPC9oMz5cbiAgICAgICAgPC9kaXY+XG4gICAgICAgIDxkaXYgY2xhc3NOYW1lPVwiZXh0cmFzLWdyaWRcIj5cbiAgICAgICAgICB7ZGV0YWlscy5tYXAoKGYpID0+IChcbiAgICAgICAgICAgIDxhcnRpY2xlIGtleT17Zi50aXRsZX0+XG4gICAgICAgICAgICAgIDxmLmljb24gc2l6ZT17MjB9IC8+XG4gICAgICAgICAgICAgIDxkaXY+XG4gICAgICAgICAgICAgICAgPGg0PntmLnRpdGxlfTwvaDQ+XG4gICAgICAgICAgICAgICAgPHA+e2YudGV4dH08L3A+XG4gICAgICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgICAgPC9hcnRpY2xlPlxuICAgICAgICAgICkpfVxuICAgICAgICA8L2Rpdj5cbiAgICAgIDwvZGl2PlxuICAgICAgPHAgY2xhc3NOYW1lPVwiY2FwYWJpbGl0eS1zY29wZVwiPlxuICAgICAgICBSZXZpZXcgZmVhdHVyZSBhdmFpbGFiaWxpdHksIEFJIGNvbmZpZ3VyYXRpb24sIGFuZCByZWd1bGF0ZWQtaXRlbSByZXBvcnRpbmcgcmVxdWlyZW1lbnRzIGZvclxuICAgICAgICB5b3VyIHBsYW4gYW5kIG9wZXJhdGlvbi4gUmVwb3J0aW5nIHRvb2xzIGRvIG5vdCBndWFyYW50ZWUgcmVndWxhdG9yeSBjb21wbGlhbmNlLlxuICAgICAgPC9wPlxuICAgICAgPExpbmsgY2xhc3NOYW1lPVwidGV4dC1saW5rXCIgaHJlZj1cIi9ib29rLWEtZGVtb1wiPlxuICAgICAgICBTaG93IHVzIHRoZSBmZWF0dXJlcyB0aGF0IG1hdHRlciB0byB5b3VyIHRlYW0gPEFycm93VXBSaWdodCBzaXplPXsxN30gLz5cbiAgICAgIDwvTGluaz5cbiAgICA8L2Rpdj5cbiAgKTtcbn1cblxuZXhwb3J0IGZ1bmN0aW9uIENhcGFiaWxpdHlTdHJpcCgpIHtcbiAgY29uc3QgaWNvbnMgPSBbXG4gICAgV2FyZWhvdXNlLFxuICAgIFBhY2thZ2UsXG4gICAgUm91dGUsXG4gICAgV2FsbGV0LFxuICAgIFJlY2VpcHRUZXh0LFxuICAgIEJhckNoYXJ0MyxcbiAgICBTdG9yZSxcbiAgICBCcmFpbkNpcmN1aXQsXG4gICAgU2hpZWxkQ2hlY2ssXG4gIF07XG4gIGNvbnN0IGxhYmVscyA9IFtcbiAgICBcIkludmVudG9yeVwiLFxuICAgIFwiT3JkZXJzXCIsXG4gICAgXCJSb3V0ZXNcIixcbiAgICBcIkFjY291bnRzXCIsXG4gICAgXCJJbnZvaWNpbmdcIixcbiAgICBcIkFuYWx5dGljc1wiLFxuICAgIFwiUmV0YWlsZXIgcG9ydGFsXCIsXG4gICAgXCJBSSBhc3Npc3RhbmNlXCIsXG4gICAgXCJSZWd1bGF0ZWQgZ29vZHNcIixcbiAgXTtcbiAgcmV0dXJuIChcbiAgICA8c2VjdGlvbiBjbGFzc05hbWU9XCJjYXBhYmlsaXR5LXN0cmlwIHdyYXBcIiBhcmlhLWxhYmVsPVwiUm91dGVGbG93IGNhcGFiaWxpdGllc1wiPlxuICAgICAge2ljb25zLm1hcCgoSWNvbiwgaSkgPT4gKFxuICAgICAgICA8TGluayBrZXk9e2ZlYXR1cmVLZXlzW2ldfSBocmVmPXtcIi9wcm9kdWN0I2ZlYXR1cmUtXCIgKyBmZWF0dXJlS2V5c1tpXX0+XG4gICAgICAgICAgPEljb24gc2l6ZT17MTh9IC8+XG4gICAgICAgICAge2xhYmVsc1tpXX1cbiAgICAgICAgPC9MaW5rPlxuICAgICAgKSl9XG4gICAgPC9zZWN0aW9uPlxuICApO1xufVxuIl0sIm5hbWVzIjpbIkNhcGFiaWxpdHlTdHJpcCIsIkZlYXR1cmVDYXRhbG9nIiwiY2FwYWJpbGl0aWVzIiwiaWNvbiIsIldhcmVob3VzZSIsIm5hbWUiLCJ0ZXh0IiwidGFnIiwiUGFja2FnZSIsIlJvdXRlIiwiV2FsbGV0IiwiUmVjZWlwdFRleHQiLCJCYXJDaGFydDMiLCJTdG9yZSIsIkJyYWluQ2lyY3VpdCIsIlNoaWVsZENoZWNrIiwiZmVhdHVyZUtleXMiLCJkZXRhaWxzIiwiVGFncyIsInRpdGxlIiwiUmVwZWF0MiIsIlNob3BwaW5nQ2FydCIsIlJvdGF0ZUNjdyIsIkhhbmRDb2lucyIsIkZpbGVVcCIsImhlYWRpbmciLCJkaXYiLCJjbGFzc05hbWUiLCJpZCIsIkV5ZWJyb3ciLCJoMiIsImJyIiwicCIsIm1hcCIsImYiLCJpIiwiYXJ0aWNsZSIsInNpemUiLCJzcGFuIiwiaDMiLCJoNCIsIkxpbmsiLCJocmVmIiwiQXJyb3dVcFJpZ2h0IiwiaWNvbnMiLCJsYWJlbHMiLCJzZWN0aW9uIiwiYXJpYS1sYWJlbCIsIkljb24iXSwibWFwcGluZ3MiOiI7Ozs7Ozs7Ozs7O1FBNExnQkE7ZUFBQUE7O1FBN0RBQztlQUFBQTs7Ozs2REEvSEM7NkJBa0JWOzJCQUNpQjs7Ozs7O0FBRXhCLGdGQUFnRjtBQUNoRiwrRUFBK0U7QUFDL0UsK0JBQStCO0FBRS9CLE1BQU1DLGVBQWU7SUFDbkI7UUFDRUMsTUFBTUMsc0JBQVM7UUFDZkMsTUFBTTtRQUNOQyxNQUFNO1FBQ05DLEtBQUs7SUFDUDtJQUNBO1FBQ0VKLE1BQU1LLG9CQUFPO1FBQ2JILE1BQU07UUFDTkMsTUFBTTtRQUNOQyxLQUFL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

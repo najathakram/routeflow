@@ -1,0 +1,34 @@
+bc1d4f881d7b6469e742e4e6de42ee32
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+/**
+ * roundUnitCost now lives once, in `@routeflow/pricing` — there is no sibling
+ * copy to keep in parity (it is the 4dp cost rounder, the twin of COST_DP = 4
+ * in apps/api/src/inventory/costing.ts). This spec pins the FP-victim cases:
+ * the same EPSILON-no-op defect class as REG-B122's roundMoney, at the 4th
+ * decimal. EPSILON is <= half a ULP for any scaled value above ~2e-4, so the
+ * old nudge never did anything and FP-victim inputs (x*10000 landing at
+ * .4999…) rounded DOWN against the documented half-away-from-zero intent.
+ * Victims verified numerically: 0.00145*10000 = 14.499999999999998, etc.
+ * Untokened deliberately: B122's register proof is roundMoney's pins; these
+ * are the close-out hardening for the 4dp rounder.
+ */
+const pricing_1 = require("@routeflow/pricing");
+const VICTIMS = [
+    // [input, expected] — scaled value lands at .4999…, old body rounded down.
+    [0.00145, 0.0015],
+    [0.00465, 0.0047],
+    [0.00565, 0.0057],
+];
+describe("roundUnitCost", () => {
+    it.each(VICTIMS)("rounds the FP-victim %f half-up to %f", (input, expected) => {
+        expect((0, pricing_1.roundUnitCost)(input)).toBe(expected);
+    });
+    it("keeps ordinary values exact", () => {
+        expect((0, pricing_1.roundUnitCost)(0.4167)).toBe(0.4167);
+        expect((0, pricing_1.roundUnitCost)(10 / 24)).toBe(0.4167); // $10 case / 24 pieces
+        expect((0, pricing_1.roundUnitCost)(-0.00145)).toBe(-0.0015); // sign preserved, away from zero
+        expect((0, pricing_1.roundUnitCost)(NaN)).toBe(0);
+    });
+});
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvX190ZXN0c19fL3JvdW5kLXVuaXQtY29zdC50ZXN0LnRzIiwibWFwcGluZ3MiOiI7O0FBQUE7Ozs7Ozs7Ozs7O0dBV0c7QUFDSCxnREFBbUQ7QUFFbkQsTUFBTSxPQUFPLEdBQTRCO0lBQ3ZDLDJFQUEyRTtJQUMzRSxDQUFDLE9BQU8sRUFBRSxNQUFNLENBQUM7SUFDakIsQ0FBQyxPQUFPLEVBQUUsTUFBTSxDQUFDO0lBQ2pCLENBQUMsT0FBTyxFQUFFLE1BQU0sQ0FBQztDQUNsQixDQUFDO0FBRUYsUUFBUSxDQUFDLGVBQWUsRUFBRSxHQUFHLEVBQUU7SUFDN0IsRUFBRSxDQUFDLElBQUksQ0FBQyxPQUFPLENBQUMsQ0FBQyx1Q0FBdUMsRUFBRSxDQUFDLEtBQUssRUFBRSxRQUFRLEVBQUUsRUFBRTtRQUM1RSxNQUFNLENBQUMsSUFBQSx1QkFBYSxFQUFDLEtBQUssQ0FBQyxDQUFDLENBQUMsSUFBSSxDQUFDLFFBQVEsQ0FBQyxDQUFDO0lBQzlDLENBQUMsQ0FBQyxDQUFDO0lBRUgsRUFBRSxDQUFDLDZCQUE2QixFQUFFLEdBQUcsRUFBRTtRQUNyQyxNQUFNLENBQUMsSUFBQSx1QkFBYSxFQUFDLE1BQU0sQ0FBQyxDQUFDLENBQUMsSUFBSSxDQUFDLE1BQU0sQ0FBQyxDQUFDO1FBQzNDLE1BQU0sQ0FBQyxJQUFBLHVCQUFhLEVBQUMsRUFBRSxHQUFHLEVBQUUsQ0FBQyxDQUFDLENBQUMsSUFBSSxDQUFDLE1BQU0sQ0FBQyxDQUFDLENBQUMsdUJBQXVCO1FBQ3BFLE1BQU0sQ0FBQyxJQUFBLHVCQUFhLEVBQUMsQ0FBQyxPQUFPLENBQUMsQ0FBQyxDQUFDLElBQUksQ0FBQyxDQUFDLE1BQU0sQ0FBQyxDQUFDLENBQUMsaUNBQWlDO1FBQ2hGLE1BQU0sQ0FBQyxJQUFBLHVCQUFhLEVBQUMsR0FBRyxDQUFDLENBQUMsQ0FBQyxJQUFJLENBQUMsQ0FBQyxDQUFDLENBQUM7SUFDckMsQ0FBQyxDQUFDLENBQUM7QUFDTCxDQUFDLENBQUMsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9hcHBzL21vYmlsZS9fX3Rlc3RzX18vcm91bmQtdW5pdC1jb3N0LnRlc3QudHMiXSwic291cmNlc0NvbnRlbnQiOlsiLyoqXG4gKiByb3VuZFVuaXRDb3N0IG5vdyBsaXZlcyBvbmNlLCBpbiBgQHJvdXRlZmxvdy9wcmljaW5nYCDigJQgdGhlcmUgaXMgbm8gc2libGluZ1xuICogY29weSB0byBrZWVwIGluIHBhcml0eSAoaXQgaXMgdGhlIDRkcCBjb3N0IHJvdW5kZXIsIHRoZSB0d2luIG9mIENPU1RfRFAgPSA0XG4gKiBpbiBhcHBzL2FwaS9zcmMvaW52ZW50b3J5L2Nvc3RpbmcudHMpLiBUaGlzIHNwZWMgcGlucyB0aGUgRlAtdmljdGltIGNhc2VzOlxuICogdGhlIHNhbWUgRVBTSUxPTi1uby1vcCBkZWZlY3QgY2xhc3MgYXMgUkVHLUIxMjIncyByb3VuZE1vbmV5LCBhdCB0aGUgNHRoXG4gKiBkZWNpbWFsLiBFUFNJTE9OIGlzIDw9IGhhbGYgYSBVTFAgZm9yIGFueSBzY2FsZWQgdmFsdWUgYWJvdmUgfjJlLTQsIHNvIHRoZVxuICogb2xkIG51ZGdlIG5ldmVyIGRpZCBhbnl0aGluZyBhbmQgRlAtdmljdGltIGlucHV0cyAoeCoxMDAwMCBsYW5kaW5nIGF0XG4gKiAuNDk5OeKApikgcm91bmRlZCBET1dOIGFnYWluc3QgdGhlIGRvY3VtZW50ZWQgaGFsZi1hd2F5LWZyb20temVybyBpbnRlbnQuXG4gKiBWaWN0aW1zIHZlcmlmaWVkIG51bWVyaWNhbGx5OiAwLjAwMTQ1KjEwMDAwID0gMTQuNDk5OTk5OTk5OTk5OTk4LCBldGMuXG4gKiBVbnRva2VuZWQgZGVsaWJlcmF0ZWx5OiBCMTIyJ3MgcmVnaXN0ZXIgcHJvb2YgaXMgcm91bmRNb25leSdzIHBpbnM7IHRoZXNlXG4gKiBhcmUgdGhlIGNsb3NlLW91dCBoYXJkZW5pbmcgZm9yIHRoZSA0ZHAgcm91bmRlci5cbiAqL1xuaW1wb3J0IHsgcm91bmRVbml0Q29zdCB9IGZyb20gXCJAcm91dGVmbG93L3ByaWNpbmdcIjtcblxuY29uc3QgVklDVElNUzogQXJyYXk8W251bWJlciwgbnVtYmVyXT4gPSBbXG4gIC8vIFtpbnB1dCwgZXhwZWN0ZWRdIOKAlCBzY2FsZWQgdmFsdWUgbGFuZHMgYXQgLjQ5OTnigKYsIG9sZCBib2R5IHJvdW5kZWQgZG93bi5cbiAgWzAuMDAxNDUsIDAuMDAxNV0sXG4gIFswLjAwNDY1LCAwLjAwNDddLFxuICBbMC4wMDU2NSwgMC4wMDU3XSxcbl07XG5cbmRlc2NyaWJlKFwicm91bmRVbml0Q29zdFwiLCAoKSA9PiB7XG4gIGl0LmVhY2goVklDVElNUykoXCJyb3VuZHMgdGhlIEZQLXZpY3RpbSAlZiBoYWxmLXVwIHRvICVmXCIsIChpbnB1dCwgZXhwZWN0ZWQpID0+IHtcbiAgICBleHBlY3Qocm91bmRVbml0Q29zdChpbnB1dCkpLnRvQmUoZXhwZWN0ZWQpO1xuICB9KTtcblxuICBpdChcImtlZXBzIG9yZGluYXJ5IHZhbHVlcyBleGFjdFwiLCAoKSA9PiB7XG4gICAgZXhwZWN0KHJvdW5kVW5pdENvc3QoMC40MTY3KSkudG9CZSgwLjQxNjcpO1xuICAgIGV4cGVjdChyb3VuZFVuaXRDb3N0KDEwIC8gMjQpKS50b0JlKDAuNDE2Nyk7IC8vICQxMCBjYXNlIC8gMjQgcGllY2VzXG4gICAgZXhwZWN0KHJvdW5kVW5pdENvc3QoLTAuMDAxNDUpKS50b0JlKC0wLjAwMTUpOyAvLyBzaWduIHByZXNlcnZlZCwgYXdheSBmcm9tIHplcm9cbiAgICBleHBlY3Qocm91bmRVbml0Q29zdChOYU4pKS50b0JlKDApO1xuICB9KTtcbn0pO1xuIl0sInZlcnNpb24iOjN9

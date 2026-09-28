@@ -1,0 +1,65 @@
+ec22a43bd6aed76234940d2fa2beb439
+/**
+ * P5-12: lifecycle badge for a CHECK payment row. Only checks get a badge.
+ * A manually-voided (never-bounced) check has no checkStatus and status
+ * VOID — that's a plain void, not a lifecycle event, so no badge.
+ * A missing checkStatus on a non-void check is legacy data recorded before
+ * the lifecycle existed — treat it as RECORDED.
+ *
+ * Extracted (P5-14) so the buyer invoice-detail and payments pages render
+ * identical badges from one source instead of two copies drifting apart.
+ */ "use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+Object.defineProperty(exports, "checkBadgeFor", {
+    enumerable: true,
+    get: function() {
+        return checkBadgeFor;
+    }
+});
+function checkBadgeFor(p) {
+    if (p.method !== "CHECK") return null;
+    // Post-dated check payments PR-1: a PENDING payment (a post-dated check on file, not yet
+    // clearable/bankable — see @routeflow/pricing's HELD_STATUSES doc) is checked BEFORE the
+    // checkStatus switch below. Its checkStatus will typically be RECORDED, so without this
+    // early check the switch would mask the more important PENDING signal behind a plain
+    // "Recorded" badge.
+    if (p.status === "PENDING") return {
+        label: "Post-dated · pending",
+        variant: "warning"
+    };
+    if (!p.checkStatus) {
+        if (p.status === "VOID") return null;
+        return {
+            label: "Recorded",
+            variant: "neutral"
+        };
+    }
+    switch(p.checkStatus){
+        case "RECORDED":
+            return {
+                label: "Recorded",
+                variant: "neutral"
+            };
+        case "DEPOSITED":
+            return {
+                label: "Deposited",
+                variant: "info"
+            };
+        case "CLEARED":
+            return {
+                label: "Cleared",
+                variant: "success"
+            };
+        case "BOUNCED":
+            return {
+                label: "Bounced",
+                variant: "danger"
+            };
+        default:
+            return null;
+    }
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2xpYi9jaGVjay1iYWRnZS50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqIFA1LTEyOiBsaWZlY3ljbGUgYmFkZ2UgZm9yIGEgQ0hFQ0sgcGF5bWVudCByb3cuIE9ubHkgY2hlY2tzIGdldCBhIGJhZGdlLlxuICogQSBtYW51YWxseS12b2lkZWQgKG5ldmVyLWJvdW5jZWQpIGNoZWNrIGhhcyBubyBjaGVja1N0YXR1cyBhbmQgc3RhdHVzXG4gKiBWT0lEIOKAlCB0aGF0J3MgYSBwbGFpbiB2b2lkLCBub3QgYSBsaWZlY3ljbGUgZXZlbnQsIHNvIG5vIGJhZGdlLlxuICogQSBtaXNzaW5nIGNoZWNrU3RhdHVzIG9uIGEgbm9uLXZvaWQgY2hlY2sgaXMgbGVnYWN5IGRhdGEgcmVjb3JkZWQgYmVmb3JlXG4gKiB0aGUgbGlmZWN5Y2xlIGV4aXN0ZWQg4oCUIHRyZWF0IGl0IGFzIFJFQ09SREVELlxuICpcbiAqIEV4dHJhY3RlZCAoUDUtMTQpIHNvIHRoZSBidXllciBpbnZvaWNlLWRldGFpbCBhbmQgcGF5bWVudHMgcGFnZXMgcmVuZGVyXG4gKiBpZGVudGljYWwgYmFkZ2VzIGZyb20gb25lIHNvdXJjZSBpbnN0ZWFkIG9mIHR3byBjb3BpZXMgZHJpZnRpbmcgYXBhcnQuXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiBjaGVja0JhZGdlRm9yKHA6IHtcbiAgbWV0aG9kOiBzdHJpbmc7XG4gIHN0YXR1cz86IHN0cmluZztcbiAgY2hlY2tTdGF0dXM/OiBcIlJFQ09SREVEXCIgfCBcIkRFUE9TSVRFRFwiIHwgXCJDTEVBUkVEXCIgfCBcIkJPVU5DRURcIiB8IG51bGw7XG59KTogeyBsYWJlbDogc3RyaW5nOyB2YXJpYW50OiBcInN1Y2Nlc3NcIiB8IFwid2FybmluZ1wiIHwgXCJkYW5nZXJcIiB8IFwibmV1dHJhbFwiIHwgXCJpbmZvXCIgfSB8IG51bGwge1xuICBpZiAocC5tZXRob2QgIT09IFwiQ0hFQ0tcIikgcmV0dXJuIG51bGw7XG4gIC8vIFBvc3QtZGF0ZWQgY2hlY2sgcGF5bWVudHMgUFItMTogYSBQRU5ESU5HIHBheW1lbnQgKGEgcG9zdC1kYXRlZCBjaGVjayBvbiBmaWxlLCBub3QgeWV0XG4gIC8vIGNsZWFyYWJsZS9iYW5rYWJsZSDigJQgc2VlIEByb3V0ZWZsb3cvcHJpY2luZydzIEhFTERfU1RBVFVTRVMgZG9jKSBpcyBjaGVja2VkIEJFRk9SRSB0aGVcbiAgLy8gY2hlY2tTdGF0dXMgc3dpdGNoIGJlbG93LiBJdHMgY2hlY2tTdGF0dXMgd2lsbCB0eXBpY2FsbHkgYmUgUkVDT1JERUQsIHNvIHdpdGhvdXQgdGhpc1xuICAvLyBlYXJseSBjaGVjayB0aGUgc3dpdGNoIHdvdWxkIG1hc2sgdGhlIG1vcmUgaW1wb3J0YW50IFBFTkRJTkcgc2lnbmFsIGJlaGluZCBhIHBsYWluXG4gIC8vIFwiUmVjb3JkZWRcIiBiYWRnZS5cbiAgaWYgKHAuc3RhdHVzID09PSBcIlBFTkRJTkdcIikgcmV0dXJuIHsgbGFiZWw6IFwiUG9zdC1kYXRlZCDCtyBwZW5kaW5nXCIsIHZhcmlhbnQ6IFwid2FybmluZ1wiIH07XG4gIGlmICghcC5jaGVja1N0YXR1cykge1xuICAgIGlmIChwLnN0YXR1cyA9PT0gXCJWT0lEXCIpIHJldHVybiBudWxsO1xuICAgIHJldHVybiB7IGxhYmVsOiBcIlJlY29yZGVkXCIsIHZhcmlhbnQ6IFwibmV1dHJhbFwiIH07XG4gIH1cbiAgc3dpdGNoIChwLmNoZWNrU3RhdHVzKSB7XG4gICAgY2FzZSBcIlJFQ09SREVEXCI6XG4gICAgICByZXR1cm4geyBsYWJlbDogXCJSZWNvcmRlZFwiLCB2YXJpYW50OiBcIm5ldXRyYWxcIiB9O1xuICAgIGNhc2UgXCJERVBPU0lURURcIjpcbiAgICAgIHJldHVybiB7IGxhYmVsOiBcIkRlcG9zaXRlZFwiLCB2YXJpYW50OiBcImluZm9cIiB9O1xuICAgIGNhc2UgXCJDTEVBUkVEXCI6XG4gICAgICByZXR1cm4geyBsYWJlbDogXCJDbGVhcmVkXCIsIHZhcmlhbnQ6IFwic3VjY2Vzc1wiIH07XG4gICAgY2FzZSBcIkJPVU5DRURcIjpcbiAgICAgIHJldHVybiB7IGxhYmVsOiBcIkJvdW5jZWRcIiwgdmFyaWFudDogXCJkYW5nZXJcIiB9O1xuICAgIGRlZmF1bHQ6XG4gICAgICByZXR1cm4gbnVsbDtcbiAgfVxufVxuIl0sIm5hbWVzIjpbImNoZWNrQmFkZ2VGb3IiLCJwIiwibWV0aG9kIiwic3RhdHVzIiwibGFiZWwiLCJ2YXJpYW50IiwiY2hlY2tTdGF0dXMiXSwibWFwcGluZ3MiOiJBQUFBOzs7Ozs7Ozs7Q0FTQzs7OzsrQkFDZUE7OztlQUFBQTs7O0FBQVQsU0FBU0EsY0FBY0MsQ0FJN0I7SUFDQyxJQUFJQSxFQUFFQyxNQUFNLEtBQUssU0FBUyxPQUFPO0lBQ2pDLHlGQUF5RjtJQUN6Rix5RkFBeUY7SUFDekYsd0ZBQXdGO0lBQ3hGLHFGQUFxRjtJQUNyRixvQkFBb0I7SUFDcEIsSUFBSUQsRUFBRUUsTUFBTSxLQUFLLFdBQVcsT0FBTztRQUFFQyxPQUFPO1FBQXdCQyxTQUFTO0lBQVU7SUFDdkYsSUFBSSxDQUFDSixFQUFFSyxXQUFXLEVBQUU7UUFDbEIsSUFBSUwsRUFBRUUsTUFBTSxLQUFLLFFBQVEsT0FBTztRQUNoQyxPQUFPO1lBQUVDLE9BQU87WUFBWUMsU0FBUztRQUFVO0lBQ2pEO0lBQ0EsT0FBUUosRUFBRUssV0FBVztRQUNuQixLQUFLO1lBQ0gsT0FBTztnQkFBRUYsT0FBTztnQkFBWUMsU0FBUztZQUFVO1FBQ2pELEtBQUs7WUFDSCxPQUFPO2dCQUFFRCxPQUFPO2dCQUFhQyxTQUFTO1lBQU87UUFDL0MsS0FBSztZQUNILE9BQU87Z0JBQUVELE9BQU87Z0JBQVdDLFNBQVM7WUFBVTtRQUNoRCxLQUFLO1lBQ0gsT0FBTztnQkFBRUQsT0FBTztnQkFBV0MsU0FBUztZQUFTO1FBQy9DO1lBQ0UsT0FBTztJQUNYO0FBQ0YifQ==

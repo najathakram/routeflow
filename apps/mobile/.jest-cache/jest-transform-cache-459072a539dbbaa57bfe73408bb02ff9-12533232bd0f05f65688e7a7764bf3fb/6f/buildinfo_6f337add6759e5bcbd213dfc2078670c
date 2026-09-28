@@ -1,0 +1,65 @@
+ae800bfc4350961fd1abcf871537d7a2
+"use strict";
+/**
+ * B202 (commit 3) — nobody can tell which build a phone (or a browser tab)
+ * is running. That already produced a false bug report: a client screenshot
+ * showing another tenant's branding was actually a stale browser context,
+ * not a data bug. A visible build stamp on the login screen fixes both
+ * problems at once: the retest note we send a client starts with "you're on
+ * the new version when the login screen shows build <sha>", and it is also
+ * how WE verify a Railway deploy actually carries a merge, without having to
+ * trust the deploy dashboard's timestamp.
+ *
+ * `shortBuildSha`/`buildLabel` are the single source of truth for how the
+ * sha is displayed — the login screen and any future About screen must both
+ * go through here so they can never disagree on formatting.
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.BUILD_SHA = void 0;
+exports.shortBuildSha = shortBuildSha;
+exports.buildLabel = buildLabel;
+/**
+ * Total: never throws, always returns a display-safe, non-empty string.
+ *
+ * - blank / undefined / null / whitespace-only -> `"dev"` (local dev — e.g.
+ *   `expo start` or a plain `localhost` web build — never has a baked-in
+ *   sha, so this is what those contexts show).
+ * - a hex string of 7 or more characters (case-insensitive — this covers
+ *   both a full 40-char git sha and an already-abbreviated one) -> its
+ *   first 7 characters, lowercased.
+ * - anything else — shorter than 7 characters, or containing any character
+ *   that isn't a hex digit — is returned trimmed, AS-IS. This is what lets a
+ *   human-set tag like `"local"` or `"v1.1.0"` survive rather than being
+ *   mangled by a truncation rule meant only for git shas.
+ */
+function shortBuildSha(raw) {
+    const trimmed = (raw ?? "").trim();
+    if (!trimmed)
+        return "dev";
+    if (/^[0-9a-f]{7,}$/i.test(trimmed)) {
+        return trimmed.slice(0, 7).toLowerCase();
+    }
+    return trimmed;
+}
+// Expo's babel plugin inlines `EXPO_PUBLIC_*` vars via a literal STATIC text
+// replacement at build time — the exported web bundle has no real
+// `process.env` at runtime. That inlining only recognizes a static member
+// expression; a dynamic lookup like `process.env[someKey]` would not be
+// rewritten and would read `undefined` in the shipped bundle, silently
+// defeating the entire point of baking the sha in. Keep this a literal
+// `process.env.EXPO_PUBLIC_BUILD_SHA` access, never a computed one.
+exports.BUILD_SHA = process.env.EXPO_PUBLIC_BUILD_SHA ?? "";
+/**
+ * The display string, e.g. "build 1234567" or "build dev". Defaults to the
+ * live `BUILD_SHA` baked into this build when called with no argument, so
+ * both the login screen and any future About screen can just call
+ * `buildLabel()` and always agree. An explicit `raw` is accepted for callers
+ * that already have a specific sha/tag in hand (and for tests).
+ *
+ * Sentence case, no trailing period — matches this app's copy conventions
+ * (see the login screen's footer text).
+ */
+function buildLabel(raw = exports.BUILD_SHA) {
+    return `build ${shortBuildSha(raw)}`;
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL2J1aWxkLWluZm8udHMiLCJtYXBwaW5ncyI6IjtBQUFBOzs7Ozs7Ozs7Ozs7O0dBYUc7OztBQWdCSCxzQ0FPQztBQXFCRCxnQ0FFQztBQTVDRDs7Ozs7Ozs7Ozs7OztHQWFHO0FBQ0gsU0FBZ0IsYUFBYSxDQUFDLEdBQW1CO0lBQy9DLE1BQU0sT0FBTyxHQUFHLENBQUMsR0FBRyxJQUFJLEVBQUUsQ0FBQyxDQUFDLElBQUksRUFBRSxDQUFDO0lBQ25DLElBQUksQ0FBQyxPQUFPO1FBQUUsT0FBTyxLQUFLLENBQUM7SUFDM0IsSUFBSSxpQkFBaUIsQ0FBQyxJQUFJLENBQUMsT0FBTyxDQUFDLEVBQUUsQ0FBQztRQUNwQyxPQUFPLE9BQU8sQ0FBQyxLQUFLLENBQUMsQ0FBQyxFQUFFLENBQUMsQ0FBQyxDQUFDLFdBQVcsRUFBRSxDQUFDO0lBQzNDLENBQUM7SUFDRCxPQUFPLE9BQU8sQ0FBQztBQUNqQixDQUFDO0FBRUQsNkVBQTZFO0FBQzdFLGtFQUFrRTtBQUNsRSwwRUFBMEU7QUFDMUUsd0VBQXdFO0FBQ3hFLHVFQUF1RTtBQUN2RSx1RUFBdUU7QUFDdkUsb0VBQW9FO0FBQ3ZELFFBQUEsU0FBUyxHQUFXLE9BQU8sQ0FBQyxHQUFHLENBQUMscUJBQXFCLElBQUksRUFBRSxDQUFDO0FBRXpFOzs7Ozs7Ozs7R0FTRztBQUNILFNBQWdCLFVBQVUsQ0FBQyxNQUFpQyxpQkFBUztJQUNuRSxPQUFPLFNBQVMsYUFBYSxDQUFDLEdBQUcsQ0FBQyxFQUFFLENBQUM7QUFDdkMsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9hcHBzL21vYmlsZS9saWIvYnVpbGQtaW5mby50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqIEIyMDIgKGNvbW1pdCAzKSDigJQgbm9ib2R5IGNhbiB0ZWxsIHdoaWNoIGJ1aWxkIGEgcGhvbmUgKG9yIGEgYnJvd3NlciB0YWIpXG4gKiBpcyBydW5uaW5nLiBUaGF0IGFscmVhZHkgcHJvZHVjZWQgYSBmYWxzZSBidWcgcmVwb3J0OiBhIGNsaWVudCBzY3JlZW5zaG90XG4gKiBzaG93aW5nIGFub3RoZXIgdGVuYW50J3MgYnJhbmRpbmcgd2FzIGFjdHVhbGx5IGEgc3RhbGUgYnJvd3NlciBjb250ZXh0LFxuICogbm90IGEgZGF0YSBidWcuIEEgdmlzaWJsZSBidWlsZCBzdGFtcCBvbiB0aGUgbG9naW4gc2NyZWVuIGZpeGVzIGJvdGhcbiAqIHByb2JsZW1zIGF0IG9uY2U6IHRoZSByZXRlc3Qgbm90ZSB3ZSBzZW5kIGEgY2xpZW50IHN0YXJ0cyB3aXRoIFwieW91J3JlIG9uXG4gKiB0aGUgbmV3IHZlcnNpb24gd2hlbiB0aGUgbG9naW4gc2NyZWVuIHNob3dzIGJ1aWxkIDxzaGE+XCIsIGFuZCBpdCBpcyBhbHNvXG4gKiBob3cgV0UgdmVyaWZ5IGEgUmFpbHdheSBkZXBsb3kgYWN0dWFsbHkgY2FycmllcyBhIG1lcmdlLCB3aXRob3V0IGhhdmluZyB0b1xuICogdHJ1c3QgdGhlIGRlcGxveSBkYXNoYm9hcmQncyB0aW1lc3RhbXAuXG4gKlxuICogYHNob3J0QnVpbGRTaGFgL2BidWlsZExhYmVsYCBhcmUgdGhlIHNpbmdsZSBzb3VyY2Ugb2YgdHJ1dGggZm9yIGhvdyB0aGVcbiAqIHNoYSBpcyBkaXNwbGF5ZWQg4oCUIHRoZSBsb2dpbiBzY3JlZW4gYW5kIGFueSBmdXR1cmUgQWJvdXQgc2NyZWVuIG11c3QgYm90aFxuICogZ28gdGhyb3VnaCBoZXJlIHNvIHRoZXkgY2FuIG5ldmVyIGRpc2FncmVlIG9uIGZvcm1hdHRpbmcuXG4gKi9cblxuLyoqXG4gKiBUb3RhbDogbmV2ZXIgdGhyb3dzLCBhbHdheXMgcmV0dXJucyBhIGRpc3BsYXktc2FmZSwgbm9uLWVtcHR5IHN0cmluZy5cbiAqXG4gKiAtIGJsYW5rIC8gdW5kZWZpbmVkIC8gbnVsbCAvIHdoaXRlc3BhY2Utb25seSAtPiBgXCJkZXZcImAgKGxvY2FsIGRldiDigJQgZS5nLlxuICogICBgZXhwbyBzdGFydGAgb3IgYSBwbGFpbiBgbG9jYWxob3N0YCB3ZWIgYnVpbGQg4oCUIG5ldmVyIGhhcyBhIGJha2VkLWluXG4gKiAgIHNoYSwgc28gdGhpcyBpcyB3aGF0IHRob3NlIGNvbnRleHRzIHNob3cpLlxuICogLSBhIGhleCBzdHJpbmcgb2YgNyBvciBtb3JlIGNoYXJhY3RlcnMgKGNhc2UtaW5zZW5zaXRpdmUg4oCUIHRoaXMgY292ZXJzXG4gKiAgIGJvdGggYSBmdWxsIDQwLWNoYXIgZ2l0IHNoYSBhbmQgYW4gYWxyZWFkeS1hYmJyZXZpYXRlZCBvbmUpIC0+IGl0c1xuICogICBmaXJzdCA3IGNoYXJhY3RlcnMsIGxvd2VyY2FzZWQuXG4gKiAtIGFueXRoaW5nIGVsc2Ug4oCUIHNob3J0ZXIgdGhhbiA3IGNoYXJhY3RlcnMsIG9yIGNvbnRhaW5pbmcgYW55IGNoYXJhY3RlclxuICogICB0aGF0IGlzbid0IGEgaGV4IGRpZ2l0IOKAlCBpcyByZXR1cm5lZCB0cmltbWVkLCBBUy1JUy4gVGhpcyBpcyB3aGF0IGxldHMgYVxuICogICBodW1hbi1zZXQgdGFnIGxpa2UgYFwibG9jYWxcImAgb3IgYFwidjEuMS4wXCJgIHN1cnZpdmUgcmF0aGVyIHRoYW4gYmVpbmdcbiAqICAgbWFuZ2xlZCBieSBhIHRydW5jYXRpb24gcnVsZSBtZWFudCBvbmx5IGZvciBnaXQgc2hhcy5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIHNob3J0QnVpbGRTaGEocmF3Pzogc3RyaW5nIHwgbnVsbCk6IHN0cmluZyB7XG4gIGNvbnN0IHRyaW1tZWQgPSAocmF3ID8/IFwiXCIpLnRyaW0oKTtcbiAgaWYgKCF0cmltbWVkKSByZXR1cm4gXCJkZXZcIjtcbiAgaWYgKC9eWzAtOWEtZl17Nyx9JC9pLnRlc3QodHJpbW1lZCkpIHtcbiAgICByZXR1cm4gdHJpbW1lZC5zbGljZSgwLCA3KS50b0xvd2VyQ2FzZSgpO1xuICB9XG4gIHJldHVybiB0cmltbWVkO1xufVxuXG4vLyBFeHBvJ3MgYmFiZWwgcGx1Z2luIGlubGluZXMgYEVYUE9fUFVCTElDXypgIHZhcnMgdmlhIGEgbGl0ZXJhbCBTVEFUSUMgdGV4dFxuLy8gcmVwbGFjZW1lbnQgYXQgYnVpbGQgdGltZSDigJQgdGhlIGV4cG9ydGVkIHdlYiBidW5kbGUgaGFzIG5vIHJlYWxcbi8vIGBwcm9jZXNzLmVudmAgYXQgcnVudGltZS4gVGhhdCBpbmxpbmluZyBvbmx5IHJlY29nbml6ZXMgYSBzdGF0aWMgbWVtYmVyXG4vLyBleHByZXNzaW9uOyBhIGR5bmFtaWMgbG9va3VwIGxpa2UgYHByb2Nlc3MuZW52W3NvbWVLZXldYCB3b3VsZCBub3QgYmVcbi8vIHJld3JpdHRlbiBhbmQgd291bGQgcmVhZCBgdW5kZWZpbmVkYCBpbiB0aGUgc2hpcHBlZCBidW5kbGUsIHNpbGVudGx5XG4vLyBkZWZlYXRpbmcgdGhlIGVudGlyZSBwb2ludCBvZiBiYWtpbmcgdGhlIHNoYSBpbi4gS2VlcCB0aGlzIGEgbGl0ZXJhbFxuLy8gYHByb2Nlc3MuZW52LkVYUE9fUFVCTElDX0JVSUxEX1NIQWAgYWNjZXNzLCBuZXZlciBhIGNvbXB1dGVkIG9uZS5cbmV4cG9ydCBjb25zdCBCVUlMRF9TSEE6IHN0cmluZyA9IHByb2Nlc3MuZW52LkVYUE9fUFVCTElDX0JVSUxEX1NIQSA/PyBcIlwiO1xuXG4vKipcbiAqIFRoZSBkaXNwbGF5IHN0cmluZywgZS5nLiBcImJ1aWxkIDEyMzQ1NjdcIiBvciBcImJ1aWxkIGRldlwiLiBEZWZhdWx0cyB0byB0aGVcbiAqIGxpdmUgYEJVSUxEX1NIQWAgYmFrZWQgaW50byB0aGlzIGJ1aWxkIHdoZW4gY2FsbGVkIHdpdGggbm8gYXJndW1lbnQsIHNvXG4gKiBib3RoIHRoZSBsb2dpbiBzY3JlZW4gYW5kIGFueSBmdXR1cmUgQWJvdXQgc2NyZWVuIGNhbiBqdXN0IGNhbGxcbiAqIGBidWlsZExhYmVsKClgIGFuZCBhbHdheXMgYWdyZWUuIEFuIGV4cGxpY2l0IGByYXdgIGlzIGFjY2VwdGVkIGZvciBjYWxsZXJzXG4gKiB0aGF0IGFscmVhZHkgaGF2ZSBhIHNwZWNpZmljIHNoYS90YWcgaW4gaGFuZCAoYW5kIGZvciB0ZXN0cykuXG4gKlxuICogU2VudGVuY2UgY2FzZSwgbm8gdHJhaWxpbmcgcGVyaW9kIOKAlCBtYXRjaGVzIHRoaXMgYXBwJ3MgY29weSBjb252ZW50aW9uc1xuICogKHNlZSB0aGUgbG9naW4gc2NyZWVuJ3MgZm9vdGVyIHRleHQpLlxuICovXG5leHBvcnQgZnVuY3Rpb24gYnVpbGRMYWJlbChyYXc6IHN0cmluZyB8IG51bGwgfCB1bmRlZmluZWQgPSBCVUlMRF9TSEEpOiBzdHJpbmcge1xuICByZXR1cm4gYGJ1aWxkICR7c2hvcnRCdWlsZFNoYShyYXcpfWA7XG59XG4iXSwidmVyc2lvbiI6M30=

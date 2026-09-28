@@ -1,0 +1,161 @@
+08d74a2fd926ae964acd28e349a5510d
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+const _render = require("../test-utils/render");
+const _server = require("react-dom/server");
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+/**
+ * T13, T14, T15 (spec R6, R7, R8, R12): the shared PortalSwitchLink anchor.
+ * The component and its `to`/`labels` props do not exist yet — the guarded
+ * load below falls back to a component that renders null, so the import
+ * itself never throws and every test fails on its own assertion
+ * (`queryByRole("link")` is `null` / the SSR string is empty), never on a
+ * module-resolution error.
+ */ function load(path) {
+    try {
+        return require(path);
+    } catch (e) {
+        // ONLY a genuinely-absent module falls back to `{}`. A syntax error or an
+        // import-time throw inside the real component must surface as itself, not
+        // as another `Received: null` that looks identical to "not written yet".
+        if (e.code !== "MODULE_NOT_FOUND") throw e;
+        return {};
+    }
+}
+const PortalSwitchLink = load("./PortalSwitchLink").PortalSwitchLink ?? (()=>null);
+function clearCookies() {
+    for (const name of [
+        "rf-op-auth",
+        "rf-buyer-auth",
+        "rf-last-portal"
+    ]){
+        document.cookie = `${name}=; path=/; max-age=0`;
+    }
+}
+describe("PortalSwitchLink (T13, T14, T15, R6, R7, R8, R12)", ()=>{
+    beforeEach(()=>{
+        clearCookies();
+    });
+    describe("T13: presence-aware switch variant", ()=>{
+        it("to='buyer' with rf-buyer-auth=1 renders 'Switch to buyer portal' -> /buyer/portal", ()=>{
+            document.cookie = "rf-buyer-auth=1; path=/";
+            (0, _render.renderWithProviders)(/*#__PURE__*/ (0, _jsxruntime.jsx)(PortalSwitchLink, {
+                to: "buyer"
+            }));
+            const link = _render.screen.queryByRole("link", {
+                name: "Switch to buyer portal"
+            });
+            expect(link).not.toBeNull();
+            expect(link).toHaveAttribute("href", "/buyer/portal");
+        });
+        it("to='op' with rf-op-auth=1 renders 'Switch to seller dashboard' -> /dashboard", ()=>{
+            document.cookie = "rf-op-auth=1; path=/";
+            (0, _render.renderWithProviders)(/*#__PURE__*/ (0, _jsxruntime.jsx)(PortalSwitchLink, {
+                to: "op"
+            }));
+            const link = _render.screen.queryByRole("link", {
+                name: "Switch to seller dashboard"
+            });
+            expect(link).not.toBeNull();
+            expect(link).toHaveAttribute("href", "/dashboard");
+        });
+    });
+    describe("T14: sign-in variant when the target portal has no presence", ()=>{
+        it("to='buyer' with no cookies renders 'Buyer portal sign-in' -> /buyer/login", ()=>{
+            (0, _render.renderWithProviders)(/*#__PURE__*/ (0, _jsxruntime.jsx)(PortalSwitchLink, {
+                to: "buyer"
+            }));
+            const link = _render.screen.queryByRole("link", {
+                name: "Buyer portal sign-in"
+            });
+            expect(link).not.toBeNull();
+            expect(link).toHaveAttribute("href", "/buyer/login");
+        });
+        it("to='op' with no cookies renders 'Seller dashboard sign-in' -> /login", ()=>{
+            (0, _render.renderWithProviders)(/*#__PURE__*/ (0, _jsxruntime.jsx)(PortalSwitchLink, {
+                to: "op"
+            }));
+            const link = _render.screen.queryByRole("link", {
+                name: "Seller dashboard sign-in"
+            });
+            expect(link).not.toBeNull();
+            expect(link).toHaveAttribute("href", "/login");
+        });
+        it("the labels prop overrides the sign-in text", ()=>{
+            (0, _render.renderWithProviders)(/*#__PURE__*/ (0, _jsxruntime.jsx)(PortalSwitchLink, {
+                to: "buyer",
+                labels: {
+                    switch: "X",
+                    signIn: "Y"
+                }
+            }));
+            // Asserted through the LINK, not bare text: `queryByText(...).toBeNull()`
+            // alone also holds for a component that renders nothing at all.
+            const link = _render.screen.queryByRole("link", {
+                name: "Y"
+            });
+            expect(link).not.toBeNull();
+            expect(link).toHaveAttribute("href", "/buyer/login");
+            expect(_render.screen.queryByText("Buyer portal sign-in")).toBeNull();
+        });
+    });
+    describe("T15 (R8, negative): server render ignores cookies", ()=>{
+        it("renderToString with rf-buyer-auth=1 still renders the sign-in variant", ()=>{
+            document.cookie = "rf-buyer-auth=1; path=/";
+            const html = (0, _server.renderToString)(/*#__PURE__*/ (0, _jsxruntime.jsx)(PortalSwitchLink, {
+                to: "buyer"
+            }));
+            expect(html).toContain("Buyer portal sign-in");
+            // The full attribute, not the bare path — a bare "/buyer/login" substring
+            // would also be satisfied by the string appearing anywhere in the markup.
+            expect(html).toContain('href="/buyer/login"');
+            expect(html).not.toContain("Switch to buyer portal");
+        });
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2NvbXBvbmVudHMvUG9ydGFsU3dpdGNoTGluay50ZXN0LnRzeCJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgKiBhcyBSZWFjdCBmcm9tIFwicmVhY3RcIjtcbmltcG9ydCB7IHJlbmRlcldpdGhQcm92aWRlcnMsIHNjcmVlbiB9IGZyb20gXCJAL3Rlc3QtdXRpbHMvcmVuZGVyXCI7XG5pbXBvcnQgeyByZW5kZXJUb1N0cmluZyB9IGZyb20gXCJyZWFjdC1kb20vc2VydmVyXCI7XG5cbi8qKlxuICogVDEzLCBUMTQsIFQxNSAoc3BlYyBSNiwgUjcsIFI4LCBSMTIpOiB0aGUgc2hhcmVkIFBvcnRhbFN3aXRjaExpbmsgYW5jaG9yLlxuICogVGhlIGNvbXBvbmVudCBhbmQgaXRzIGB0b2AvYGxhYmVsc2AgcHJvcHMgZG8gbm90IGV4aXN0IHlldCDigJQgdGhlIGd1YXJkZWRcbiAqIGxvYWQgYmVsb3cgZmFsbHMgYmFjayB0byBhIGNvbXBvbmVudCB0aGF0IHJlbmRlcnMgbnVsbCwgc28gdGhlIGltcG9ydFxuICogaXRzZWxmIG5ldmVyIHRocm93cyBhbmQgZXZlcnkgdGVzdCBmYWlscyBvbiBpdHMgb3duIGFzc2VydGlvblxuICogKGBxdWVyeUJ5Um9sZShcImxpbmtcIilgIGlzIGBudWxsYCAvIHRoZSBTU1Igc3RyaW5nIGlzIGVtcHR5KSwgbmV2ZXIgb24gYVxuICogbW9kdWxlLXJlc29sdXRpb24gZXJyb3IuXG4gKi9cblxuZnVuY3Rpb24gbG9hZDxUPihwYXRoOiBzdHJpbmcpOiBQYXJ0aWFsPFQ+IHtcbiAgdHJ5IHtcbiAgICByZXR1cm4gcmVxdWlyZShwYXRoKTtcbiAgfSBjYXRjaCAoZSkge1xuICAgIC8vIE9OTFkgYSBnZW51aW5lbHktYWJzZW50IG1vZHVsZSBmYWxscyBiYWNrIHRvIGB7fWAuIEEgc3ludGF4IGVycm9yIG9yIGFuXG4gICAgLy8gaW1wb3J0LXRpbWUgdGhyb3cgaW5zaWRlIHRoZSByZWFsIGNvbXBvbmVudCBtdXN0IHN1cmZhY2UgYXMgaXRzZWxmLCBub3RcbiAgICAvLyBhcyBhbm90aGVyIGBSZWNlaXZlZDogbnVsbGAgdGhhdCBsb29rcyBpZGVudGljYWwgdG8gXCJub3Qgd3JpdHRlbiB5ZXRcIi5cbiAgICBpZiAoKGUgYXMgTm9kZUpTLkVycm5vRXhjZXB0aW9uKS5jb2RlICE9PSBcIk1PRFVMRV9OT1RfRk9VTkRcIikgdGhyb3cgZTtcbiAgICByZXR1cm4ge307XG4gIH1cbn1cblxuaW50ZXJmYWNlIFBvcnRhbFN3aXRjaExpbmtQcm9wcyB7XG4gIHRvOiBcImJ1eWVyXCIgfCBcIm9wXCI7XG4gIGxhYmVscz86IHsgc3dpdGNoOiBzdHJpbmc7IHNpZ25Jbjogc3RyaW5nIH07XG59XG5cbmNvbnN0IFBvcnRhbFN3aXRjaExpbmsgPSAobG9hZDx7IFBvcnRhbFN3aXRjaExpbms6IFJlYWN0LkNvbXBvbmVudFR5cGU8UG9ydGFsU3dpdGNoTGlua1Byb3BzPiB9PihcbiAgXCIuL1BvcnRhbFN3aXRjaExpbmtcIixcbikuUG9ydGFsU3dpdGNoTGluayA/PyAoKCkgPT4gbnVsbCkpIGFzIFJlYWN0LkNvbXBvbmVudFR5cGU8UG9ydGFsU3dpdGNoTGlua1Byb3BzPjtcblxuZnVuY3Rpb24gY2xlYXJDb29raWVzKCk6IHZvaWQge1xuICBmb3IgKGNvbnN0IG5hbWUgb2YgW1wicmYtb3AtYXV0aFwiLCBcInJmLWJ1eWVyLWF1dGhcIiwgXCJyZi1sYXN0LXBvcnRhbFwiXSkge1xuICAgIGRvY3VtZW50LmNvb2tpZSA9IGAke25hbWV9PTsgcGF0aD0vOyBtYXgtYWdlPTBgO1xuICB9XG59XG5cbmRlc2NyaWJlKFwiUG9ydGFsU3dpdGNoTGluayAoVDEzLCBUMTQsIFQxNSwgUjYsIFI3LCBSOCwgUjEyKVwiLCAoKSA9PiB7XG4gIGJlZm9yZUVhY2goKCkgPT4ge1xuICAgIGNsZWFyQ29va2llcygpO1xuICB9KTtcblxuICBkZXNjcmliZShcIlQxMzogcHJlc2VuY2UtYXdhcmUgc3dpdGNoIHZhcmlhbnRcIiwgKCkgPT4ge1xuICAgIGl0KFwidG89J2J1eWVyJyB3aXRoIHJmLWJ1eWVyLWF1dGg9MSByZW5kZXJzICdTd2l0Y2ggdG8gYnV5ZXIgcG9ydGFsJyAtPiAvYnV5ZXIvcG9ydGFsXCIsICgpID0+IHtcbiAgICAgIGRvY3VtZW50LmNvb2tpZSA9IFwicmYtYnV5ZXItYXV0aD0xOyBwYXRoPS9cIjtcbiAgICAgIHJlbmRlcldpdGhQcm92aWRlcnMoPFBvcnRhbFN3aXRjaExpbmsgdG89XCJidXllclwiIC8+KTtcblxuICAgICAgY29uc3QgbGluayA9IHNjcmVlbi5xdWVyeUJ5Um9sZShcImxpbmtcIiwgeyBuYW1lOiBcIlN3aXRjaCB0byBidXllciBwb3J0YWxcIiB9KTtcbiAgICAgIGV4cGVjdChsaW5rKS5ub3QudG9CZU51bGwoKTtcbiAgICAgIGV4cGVjdChsaW5rKS50b0hhdmVBdHRyaWJ1dGUoXCJocmVmXCIsIFwiL2J1eWVyL3BvcnRhbFwiKTtcbiAgICB9KTtcblxuICAgIGl0KFwidG89J29wJyB3aXRoIHJmLW9wLWF1dGg9MSByZW5kZXJzICdTd2l0Y2ggdG8gc2VsbGVyIGRhc2hib2FyZCcgLT4gL2Rhc2hib2FyZFwiLCAoKSA9PiB7XG4gICAgICBkb2N1bWVudC5jb29raWUgPSBcInJmLW9wLWF1dGg9MTsgcGF0aD0vXCI7XG4gICAgICByZW5kZXJXaXRoUHJvdmlkZXJzKDxQb3J0YWxTd2l0Y2hMaW5rIHRvPVwib3BcIiAvPik7XG5cbiAgICAgIGNvbnN0IGxpbmsgPSBzY3JlZW4ucXVlcnlCeVJvbGUoXCJsaW5rXCIsIHsgbmFtZTogXCJTd2l0Y2ggdG8gc2VsbGVyIGRhc2hib2FyZFwiIH0pO1xuICAgICAgZXhwZWN0KGxpbmspLm5vdC50b0JlTnVsbCgpO1xuICAgICAgZXhwZWN0KGxpbmspLnRvSGF2ZUF0dHJpYnV0ZShcImhyZWZcIiwgXCIvZGFzaGJvYXJkXCIpO1xuICAgIH0pO1xuICB9KTtcblxuICBkZXNjcmliZShcIlQxNDogc2lnbi1pbiB2YXJpYW50IHdoZW4gdGhlIHRhcmdldCBwb3J0YWwgaGFzIG5vIHByZXNlbmNlXCIsICgpID0+IHtcbiAgICBpdChcInRvPSdidXllcicgd2l0aCBubyBjb29raWVzIHJlbmRlcnMgJ0J1eWVyIHBvcnRhbCBzaWduLWluJyAtPiAvYnV5ZXIvbG9naW5cIiwgKCkgPT4ge1xuICAgICAgcmVuZGVyV2l0aFByb3ZpZGVycyg8UG9ydGFsU3dpdGNoTGluayB0bz1cImJ1eWVyXCIgLz4pO1xuXG4gICAgICBjb25zdCBsaW5rID0gc2NyZWVuLnF1ZXJ5QnlSb2xlKFwibGlua1wiLCB7IG5hbWU6IFwiQnV5ZXIgcG9ydGFsIHNpZ24taW5cIiB9KTtcbiAgICAgIGV4cGVjdChsaW5rKS5ub3QudG9CZU51bGwoKTtcbiAgICAgIGV4cGVjdChsaW5rKS50b0hhdmVBdHRyaWJ1dGUoXCJocmVmXCIsIFwiL2J1eWVyL2xvZ2luXCIpO1xuICAgIH0pO1xuXG4gICAgaXQoXCJ0bz0nb3AnIHdpdGggbm8gY29va2llcyByZW5kZXJzICdTZWxsZXIgZGFzaGJvYXJkIHNpZ24taW4nIC0+IC9sb2dpblwiLCAoKSA9PiB7XG4gICAgICByZW5kZXJXaXRoUHJvdmlkZXJzKDxQb3J0YWxTd2l0Y2hMaW5rIHRvPVwib3BcIiAvPik7XG5cbiAgICAgIGNvbnN0IGxpbmsgPSBzY3JlZW4ucXVlcnlCeVJvbGUoXCJsaW5rXCIsIHsgbmFtZTogXCJTZWxsZXIgZGFzaGJvYXJkIHNpZ24taW5cIiB9KTtcbiAgICAgIGV4cGVjdChsaW5rKS5ub3QudG9CZU51bGwoKTtcbiAgICAgIGV4cGVjdChsaW5rKS50b0hhdmVBdHRyaWJ1dGUoXCJocmVmXCIsIFwiL2xvZ2luXCIpO1xuICAgIH0pO1xuXG4gICAgaXQoXCJ0aGUgbGFiZWxzIHByb3Agb3ZlcnJpZGVzIHRoZSBzaWduLWluIHRleHRcIiwgKCkgPT4ge1xuICAgICAgcmVuZGVyV2l0aFByb3ZpZGVycyg8UG9ydGFsU3dpdGNoTGluayB0bz1cImJ1eWVyXCIgbGFiZWxzPXt7IHN3aXRjaDogXCJYXCIsIHNpZ25JbjogXCJZXCIgfX0gLz4pO1xuXG4gICAgICAvLyBBc3NlcnRlZCB0aHJvdWdoIHRoZSBMSU5LLCBub3QgYmFyZSB0ZXh0OiBgcXVlcnlCeVRleHQoLi4uKS50b0JlTnVsbCgpYFxuICAgICAgLy8gYWxvbmUgYWxzbyBob2xkcyBmb3IgYSBjb21wb25lbnQgdGhhdCByZW5kZXJzIG5vdGhpbmcgYXQgYWxsLlxuICAgICAgY29uc3QgbGluayA9IHNjcmVlbi5xdWVyeUJ5Um9sZShcImxpbmtcIiwgeyBuYW1lOiBcIllcIiB9KTtcbiAgICAgIGV4cGVjdChsaW5rKS5ub3QudG9CZU51bGwoKTtcbiAgICAgIGV4cGVjdChsaW5rKS50b0hhdmVBdHRyaWJ1dGUoXCJocmVmXCIsIFwiL2J1eWVyL2xvZ2luXCIpO1xuICAgICAgZXhwZWN0KHNjcmVlbi5xdWVyeUJ5VGV4dChcIkJ1eWVyIHBvcnRhbCBzaWduLWluXCIpKS50b0JlTnVsbCgpO1xuICAgIH0pO1xuICB9KTtcblxuICBkZXNjcmliZShcIlQxNSAoUjgsIG5lZ2F0aXZlKTogc2VydmVyIHJlbmRlciBpZ25vcmVzIGNvb2tpZXNcIiwgKCkgPT4ge1xuICAgIGl0KFwicmVuZGVyVG9TdHJpbmcgd2l0aCByZi1idXllci1hdXRoPTEgc3RpbGwgcmVuZGVycyB0aGUgc2lnbi1pbiB2YXJpYW50XCIsICgpID0+IHtcbiAgICAgIGRvY3VtZW50LmNvb2tpZSA9IFwicmYtYnV5ZXItYXV0aD0xOyBwYXRoPS9cIjtcblxuICAgICAgY29uc3QgaHRtbCA9IHJlbmRlclRvU3RyaW5nKDxQb3J0YWxTd2l0Y2hMaW5rIHRvPVwiYnV5ZXJcIiAvPik7XG5cbiAgICAgIGV4cGVjdChodG1sKS50b0NvbnRhaW4oXCJCdXllciBwb3J0YWwgc2lnbi1pblwiKTtcbiAgICAgIC8vIFRoZSBmdWxsIGF0dHJpYnV0ZSwgbm90IHRoZSBiYXJlIHBhdGgg4oCUIGEgYmFyZSBcIi9idXllci9sb2dpblwiIHN1YnN0cmluZ1xuICAgICAgLy8gd291bGQgYWxzbyBiZSBzYXRpc2ZpZWQgYnkgdGhlIHN0cmluZyBhcHBlYXJpbmcgYW55d2hlcmUgaW4gdGhlIG1hcmt1cC5cbiAgICAgIGV4cGVjdChodG1sKS50b0NvbnRhaW4oJ2hyZWY9XCIvYnV5ZXIvbG9naW5cIicpO1xuICAgICAgZXhwZWN0KGh0bWwpLm5vdC50b0NvbnRhaW4oXCJTd2l0Y2ggdG8gYnV5ZXIgcG9ydGFsXCIpO1xuICAgIH0pO1xuICB9KTtcbn0pO1xuIl0sIm5hbWVzIjpbImxvYWQiLCJwYXRoIiwicmVxdWlyZSIsImUiLCJjb2RlIiwiUG9ydGFsU3dpdGNoTGluayIsImNsZWFyQ29va2llcyIsIm5hbWUiLCJkb2N1bWVudCIsImNvb2tpZSIsImRlc2NyaWJlIiwiYmVmb3JlRWFjaCIsIml0IiwicmVuZGVyV2l0aFByb3ZpZGVycyIsInRvIiwibGluayIsInNjcmVlbiIsInF1ZXJ5QnlSb2xlIiwiZXhwZWN0Iiwibm90IiwidG9CZU51bGwiLCJ0b0hhdmVBdHRyaWJ1dGUiLCJsYWJlbHMiLCJzd2l0Y2giLCJzaWduSW4iLCJxdWVyeUJ5VGV4dCIsImh0bWwiLCJyZW5kZXJUb1N0cmluZyIsInRvQ29udGFpbiJdLCJtYXBwaW5ncyI6Ijs7Ozs7K0RBQXVCO3dCQUNxQjt3QkFDYjs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7O0FBRS9COzs7Ozs7O0NBT0MsR0FFRCxTQUFTQSxLQUFRQyxJQUFZO0lBQzNCLElBQUk7UUFDRixPQUFPQyxRQUFRRDtJQUNqQixFQUFFLE9BQU9FLEdBQUc7UUFDViwwRUFBMEU7UUFDMUUsMEVBQTBFO1FBQzFFLHlFQUF5RTtRQUN6RSxJQUFJLEFBQUNBLEVBQTRCQyxJQUFJLEtBQUssb0JBQW9CLE1BQU1EO1FBQ3BFLE9BQU8sQ0FBQztJQUNWO0FBQ0Y7QUFPQSxNQUFNRSxtQkFBb0JMLEtBQ3hCLHNCQUNBSyxnQkFBZ0IsSUFBSyxDQUFBLElBQU0sSUFBRztBQUVoQyxTQUFTQztJQUNQLEtBQUssTUFBTUMs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

@@ -1,0 +1,101 @@
+fe1b1982ee6eb4bb172c6ef016330228
+/**
+ * Shared carrier shipment-tracking helpers.
+ *
+ * When goods ship via a carrier (instead of being delivered on our own route),
+ * the order/invoice carries a free-text carrier label + a tracking number. For
+ * the carriers we recognise we can build a public "track your package" URL so
+ * the operator (and the customer, on the invoice) can open the carrier's own
+ * tracking page. The URL is always DERIVED from (carrier, number) — never stored
+ * — so it can't be tampered with and stays correct if templates change.
+ *
+ * This module is mirrored verbatim across api/web/mobile
+ * (`apps/api/src/common/shipping.ts`, `apps/web/lib/shipping.ts`,
+ * `apps/mobile/lib/shipping.ts`) — change all three together. It is pure TS with
+ * no framework imports so the copies stay identical.
+ */ "use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, {
+        enumerable: true,
+        get: Object.getOwnPropertyDescriptor(all, name).get
+    });
+}
+_export(exports, {
+    get CARRIERS () {
+        return CARRIERS;
+    },
+    get carrierLabel () {
+        return carrierLabel;
+    },
+    get getTrackingUrl () {
+        return getTrackingUrl;
+    },
+    get normalizeCarrier () {
+        return normalizeCarrier;
+    }
+});
+const CARRIERS = [
+    {
+        id: "ups",
+        label: "UPS"
+    },
+    {
+        id: "fedex",
+        label: "FedEx"
+    },
+    {
+        id: "usps",
+        label: "USPS"
+    },
+    {
+        id: "dhl",
+        label: "DHL"
+    },
+    {
+        id: "other",
+        label: "Other"
+    }
+];
+// Public tracking URL templates keyed by normalised carrier id. `{n}` is
+// replaced with the URL-encoded tracking number.
+const TRACKING_URL_TEMPLATES = {
+    ups: "https://www.ups.com/track?loc=en_US&tracknum={n}",
+    fedex: "https://www.fedex.com/fedextrack/?trknbr={n}",
+    usps: "https://tools.usps.com/go/TrackConfirmAction?tLabels={n}",
+    dhl: "https://www.dhl.com/us-en/home/tracking.html?tracking-id={n}"
+};
+function normalizeCarrier(carrier) {
+    if (!carrier) return null;
+    const c = carrier.trim().toLowerCase();
+    if (!c) return null;
+    if (c === "ups") return "ups";
+    if (c === "fedex" || c === "fed ex") return "fedex";
+    if (c === "usps") return "usps";
+    if (c === "dhl") return "dhl";
+    const k = c.replace(/[^a-z]/g, "");
+    if (k.includes("fedex")) return "fedex";
+    if (k.includes("usps") || k === "uspostalservice") return "usps";
+    if (k.includes("dhl")) return "dhl";
+    if (k.includes("ups")) return "ups"; // checked last so "usps" never matches here
+    return null;
+}
+function getTrackingUrl(carrier, trackingNumber) {
+    const num = (trackingNumber ?? "").trim();
+    if (!num) return null;
+    const id = normalizeCarrier(carrier);
+    if (!id) return null;
+    const tmpl = TRACKING_URL_TEMPLATES[id];
+    if (!tmpl) return null;
+    return tmpl.replace("{n}", encodeURIComponent(num));
+}
+function carrierLabel(carrier) {
+    if (!carrier) return "";
+    const id = normalizeCarrier(carrier);
+    const found = CARRIERS.find((x)=>x.id === id);
+    return found ? found.label : carrier;
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2xpYi9zaGlwcGluZy50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqIFNoYXJlZCBjYXJyaWVyIHNoaXBtZW50LXRyYWNraW5nIGhlbHBlcnMuXG4gKlxuICogV2hlbiBnb29kcyBzaGlwIHZpYSBhIGNhcnJpZXIgKGluc3RlYWQgb2YgYmVpbmcgZGVsaXZlcmVkIG9uIG91ciBvd24gcm91dGUpLFxuICogdGhlIG9yZGVyL2ludm9pY2UgY2FycmllcyBhIGZyZWUtdGV4dCBjYXJyaWVyIGxhYmVsICsgYSB0cmFja2luZyBudW1iZXIuIEZvclxuICogdGhlIGNhcnJpZXJzIHdlIHJlY29nbmlzZSB3ZSBjYW4gYnVpbGQgYSBwdWJsaWMgXCJ0cmFjayB5b3VyIHBhY2thZ2VcIiBVUkwgc29cbiAqIHRoZSBvcGVyYXRvciAoYW5kIHRoZSBjdXN0b21lciwgb24gdGhlIGludm9pY2UpIGNhbiBvcGVuIHRoZSBjYXJyaWVyJ3Mgb3duXG4gKiB0cmFja2luZyBwYWdlLiBUaGUgVVJMIGlzIGFsd2F5cyBERVJJVkVEIGZyb20gKGNhcnJpZXIsIG51bWJlcikg4oCUIG5ldmVyIHN0b3JlZFxuICog4oCUIHNvIGl0IGNhbid0IGJlIHRhbXBlcmVkIHdpdGggYW5kIHN0YXlzIGNvcnJlY3QgaWYgdGVtcGxhdGVzIGNoYW5nZS5cbiAqXG4gKiBUaGlzIG1vZHVsZSBpcyBtaXJyb3JlZCB2ZXJiYXRpbSBhY3Jvc3MgYXBpL3dlYi9tb2JpbGVcbiAqIChgYXBwcy9hcGkvc3JjL2NvbW1vbi9zaGlwcGluZy50c2AsIGBhcHBzL3dlYi9saWIvc2hpcHBpbmcudHNgLFxuICogYGFwcHMvbW9iaWxlL2xpYi9zaGlwcGluZy50c2ApIOKAlCBjaGFuZ2UgYWxsIHRocmVlIHRvZ2V0aGVyLiBJdCBpcyBwdXJlIFRTIHdpdGhcbiAqIG5vIGZyYW1ld29yayBpbXBvcnRzIHNvIHRoZSBjb3BpZXMgc3RheSBpZGVudGljYWwuXG4gKi9cblxuZXhwb3J0IGludGVyZmFjZSBDYXJyaWVyT3B0aW9uIHtcbiAgLyoqIE5vcm1hbGlzZWQga2V5IHVzZWQgZm9yIFVSTCBsb29rdXAuICovXG4gIGlkOiBzdHJpbmc7XG4gIC8qKiBIdW1hbi1mYWNpbmcgbGFiZWwgc2hvd24gaW4gdGhlIGNhcnJpZXIgcGlja2VyLiAqL1xuICBsYWJlbDogc3RyaW5nO1xufVxuXG4vKipcbiAqIENhcnJpZXJzIG9mZmVyZWQgaW4gdGhlIHBpY2tlci4gVGhlIGZpcnN0IGZvdXIgaGF2ZSBhIGtub3duIHRyYWNraW5nIFVSTDtcbiAqIFwiT3RoZXJcIiBsZXRzIGFuIG9wZXJhdG9yIHR5cGUgYW55IGNhcnJpZXIgbmFtZSAobm8gYXV0by1saW5rKS5cbiAqL1xuZXhwb3J0IGNvbnN0IENBUlJJRVJTOiBDYXJyaWVyT3B0aW9uW10gPSBbXG4gIHsgaWQ6IFwidXBzXCIsIGxhYmVsOiBcIlVQU1wiIH0sXG4gIHsgaWQ6IFwiZmVkZXhcIiwgbGFiZWw6IFwiRmVkRXhcIiB9LFxuICB7IGlkOiBcInVzcHNcIiwgbGFiZWw6IFwiVVNQU1wiIH0sXG4gIHsgaWQ6IFwiZGhsXCIsIGxhYmVsOiBcIkRITFwiIH0sXG4gIHsgaWQ6IFwib3RoZXJcIiwgbGFiZWw6IFwiT3RoZXJcIiB9LFxuXTtcblxuLy8gUHVibGljIHRyYWNraW5nIFVSTCB0ZW1wbGF0ZXMga2V5ZWQgYnkgbm9ybWFsaXNlZCBjYXJyaWVyIGlkLiBge259YCBpc1xuLy8gcmVwbGFjZWQgd2l0aCB0aGUgVVJMLWVuY29kZWQgdHJhY2tpbmcgbnVtYmVyLlxuY29uc3QgVFJBQ0tJTkdfVVJMX1RFTVBMQVRFUzogUmVjb3JkPHN0cmluZywgc3RyaW5nPiA9IHtcbiAgdXBzOiBcImh0dHBzOi8vd3d3LnVwcy5jb20vdHJhY2s/bG9jPWVuX1VTJnRyYWNrbnVtPXtufVwiLFxuICBmZWRleDogXCJodHRwczovL3d3dy5mZWRleC5jb20vZmVkZXh0cmFjay8/dHJrbmJyPXtufVwiLFxuICB1c3BzOiBcImh0dHBzOi8vdG9vbHMudXNwcy5jb20vZ28vVHJhY2tDb25maXJtQWN0aW9uP3RMYWJlbHM9e259XCIsXG4gIGRobDogXCJodHRwczovL3d3dy5kaGwuY29tL3VzLWVuL2hvbWUvdHJhY2tpbmcuaHRtbD90cmFja2luZy1pZD17bn1cIixcbn07XG5cbi8qKlxuICogTWFwIGEgZnJlZS10ZXh0IGNhcnJpZXIgbGFiZWwgdG8gYSBrbm93biBjYXJyaWVyIGlkLCBvciBudWxsIHdoZW4gd2UgZG9uJ3RcbiAqIHJlY29nbmlzZSBpdCAoZS5nLiBcIk90aGVyXCIgb3IgYSBjdXN0b20gY291cmllcikuIFRoZSBwaWNrZXIgc3RvcmVzIGV4YWN0XG4gKiBsYWJlbHMsIHNvIHRoZSBleGFjdCBtYXRjaGVzIGJlbG93IGNvdmVyIHRoZSBub3JtYWwgY2FzZTsgdGhlIGZ1enp5IGZhbGxiYWNrXG4gKiB0b2xlcmF0ZXMgbGVnYWN5L2hhbmQtdHlwZWQgdmFsdWVzLlxuICovXG5leHBvcnQgZnVuY3Rpb24gbm9ybWFsaXplQ2FycmllcihjYXJyaWVyPzogc3RyaW5nIHwgbnVsbCk6IHN0cmluZyB8IG51bGwge1xuICBpZiAoIWNhcnJpZXIpIHJldHVybiBudWxsO1xuICBjb25zdCBjID0gY2Fycmllci50cmltKCkudG9Mb3dlckNhc2UoKTtcbiAgaWYgKCFjKSByZXR1cm4gbnVsbDtcbiAgaWYgKGMgPT09IFwidXBzXCIpIHJldHVybiBcInVwc1wiO1xuICBpZiAoYyA9PT0gXCJmZWRleFwiIHx8IGMgPT09IFwiZmVkIGV4XCIpIHJldHVybiBcImZlZGV4XCI7XG4gIGlmIChjID09PSBcInVzcHNcIikgcmV0dXJuIFwidXNwc1wiO1xuICBpZiAoYyA9PT0gXCJkaGxcIikgcmV0dXJuIFwiZGhsXCI7XG4gIGNvbnN0IGsgPSBjLnJlcGxhY2UoL1teYS16XS9nLCBcIlwiKTtcbiAgaWYgKGsuaW5jbHVkZXMoXCJmZWRleFwiKSkgcmV0dXJuIFwiZmVkZXhcIjtcbiAgaWYgKGsuaW5jbHVkZXMoXCJ1c3BzXCIpIHx8IGsgPT09IFwidXNwb3N0YWxzZXJ2aWNlXCIpIHJldHVybiBcInVzcHNcIjtcbiAgaWYgKGsuaW5jbHVkZXMoXCJkaGxcIikpIHJldHVybiBcImRobFwiO1xuICBpZiAoay5pbmNsdWRlcyhcInVwc1wiKSkgcmV0dXJuIFwidXBzXCI7IC8vIGNoZWNrZWQgbGFzdCBzbyBcInVzcHNcIiBuZXZlciBtYXRjaGVzIGhlcmVcbiAgcmV0dXJuIG51bGw7XG59XG5cbi8qKlxuICogQnVpbGQgYSBjbGlja2FibGUgY2FycmllciB0cmFja2luZyBVUkwgZnJvbSBhIGNhcnJpZXIgbGFiZWwgKyB0cmFja2luZyBudW1iZXIuXG4gKiBSZXR1cm5zIG51bGwgd2hlbiB0aGUgbnVtYmVyIGlzIGJsYW5rIG9yIHRoZSBjYXJyaWVyIGlzIHVua25vd24gKHRoZSBVSSB0aGVuXG4gKiBzaG93cyB0aGUgbnVtYmVyIGFzIHBsYWluIHRleHQgaW5zdGVhZCBvZiBhIGxpbmspLlxuICovXG5leHBvcnQgZnVuY3Rpb24gZ2V0VHJhY2tpbmdVcmwoXG4gIGNhcnJpZXI/OiBzdHJpbmcgfCBudWxsLFxuICB0cmFja2luZ051bWJlcj86IHN0cmluZyB8IG51bGwsXG4pOiBzdHJpbmcgfCBudWxsIHtcbiAgY29uc3QgbnVtID0gKHRyYWNraW5nTnVtYmVyID8/IFwiXCIpLnRyaW0oKTtcbiAgaWYgKCFudW0pIHJldHVybiBudWxsO1xuICBjb25zdCBpZCA9IG5vcm1hbGl6ZUNhcnJpZXIoY2Fycmllcik7XG4gIGlmICghaWQpIHJldHVybiBudWxsO1xuICBjb25zdCB0bXBsID0gVFJBQ0tJTkdfVVJMX1RFTVBMQVRFU1tpZF07XG4gIGlmICghdG1wbCkgcmV0dXJuIG51bGw7XG4gIHJldHVybiB0bXBsLnJlcGxhY2UoXCJ7bn1cIiwgZW5jb2RlVVJJQ29tcG9uZW50KG51bSkpO1xufVxuXG4vKiogRGlzcGxheSBsYWJlbCBmb3IgYSBzdG9yZWQgY2FycmllciB2YWx1ZSAoZmFsbHMgYmFjayB0byB0aGUgcmF3IHN0cmluZykuICovXG5leHBvcnQgZnVuY3Rpb24gY2FycmllckxhYmVsKGNhcnJpZXI/OiBzdHJpbmcgfCBudWxsKTogc3RyaW5nIHtcbiAgaWYgKCFjYXJyaWVyKSByZXR1cm4gXCJcIjtcbiAgY29uc3QgaWQgPSBub3JtYWxpemVDYXJyaWVyKGNhcnJpZXIpO1xuICBjb25zdCBmb3VuZCA9IENBUlJJRVJTLmZpbmQoKHgpID0+IHguaWQgPT09IGlkKTtcbiAgcmV0dXJuIGZvdW5kID8gZm91bmQubGFiZWwgOiBjYXJyaWVyO1xufVxuIl0sIm5hbWVzIjpbIkNBUlJJRVJTIiwiY2FycmllckxhYmVsIiwiZ2V0VHJhY2tpbmdVcmwiLCJub3JtYWxpemVDYXJyaWVyIiwiaWQiLCJsYWJlbCIsIlRSQUNLSU5HX1VSTF9URU1QTEFURVMiLCJ1cHMiLCJmZWRleCIsInVzcHMiLCJkaGwiLCJjYXJyaWVyIiwiYyIsInRyaW0iLCJ0b0xvd2VyQ2FzZSIsImsiLCJyZXBsYWNlIiwiaW5jbHVkZXMiLCJ0cmFja2luZ051bWJlciIsIm51bSIsInRtcGwiLCJlbmNvZGVVUklDb21wb25lbnQiLCJmb3VuZCIsImZpbmQiLCJ4Il0sIm1hcHBpbmdzIjoiQUFBQTs7Ozs7Ozs7Ozs7Ozs7Q0FjQzs7Ozs7Ozs7Ozs7UUFhWUE7ZUFBQUE7O1FBMERHQztlQUFBQTs7UUFkQUM7ZUFBQUE7O1FBckJBQztlQUFBQTs7O0FBdkJULE1BQU1ILFdBQTRCO0lBQ3ZDO1FBQUVJLElBQUk7UUFBT0MsT0FBTztJQUFNO0lBQzFCO1FBQUVELElBQUk7UUFBU0MsT0FBTztJQUFRO0lBQzlCO1FBQUVELElBQUk7UUFBUUMsT0FBTztJQUFPO0lBQzVCO1FBQUVELElBQUk7UUFBT0MsT0FBTztJQUFNO0lBQzFCO1FBQUVELElBQUk7UUFBU0MsT0FBTztJQUFRO0NBQy9CO0FBRUQseUVBQXlFO0FBQ3pFLGlEQUFpRDtBQUNqRCxNQUFNQyx5QkFBaUQ7SUFDckRDLEtBQUs7SUFDTEMsT0FBTztJQUNQQyxNQUFNO0lBQ05DLEtBQUs7QUFDUDtBQVFPLFNBQVNQLGlCQUFpQlEsT0FBdUI7SUFDdEQsSUFBSSxDQUFDQSxTQUFTLE9BQU87SUFDckIsTUFBTUMsSUFBSUQsUUFBUUUsSUFBSSxHQUFHQyxXQUFXO0lBQ3BDLElBQUksQ0FBQ0YsR0FBRyxPQUFPO0lBQ2YsSUFBSUEsTUFBTSxPQUFPLE9BQU87SUFDeEIsSUFBSUEsTUFBTSxXQUFXQSxNQUFNLFVBQVUsT0FBTztJQUM1QyxJQUFJQSxNQUFNLFFBQVEsT0FBTztJQUN6QixJQUFJQSxNQUFNLE9BQU8sT0FBTztJQUN4QixNQUFNRyxJQUFJSCxFQUFFSSxPQUFPLENBQUMsV0FBVztJQUMvQixJQUFJRCxFQUFFRSxRQUFRLENBQUMsVUFBVSxPQUFPO0lBQ2hDLElBQUlGLEVBQUVFLFFBQVEsQ0FBQyxXQUFXRixNQUFNLG1CQUFtQixPQUFPO0lBQzFELElBQUlBLEVBQUVFLFFBQVEsQ0FBQyxRQUFRLE9BQU87SUFDOUIsSUFBSUYsRUFBRUUsUUFBUSxDQUFDLFFBQVEsT0FBTyxPQUFPLDRDQUE0QztJQUNqRixPQUFPO0FBQ1Q7QUFPTyxTQUFTZixlQUNkUyxPQUF1QixFQUN2Qk8sY0FBOEI7SUFFOUIsTUFBTUMsTUFBTSxBQUFDRCxDQUFBQSxrQkFBa0IsRUFBQyxFQUFHTCxJQUFJO0lBQ3ZDLElBQUksQ0FBQ00sS0FBSyxPQUFPO0lBQ2pCLE1BQU1mLEtBQUtELGlCQUFpQlE7SUFDNUIsSUFBSSxDQUFDUCxJQUFJLE9BQU87SUFDaEIsTUFBTWdCLE9BQU9kLHNCQUFzQixDQUFDRixHQUFHO0lBQ3ZDLElBQUksQ0FBQ2dCLE1BQU0sT0FBTztJQUNsQixPQUFPQSxLQUFLSixPQUFPLENBQUMsT0FBT0ssbUJBQW1CRjtBQUNoRDtBQUdPLFNBQVNsQixhQUFhVSxPQUF1QjtJQUNsRCxJQUFJLENBQUNBLFNBQVMsT0FBTztJQUNyQixNQUFNUCxLQUFLRCxpQkFBaUJRO0lBQzVCLE1BQU1XLFFBQVF0QixTQUFTdUIsSUFBSSxDQUFDLENBQUNDLElBQU1BLEVBQUVwQixFQUFFLEtBQUtBO0lBQzVDLE9BQU9rQixRQUFRQSxNQUFNakIsS0FBSyxHQUFHTTtBQUMvQiJ9

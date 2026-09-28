@@ -1,0 +1,85 @@
+67c3cb407b8d63a2b29f273a8144d069
+"use strict";
+/**
+ * Pure (screen-free, testable) order-template ("standing order") helpers — the
+ * Active/Paused pill, the detail-screen action flags, and the schedule label.
+ * Kept out of the RN screens so apps/mobile/__tests__/*.test.ts (pure-logic,
+ * node env) can lock them.
+ *
+ * No line-amount/money helper: order-template items are `{ productId, qty, notes }`
+ * with NO price — there is nothing monetary to render or derive on this feature.
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.ISO_DAY_OPTIONS = void 0;
+exports.orderTemplatePillFor = orderTemplatePillFor;
+exports.orderTemplateActionFlags = orderTemplateActionFlags;
+exports.daysLabel = daysLabel;
+exports.unwrapListEnvelope = unwrapListEnvelope;
+exports.validateTemplateForm = validateTemplateForm;
+/** State is a boolean, not an enum — Active (green) / Paused (gray). */
+function orderTemplatePillFor(isActive) {
+    return isActive ? { variant: "green", label: "Active" } : { variant: "gray", label: "Paused" };
+}
+/**
+ * Detail-screen actions. Generate-now is always available; Pause only when
+ * active, Resume only when paused — both directions are the same safe PATCH.
+ */
+function orderTemplateActionFlags(isActive) {
+    return { canGenerate: true, canPause: isActive, canActivate: !isActive };
+}
+// ISO weekday 1..7 → Mon..Sun. Index 0 is a placeholder so `iso` maps directly.
+// NOTE: this API uses ISO weekdays (Mon=1 … Sun=7), NOT JS getDay() (Sun=0). Do
+// NOT reuse recurring's 0-indexed ["Sun","Mon",…] array (it shifts every day by
+// one) and do NOT index a Sun-first array by the raw value (Sunday=7 → undefined,
+// the latent bug in app/(customer)/standing-orders.tsx). Mapping 7→"Sun" here
+// renders all seven days correctly.
+const ISO_DAYS = ["", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+/** e.g. [1,3,5] → "Mon, Wed, Fri"; [] / undefined → "No schedule". */
+function daysLabel(daysOfWeek) {
+    if (!daysOfWeek?.length)
+        return "No schedule";
+    return [...daysOfWeek]
+        .sort((a, b) => a - b)
+        .map((d) => ISO_DAYS[d])
+        .filter(Boolean)
+        .join(", ");
+}
+/** ISO day chips for schedule pickers — value 1..7 with the same Mon-first labels. */
+exports.ISO_DAY_OPTIONS = [
+    { value: 1, label: "Mon" },
+    { value: 2, label: "Tue" },
+    { value: 3, label: "Wed" },
+    { value: 4, label: "Thu" },
+    { value: 5, label: "Fri" },
+    { value: 6, label: "Sat" },
+    { value: 7, label: "Sun" },
+];
+/**
+ * The staff list endpoint returns a `{data, meta}` envelope; some endpoints
+ * (and older builds) return bare arrays. One tolerant unwrap so no consumer
+ * ever calls `.filter` on the envelope again (the crash this fixes).
+ */
+function unwrapListEnvelope(payload) {
+    if (Array.isArray(payload))
+        return payload;
+    const data = payload?.data;
+    return Array.isArray(data) ? data : [];
+}
+/**
+ * The exact create rules web's StandingOrderModal enforces: a name, at least
+ * one ISO day, at least one item with qty ≥ 1. Returns the first human error
+ * or null when submittable.
+ */
+function validateTemplateForm(form) {
+    if (!form.name.trim())
+        return "Give this standing order a name.";
+    if (!form.daysOfWeek.length)
+        return "Pick at least one delivery day.";
+    if (!form.items.length)
+        return "Add at least one product.";
+    if (form.items.some((i) => !i.productId || !Number.isFinite(i.qty) || i.qty < 1)) {
+        return "Every line needs a product and a quantity of at least 1.";
+    }
+    return null;
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL29yZGVyLXRlbXBsYXRlcy1sb2dpYy50cyIsIm1hcHBpbmdzIjoiO0FBQUE7Ozs7Ozs7O0dBUUc7OztBQUtILG9EQUVDO0FBWUQsNERBRUM7QUFXRCw4QkFPQztBQWtCRCxnREFJQztBQWFELG9EQVFDO0FBOUVELHdFQUF3RTtBQUN4RSxTQUFnQixvQkFBb0IsQ0FBQyxRQUFpQjtJQUNwRCxPQUFPLFFBQVEsQ0FBQyxDQUFDLENBQUMsRUFBRSxPQUFPLEVBQUUsT0FBTyxFQUFFLEtBQUssRUFBRSxRQUFRLEVBQUUsQ0FBQyxDQUFDLENBQUMsRUFBRSxPQUFPLEVBQUUsTUFBTSxFQUFFLEtBQUssRUFBRSxRQUFRLEVBQUUsQ0FBQztBQUNqRyxDQUFDO0FBUUQ7OztHQUdHO0FBQ0gsU0FBZ0Isd0JBQXdCLENBQUMsUUFBaUI7SUFDeEQsT0FBTyxFQUFFLFdBQVcsRUFBRSxJQUFJLEVBQUUsUUFBUSxFQUFFLFFBQVEsRUFBRSxXQUFXLEVBQUUsQ0FBQyxRQUFRLEVBQUUsQ0FBQztBQUMzRSxDQUFDO0FBRUQsZ0ZBQWdGO0FBQ2hGLGdGQUFnRjtBQUNoRixnRkFBZ0Y7QUFDaEYsa0ZBQWtGO0FBQ2xGLDhFQUE4RTtBQUM5RSxvQ0FBb0M7QUFDcEMsTUFBTSxRQUFRLEdBQUcsQ0FBQyxFQUFFLEVBQUUsS0FBSyxFQUFFLEtBQUssRUFBRSxLQUFLLEVBQUUsS0FBSyxFQUFFLEtBQUssRUFBRSxLQUFLLEVBQUUsS0FBSyxDQUFDLENBQUM7QUFFdkUsc0VBQXNFO0FBQ3RFLFNBQWdCLFNBQVMsQ0FBQyxVQUFnQztJQUN4RCxJQUFJLENBQUMsVUFBVSxFQUFFLE1BQU07UUFBRSxPQUFPLGFBQWEsQ0FBQztJQUM5QyxPQUFPLENBQUMsR0FBRyxVQUFVLENBQUM7U0FDbkIsSUFBSSxDQUFDLENBQUMsQ0FBQyxFQUFFLENBQUMsRUFBRSxFQUFFLENBQUMsQ0FBQyxHQUFHLENBQUMsQ0FBQztTQUNyQixHQUFHLENBQUMsQ0FBQyxDQUFDLEVBQUUsRUFBRSxDQUFDLFFBQVEsQ0FBQyxDQUFDLENBQUMsQ0FBQztTQUN2QixNQUFNLENBQUMsT0FBTyxDQUFDO1NBQ2YsSUFBSSxDQUFDLElBQUksQ0FBQyxDQUFDO0FBQ2hCLENBQUM7QUFFRCxzRkFBc0Y7QUFDekUsUUFBQSxlQUFlLEdBQXVDO0lBQ2pFLEVBQUUsS0FBSyxFQUFFLENBQUMsRUFBRSxLQUFLLEVBQUUsS0FBSyxFQUFFO0lBQzFCLEVBQUUsS0FBSyxFQUFFLENBQUMsRUFBRSxLQUFLLEVBQUUsS0FBSyxFQUFFO0lBQzFCLEVBQUUsS0FBSyxFQUFFLENBQUMsRUFBRSxLQUFLLEVBQUUsS0FBSyxFQUFFO0lBQzFCLEVBQUUsS0FBSyxFQUFFLENBQUMsRUFBRSxLQUFLLEVBQUUsS0FBSyxFQUFFO0lBQzFCLEVBQUUsS0FBSyxFQUFFLENBQUMsRUFBRSxLQUFLLEVBQUUsS0FBSyxFQUFFO0lBQzFCLEVBQUUsS0FBSyxFQUFFLENBQUMsRUFBRSxLQUFLLEVBQUUsS0FBSyxFQUFFO0lBQzFCLEVBQUUsS0FBSyxFQUFFLENBQUMsRUFBRSxLQUFLLEVBQUUsS0FBSyxFQUFFO0NBQzNCLENBQUM7QUFFRjs7OztHQUlHO0FBQ0gsU0FBZ0Isa0JBQWtCLENBQUksT0FBZ0I7SUFDcEQsSUFBSSxLQUFLLENBQUMsT0FBTyxDQUFDLE9BQU8sQ0FBQztRQUFFLE9BQU8sT0FBYyxDQUFDO0lBQ2xELE1BQU0sSUFBSSxHQUFJLE9BQWlELEVBQUUsSUFBSSxDQUFDO0lBQ3RFLE9BQU8sS0FBSyxDQUFDLE9BQU8sQ0FBQyxJQUFJLENBQUMsQ0FBQyxDQUFDLENBQUUsSUFBWSxDQUFDLENBQUMsQ0FBQyxFQUFFLENBQUM7QUFDbEQsQ0FBQztBQVFEOzs7O0dBSUc7QUFDSCxTQUFnQixvQkFBb0IsQ0FBQyxJQUF1QjtJQUMxRCxJQUFJLENBQUMsSUFBSSxDQUFDLElBQUksQ0FBQyxJQUFJLEVBQUU7UUFBRSxPQUFPLGtDQUFrQyxDQUFDO0lBQ2pFLElBQUksQ0FBQyxJQUFJLENBQUMsVUFBVSxDQUFDLE1BQU07UUFBRSxPQUFPLGlDQUFpQyxDQUFDO0lBQ3RFLElBQUksQ0FBQyxJQUFJLENBQUMsS0FBSyxDQUFDLE1BQU07UUFBRSxPQUFPLDJCQUEyQixDQUFDO0lBQzNELElBQUksSUFBSSxDQUFDLEtBQUssQ0FBQyxJQUFJLENBQUMsQ0FBQyxDQUFDLEVBQUUsRUFBRSxDQUFDLENBQUMsQ0FBQyxDQUFDLFNBQVMsSUFBSSxDQUFDLE1BQU0sQ0FBQyxRQUFRLENBQUMsQ0FBQyxDQUFDLEdBQUcsQ0FBQyxJQUFJLENBQUMsQ0FBQyxHQUFHLEdBQUcsQ0FBQyxDQUFDLEVBQUUsQ0FBQztRQUNqRixPQUFPLDBEQUEwRCxDQUFDO0lBQ3BFLENBQUM7SUFDRCxPQUFPLElBQUksQ0FBQztBQUNkLENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL29yZGVyLXRlbXBsYXRlcy1sb2dpYy50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqIFB1cmUgKHNjcmVlbi1mcmVlLCB0ZXN0YWJsZSkgb3JkZXItdGVtcGxhdGUgKFwic3RhbmRpbmcgb3JkZXJcIikgaGVscGVycyDigJQgdGhlXG4gKiBBY3RpdmUvUGF1c2VkIHBpbGwsIHRoZSBkZXRhaWwtc2NyZWVuIGFjdGlvbiBmbGFncywgYW5kIHRoZSBzY2hlZHVsZSBsYWJlbC5cbiAqIEtlcHQgb3V0IG9mIHRoZSBSTiBzY3JlZW5zIHNvIGFwcHMvbW9iaWxlL19fdGVzdHNfXy8qLnRlc3QudHMgKHB1cmUtbG9naWMsXG4gKiBub2RlIGVudikgY2FuIGxvY2sgdGhlbS5cbiAqXG4gKiBObyBsaW5lLWFtb3VudC9tb25leSBoZWxwZXI6IG9yZGVyLXRlbXBsYXRlIGl0ZW1zIGFyZSBgeyBwcm9kdWN0SWQsIHF0eSwgbm90ZXMgfWBcbiAqIHdpdGggTk8gcHJpY2Ug4oCUIHRoZXJlIGlzIG5vdGhpbmcgbW9uZXRhcnkgdG8gcmVuZGVyIG9yIGRlcml2ZSBvbiB0aGlzIGZlYXR1cmUuXG4gKi9cblxuZXhwb3J0IHR5cGUgUGlsbFZhcmlhbnQgPSBcImJyYW5kXCIgfCBcImdyZWVuXCIgfCBcIm9yYW5nZVwiIHwgXCJyZWRcIiB8IFwiZ3JheVwiIHwgXCJwdXJwbGVcIjtcblxuLyoqIFN0YXRlIGlzIGEgYm9vbGVhbiwgbm90IGFuIGVudW0g4oCUIEFjdGl2ZSAoZ3JlZW4pIC8gUGF1c2VkIChncmF5KS4gKi9cbmV4cG9ydCBmdW5jdGlvbiBvcmRlclRlbXBsYXRlUGlsbEZvcihpc0FjdGl2ZTogYm9vbGVhbik6IHsgdmFyaWFudDogUGlsbFZhcmlhbnQ7IGxhYmVsOiBzdHJpbmcgfSB7XG4gIHJldHVybiBpc0FjdGl2ZSA/IHsgdmFyaWFudDogXCJncmVlblwiLCBsYWJlbDogXCJBY3RpdmVcIiB9IDogeyB2YXJpYW50OiBcImdyYXlcIiwgbGFiZWw6IFwiUGF1c2VkXCIgfTtcbn1cblxuZXhwb3J0IGludGVyZmFjZSBPcmRlclRlbXBsYXRlQWN0aW9uRmxhZ3Mge1xuICBjYW5HZW5lcmF0ZTogYm9vbGVhbjsgLy8gUE9TVCAvOmlkL2dlbmVyYXRlIOKAlCBhbHdheXNcbiAgY2FuUGF1c2U6IGJvb2xlYW47IC8vIFBBVENIIHsgaXNBY3RpdmU6ZmFsc2UgfSDigJQgd2hlbiBhY3RpdmVcbiAgY2FuQWN0aXZhdGU6IGJvb2xlYW47IC8vIFBBVENIIHsgaXNBY3RpdmU6dHJ1ZSB9ICDigJQgd2hlbiBwYXVzZWRcbn1cblxuLyoqXG4gKiBEZXRhaWwtc2NyZWVuIGFjdGlvbnMuIEdlbmVyYXRlLW5vdyBpcyBhbHdheXMgYXZhaWxhYmxlOyBQYXVzZSBvbmx5IHdoZW5cbiAqIGFjdGl2ZSwgUmVzdW1lIG9ubHkgd2hlbiBwYXVzZWQg4oCUIGJvdGggZGlyZWN0aW9ucyBhcmUgdGhlIHNhbWUgc2FmZSBQQVRDSC5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIG9yZGVyVGVtcGxhdGVBY3Rpb25GbGFncyhpc0FjdGl2ZTogYm9vbGVhbik6IE9yZGVyVGVtcGxhdGVBY3Rpb25GbGFncyB7XG4gIHJldHVybiB7IGNhbkdlbmVyYXRlOiB0cnVlLCBjYW5QYXVzZTogaXNBY3RpdmUsIGNhbkFjdGl2YXRlOiAhaXNBY3RpdmUgfTtcbn1cblxuLy8gSVNPIHdlZWtkYXkgMS4uNyDihpIgTW9uLi5TdW4uIEluZGV4IDAgaXMgYSBwbGFjZWhvbGRlciBzbyBgaXNvYCBtYXBzIGRpcmVjdGx5LlxuLy8gTk9URTogdGhpcyBBUEkgdXNlcyBJU08gd2Vla2RheXMgKE1vbj0xIOKApiBTdW49NyksIE5PVCBKUyBnZXREYXkoKSAoU3VuPTApLiBEb1xuLy8gTk9UIHJldXNlIHJlY3VycmluZydzIDAtaW5kZXhlZCBbXCJTdW5cIixcIk1vblwiLOKApl0gYXJyYXkgKGl0IHNoaWZ0cyBldmVyeSBkYXkgYnlcbi8vIG9uZSkgYW5kIGRvIE5PVCBpbmRleCBhIFN1bi1maXJzdCBhcnJheSBieSB0aGUgcmF3IHZhbHVlIChTdW5kYXk9NyDihpIgdW5kZWZpbmVkLFxuLy8gdGhlIGxhdGVudCBidWcgaW4gYXBwLyhjdXN0b21lcikvc3RhbmRpbmctb3JkZXJzLnRzeCkuIE1hcHBpbmcgN+KGklwiU3VuXCIgaGVyZVxuLy8gcmVuZGVycyBhbGwgc2V2ZW4gZGF5cyBjb3JyZWN0bHkuXG5jb25zdCBJU09fREFZUyA9IFtcIlwiLCBcIk1vblwiLCBcIlR1ZVwiLCBcIldlZFwiLCBcIlRodVwiLCBcIkZyaVwiLCBcIlNhdFwiLCBcIlN1blwiXTtcblxuLyoqIGUuZy4gWzEsMyw1XSDihpIgXCJNb24sIFdlZCwgRnJpXCI7IFtdIC8gdW5kZWZpbmVkIOKGkiBcIk5vIHNjaGVkdWxlXCIuICovXG5leHBvcnQgZnVuY3Rpb24gZGF5c0xhYmVsKGRheXNPZldlZWs6IG51bWJlcltdIHwgdW5kZWZpbmVkKTogc3RyaW5nIHtcbiAgaWYgKCFkYXlzT2ZXZWVrPy5sZW5ndGgpIHJldHVybiBcIk5vIHNjaGVkdWxlXCI7XG4gIHJldHVybiBbLi4uZGF5c09mV2Vla11cbiAgICAuc29ydCgoYSwgYikgPT4gYSAtIGIpXG4gICAgLm1hcCgoZCkgPT4gSVNPX0RBWVNbZF0pXG4gICAgLmZpbHRlcihCb29sZWFuKVxuICAgIC5qb2luKFwiLCBcIik7XG59XG5cbi8qKiBJU08gZGF5IGNoaXBzIGZvciBzY2hlZHVsZSBwaWNrZXJzIOKAlCB2YWx1ZSAxLi43IHdpdGggdGhlIHNhbWUgTW9uLWZpcnN0IGxhYmVscy4gKi9cbmV4cG9ydCBjb25zdCBJU09fREFZX09QVElPTlM6IHsgdmFsdWU6IG51bWJlcjsgbGFiZWw6IHN0cmluZyB9W10gPSBbXG4gIHsgdmFsdWU6IDEsIGxhYmVsOiBcIk1vblwiIH0sXG4gIHsgdmFsdWU6IDIsIGxhYmVsOiBcIlR1ZVwiIH0sXG4gIHsgdmFsdWU6IDMsIGxhYmVsOiBcIldlZFwiIH0sXG4gIHsgdmFsdWU6IDQsIGxhYmVsOiBcIlRodVwiIH0sXG4gIHsgdmFsdWU6IDUsIGxhYmVsOiBcIkZyaVwiIH0sXG4gIHsgdmFsdWU6IDYsIGxhYmVsOiBcIlNhdFwiIH0sXG4gIHsgdmFsdWU6IDcsIGxhYmVsOiBcIlN1blwiIH0sXG5dO1xuXG4vKipcbiAqIFRoZSBzdGFmZiBsaXN0IGVuZHBvaW50IHJldHVybnMgYSBge2RhdGEsIG1ldGF9YCBlbnZlbG9wZTsgc29tZSBlbmRwb2ludHNcbiAqIChhbmQgb2xkZXIgYnVpbGRzKSByZXR1cm4gYmFyZSBhcnJheXMuIE9uZSB0b2xlcmFudCB1bndyYXAgc28gbm8gY29uc3VtZXJcbiAqIGV2ZXIgY2FsbHMgYC5maWx0ZXJgIG9uIHRoZSBlbnZlbG9wZSBhZ2FpbiAodGhlIGNyYXNoIHRoaXMgZml4ZXMpLlxuICovXG5leHBvcnQgZnVuY3Rpb24gdW53cmFwTGlzdEVudmVsb3BlPFQ+KHBheWxvYWQ6IHVua25vd24pOiBUW10ge1xuICBpZiAoQXJyYXkuaXNBcnJheShwYXlsb2FkKSkgcmV0dXJuIHBheWxvYWQgYXMgVFtdO1xuICBjb25zdCBkYXRhID0gKHBheWxvYWQgYXMgeyBkYXRhPzogdW5rbm93biB9IHwgbnVsbCB8IHVuZGVmaW5lZCk/LmRhdGE7XG4gIHJldHVybiBBcnJheS5pc0FycmF5KGRhdGEpID8gKGRhdGEgYXMgVFtdKSA6IFtdO1xufVxuXG5leHBvcnQgaW50ZXJmYWNlIFRlbXBsYXRlRm9ybUlucHV0IHtcbiAgbmFtZTogc3RyaW5nO1xuICBkYXlzT2ZXZWVrOiBudW1iZXJbXTtcbiAgaXRlbXM6IHsgcHJvZHVjdElkOiBzdHJpbmc7IHF0eTogbnVtYmVyIH1bXTtcbn1cblxuLyoqXG4gKiBUaGUgZXhhY3QgY3JlYXRlIHJ1bGVzIHdlYidzIFN0YW5kaW5nT3JkZXJNb2RhbCBlbmZvcmNlczogYSBuYW1lLCBhdCBsZWFzdFxuICogb25lIElTTyBkYXksIGF0IGxlYXN0IG9uZSBpdGVtIHdpdGggcXR5IOKJpSAxLiBSZXR1cm5zIHRoZSBmaXJzdCBodW1hbiBlcnJvclxuICogb3IgbnVsbCB3aGVuIHN1Ym1pdHRhYmxlLlxuICovXG5leHBvcnQgZnVuY3Rpb24gdmFsaWRhdGVUZW1wbGF0ZUZvcm0oZm9ybTogVGVtcGxhdGVGb3JtSW5wdXQpOiBzdHJpbmcgfCBudWxsIHtcbiAgaWYgKCFmb3JtLm5hbWUudHJpbSgpKSByZXR1cm4gXCJHaXZlIHRoaXMgc3RhbmRpbmcgb3JkZXIgYSBuYW1lLlwiO1xuICBpZiAoIWZvcm0uZGF5c09mV2Vlay5sZW5ndGgpIHJldHVybiBcIlBpY2sgYXQgbGVhc3Qgb25lIGRlbGl2ZXJ5IGRheS5cIjtcbiAgaWYgKCFmb3JtLml0ZW1zLmxlbmd0aCkgcmV0dXJuIFwiQWRkIGF0IGxlYXN0IG9uZSBwcm9kdWN0LlwiO1xuICBpZiAoZm9ybS5pdGVtcy5zb21lKChpKSA9PiAhaS5wcm9kdWN0SWQgfHwgIU51bWJlci5pc0Zpbml0ZShpLnF0eSkgfHwgaS5xdHkgPCAxKSkge1xuICAgIHJldHVybiBcIkV2ZXJ5IGxpbmUgbmVlZHMgYSBwcm9kdWN0IGFuZCBhIHF1YW50aXR5IG9mIGF0IGxlYXN0IDEuXCI7XG4gIH1cbiAgcmV0dXJuIG51bGw7XG59XG4iXSwidmVyc2lvbiI6M30=

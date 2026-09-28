@@ -1,0 +1,100 @@
+7295b5e370b1e27ea8410c5e5fa645db
+/**
+ * @jest-environment node
+ */ // R-MKT hotfix pin (#657 follow-through). /distributors used to be a
+// prerendered `redirect()` page (app/(marketing)/distributors/page.tsx), but
+// a prerendered redirect() page served from the ISR cache lost its Location
+// header on the standalone server (307, no Location; spec 36 T1 red on
+// 2026-09-08). The alias must never come back as a page — it must stay a
+// next.config redirect, which next evaluates before middleware and which
+// always carries the Location header.
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _fs = /*#__PURE__*/ _interop_require_wildcard(require("fs"));
+const _path = /*#__PURE__*/ _interop_require_wildcard(require("path"));
+const _child_process = require("child_process");
+const _url = require("url");
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+const WEB_ROOT = _path.resolve(__dirname, "../..");
+// next.config.mjs is deliberately NOT imported in-process here: it opens with
+// `const __dirname = path.dirname(fileURLToPath(import.meta.url));`, and this
+// workspace's Jest/Babel transform (next/jest) recompiles a dynamically
+// imported .mjs to CJS and injects its OWN `__dirname` binding, colliding
+// with that line ("Identifier '__dirname' has already been declared").
+// csp.mjs was split out of next.config.mjs for exactly this reason (see its
+// header comment). A real, unmodified `node` subprocess — the same technique
+// lib/csp.test.ts's oracle comment documents for exercising next.config.mjs
+// directly — sidesteps the transform and actually resolves redirects().
+function loadRedirects() {
+    const configUrl = (0, _url.pathToFileURL)(_path.join(WEB_ROOT, "next.config.mjs")).href;
+    const script = `const m = await import(${JSON.stringify(configUrl)});` + `process.stdout.write(JSON.stringify(await m.default.redirects()));`;
+    const output = (0, _child_process.execFileSync)(process.execPath, [
+        "--input-type=module",
+        "-e",
+        script
+    ], {
+        cwd: WEB_ROOT,
+        encoding: "utf8",
+        timeout: 15000
+    });
+    return JSON.parse(output);
+}
+describe("/distributors alias — next.config redirect (#657 follow-through)", ()=>{
+    it("next.config.mjs redirects /distributors to /wholesalers, temporarily (307)", ()=>{
+        const redirects = loadRedirects();
+        const entry = redirects.find((r)=>r.source === "/distributors");
+        expect(entry).toEqual({
+            source: "/distributors",
+            destination: "/wholesalers",
+            permanent: false
+        });
+    });
+    it("app/(marketing)/distributors/page.tsx does not exist (the alias must never come back as a prerendered redirect() page)", ()=>{
+        const pagePath = _path.join(WEB_ROOT, "app", "(marketing)", "distributors", "page.tsx");
+        expect(_fs.existsSync(pagePath)).toBe(false);
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8obWFya2V0aW5nKS9kaXN0cmlidXRvcnMtcmVkaXJlY3Quc3RhdGljLnRlc3QudHMiXSwic291cmNlc0NvbnRlbnQiOlsiLyoqXG4gKiBAamVzdC1lbnZpcm9ubWVudCBub2RlXG4gKi9cbi8vIFItTUtUIGhvdGZpeCBwaW4gKCM2NTcgZm9sbG93LXRocm91Z2gpLiAvZGlzdHJpYnV0b3JzIHVzZWQgdG8gYmUgYVxuLy8gcHJlcmVuZGVyZWQgYHJlZGlyZWN0KClgIHBhZ2UgKGFwcC8obWFya2V0aW5nKS9kaXN0cmlidXRvcnMvcGFnZS50c3gpLCBidXRcbi8vIGEgcHJlcmVuZGVyZWQgcmVkaXJlY3QoKSBwYWdlIHNlcnZlZCBmcm9tIHRoZSBJU1IgY2FjaGUgbG9zdCBpdHMgTG9jYXRpb25cbi8vIGhlYWRlciBvbiB0aGUgc3RhbmRhbG9uZSBzZXJ2ZXIgKDMwNywgbm8gTG9jYXRpb247IHNwZWMgMzYgVDEgcmVkIG9uXG4vLyAyMDI2LTA5LTA4KS4gVGhlIGFsaWFzIG11c3QgbmV2ZXIgY29tZSBiYWNrIGFzIGEgcGFnZSDigJQgaXQgbXVzdCBzdGF5IGFcbi8vIG5leHQuY29uZmlnIHJlZGlyZWN0LCB3aGljaCBuZXh0IGV2YWx1YXRlcyBiZWZvcmUgbWlkZGxld2FyZSBhbmQgd2hpY2hcbi8vIGFsd2F5cyBjYXJyaWVzIHRoZSBMb2NhdGlvbiBoZWFkZXIuXG5pbXBvcnQgKiBhcyBmcyBmcm9tIFwiZnNcIjtcbmltcG9ydCAqIGFzIHBhdGggZnJvbSBcInBhdGhcIjtcbmltcG9ydCB7IGV4ZWNGaWxlU3luYyB9IGZyb20gXCJjaGlsZF9wcm9jZXNzXCI7XG5pbXBvcnQgeyBwYXRoVG9GaWxlVVJMIH0gZnJvbSBcInVybFwiO1xuXG5jb25zdCBXRUJfUk9PVCA9IHBhdGgucmVzb2x2ZShfX2Rpcm5hbWUsIFwiLi4vLi5cIik7XG5cbi8vIG5leHQuY29uZmlnLm1qcyBpcyBkZWxpYmVyYXRlbHkgTk9UIGltcG9ydGVkIGluLXByb2Nlc3MgaGVyZTogaXQgb3BlbnMgd2l0aFxuLy8gYGNvbnN0IF9fZGlybmFtZSA9IHBhdGguZGlybmFtZShmaWxlVVJMVG9QYXRoKGltcG9ydC5tZXRhLnVybCkpO2AsIGFuZCB0aGlzXG4vLyB3b3Jrc3BhY2UncyBKZXN0L0JhYmVsIHRyYW5zZm9ybSAobmV4dC9qZXN0KSByZWNvbXBpbGVzIGEgZHluYW1pY2FsbHlcbi8vIGltcG9ydGVkIC5tanMgdG8gQ0pTIGFuZCBpbmplY3RzIGl0cyBPV04gYF9fZGlybmFtZWAgYmluZGluZywgY29sbGlkaW5nXG4vLyB3aXRoIHRoYXQgbGluZSAoXCJJZGVudGlmaWVyICdfX2Rpcm5hbWUnIGhhcyBhbHJlYWR5IGJlZW4gZGVjbGFyZWRcIikuXG4vLyBjc3AubWpzIHdhcyBzcGxpdCBvdXQgb2YgbmV4dC5jb25maWcubWpzIGZvciBleGFjdGx5IHRoaXMgcmVhc29uIChzZWUgaXRzXG4vLyBoZWFkZXIgY29tbWVudCkuIEEgcmVhbCwgdW5tb2RpZmllZCBgbm9kZWAgc3VicHJvY2VzcyDigJQgdGhlIHNhbWUgdGVjaG5pcXVlXG4vLyBsaWIvY3NwLnRlc3QudHMncyBvcmFjbGUgY29tbWVudCBkb2N1bWVudHMgZm9yIGV4ZXJjaXNpbmcgbmV4dC5jb25maWcubWpzXG4vLyBkaXJlY3RseSDigJQgc2lkZXN0ZXBzIHRoZSB0cmFuc2Zvcm0gYW5kIGFjdHVhbGx5IHJlc29sdmVzIHJlZGlyZWN0cygpLlxuZnVuY3Rpb24gbG9hZFJlZGlyZWN0cygpOiBBcnJheTx7IHNvdXJjZTogc3RyaW5nOyBkZXN0aW5hdGlvbjogc3RyaW5nOyBwZXJtYW5lbnQ6IGJvb2xlYW4gfT4ge1xuICBjb25zdCBjb25maWdVcmwgPSBwYXRoVG9GaWxlVVJMKHBhdGguam9pbihXRUJfUk9PVCwgXCJuZXh0LmNvbmZpZy5tanNcIikpLmhyZWY7XG4gIGNvbnN0IHNjcmlwdCA9XG4gICAgYGNvbnN0IG0gPSBhd2FpdCBpbXBvcnQoJHtKU09OLnN0cmluZ2lmeShjb25maWdVcmwpfSk7YCArXG4gICAgYHByb2Nlc3Muc3Rkb3V0LndyaXRlKEpTT04uc3RyaW5naWZ5KGF3YWl0IG0uZGVmYXVsdC5yZWRpcmVjdHMoKSkpO2A7XG4gIGNvbnN0IG91dHB1dCA9IGV4ZWNGaWxlU3luYyhwcm9jZXNzLmV4ZWNQYXRoLCBbXCItLWlucHV0LXR5cGU9bW9kdWxlXCIsIFwiLWVcIiwgc2NyaXB0XSwge1xuICAgIGN3ZDogV0VCX1JPT1QsXG4gICAgZW5jb2Rpbmc6IFwidXRmOFwiLFxuICAgIHRpbWVvdXQ6IDE1XzAwMCxcbiAgfSk7XG4gIHJldHVybiBKU09OLnBhcnNlKG91dHB1dCk7XG59XG5cbmRlc2NyaWJlKFwiL2Rpc3RyaWJ1dG9ycyBhbGlhcyDigJQgbmV4dC5jb25maWcgcmVkaXJlY3QgKCM2NTcgZm9sbG93LXRocm91Z2gpXCIsICgpID0+IHtcbiAgaXQoXCJuZXh0LmNvbmZpZy5tanMgcmVkaXJlY3RzIC9kaXN0cmlidXRvcnMgdG8gL3dob2xlc2FsZXJzLCB0ZW1wb3JhcmlseSAoMzA3KVwiLCAoKSA9PiB7XG4gICAgY29uc3QgcmVkaXJlY3RzID0gbG9hZFJlZGlyZWN0cygpO1xuICAgIGNvbnN0IGVudHJ5ID0gcmVkaXJlY3RzLmZpbmQoKHIpID0+IHIuc291cmNlID09PSBcIi9kaXN0cmlidXRvcnNcIik7XG4gICAgZXhwZWN0KGVudHJ5KS50b0VxdWFsKHtcbiAgICAgIHNvdXJjZTogXCIvZGlzdHJpYnV0b3JzXCIsXG4gICAgICBkZXN0aW5hdGlvbjogXCIvd2hvbGVzYWxlcnNcIixcbiAgICAgIHBlcm1hbmVudDogZmFsc2UsXG4gICAgfSk7XG4gIH0pO1xuXG4gIGl0KFwiYXBwLyhtYXJrZXRpbmcpL2Rpc3RyaWJ1dG9ycy9wYWdlLnRzeCBkb2VzIG5vdCBleGlzdCAodGhlIGFsaWFzIG11c3QgbmV2ZXIgY29tZSBiYWNrIGFzIGEgcHJlcmVuZGVyZWQgcmVkaXJlY3QoKSBwYWdlKVwiLCAoKSA9PiB7XG4gICAgY29uc3QgcGFnZVBhdGggPSBwYXRoLmpvaW4oV0VCX1JPT1QsIFwiYXBwXCIsIFwiKG1hcmtldGluZylcIiwgXCJkaXN0cmlidXRvcnNcIiwgXCJwYWdlLnRzeFwiKTtcbiAgICBleHBlY3QoZnMuZXhpc3RzU3luYyhwYWdlUGF0aCkpLnRvQmUoZmFsc2UpO1xuICB9KTtcbn0pO1xuIl0sIm5hbWVzIjpbIldFQl9ST09UIiwicGF0aCIsInJlc29sdmUiLCJfX2Rpcm5hbWUiLCJsb2FkUmVkaXJlY3RzIiwiY29uZmlnVXJsIiwicGF0aFRvRmlsZVVSTCIsImpvaW4iLCJocmVmIiwic2NyaXB0IiwiSlNPTiIsInN0cmluZ2lmeSIsIm91dHB1dCIsImV4ZWNGaWxlU3luYyIsInByb2Nlc3MiLCJleGVjUGF0aCIsImN3ZCIsImVuY29kaW5nIiwidGltZW91dCIsInBhcnNlIiwiZGVzY3JpYmUiLCJpdCIsInJlZGlyZWN0cyIsImVudHJ5IiwiZmluZCIsInIiLCJzb3VyY2UiLCJleHBlY3QiLCJ0b0VxdWFsIiwiZGVzdGluYXRpb24iLCJwZXJtYW5lbnQiLCJwYWdlUGF0aCIsImZzIiwiZXhpc3RzU3luYyIsInRvQmUiXSwibWFwcGluZ3MiOiJBQUFBOztDQUVDLEdBQ0QscUVBQXFFO0FBQ3JFLDZFQUE2RTtBQUM3RSw0RUFBNEU7QUFDNUUsdUVBQXVFO0FBQ3ZFLHlFQUF5RTtBQUN6RSx5RUFBeUU7QUFDekUsc0NBQXNDOzs7Ozs0REFDbEI7OERBQ0U7K0JBQ087cUJBQ0M7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7OztBQUU5QixNQUFNQSxXQUFXQyxNQUFLQyxPQUFPLENBQUNDLFdBQVc7QUFFekMsOEVBQThFO0FBQzlFLDhFQUE4RTtBQUM5RSx3RUFBd0U7QUFDeEUsMEVBQTBFO0FBQzFFLHVFQUF1RTtBQUN2RSw0RUFBNEU7QUFDNUUsNkVBQTZFO0FBQzdFLDRFQUE0RTtBQUM1RSx3RUFBd0U7QUFDeEUsU0FBU0M7SUFDUCxNQUFNQyxZQUFZQyxJQUFBQSxrQkFBYSxFQUFDTCxNQUFLTSxJQUFJLENBQUNQLFVBQVUsb0JBQW9CUSxJQUFJO0lBQzVFLE1BQU1DLFNBQ0osQ0FBQyx1QkFBdUIsRUFBRUMsS0FBS0MsU0FBUyxDQUFDTixXQUFXLEVBQUUsQ0FBQyxHQUN2RCxDQUFDLGtFQUFrRSxDQUFDO0lBQ3RFLE1BQU1PLFNBQVNDLElBQUFBLDJCQUFZLEVBQUNDLFFBQVFDLFFBQVEsRUFBRTtRQUFDO1FBQXVCO1FBQU1OO0tBQU8sRUFBRTtRQUNuRk8sS0FBS2hCO1FBQ0xpQixVQUFVO1FBQ1ZDLFNBQVM7SUFDWDtJQUNBLE9BQU9SLEtBQUtTLEtBQUssQ0FBQ1A7QUFDcEI7QUFFQVEsU0FBUyxvRUFBb0U7SUFDM0VDLEdBQUcsOEVBQThFO1FBQy9FLE1BQU1DLFlBQVlsQjtRQUNsQixNQUFNbUIsUUFBUUQsVUFBVUUsSUFBSSxDQUFDLENBQUNDLElBQU1BLEVBQUVDLE1BQU0sS0FBSztRQUNqREMsT0FBT0osT0FBT0ssT0FBTyxDQUFDO1lBQ3BCRixRQUFRO1lBQ1JHLGFBQWE7WUFDYkMsV0FBVztRQUNiO0lBQ0Y7SUFFQVQsR0FBRywwSEFBMEg7UUFDM0gsTUFBTVUsV0FBVzlCLE1BQUtNLElBQUksQ0FBQ1AsVUFBVSxPQUFPLGVBQWUsZ0JBQWdCO1FBQzNFMkIsT0FBT0ssSUFBR0MsVUFBVSxDQUFDRixXQUFXRyxJQUFJLENBQUM7SUFDdkM7QUFDRiJ9

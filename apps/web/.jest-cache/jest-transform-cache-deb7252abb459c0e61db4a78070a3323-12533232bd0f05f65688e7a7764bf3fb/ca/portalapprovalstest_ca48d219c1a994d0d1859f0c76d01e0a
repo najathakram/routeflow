@@ -1,0 +1,151 @@
+709182851bad1620153280e6d5341362
+/**
+ * B449 fix-round finding 2: `GET /customers/pending-portal-approvals` is
+ * `@RequirePlanFlag("addon.buyer_portal")` — a dark flag every plan gets a courtesy
+ * allow on EXCEPT an always-enforced one (LITE). `usePendingPortalApprovals` fired
+ * unconditionally from two globally-mounted call sites (the header bell, the
+ * customers list), so a LITE tenant got a real 403 there on every page load and
+ * every 60s poll — the "stray toast with no gated navigation" half of B449.
+ */ "use strict";
+jest.mock("@/lib/api-client", ()=>({
+        apiClient: {
+            get: jest.fn(),
+            post: jest.fn(),
+            patch: jest.fn(),
+            delete: jest.fn()
+        }
+    }));
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+const _react1 = require("@testing-library/react");
+const _reactquery = require("@tanstack/react-query");
+const _render = require("../../test-utils/render");
+const _apiclient = require("../api-client");
+const _portalapprovals = require("./portal-approvals");
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+const mockedGet = _apiclient.apiClient.get;
+function Wrapper({ children }) {
+    const [client] = _react.useState(_render.createTestQueryClient);
+    return /*#__PURE__*/ (0, _jsxruntime.jsx)(_reactquery.QueryClientProvider, {
+        client: client,
+        children: children
+    });
+}
+function mockSubscription(flags) {
+    mockedGet.mockImplementation((url)=>{
+        if (url === "/billing/subscription") return Promise.resolve({
+            data: {
+                flags
+            }
+        });
+        if (url === "/customers/pending-portal-approvals") return Promise.resolve({
+            data: []
+        });
+        return Promise.reject(new Error(`unexpected GET ${url}`));
+    });
+}
+beforeEach(()=>{
+    jest.clearAllMocks();
+});
+describe("usePendingPortalApprovals — B449 fix-round finding 2", ()=>{
+    it("never fires the gated GET for a tenant resolved WITHOUT addon.buyer_portal (e.g. LITE)", async ()=>{
+        mockSubscription([
+            "flag.estimates"
+        ]); // resolved, buyer_portal absent
+        (0, _react1.renderHook)(()=>(0, _portalapprovals.usePendingPortalApprovals)(), {
+            wrapper: Wrapper
+        });
+        await (0, _react1.waitFor)(()=>expect(mockedGet).toHaveBeenCalledWith("/billing/subscription"));
+        expect(mockedGet).not.toHaveBeenCalledWith("/customers/pending-portal-approvals");
+    });
+    it("fires the gated GET once resolved WITH addon.buyer_portal", async ()=>{
+        mockSubscription([
+            "addon.buyer_portal"
+        ]);
+        (0, _react1.renderHook)(()=>(0, _portalapprovals.usePendingPortalApprovals)(), {
+            wrapper: Wrapper
+        });
+        await (0, _react1.waitFor)(()=>expect(mockedGet).toHaveBeenCalledWith("/customers/pending-portal-approvals"));
+    });
+    it("does not fire the gated GET while the flag is still resolving", ()=>{
+        mockedGet.mockImplementation(()=>new Promise(()=>{})); // never resolves
+        (0, _react1.renderHook)(()=>(0, _portalapprovals.usePendingPortalApprovals)(), {
+            wrapper: Wrapper
+        });
+        expect(mockedGet).not.toHaveBeenCalledWith("/customers/pending-portal-approvals");
+    });
+    it("fires the gated GET on a fetch failure (fail open, matches every other flag consumer)", async ()=>{
+        mockedGet.mockImplementation((url)=>{
+            if (url === "/billing/subscription") return Promise.reject(new Error("network error"));
+            if (url === "/customers/pending-portal-approvals") return Promise.resolve({
+                data: []
+            });
+            return Promise.reject(new Error(`unexpected GET ${url}`));
+        });
+        (0, _react1.renderHook)(()=>(0, _portalapprovals.usePendingPortalApprovals)(), {
+            wrapper: Wrapper
+        });
+        await (0, _react1.waitFor)(()=>expect(mockedGet).toHaveBeenCalledWith("/customers/pending-portal-approvals"));
+    });
+    it("fires ZERO requests for a role the caller disables (e.g. CUSTOMER/DRIVER) — fix-round finding 2-new", async ()=>{
+        // GET /billing/subscription is @Roles(OPERATOR)-gated same as the approvals
+        // endpoint — a caller passing enabled: false (a CUSTOMER/DRIVER header) must
+        // never fire the flag-resolution query either, or that alone 403s.
+        mockSubscription([
+            "addon.buyer_portal"
+        ]);
+        (0, _react1.renderHook)(()=>(0, _portalapprovals.usePendingPortalApprovals)({
+                enabled: false
+            }), {
+            wrapper: Wrapper
+        });
+        // Give react-query a tick to settle so a wrongly-fired request would show up.
+        await new Promise((r)=>setTimeout(r, 50));
+        expect(mockedGet).not.toHaveBeenCalled();
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2xpYi9hcGkvcG9ydGFsLWFwcHJvdmFscy50ZXN0LnRzeCJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqIEI0NDkgZml4LXJvdW5kIGZpbmRpbmcgMjogYEdFVCAvY3VzdG9tZXJzL3BlbmRpbmctcG9ydGFsLWFwcHJvdmFsc2AgaXNcbiAqIGBAUmVxdWlyZVBsYW5GbGFnKFwiYWRkb24uYnV5ZXJfcG9ydGFsXCIpYCDigJQgYSBkYXJrIGZsYWcgZXZlcnkgcGxhbiBnZXRzIGEgY291cnRlc3lcbiAqIGFsbG93IG9uIEVYQ0VQVCBhbiBhbHdheXMtZW5mb3JjZWQgb25lIChMSVRFKS4gYHVzZVBlbmRpbmdQb3J0YWxBcHByb3ZhbHNgIGZpcmVkXG4gKiB1bmNvbmRpdGlvbmFsbHkgZnJvbSB0d28gZ2xvYmFsbHktbW91bnRlZCBjYWxsIHNpdGVzICh0aGUgaGVhZGVyIGJlbGwsIHRoZVxuICogY3VzdG9tZXJzIGxpc3QpLCBzbyBhIExJVEUgdGVuYW50IGdvdCBhIHJlYWwgNDAzIHRoZXJlIG9uIGV2ZXJ5IHBhZ2UgbG9hZCBhbmRcbiAqIGV2ZXJ5IDYwcyBwb2xsIOKAlCB0aGUgXCJzdHJheSB0b2FzdCB3aXRoIG5vIGdhdGVkIG5hdmlnYXRpb25cIiBoYWxmIG9mIEI0NDkuXG4gKi9cbmltcG9ydCAqIGFzIFJlYWN0IGZyb20gXCJyZWFjdFwiO1xuaW1wb3J0IHsgcmVuZGVySG9vaywgd2FpdEZvciB9IGZyb20gXCJAdGVzdGluZy1saWJyYXJ5L3JlYWN0XCI7XG5pbXBvcnQgeyBRdWVyeUNsaWVudFByb3ZpZGVyIH0gZnJvbSBcIkB0YW5zdGFjay9yZWFjdC1xdWVyeVwiO1xuaW1wb3J0IHsgY3JlYXRlVGVzdFF1ZXJ5Q2xpZW50IH0gZnJvbSBcIkAvdGVzdC11dGlscy9yZW5kZXJcIjtcbmltcG9ydCB7IGFwaUNsaWVudCB9IGZyb20gXCJAL2xpYi9hcGktY2xpZW50XCI7XG5pbXBvcnQgeyB1c2VQZW5kaW5nUG9ydGFsQXBwcm92YWxzIH0gZnJvbSBcIi4vcG9ydGFsLWFwcHJvdmFsc1wiO1xuXG5qZXN0Lm1vY2soXCJAL2xpYi9hcGktY2xpZW50XCIsICgpID0+ICh7XG4gIGFwaUNsaWVudDogeyBnZXQ6IGplc3QuZm4oKSwgcG9zdDogamVzdC5mbigpLCBwYXRjaDogamVzdC5mbigpLCBkZWxldGU6IGplc3QuZm4oKSB9LFxufSkpO1xuXG5jb25zdCBtb2NrZWRHZXQgPSBhcGlDbGllbnQuZ2V0IGFzIGplc3QuTW9jaztcblxuZnVuY3Rpb24gV3JhcHBlcih7IGNoaWxkcmVuIH06IHsgY2hpbGRyZW46IFJlYWN0LlJlYWN0Tm9kZSB9KSB7XG4gIGNvbnN0IFtjbGllbnRdID0gUmVhY3QudXNlU3RhdGUoY3JlYXRlVGVzdFF1ZXJ5Q2xpZW50KTtcbiAgcmV0dXJuIDxRdWVyeUNsaWVudFByb3ZpZGVyIGNsaWVudD17Y2xpZW50fT57Y2hpbGRyZW59PC9RdWVyeUNsaWVudFByb3ZpZGVyPjtcbn1cblxuZnVuY3Rpb24gbW9ja1N1YnNjcmlwdGlvbihmbGFnczogc3RyaW5nW10gfCB1bmRlZmluZWQpIHtcbiAgbW9ja2VkR2V0Lm1vY2tJbXBsZW1lbnRhdGlvbigodXJsOiBzdHJpbmcpID0+IHtcbiAgICBpZiAodXJsID09PSBcIi9iaWxsaW5nL3N1YnNjcmlwdGlvblwiKSByZXR1cm4gUHJvbWlzZS5yZXNvbHZlKHsgZGF0YTogeyBmbGFncyB9IH0pO1xuICAgIGlmICh1cmwgPT09IFwiL2N1c3RvbWVycy9wZW5kaW5nLXBvcnRhbC1hcHByb3ZhbHNcIikgcmV0dXJuIFByb21pc2UucmVzb2x2ZSh7IGRhdGE6IFtdIH0pO1xuICAgIHJldHVybiBQcm9taXNlLnJlamVjdChuZXcgRXJyb3IoYHVuZXhwZWN0ZWQgR0VUICR7dXJsfWApKTtcbiAgfSk7XG59XG5cbmJlZm9yZUVhY2goKCkgPT4ge1xuICBqZXN0LmNsZWFyQWxsTW9ja3MoKTtcbn0pO1xuXG5kZXNjcmliZShcInVzZVBlbmRpbmdQb3J0YWxBcHByb3ZhbHMg4oCUIEI0NDkgZml4LXJvdW5kIGZpbmRpbmcgMlwiLCAoKSA9PiB7XG4gIGl0KFwibmV2ZXIgZmlyZXMgdGhlIGdhdGVkIEdFVCBmb3IgYSB0ZW5hbnQgcmVzb2x2ZWQgV0lUSE9VVCBhZGRvbi5idXllcl9wb3J0YWwgKGUuZy4gTElURSlcIiwgYXN5bmMgKCkgPT4ge1xuICAgIG1vY2tTdWJzY3JpcHRpb24oW1wiZmxhZy5lc3RpbWF0ZXNcIl0pOyAvLyByZXNvbHZlZCwgYnV5ZXJfcG9ydGFsIGFic2VudFxuICAgIHJlbmRlckhvb2soKCkgPT4gdXNlUGVuZGluZ1BvcnRhbEFwcHJvdmFscygpLCB7IHdyYXBwZXI6IFdyYXBwZXIgfSk7XG5cbiAgICBhd2FpdCB3YWl0Rm9yKCgpID0+IGV4cGVjdChtb2NrZWRHZXQpLnRvSGF2ZUJlZW5DYWxsZWRXaXRoKFwiL2JpbGxpbmcvc3Vic2NyaXB0aW9uXCIpKTtcbiAgICBleHBlY3QobW9ja2VkR2V0KS5ub3QudG9IYXZlQmVlbkNhbGxlZFdpdGgoXCIvY3VzdG9tZXJzL3BlbmRpbmctcG9ydGFsLWFwcHJvdmFsc1wiKTtcbiAgfSk7XG5cbiAgaXQoXCJmaXJlcyB0aGUgZ2F0ZWQgR0VUIG9uY2UgcmVzb2x2ZWQgV0lUSCBhZGRvbi5idXllcl9wb3J0YWxcIiwgYXN5bmMgKCkgPT4ge1xuICAgIG1vY2tTdWJzY3JpcHRpb24oW1wiYWRkb24uYnV5ZXJfcG9ydGFsXCJdKTtcbiAgICByZW5kZXJIb29rKCgpID0+IHVzZVBlbmRpbmdQb3J0YWxBcHByb3ZhbHMoKSwgeyB3cmFwcGVyOiBXcmFwcGVyIH0pO1xuXG4gICAgYXdhaXQgd2FpdEZvcigoKSA9PlxuICAgICAgZXhwZWN0KG1vY2tlZEdldCkudG9IYXZlQmVlbkNhbGxlZFdpdGgoXCIvY3VzdG9tZXJzL3BlbmRpbmctcG9ydGFsLWFwcHJvdmFsc1wiKSxcbiAgICApO1xuICB9KTtcblxuICBpdChcImRvZXMgbm90IGZpcmUgdGhlIGdhdGVkIEdFVCB3aGlsZSB0aGUgZmxhZyBpcyBzdGlsbCByZXNvbHZpbmdcIiwgKCkgPT4ge1xuICAgIG1vY2tlZEdldC5tb2NrSW1wbGVtZW50YXRpb24oKCkgPT4gbmV3IFByb21pc2UoKCkgPT4ge30pKTsgLy8gbmV2ZXIgcmVzb2x2ZXNcbiAgICByZW5kZXJIb29rKCgpID0+IHVzZVBlbmRpbmdQb3J0YWxBcHByb3ZhbHMoKSwgeyB3cmFwcGVyOiBXcmFwcGVyIH0pO1xuXG4gICAgZXhwZWN0KG1vY2tlZEdldCkubm90LnRvSGF2ZUJlZW5DYWxsZWRXaXRoKFwiL2N1c3RvbWVycy9wZW5kaW5nLXBvcnRhbC1hcHByb3ZhbHNcIik7XG4gIH0pO1xuXG4gIGl0KFwiZmlyZXMgdGhlIGdhdGVkIEdFVCBvbiBhIGZldGNoIGZhaWx1cmUgKGZhaWwgb3BlbiwgbWF0Y2hlcyBldmVyeSBvdGhlciBmbGFnIGNvbnN1bWVyKVwiLCBhc3luYyAoKSA9PiB7XG4gICAgbW9ja2VkR2V0Lm1vY2tJbXBsZW1lbnRhdGlvbigodXJsOiBzdHJpbmcpID0+IHtcbiAgICAgIGlmICh1cmwgPT09IFwiL2JpbGxpbmcvc3Vic2NyaXB0aW9uXCIpIHJldHVybiBQcm9taXNlLnJlamVjdChuZXcgRXJyb3IoXCJuZXR3b3JrIGVycm9yXCIpKTtcbiAgICAgIGlmICh1cmwgPT09IFwiL2N1c3RvbWVycy9wZW5kaW5nLXBvcnRhbC1hcHByb3ZhbHNcIikgcmV0dXJuIFByb21pc2UucmVzb2x2ZSh7IGRhdGE6IFtdIH0pO1xuICAgICAgcmV0dXJuIFByb21pc2UucmVqZWN0KG5ldyBFcnJvcihgdW5leHBlY3RlZCBHRVQgJHt1cmx9YCkpO1xuICAgIH0pO1xuICAgIHJlbmRlckhvb2soKCkgPT4gdXNlUGVuZGluZ1BvcnRhbEFwcHJvdmFscygpLCB7IHdyYXBwZXI6IFdyYXBwZXIgfSk7XG5cbiAgICBhd2FpdCB3YWl0Rm9yKCgpID0+XG4gICAgICBleHBlY3QobW9ja2VkR2V0KS50b0hhdmVCZWVuQ2FsbGVkV2l0aChcIi9jdXN0b21lcnMvcGVuZGluZy1wb3J0YWwtYXBwcm92YWxzXCIpLFxuICAgICk7XG4gIH0pO1xuXG4gIGl0KFwiZmlyZXMgWkVSTyByZXF1ZXN0cyBmb3IgYSByb2xlIHRoZSBjYWxsZXIgZGlzYWJsZXMgKGUuZy4gQ1VTVE9NRVIvRFJJVkVSKSDigJQgZml4LXJvdW5kIGZpbmRpbmcgMi1uZXdcIiwgYXN5bmMgKCkgPT4ge1xuICAgIC8vIEdFVCAvYmlsbGluZy9zdWJzY3JpcHRpb24gaXMgQFJvbGVzKE9QRVJBVE9SKS1nYXRlZCBzYW1lIGFzIHRoZSBhcHByb3ZhbHNcbiAgICAvLyBlbmRwb2ludCDigJQgYSBjYWxsZXIgcGFzc2luZyBlbmFibGVkOiBmYWxzZSAoYSBDVVNUT01FUi9EUklWRVIgaGVhZGVyKSBtdXN0XG4gICAgLy8gbmV2ZXIgZmlyZSB0aGUgZmxhZy1yZXNvbHV0aW9uIHF1ZXJ5IGVpdGhlciwgb3IgdGhhdCBhbG9uZSA0MDNzLlxuICAgIG1vY2tTdWJzY3JpcHRpb24oW1wiYWRkb24uYnV5ZXJfcG9ydGFsXCJdKTtcbiAgICByZW5kZXJIb29rKCgpID0+IHVzZVBlbmRpbmdQb3J0YWxBcHByb3ZhbHMoeyBlbmFibGVkOiBmYWxzZSB9KSwgeyB3cmFwcGVyOiBXcmFwcGVyIH0pO1xuXG4gICAgLy8gR2l2ZSByZWFjdC1xdWVyeSBhIHRpY2sgdG8gc2V0dGxlIHNvIGEgd3JvbmdseS1maXJlZCByZXF1ZXN0IHdvdWxkIHNob3cgdXAuXG4gICAgYXdhaXQgbmV3IFByb21pc2UoKHIpID0+IHNldFRpbWVvdXQociwgNTApKTtcbiAgICBleHBlY3QobW9ja2VkR2V0KS5ub3QudG9IYXZlQmVlbkNhbGxlZCgpO1xuICB9KTtcbn0pO1xuIl0sIm5hbWVzIjpbImplc3QiLCJtb2NrIiwiYXBpQ2xpZW50IiwiZ2V0IiwiZm4iLCJwb3N0IiwicGF0Y2giLCJkZWxldGUiLCJtb2NrZWRHZXQiLCJXcmFwcGVyIiwiY2hpbGRyZW4iLCJjbGllbnQiLCJSZWFjdCIsInVzZVN0YXRlIiwiY3JlYXRlVGVzdFF1ZXJ5Q2xpZW50IiwiUXVlcnlDbGllbnRQcm92aWRlciIsIm1vY2tTdWJzY3JpcHRpb24iLCJmbGFncyIsIm1vY2tJbXBsZW1lbnRhdGlvbiIsInVybCIsIlByb21pc2UiLCJyZXNvbHZlIiwiZGF0YSIsInJlamVjdCIsIkVycm9yIiwiYmVmb3JlRWFjaCIsImNsZWFyQWxsTW9ja3MiLCJkZXNjcmliZSIsIml0IiwicmVuZGVySG9vayIsInVzZVBlbmRpbmdQb3J0YWxBcHByb3ZhbHMiLCJ3cmFwcGVyIiwid2FpdEZvciIsImV4cGVjdCIsInRvSGF2ZUJlZW5DYWxsZWRXaXRoIiwibm90IiwiZW5hYmxlZCIsInIiLCJzZXRUaW1lb3V0IiwidG9IYXZlQmVlbkNhbGxlZCJdLCJtYXBwaW5ncyI6IkFBQUE7Ozs7Ozs7Q0FPQztBQVFEQSxLQUFLQyxJQUFJLENBQUMsb0JBQW9CLElBQU8sQ0FBQTtRQUNuQ0MsV0FBVztZQUFFQyxLQUFLSCxLQUFLSSxFQUFFO1lBQUlDLE1BQU1MLEtBQUtJLEVBQUU7WUFBSUUsT0FBT04sS0FBS0ksRUFBRTtZQUFJRyxRQUFRUCxLQUFLSSxFQUFFO1FBQUc7SUFDcEYsQ0FBQTs7Ozs7K0RBVHVCO3dCQUNhOzRCQUNBO3dCQUNFOzJCQUNaO2lDQUNnQjs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7O0FBTTFDLE1BQU1JLFlBQVlOLG9CQUFTLENBQUNDLEdBQUc7QUFFL0IsU0FBU00sUUFBUSxFQUFFQyxRQUFRLEVBQWlDO0lBQzFELE1BQU0sQ0FBQ0MsT0FBTyxHQUFHQyxPQUFNQyxRQUFRLENBQUNDLDZCQUFxQjtJQUNyRCxxQkFBTyxxQkFBQ0MsK0JBQW1CO1FBQUNKLFFBQVFBO2tCQUFTRDs7QUFDL0M7QUFFQSxTQUFTTSxpQkFBaUJDLEtBQTJCO0lBQ25EVCxVQUFVVSxrQkFBa0IsQ0FBQyxDQUFDQztRQUM1QixJQUFJQSxRQUFRLHlCQUF5QixPQUFPQyxRQUFRQyxPQUFPLENBQUM7WUFBRUMsTUFBTTtnQkFBRUw7WUFBTTtRQUFFO1FBQzlFLElBQUlFLFFBQVEsdUNBQXVDLE9BQU9DLFFBQVFDLE9BQU8sQ0FBQztZQUFFQyxNQUFNLEVBQUU7UUFBQztRQUNyRixPQUFPRixRQUFRRyxNQUFNLENBQUMsSUFBSUMsTUFBTSxDQUFDLGVBQWUsRUFBRUwsS0FBSztJQUN6RDtBQUNGO0FBRUFNLFdBQVc7SUFDVHpCLEtBQUswQixhQUFhO0FBQ3BCO0FBRUFDLFNBQVMsd0RBQXdEO0lBQy9EQyxHQUFHLDBGQUEwRjtRQUMzRlosaUJBQWlCO1lBQUM7U0FBaUIsR0FBRyxnQ0FBZ0M7UUFDdEVhLElBQUFBLGtCQUFVLEVBQUMsSUFBTUMsSUFBQUEsMENBQXlCLEtBQUk7WUFBRUMsU0FBU3RCO1FBQVE7UUFFakUsTUFBTXVCLElBQUFBLGVBQU8sRUFBQyxJQUFNQyxPQUFPekIsV0FBVzBCLG9CQUFvQixDQUFDO1FBQzNERCxPQUFPekIsV0FBVzJCLEdBQUcsQ0FBQ0Qsb0JBQW9CLENBQUM7SUFDN0M7SUFFQU4sR0FBRyw2REFBNkQ7UUFDOURaLGlCQUFpQjtZQUFDO1NBQXFCO1FBQ3ZDYSxJQUFBQSxrQkFBVSxFQUFDLElBQU1DLElBQUFBLDBDQUF5QixLQUFJO1lBQUVDLFNBQVN0QjtRQUFRO1FBRWpFLE1BQU11QixJQUFBQSxlQUFPLEVBQUMsSUFDWkMsT0FBT3pCLFdBQVcwQixvQkFBb0IsQ0FBQztJQUUzQztJQUVBTixHQUFHLGlFQUFpRTtRQUNsRXBCLFVBQVVVLGtCQUFrQixDQUFDLElBQU0sSUFBSUUsUUFBUSxLQUFPLEtBQUssaUJBQWlCO1FBQzVFUyxJQUFBQSxrQkFBVSxFQUFDLElBQU1DLElBQUFBLDBDQUF5QixLQUFJO1lBQUVDLFNBQVN0QjtRQUFRO1FBRWpFd0IsT0FBT3pCLFdBQVcyQixHQUFHLENBQUNELG9CQUFvQixDQUFDO0lBQzdDO0lBRUFOLEdBQUcseUZBQXlGO1FBQzFGcEIsVUFBVVUsa0JBQWtCLENBQUMsQ0FBQ0M7WUFDNUIsSUFBSUEsUUFBUSx5QkFBeUIsT0FBT0MsUUFBUUcsTUFBTSxDQUFDLElBQUlDLE1BQU07WUFDckUsSUFBSUwsUUFBUSx1Q0FBdUMsT0FBT0MsUUFBUUMsT0FBTyxDQUFDO2dCQUFFQyxNQUFNLEVBQUU7WUFBQztZQUNyRixPQUFPRixRQUFRRyxNQUFNLENBQUMsSUFBSUMsTUFBTSxDQUFDLGVBQWUsRUFBRUwsS0FBSztRQUN6RDtRQUNBVSxJQUFBQSxrQkFBVSxFQUFDLElBQU1DLElBQUFBLDBDQUF5QixLQUFJO1lBQUVDLFNBQVN0QjtRQUFRO1FBRWpFLE1BQU11QixJQUFBQSxlQUFPLEVBQUMsSUFDWkMsT0FBT3pCLFdBQVcwQixvQkFBb0IsQ0FBQztJQUUzQztJQUVBTixHQUFHLHVHQUF1RztRQUN4Ryw0RUFBNEU7UUFDNUUsNkVBQTZFO1FBQzdFLG1FQUFtRTtRQUNuRVosaUJBQWlCO1lBQUM7U0FBcUI7UUFDdkNhLElBQUFBLGtCQUFVLEVBQUMsSUFBTUMsSUFBQUEsMENBQXlCLEVBQUM7Z0JBQUVNLFNBQVM7WUFBTSxJQUFJO1lBQUVMLFNBQVN0QjtRQUFRO1FBRW5GLDhFQUE4RTtRQUM5RSxNQUFNLElBQUlXLFFBQVEsQ0FBQ2lCLElBQU1DLFdBQVdELEdBQUc7UUFDdkNKLE9BQU96QixXQUFXMkIsR0FBRyxDQUFDSSxnQkFBZ0I7SUFDeEM7QUFDRiJ9

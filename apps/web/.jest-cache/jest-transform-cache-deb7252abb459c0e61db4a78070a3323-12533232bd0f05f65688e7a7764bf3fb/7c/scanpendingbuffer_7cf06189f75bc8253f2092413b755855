@@ -1,0 +1,108 @@
+7a830168369506db70edce4e8424973f
+/**
+ * F30 / R2 / REG-B192 — ScanCamera's `busyRef` used to be a plain boolean:
+ * while a scan resolve was in flight, every further detection was dropped
+ * with no feedback, for up to one full lookup (api-client.ts's timeout) per
+ * scan — see `.claude/pipeline/fix-cards/F30-mobile-scan-loss.md` B192.
+ *
+ * This module is that mutex's replacement: a pure, jest-speccable state
+ * machine holding a bounded (depth 2) pending queue behind the one code
+ * currently resolving, so ScanCamera can buffer instead of drop and
+ * ScanOrderSheet can render an `isResolving` indicator.
+ *
+ * WHO OWNS DEDUPE: `scan-loop.ts`'s gate, and only it. Every detection that
+ * reaches `pushScan` was already ACCEPTED there, which for a repeat of the
+ * same item means both of its clocks cleared — `SCAN_COOLDOWN_MS` since the
+ * last accept AND `ABSENCE_GAP_MS` out of frame — i.e. the operator lifted
+ * the item away and deliberately re-presented it, matched on the NORMALIZED
+ * candidate set so a label flickering between symbologies is one item. A
+ * second dedupe here could only overrule that verdict, and overruling it is
+ * exactly B192: scanning the same item twice during one slow lookup landed
+ * qty 1. So the buffer keeps EVERY accepted detection, repeats included.
+ */ "use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, {
+        enumerable: true,
+        get: Object.getOwnPropertyDescriptor(all, name).get
+    });
+}
+_export(exports, {
+    get PENDING_BUFFER_DEPTH () {
+        return PENDING_BUFFER_DEPTH;
+    },
+    get completeResolve () {
+        return completeResolve;
+    },
+    get createPendingBuffer () {
+        return createPendingBuffer;
+    },
+    get pushScan () {
+        return pushScan;
+    }
+});
+const PENDING_BUFFER_DEPTH = 2;
+function createPendingBuffer() {
+    return {
+        isResolving: false,
+        current: null,
+        pending: []
+    };
+}
+function pushScan(state, code) {
+    if (!state.isResolving) {
+        return {
+            startResolving: code,
+            next: {
+                isResolving: true,
+                current: code,
+                pending: []
+            }
+        };
+    }
+    if (state.pending.length >= PENDING_BUFFER_DEPTH) {
+        // Bounded by design (R2's "depth 2") — this is the intentional cap, not
+        // the drop-not-queue bug: it only bites once THREE accepted scans (the
+        // one resolving plus two buffered) are already in flight at once, which
+        // real resolve latency makes rare.
+        return {
+            startResolving: null,
+            next: state
+        };
+    }
+    return {
+        startResolving: null,
+        next: {
+            ...state,
+            pending: [
+                ...state.pending,
+                code
+            ]
+        }
+    };
+}
+function completeResolve(state) {
+    const [next, ...rest] = state.pending;
+    if (next === undefined) {
+        return {
+            startResolving: null,
+            next: {
+                isResolving: false,
+                current: null,
+                pending: []
+            }
+        };
+    }
+    return {
+        startResolving: next,
+        next: {
+            isResolving: true,
+            current: next,
+            pending: rest
+        }
+    };
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L3BhY2thZ2VzL3NjYW5uaW5nL3NyYy9zY2FuLXBlbmRpbmctYnVmZmVyLnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogRjMwIC8gUjIgLyBSRUctQjE5MiDigJQgU2NhbkNhbWVyYSdzIGBidXN5UmVmYCB1c2VkIHRvIGJlIGEgcGxhaW4gYm9vbGVhbjpcbiAqIHdoaWxlIGEgc2NhbiByZXNvbHZlIHdhcyBpbiBmbGlnaHQsIGV2ZXJ5IGZ1cnRoZXIgZGV0ZWN0aW9uIHdhcyBkcm9wcGVkXG4gKiB3aXRoIG5vIGZlZWRiYWNrLCBmb3IgdXAgdG8gb25lIGZ1bGwgbG9va3VwIChhcGktY2xpZW50LnRzJ3MgdGltZW91dCkgcGVyXG4gKiBzY2FuIOKAlCBzZWUgYC5jbGF1ZGUvcGlwZWxpbmUvZml4LWNhcmRzL0YzMC1tb2JpbGUtc2Nhbi1sb3NzLm1kYCBCMTkyLlxuICpcbiAqIFRoaXMgbW9kdWxlIGlzIHRoYXQgbXV0ZXgncyByZXBsYWNlbWVudDogYSBwdXJlLCBqZXN0LXNwZWNjYWJsZSBzdGF0ZVxuICogbWFjaGluZSBob2xkaW5nIGEgYm91bmRlZCAoZGVwdGggMikgcGVuZGluZyBxdWV1ZSBiZWhpbmQgdGhlIG9uZSBjb2RlXG4gKiBjdXJyZW50bHkgcmVzb2x2aW5nLCBzbyBTY2FuQ2FtZXJhIGNhbiBidWZmZXIgaW5zdGVhZCBvZiBkcm9wIGFuZFxuICogU2Nhbk9yZGVyU2hlZXQgY2FuIHJlbmRlciBhbiBgaXNSZXNvbHZpbmdgIGluZGljYXRvci5cbiAqXG4gKiBXSE8gT1dOUyBERURVUEU6IGBzY2FuLWxvb3AudHNgJ3MgZ2F0ZSwgYW5kIG9ubHkgaXQuIEV2ZXJ5IGRldGVjdGlvbiB0aGF0XG4gKiByZWFjaGVzIGBwdXNoU2NhbmAgd2FzIGFscmVhZHkgQUNDRVBURUQgdGhlcmUsIHdoaWNoIGZvciBhIHJlcGVhdCBvZiB0aGVcbiAqIHNhbWUgaXRlbSBtZWFucyBib3RoIG9mIGl0cyBjbG9ja3MgY2xlYXJlZCDigJQgYFNDQU5fQ09PTERPV05fTVNgIHNpbmNlIHRoZVxuICogbGFzdCBhY2NlcHQgQU5EIGBBQlNFTkNFX0dBUF9NU2Agb3V0IG9mIGZyYW1lIOKAlCBpLmUuIHRoZSBvcGVyYXRvciBsaWZ0ZWRcbiAqIHRoZSBpdGVtIGF3YXkgYW5kIGRlbGliZXJhdGVseSByZS1wcmVzZW50ZWQgaXQsIG1hdGNoZWQgb24gdGhlIE5PUk1BTElaRURcbiAqIGNhbmRpZGF0ZSBzZXQgc28gYSBsYWJlbCBmbGlja2VyaW5nIGJldHdlZW4gc3ltYm9sb2dpZXMgaXMgb25lIGl0ZW0uIEFcbiAqIHNlY29uZCBkZWR1cGUgaGVyZSBjb3VsZCBvbmx5IG92ZXJydWxlIHRoYXQgdmVyZGljdCwgYW5kIG92ZXJydWxpbmcgaXQgaXNcbiAqIGV4YWN0bHkgQjE5Mjogc2Nhbm5pbmcgdGhlIHNhbWUgaXRlbSB0d2ljZSBkdXJpbmcgb25lIHNsb3cgbG9va3VwIGxhbmRlZFxuICogcXR5IDEuIFNvIHRoZSBidWZmZXIga2VlcHMgRVZFUlkgYWNjZXB0ZWQgZGV0ZWN0aW9uLCByZXBlYXRzIGluY2x1ZGVkLlxuICovXG5cbmV4cG9ydCBpbnRlcmZhY2UgUGVuZGluZ0J1ZmZlclN0YXRlIHtcbiAgaXNSZXNvbHZpbmc6IGJvb2xlYW47XG4gIC8qKiBUaGUgY29kZSBjdXJyZW50bHkgYmVpbmcgcmVzb2x2ZWQsIG9yIG51bGwgd2hlbiBpZGxlLiAqL1xuICBjdXJyZW50OiBzdHJpbmcgfCBudWxsO1xuICAvKipcbiAgICogQ29kZXMgd2FpdGluZyB0aGVpciB0dXJuLCBvbGRlc3QgZmlyc3QuIENhcHBlZCBhdCBQRU5ESU5HX0JVRkZFUl9ERVBUSC5cbiAgICogQSByZXBlYXQgb2YgYSBjb2RlIGFscmVhZHkgaGVyZSAob3Igb2YgYGN1cnJlbnRgKSBpcyBhIHNlcGFyYXRlIGRlbGliZXJhdGVcbiAgICogc2NhbiBhbmQgZ2V0cyBpdHMgb3duIHNsb3Qg4oCUIHRoaXMgaXMgYSBxdWV1ZSwgbm90IGEgc2V0LlxuICAgKi9cbiAgcGVuZGluZzogc3RyaW5nW107XG59XG5cbi8qKiBNYXggY29kZXMgcXVldWVkIGJlaGluZCB0aGUgb25lIGN1cnJlbnRseSByZXNvbHZpbmcgKHNwZWMgUjIpLiAqL1xuZXhwb3J0IGNvbnN0IFBFTkRJTkdfQlVGRkVSX0RFUFRIID0gMjtcblxuZXhwb3J0IGludGVyZmFjZSBQZW5kaW5nQnVmZmVyUmVzdWx0IHtcbiAgbmV4dDogUGVuZGluZ0J1ZmZlclN0YXRlO1xuICAvKiogVGhlIGNvZGUgdG8gaGFuZCB0byB0aGUgcmVzb2x2ZXIgcmlnaHQgbm93LCBvciBudWxsIHRvIHN0YXJ0IG5vdGhpbmcuICovXG4gIHN0YXJ0UmVzb2x2aW5nOiBzdHJpbmcgfCBudWxsO1xufVxuXG4vKiogVGhlIGVtcHR5L2lkbGUgYnVmZmVyLiAqL1xuZXhwb3J0IGZ1bmN0aW9uIGNyZWF0ZVBlbmRpbmdCdWZmZXIoKTogUGVuZGluZ0J1ZmZlclN0YXRlIHtcbiAgcmV0dXJuIHsgaXNSZXNvbHZpbmc6IGZhbHNlLCBjdXJyZW50OiBudWxsLCBwZW5kaW5nOiBbXSB9O1xufVxuXG4vKipcbiAqIEEgbmV3bHktYWNjZXB0ZWQgc2NhbiBhcnJpdmVzLiBTdGFydHMgcmVzb2x2aW5nIGltbWVkaWF0ZWx5IHdoZW4gbm90aGluZ1xuICogZWxzZSBpcyBpbiBmbGlnaHQ7IG90aGVyd2lzZSBidWZmZXJzIGl0IChkZXB0aC1jYXBwZWQpIGluc3RlYWQgb2YgZHJvcHBpbmdcbiAqIGl0IOKAlCBpbmNsdWRpbmcgd2hlbiBpdCByZXBlYXRzIHRoZSBjb2RlIGN1cnJlbnRseSByZXNvbHZpbmcgb3Igb25lIGFscmVhZHlcbiAqIHF1ZXVlZCwgc2luY2UgdGhlIGdhdGUgaGFzIGFscmVhZHkgcnVsZWQgdGhhdCByZXBlYXQgZGVsaWJlcmF0ZS5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIHB1c2hTY2FuKHN0YXRlOiBQZW5kaW5nQnVmZmVyU3RhdGUsIGNvZGU6IHN0cmluZyk6IFBlbmRpbmdCdWZmZXJSZXN1bHQge1xuICBpZiAoIXN0YXRlLmlzUmVzb2x2aW5nKSB7XG4gICAgcmV0dXJuIHsgc3RhcnRSZXNvbHZpbmc6IGNvZGUsIG5leHQ6IHsgaXNSZXNvbHZpbmc6IHRydWUsIGN1cnJlbnQ6IGNvZGUsIHBlbmRpbmc6IFtdIH0gfTtcbiAgfVxuICBpZiAoc3RhdGUucGVuZGluZy5sZW5ndGggPj0gUEVORElOR19CVUZGRVJfREVQVEgpIHtcbiAgICAvLyBCb3VuZGVkIGJ5IGRlc2lnbiAoUjIncyBcImRlcHRoIDJcIikg4oCUIHRoaXMgaXMgdGhlIGludGVudGlvbmFsIGNhcCwgbm90XG4gICAgLy8gdGhlIGRyb3Atbm90LXF1ZXVlIGJ1ZzogaXQgb25seSBiaXRlcyBvbmNlIFRIUkVFIGFjY2VwdGVkIHNjYW5zICh0aGVcbiAgICAvLyBvbmUgcmVzb2x2aW5nIHBsdXMgdHdvIGJ1ZmZlcmVkKSBhcmUgYWxyZWFkeSBpbiBmbGlnaHQgYXQgb25jZSwgd2hpY2hcbiAgICAvLyByZWFsIHJlc29sdmUgbGF0ZW5jeSBtYWtlcyByYXJlLlxuICAgIHJldHVybiB7IHN0YXJ0UmVzb2x2aW5nOiBudWxsLCBuZXh0OiBzdGF0ZSB9O1xuICB9XG4gIHJldHVybiB7IHN0YXJ0UmVzb2x2aW5nOiBudWxsLCBuZXh0OiB7IC4uLnN0YXRlLCBwZW5kaW5nOiBbLi4uc3RhdGUucGVuZGluZywgY29kZV0gfSB9O1xufVxuXG4vKipcbiAqIFRoZSBpbi1mbGlnaHQgcmVzb2x2ZSBmaW5pc2hlZC4gUHVsbHMgdGhlIG5leHQgYnVmZmVyZWQgY29kZSAoRklGTykgdG9cbiAqIHN0YXJ0IHJlc29sdmluZywgb3IgY2xlYXJzIGBpc1Jlc29sdmluZ2Agd2hlbiBub3RoaW5nIGlzIGxlZnQuXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiBjb21wbGV0ZVJlc29sdmUoc3RhdGU6IFBlbmRpbmdCdWZmZXJTdGF0ZSk6IFBlbmRpbmdCdWZmZXJSZXN1bHQge1xuICBjb25zdCBbbmV4dCwgLi4ucmVzdF0gPSBzdGF0ZS5wZW5kaW5nO1xuICBpZiAobmV4dCA9PT0gdW5kZWZpbmVkKSB7XG4gICAgcmV0dXJuIHsgc3RhcnRSZXNvbHZpbmc6IG51bGwsIG5leHQ6IHsgaXNSZXNvbHZpbmc6IGZhbHNlLCBjdXJyZW50OiBudWxsLCBwZW5kaW5nOiBbXSB9IH07XG4gIH1cbiAgcmV0dXJuIHsgc3RhcnRSZXNvbHZpbmc6IG5leHQsIG5leHQ6IHsgaXNSZXNvbHZpbmc6IHRydWUsIGN1cnJlbnQ6IG5leHQsIHBlbmRpbmc6IHJlc3QgfSB9O1xufVxuIl0sIm5hbWVzIjpbIlBFTkRJTkdfQlVGRkVSX0RFUFRIIiwiY29tcGxldGVSZXNvbHZlIiwiY3JlYXRlUGVuZGluZ0J1ZmZlciIsInB1c2hTY2FuIiwiaXNSZXNvbHZpbmciLCJjdXJyZW50IiwicGVuZGluZyIsInN0YXRlIiwiY29kZSIsInN0YXJ0UmVzb2x2aW5nIiwibmV4dCIsImxlbmd0aCIsInJlc3QiLCJ1bmRlZmluZWQiXSwibWFwcGluZ3MiOiJBQUFBOzs7Ozs7Ozs7Ozs7Ozs7Ozs7OztDQW9CQzs7Ozs7Ozs7Ozs7UUFlWUE7ZUFBQUE7O1FBcUNHQztlQUFBQTs7UUE1QkFDO2VBQUFBOztRQVVBQztlQUFBQTs7O0FBbkJULE1BQU1ILHVCQUF1QjtBQVM3QixTQUFTRTtJQUNkLE9BQU87UUFBRUUsYUFBYTtRQUFPQyxTQUFTO1FBQU1DLFNBQVMsRUFBRTtJQUFDO0FBQzFEO0FBUU8sU0FBU0gsU0FBU0ksS0FBeUIsRUFBRUMsSUFBWTtJQUM5RCxJQUFJLENBQUNELE1BQU1ILFdBQVcsRUFBRTtRQUN0QixPQUFPO1lBQUVLLGdCQUFnQkQ7WUFBTUUsTUFBTTtnQkFBRU4sYUFBYTtnQkFBTUMsU0FBU0c7Z0JBQU1GLFNBQVMsRUFBRTtZQUFDO1FBQUU7SUFDekY7SUFDQSxJQUFJQyxNQUFNRCxPQUFPLENBQUNLLE1BQU0sSUFBSVgsc0JBQXNCO1FBQ2hELHdFQUF3RTtRQUN4RSx1RUFBdUU7UUFDdkUsd0VBQXdFO1FBQ3hFLG1DQUFtQztRQUNuQyxPQUFPO1lBQUVTLGdCQUFnQjtZQUFNQyxNQUFNSDtRQUFNO0lBQzdDO0lBQ0EsT0FBTztRQUFFRSxnQkFBZ0I7UUFBTUMsTUFBTTtZQUFFLEdBQUdILEtBQUs7WUFBRUQsU0FBUzttQkFBSUMsTUFBTUQsT0FBTztnQkFBRUU7YUFBSztRQUFDO0lBQUU7QUFDdkY7QUFNTyxTQUFTUCxnQkFBZ0JNLEtBQXlCO0lBQ3ZELE1BQU0sQ0FBQ0csTUFBTSxHQUFHRSxLQUFLLEdBQUdMLE1BQU1ELE9BQU87SUFDckMsSUFBSUksU0FBU0csV0FBVztRQUN0QixPQUFPO1lBQUVKLGdCQUFnQjtZQUFNQyxNQUFNO2dCQUFFTixhQUFhO2dCQUFPQyxTQUFTO2dCQUFNQyxTQUFTLEVBQUU7WUFBQztRQUFFO0lBQzFGO0lBQ0EsT0FBTztRQUFFRyxnQkFBZ0JDO1FBQU1BLE1BQU07WUFBRU4sYUFBYTtZQUFNQyxTQUFTSztZQUFNSixTQUFTTTtRQUFLO0lBQUU7QUFDM0YifQ==

@@ -1,0 +1,52 @@
+8c76d48d4352d60213e65110a9817f16
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.productSalesSummaryLine = productSalesSummaryLine;
+exports.productSaleRowTarget = productSaleRowTarget;
+exports.productSaleQtyLabel = productSaleQtyLabel;
+const pricing_1 = require("@routeflow/pricing");
+/**
+ * Pure helpers for the product detail "Sales" card (PR-B). Extracted so the
+ * summary strip and row tap-through rules are tested without mounting the
+ * screen — mirrors lib/customer-order-filter.ts.
+ */
+/** `$1,234.56`-style formatting for the summary strip and row prices. */
+function money(n) {
+    return `$${n.toFixed(2)}`;
+}
+/**
+ * Compact "buyers · qty · price range" line shown above the Sales card rows.
+ * Falls back to a shorter form when there's no price data yet (zero-sales,
+ * or every line credited to $0). A single distinct price collapses the
+ * min–max range to one number instead of "$5.00–$5.00".
+ */
+function productSalesSummaryLine(summary) {
+    const buyers = `${summary.buyers} buyer${summary.buyers === 1 ? "" : "s"}`;
+    const qty = `${summary.totalQty} sold`;
+    if (summary.minPrice == null || summary.maxPrice == null || summary.avgPrice == null) {
+        return `${buyers} · ${qty}`;
+    }
+    const range = summary.minPrice === summary.maxPrice
+        ? money(summary.minPrice)
+        : `${money(summary.minPrice)}–${money(summary.maxPrice)}`;
+    return `${buyers} · ${qty} · ${range} avg ${money(summary.avgPrice)}`;
+}
+/**
+ * Where a Sales-card row navigates on tap. `orderId` is null for invoices cut
+ * without a backing order (e.g. a manual/POS invoice) — those fall back to
+ * the invoice detail, which always exists for a returned line.
+ */
+function productSaleRowTarget(line) {
+    return line.orderId
+        ? { screen: "order", id: line.orderId }
+        : { screen: "invoice", id: line.invoiceId };
+}
+/**
+ * A Sales-card row's quantity text, from the line's stored base-piece split: "1 box + 6 pcs".
+ * Web parity (SalesHistoryCard). The product's own `unit` is its SELLING unit, never the
+ * loose-piece noun, so it is deliberately not passed (#2253: it rendered "1 box + 6 box").
+ */
+function productSaleQtyLabel(line) {
+    return (0, pricing_1.formatQtySplit)({ qty: line.qty, boxes: line.boxes, pieces: line.pieces });
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3Byb2R1Y3Qtc2FsZXMtbG9naWMudHMiLCJtYXBwaW5ncyI6Ijs7QUFvQkEsMERBV0M7QUFVRCxvREFNQztBQU9ELGtEQUlDO0FBMURELGdEQUFvRDtBQUdwRDs7OztHQUlHO0FBRUgseUVBQXlFO0FBQ3pFLFNBQVMsS0FBSyxDQUFDLENBQVM7SUFDdEIsT0FBTyxJQUFJLENBQUMsQ0FBQyxPQUFPLENBQUMsQ0FBQyxDQUFDLEVBQUUsQ0FBQztBQUM1QixDQUFDO0FBRUQ7Ozs7O0dBS0c7QUFDSCxTQUFnQix1QkFBdUIsQ0FBQyxPQUE0QjtJQUNsRSxNQUFNLE1BQU0sR0FBRyxHQUFHLE9BQU8sQ0FBQyxNQUFNLFNBQVMsT0FBTyxDQUFDLE1BQU0sS0FBSyxDQUFDLENBQUMsQ0FBQyxDQUFDLEVBQUUsQ0FBQyxDQUFDLENBQUMsR0FBRyxFQUFFLENBQUM7SUFDM0UsTUFBTSxHQUFHLEdBQUcsR0FBRyxPQUFPLENBQUMsUUFBUSxPQUFPLENBQUM7SUFDdkMsSUFBSSxPQUFPLENBQUMsUUFBUSxJQUFJLElBQUksSUFBSSxPQUFPLENBQUMsUUFBUSxJQUFJLElBQUksSUFBSSxPQUFPLENBQUMsUUFBUSxJQUFJLElBQUksRUFBRSxDQUFDO1FBQ3JGLE9BQU8sR0FBRyxNQUFNLE1BQU0sR0FBRyxFQUFFLENBQUM7SUFDOUIsQ0FBQztJQUNELE1BQU0sS0FBSyxHQUNULE9BQU8sQ0FBQyxRQUFRLEtBQUssT0FBTyxDQUFDLFFBQVE7UUFDbkMsQ0FBQyxDQUFDLEtBQUssQ0FBQyxPQUFPLENBQUMsUUFBUSxDQUFDO1FBQ3pCLENBQUMsQ0FBQyxHQUFHLEtBQUssQ0FBQyxPQUFPLENBQUMsUUFBUSxDQUFDLElBQUksS0FBSyxDQUFDLE9BQU8sQ0FBQyxRQUFRLENBQUMsRUFBRSxDQUFDO0lBQzlELE9BQU8sR0FBRyxNQUFNLE1BQU0sR0FBRyxNQUFNLEtBQUssUUFBUSxLQUFLLENBQUMsT0FBTyxDQUFDLFFBQVEsQ0FBQyxFQUFFLENBQUM7QUFDeEUsQ0FBQztBQUtEOzs7O0dBSUc7QUFDSCxTQUFnQixvQkFBb0IsQ0FDbEMsSUFBb0Q7SUFFcEQsT0FBTyxJQUFJLENBQUMsT0FBTztRQUNqQixDQUFDLENBQUMsRUFBRSxNQUFNLEVBQUUsT0FBTyxFQUFFLEVBQUUsRUFBRSxJQUFJLENBQUMsT0FBTyxFQUFFO1FBQ3ZDLENBQUMsQ0FBQyxFQUFFLE1BQU0sRUFBRSxTQUFTLEVBQUUsRUFBRSxFQUFFLElBQUksQ0FBQyxTQUFTLEVBQUUsQ0FBQztBQUNoRCxDQUFDO0FBRUQ7Ozs7R0FJRztBQUNILFNBQWdCLG1CQUFtQixDQUNqQyxJQUF1RDtJQUV2RCxPQUFPLElBQUEsd0JBQWMsRUFBQyxFQUFFLEdBQUcsRUFBRSxJQUFJLENBQUMsR0FBRyxFQUFFLEtBQUssRUFBRSxJQUFJLENBQUMsS0FBSyxFQUFFLE1BQU0sRUFBRSxJQUFJLENBQUMsTUFBTSxFQUFFLENBQUMsQ0FBQztBQUNuRixDQUFDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvbW9iaWxlL2xpYi9wcm9kdWN0LXNhbGVzLWxvZ2ljLnRzIl0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCB7IGZvcm1hdFF0eVNwbGl0IH0gZnJvbSBcIkByb3V0ZWZsb3cvcHJpY2luZ1wiO1xuaW1wb3J0IHR5cGUgeyBQcm9kdWN0U2FsZUxpbmUsIFByb2R1Y3RTYWxlc1N1bW1hcnkgfSBmcm9tIFwiLi9hcGkvcHJvZHVjdC1zYWxlc1wiO1xuXG4vKipcbiAqIFB1cmUgaGVscGVycyBmb3IgdGhlIHByb2R1Y3QgZGV0YWlsIFwiU2FsZXNcIiBjYXJkIChQUi1CKS4gRXh0cmFjdGVkIHNvIHRoZVxuICogc3VtbWFyeSBzdHJpcCBhbmQgcm93IHRhcC10aHJvdWdoIHJ1bGVzIGFyZSB0ZXN0ZWQgd2l0aG91dCBtb3VudGluZyB0aGVcbiAqIHNjcmVlbiDigJQgbWlycm9ycyBsaWIvY3VzdG9tZXItb3JkZXItZmlsdGVyLnRzLlxuICovXG5cbi8qKiBgJDEsMjM0LjU2YC1zdHlsZSBmb3JtYXR0aW5nIGZvciB0aGUgc3VtbWFyeSBzdHJpcCBhbmQgcm93IHByaWNlcy4gKi9cbmZ1bmN0aW9uIG1vbmV5KG46IG51bWJlcik6IHN0cmluZyB7XG4gIHJldHVybiBgJCR7bi50b0ZpeGVkKDIpfWA7XG59XG5cbi8qKlxuICogQ29tcGFjdCBcImJ1eWVycyDCtyBxdHkgwrcgcHJpY2UgcmFuZ2VcIiBsaW5lIHNob3duIGFib3ZlIHRoZSBTYWxlcyBjYXJkIHJvd3MuXG4gKiBGYWxscyBiYWNrIHRvIGEgc2hvcnRlciBmb3JtIHdoZW4gdGhlcmUncyBubyBwcmljZSBkYXRhIHlldCAoemVyby1zYWxlcyxcbiAqIG9yIGV2ZXJ5IGxpbmUgY3JlZGl0ZWQgdG8gJDApLiBBIHNpbmdsZSBkaXN0aW5jdCBwcmljZSBjb2xsYXBzZXMgdGhlXG4gKiBtaW7igJNtYXggcmFuZ2UgdG8gb25lIG51bWJlciBpbnN0ZWFkIG9mIFwiJDUuMDDigJMkNS4wMFwiLlxuICovXG5leHBvcnQgZnVuY3Rpb24gcHJvZHVjdFNhbGVzU3VtbWFyeUxpbmUoc3VtbWFyeTogUHJvZHVjdFNhbGVzU3VtbWFyeSk6IHN0cmluZyB7XG4gIGNvbnN0IGJ1eWVycyA9IGAke3N1bW1hcnkuYnV5ZXJzfSBidXllciR7c3VtbWFyeS5idXllcnMgPT09IDEgPyBcIlwiIDogXCJzXCJ9YDtcbiAgY29uc3QgcXR5ID0gYCR7c3VtbWFyeS50b3RhbFF0eX0gc29sZGA7XG4gIGlmIChzdW1tYXJ5Lm1pblByaWNlID09IG51bGwgfHwgc3VtbWFyeS5tYXhQcmljZSA9PSBudWxsIHx8IHN1bW1hcnkuYXZnUHJpY2UgPT0gbnVsbCkge1xuICAgIHJldHVybiBgJHtidXllcnN9IMK3ICR7cXR5fWA7XG4gIH1cbiAgY29uc3QgcmFuZ2UgPVxuICAgIHN1bW1hcnkubWluUHJpY2UgPT09IHN1bW1hcnkubWF4UHJpY2VcbiAgICAgID8gbW9uZXkoc3VtbWFyeS5taW5QcmljZSlcbiAgICAgIDogYCR7bW9uZXkoc3VtbWFyeS5taW5QcmljZSl94oCTJHttb25leShzdW1tYXJ5Lm1heFByaWNlKX1gO1xuICByZXR1cm4gYCR7YnV5ZXJzfSDCtyAke3F0eX0gwrcgJHtyYW5nZX0gYXZnICR7bW9uZXkoc3VtbWFyeS5hdmdQcmljZSl9YDtcbn1cblxuZXhwb3J0IHR5cGUgUHJvZHVjdFNhbGVSb3dUYXJnZXQgPVxuICB7IHNjcmVlbjogXCJvcmRlclwiOyBpZDogc3RyaW5nIH0gfCB7IHNjcmVlbjogXCJpbnZvaWNlXCI7IGlkOiBzdHJpbmcgfTtcblxuLyoqXG4gKiBXaGVyZSBhIFNhbGVzLWNhcmQgcm93IG5hdmlnYXRlcyBvbiB0YXAuIGBvcmRlcklkYCBpcyBudWxsIGZvciBpbnZvaWNlcyBjdXRcbiAqIHdpdGhvdXQgYSBiYWNraW5nIG9yZGVyIChlLmcuIGEgbWFudWFsL1BPUyBpbnZvaWNlKSDigJQgdGhvc2UgZmFsbCBiYWNrIHRvXG4gKiB0aGUgaW52b2ljZSBkZXRhaWwsIHdoaWNoIGFsd2F5cyBleGlzdHMgZm9yIGEgcmV0dXJuZWQgbGluZS5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIHByb2R1Y3RTYWxlUm93VGFyZ2V0KFxuICBsaW5lOiBQaWNrPFByb2R1Y3RTYWxlTGluZSwgXCJvcmRlcklkXCIgfCBcImludm9pY2VJZFwiPixcbik6IFByb2R1Y3RTYWxlUm93VGFyZ2V0IHtcbiAgcmV0dXJuIGxpbmUub3JkZXJJZFxuICAgID8geyBzY3JlZW46IFwib3JkZXJcIiwgaWQ6IGxpbmUub3JkZXJJZCB9XG4gICAgOiB7IHNjcmVlbjogXCJpbnZvaWNlXCIsIGlkOiBsaW5lLmludm9pY2VJZCB9O1xufVxuXG4vKipcbiAqIEEgU2FsZXMtY2FyZCByb3cncyBxdWFudGl0eSB0ZXh0LCBmcm9tIHRoZSBsaW5lJ3Mgc3RvcmVkIGJhc2UtcGllY2Ugc3BsaXQ6IFwiMSBib3ggKyA2IHBjc1wiLlxuICogV2ViIHBhcml0eSAoU2FsZXNIaXN0b3J5Q2FyZCkuIFRoZSBwcm9kdWN0J3Mgb3duIGB1bml0YCBpcyBpdHMgU0VMTElORyB1bml0LCBuZXZlciB0aGVcbiAqIGxvb3NlLXBpZWNlIG5vdW4sIHNvIGl0IGlzIGRlbGliZXJhdGVseSBub3QgcGFzc2VkICgjMjI1MzogaXQgcmVuZGVyZWQgXCIxIGJveCArIDYgYm94XCIpLlxuICovXG5leHBvcnQgZnVuY3Rpb24gcHJvZHVjdFNhbGVRdHlMYWJlbChcbiAgbGluZTogUGljazxQcm9kdWN0U2FsZUxpbmUsIFwicXR5XCIgfCBcImJveGVzXCIgfCBcInBpZWNlc1wiPixcbik6IHN0cmluZyB7XG4gIHJldHVybiBmb3JtYXRRdHlTcGxpdCh7IHF0eTogbGluZS5xdHksIGJveGVzOiBsaW5lLmJveGVzLCBwaWVjZXM6IGxpbmUucGllY2VzIH0pO1xufVxuIl0sInZlcnNpb24iOjN9

@@ -1,0 +1,35 @@
+5397720375d9f61861b799d8651c121f
+"use strict";
+/**
+ * B204 — expo-secure-store rejects every storage key this app defines.
+ *
+ * Native token storage validates keys against `/^[\w.-]+$/` and THROWS on
+ * anything else (SecureStore.ts `ensureValidKey`, applied to reads and writes
+ * alike). Our keys are colon-namespaced (`rf:op:accessToken`,
+ * `rf:buyer:accessToken`, `rf:currentRole`, `rf:oauth:pendingState`, …), so on
+ * a device every session read/write threw: the buyer boot gate hung the app on
+ * the splash spinner (its initialize had no catch), and even past boot no
+ * login could ever persist. Web never noticed — there these keys go to
+ * localStorage, which accepts any string, and until the first APK existed no
+ * code path had ever actually reached SecureStore.
+ *
+ * The fix is a NATIVE-ONLY spelling change at the storage boundary: web keeps
+ * the exact keys it has always used (nobody gets signed out), and the native
+ * branch maps each key through this function. There is no native install base
+ * yet, so there is nothing to migrate — this defines the native format.
+ *
+ * Every call into expo-secure-store MUST route its key through here. Do not
+ * add a colon-free key to dodge the mapper: the mapper is total and
+ * idempotent, and `__tests__/secure-key.test.ts` pins that the REAL key set
+ * stays collision-free after mapping — a hand-rolled parallel spelling would
+ * sit outside that proof.
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.toSecureStoreKey = toSecureStoreKey;
+/** Spell `key` the way the native secure store requires: every character
+ *  outside `[A-Za-z0-9_.-]` becomes `_`. Idempotent; identity for keys that
+ *  are already valid (e.g. `tenantSlug`). */
+function toSecureStoreKey(key) {
+    return key.replace(/[^\w.-]/g, "_");
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3NlY3VyZS1rZXkudHMiLCJtYXBwaW5ncyI6IjtBQUFBOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7OztHQXVCRzs7QUFLSCw0Q0FFQztBQUxEOzs2Q0FFNkM7QUFDN0MsU0FBZ0IsZ0JBQWdCLENBQUMsR0FBVztJQUMxQyxPQUFPLEdBQUcsQ0FBQyxPQUFPLENBQUMsVUFBVSxFQUFFLEdBQUcsQ0FBQyxDQUFDO0FBQ3RDLENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3NlY3VyZS1rZXkudHMiXSwic291cmNlc0NvbnRlbnQiOlsiLyoqXG4gKiBCMjA0IOKAlCBleHBvLXNlY3VyZS1zdG9yZSByZWplY3RzIGV2ZXJ5IHN0b3JhZ2Uga2V5IHRoaXMgYXBwIGRlZmluZXMuXG4gKlxuICogTmF0aXZlIHRva2VuIHN0b3JhZ2UgdmFsaWRhdGVzIGtleXMgYWdhaW5zdCBgL15bXFx3Li1dKyQvYCBhbmQgVEhST1dTIG9uXG4gKiBhbnl0aGluZyBlbHNlIChTZWN1cmVTdG9yZS50cyBgZW5zdXJlVmFsaWRLZXlgLCBhcHBsaWVkIHRvIHJlYWRzIGFuZCB3cml0ZXNcbiAqIGFsaWtlKS4gT3VyIGtleXMgYXJlIGNvbG9uLW5hbWVzcGFjZWQgKGByZjpvcDphY2Nlc3NUb2tlbmAsXG4gKiBgcmY6YnV5ZXI6YWNjZXNzVG9rZW5gLCBgcmY6Y3VycmVudFJvbGVgLCBgcmY6b2F1dGg6cGVuZGluZ1N0YXRlYCwg4oCmKSwgc28gb25cbiAqIGEgZGV2aWNlIGV2ZXJ5IHNlc3Npb24gcmVhZC93cml0ZSB0aHJldzogdGhlIGJ1eWVyIGJvb3QgZ2F0ZSBodW5nIHRoZSBhcHAgb25cbiAqIHRoZSBzcGxhc2ggc3Bpbm5lciAoaXRzIGluaXRpYWxpemUgaGFkIG5vIGNhdGNoKSwgYW5kIGV2ZW4gcGFzdCBib290IG5vXG4gKiBsb2dpbiBjb3VsZCBldmVyIHBlcnNpc3QuIFdlYiBuZXZlciBub3RpY2VkIOKAlCB0aGVyZSB0aGVzZSBrZXlzIGdvIHRvXG4gKiBsb2NhbFN0b3JhZ2UsIHdoaWNoIGFjY2VwdHMgYW55IHN0cmluZywgYW5kIHVudGlsIHRoZSBmaXJzdCBBUEsgZXhpc3RlZCBub1xuICogY29kZSBwYXRoIGhhZCBldmVyIGFjdHVhbGx5IHJlYWNoZWQgU2VjdXJlU3RvcmUuXG4gKlxuICogVGhlIGZpeCBpcyBhIE5BVElWRS1PTkxZIHNwZWxsaW5nIGNoYW5nZSBhdCB0aGUgc3RvcmFnZSBib3VuZGFyeTogd2ViIGtlZXBzXG4gKiB0aGUgZXhhY3Qga2V5cyBpdCBoYXMgYWx3YXlzIHVzZWQgKG5vYm9keSBnZXRzIHNpZ25lZCBvdXQpLCBhbmQgdGhlIG5hdGl2ZVxuICogYnJhbmNoIG1hcHMgZWFjaCBrZXkgdGhyb3VnaCB0aGlzIGZ1bmN0aW9uLiBUaGVyZSBpcyBubyBuYXRpdmUgaW5zdGFsbCBiYXNlXG4gKiB5ZXQsIHNvIHRoZXJlIGlzIG5vdGhpbmcgdG8gbWlncmF0ZSDigJQgdGhpcyBkZWZpbmVzIHRoZSBuYXRpdmUgZm9ybWF0LlxuICpcbiAqIEV2ZXJ5IGNhbGwgaW50byBleHBvLXNlY3VyZS1zdG9yZSBNVVNUIHJvdXRlIGl0cyBrZXkgdGhyb3VnaCBoZXJlLiBEbyBub3RcbiAqIGFkZCBhIGNvbG9uLWZyZWUga2V5IHRvIGRvZGdlIHRoZSBtYXBwZXI6IHRoZSBtYXBwZXIgaXMgdG90YWwgYW5kXG4gKiBpZGVtcG90ZW50LCBhbmQgYF9fdGVzdHNfXy9zZWN1cmUta2V5LnRlc3QudHNgIHBpbnMgdGhhdCB0aGUgUkVBTCBrZXkgc2V0XG4gKiBzdGF5cyBjb2xsaXNpb24tZnJlZSBhZnRlciBtYXBwaW5nIOKAlCBhIGhhbmQtcm9sbGVkIHBhcmFsbGVsIHNwZWxsaW5nIHdvdWxkXG4gKiBzaXQgb3V0c2lkZSB0aGF0IHByb29mLlxuICovXG5cbi8qKiBTcGVsbCBga2V5YCB0aGUgd2F5IHRoZSBuYXRpdmUgc2VjdXJlIHN0b3JlIHJlcXVpcmVzOiBldmVyeSBjaGFyYWN0ZXJcbiAqICBvdXRzaWRlIGBbQS1aYS16MC05Xy4tXWAgYmVjb21lcyBgX2AuIElkZW1wb3RlbnQ7IGlkZW50aXR5IGZvciBrZXlzIHRoYXRcbiAqICBhcmUgYWxyZWFkeSB2YWxpZCAoZS5nLiBgdGVuYW50U2x1Z2ApLiAqL1xuZXhwb3J0IGZ1bmN0aW9uIHRvU2VjdXJlU3RvcmVLZXkoa2V5OiBzdHJpbmcpOiBzdHJpbmcge1xuICByZXR1cm4ga2V5LnJlcGxhY2UoL1teXFx3Li1dL2csIFwiX1wiKTtcbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

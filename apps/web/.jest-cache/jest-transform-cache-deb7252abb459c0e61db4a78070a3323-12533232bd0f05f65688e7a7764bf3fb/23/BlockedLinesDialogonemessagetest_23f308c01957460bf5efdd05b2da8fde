@@ -1,0 +1,152 @@
+59be07e1c5165493bdcb91d3d7bf3596
+"use strict";
+jest.mock("next/navigation", ()=>({
+        useRouter: ()=>({
+                push: jest.fn()
+            })
+    }));
+jest.mock("@/components/ReAuthProvider", ()=>({
+        ReAuthProvider: ({ children })=>children
+    }));
+jest.mock("@/components/PlanGateNotice", ()=>({
+        PlanGateNotice: ()=>null
+    }));
+jest.mock("@routeflow/ui/web", ()=>({
+        ...jest.requireActual("@routeflow/ui/web"),
+        useToast: ()=>({
+                toast
+            })
+    }));
+jest.mock("@/lib/api-client", ()=>({
+        ...jest.requireActual("@/lib/api-client"),
+        apiClient: {
+            post: (...a)=>post(...a)
+        }
+    }));
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+const _react1 = require("@testing-library/react");
+const _reactquery = require("@tanstack/react-query");
+const _providers = require("../app/providers");
+const _apiclient = require("../lib/api-client");
+const _sellingrestricted = require("../lib/api/selling-restricted");
+const _BlockedLinesDialog = require("./BlockedLinesDialog");
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+/**
+ * End to end for the message contract: the REAL global MutationCache handler (app/providers.tsx)
+ * around a component that wires the dialog exactly like the order modals do. A blocked save must
+ * show the dialog and NO toast (SELLING_RESTRICTED is in HANDLED_CODES); any other error still gets
+ * the global handler's single toast.
+ */ const toast = jest.fn();
+const post = jest.fn();
+function Host() {
+    const save = (0, _reactquery.useMutation)({
+        mutationFn: ()=>_apiclient.apiClient.post("/orders", {})
+    });
+    const [lines, setLines] = _react.useState(null);
+    return /*#__PURE__*/ (0, _jsxruntime.jsxs)(_jsxruntime.Fragment, {
+        children: [
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                onClick: ()=>save.mutate(undefined, {
+                        onError: (e)=>setLines((0, _sellingrestricted.parseSellingRestricted)(e))
+                    }),
+                children: "Save"
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)(_BlockedLinesDialog.BlockedLinesDialog, {
+                lines: lines,
+                onClose: ()=>setLines(null)
+            })
+        ]
+    });
+}
+const reject = (status, data)=>post.mockRejectedValueOnce(Object.assign(new Error("Request failed"), {
+        response: {
+            status,
+            data
+        }
+    }));
+const save = ()=>{
+    (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_providers.Providers, {
+        children: /*#__PURE__*/ (0, _jsxruntime.jsx)(Host, {})
+    }));
+    _react1.fireEvent.click(_react1.screen.getByRole("button", {
+        name: "Save"
+    }));
+};
+beforeEach(()=>jest.clearAllMocks());
+describe("a blocked save gives one message", ()=>{
+    it("SELLING_RESTRICTED: the dialog only, no toast (not the raw 'Request failed')", async ()=>{
+        reject(409, {
+            code: "SELLING_RESTRICTED",
+            blockedLines: [
+                {
+                    productId: "p1",
+                    productName: "Hemp Gummies",
+                    ruleId: "r1",
+                    reason: "FEDERAL_BAN",
+                    message: "m"
+                }
+            ]
+        });
+        save();
+        expect(await _react1.screen.findByText("Hemp Gummies")).toBeInTheDocument();
+        expect(toast).not.toHaveBeenCalled();
+    });
+    it("any other error: the global handler's single toast, and no dialog", async ()=>{
+        reject(500, {
+            message: "Boom"
+        });
+        save();
+        await (0, _react1.waitFor)(()=>expect(toast).toHaveBeenCalledTimes(1));
+        expect(toast.mock.calls[0][0]).toMatchObject({
+            title: "Boom",
+            variant: "error"
+        });
+        expect(_react1.screen.queryByRole("dialog")).toBeNull();
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2NvbXBvbmVudHMvQmxvY2tlZExpbmVzRGlhbG9nLm9uZS1tZXNzYWdlLnRlc3QudHN4Il0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCAqIGFzIFJlYWN0IGZyb20gXCJyZWFjdFwiO1xuaW1wb3J0IHsgcmVuZGVyLCBzY3JlZW4sIGZpcmVFdmVudCwgd2FpdEZvciB9IGZyb20gXCJAdGVzdGluZy1saWJyYXJ5L3JlYWN0XCI7XG5pbXBvcnQgeyB1c2VNdXRhdGlvbiB9IGZyb20gXCJAdGFuc3RhY2svcmVhY3QtcXVlcnlcIjtcbmltcG9ydCB7IFByb3ZpZGVycyB9IGZyb20gXCJAL2FwcC9wcm92aWRlcnNcIjtcbmltcG9ydCB7IGFwaUNsaWVudCB9IGZyb20gXCJAL2xpYi9hcGktY2xpZW50XCI7XG5pbXBvcnQgeyBwYXJzZVNlbGxpbmdSZXN0cmljdGVkIH0gZnJvbSBcIkAvbGliL2FwaS9zZWxsaW5nLXJlc3RyaWN0ZWRcIjtcbmltcG9ydCB7IEJsb2NrZWRMaW5lc0RpYWxvZyB9IGZyb20gXCIuL0Jsb2NrZWRMaW5lc0RpYWxvZ1wiO1xuXG4vKipcbiAqIEVuZCB0byBlbmQgZm9yIHRoZSBtZXNzYWdlIGNvbnRyYWN0OiB0aGUgUkVBTCBnbG9iYWwgTXV0YXRpb25DYWNoZSBoYW5kbGVyIChhcHAvcHJvdmlkZXJzLnRzeClcbiAqIGFyb3VuZCBhIGNvbXBvbmVudCB0aGF0IHdpcmVzIHRoZSBkaWFsb2cgZXhhY3RseSBsaWtlIHRoZSBvcmRlciBtb2RhbHMgZG8uIEEgYmxvY2tlZCBzYXZlIG11c3RcbiAqIHNob3cgdGhlIGRpYWxvZyBhbmQgTk8gdG9hc3QgKFNFTExJTkdfUkVTVFJJQ1RFRCBpcyBpbiBIQU5ETEVEX0NPREVTKTsgYW55IG90aGVyIGVycm9yIHN0aWxsIGdldHNcbiAqIHRoZSBnbG9iYWwgaGFuZGxlcidzIHNpbmdsZSB0b2FzdC5cbiAqL1xuY29uc3QgdG9hc3QgPSBqZXN0LmZuKCk7XG5jb25zdCBwb3N0ID0gamVzdC5mbigpO1xuamVzdC5tb2NrKFwibmV4dC9uYXZpZ2F0aW9uXCIsICgpID0+ICh7IHVzZVJvdXRlcjogKCkgPT4gKHsgcHVzaDogamVzdC5mbigpIH0pIH0pKTtcbmplc3QubW9jayhcIkAvY29tcG9uZW50cy9SZUF1dGhQcm92aWRlclwiLCAoKSA9PiAoe1xuICBSZUF1dGhQcm92aWRlcjogKHsgY2hpbGRyZW4gfTogYW55KSA9PiBjaGlsZHJlbixcbn0pKTtcbmplc3QubW9jayhcIkAvY29tcG9uZW50cy9QbGFuR2F0ZU5vdGljZVwiLCAoKSA9PiAoeyBQbGFuR2F0ZU5vdGljZTogKCkgPT4gbnVsbCB9KSk7XG5qZXN0Lm1vY2soXCJAcm91dGVmbG93L3VpL3dlYlwiLCAoKSA9PiAoe1xuICAuLi5qZXN0LnJlcXVpcmVBY3R1YWwoXCJAcm91dGVmbG93L3VpL3dlYlwiKSxcbiAgdXNlVG9hc3Q6ICgpID0+ICh7IHRvYXN0IH0pLFxufSkpO1xuamVzdC5tb2NrKFwiQC9saWIvYXBpLWNsaWVudFwiLCAoKSA9PiAoe1xuICAuLi5qZXN0LnJlcXVpcmVBY3R1YWwoXCJAL2xpYi9hcGktY2xpZW50XCIpLFxuICBhcGlDbGllbnQ6IHsgcG9zdDogKC4uLmE6IHVua25vd25bXSkgPT4gcG9zdCguLi5hKSB9LFxufSkpO1xuXG5mdW5jdGlvbiBIb3N0KCkge1xuICBjb25zdCBzYXZlID0gdXNlTXV0YXRpb24oeyBtdXRhdGlvbkZuOiAoKSA9PiBhcGlDbGllbnQucG9zdChcIi9vcmRlcnNcIiwge30pIH0pO1xuICBjb25zdCBbbGluZXMsIHNldExpbmVzXSA9IFJlYWN0LnVzZVN0YXRlPFJldHVyblR5cGU8dHlwZW9mIHBhcnNlU2VsbGluZ1Jlc3RyaWN0ZWQ+PihudWxsKTtcbiAgcmV0dXJuIChcbiAgICA8PlxuICAgICAgPGJ1dHRvblxuICAgICAgICBvbkNsaWNrPXsoKSA9PlxuICAgICAgICAgIHNhdmUubXV0YXRlKHVuZGVmaW5lZCwgeyBvbkVycm9yOiAoZSkgPT4gc2V0TGluZXMocGFyc2VTZWxsaW5nUmVzdHJpY3RlZChlKSkgfSlcbiAgICAgICAgfVxuICAgICAgPlxuICAgICAgICBTYXZlXG4gICAgICA8L2J1dHRvbj5cbiAgICAgIDxCbG9ja2VkTGluZXNEaWFsb2cgbGluZXM9e2xpbmVzfSBvbkNsb3NlPXsoKSA9PiBzZXRMaW5lcyhudWxsKX0gLz5cbiAgICA8Lz5cbiAgKTtcbn1cbmNvbnN0IHJlamVjdCA9IChzdGF0dXM6IG51bWJlciwgZGF0YTogb2JqZWN0KSA9PlxuICBwb3N0Lm1vY2tSZWplY3RlZFZhbHVlT25jZShcbiAgICBPYmplY3QuYXNzaWduKG5ldyBFcnJvcihcIlJlcXVlc3QgZmFpbGVkXCIpLCB7IHJlc3BvbnNlOiB7IHN0YXR1cywgZGF0YSB9IH0pLFxuICApO1xuY29uc3Qgc2F2ZSA9ICgpID0+IHtcbiAgcmVuZGVyKFxuICAgIDxQcm92aWRlcnM+XG4gICAgICA8SG9zdCAvPlxuICAgIDwvUHJvdmlkZXJzPixcbiAgKTtcbiAgZmlyZUV2ZW50LmNsaWNrKHNjcmVlbi5nZXRCeVJvbGUoXCJidXR0b25cIiwgeyBuYW1lOiBcIlNhdmVcIiB9KSk7XG59O1xuXG5iZWZvcmVFYWNoKCgpID0+IGplc3QuY2xlYXJBbGxNb2NrcygpKTtcblxuZGVzY3JpYmUoXCJhIGJsb2NrZWQgc2F2ZSBnaXZlcyBvbmUgbWVzc2FnZVwiLCAoKSA9PiB7XG4gIGl0KFwiU0VMTElOR19SRVNUUklDVEVEOiB0aGUgZGlhbG9nIG9ubHksIG5vIHRvYXN0IChub3QgdGhlIHJhdyAnUmVxdWVzdCBmYWlsZWQnKVwiLCBhc3luYyAoKSA9PiB7XG4gICAgcmVqZWN0KDQwOSwge1xuICAgICAgY29kZTogXCJTRUxMSU5HX1JFU1RSSUNURURcIixcbiAgICAgIGJsb2NrZWRMaW5lczogW1xuICAgICAgICB7XG4gICAgICAgICAgcHJvZHVjdElkOiBcInAxXCIsXG4gICAgICAgICAgcHJvZHVjdE5hbWU6IFwiSGVtcCBHdW1taWVzXCIsXG4gICAgICAgICAgcnVsZUlkOiBcInIxXCIsXG4gICAgICAgICAgcmVhc29uOiBcIkZFREVSQUxfQkFOXCIsXG4gICAgICAgICAgbWVzc2FnZTogXCJtXCIsXG4gICAgICAgIH0sXG4gICAgICBdLFxuICAgIH0pO1xuICAgIHNhdmUoKTtcbiAgICBleHBlY3QoYXdhaXQgc2NyZWVuLmZpbmRCeVRleHQoXCJIZW1wIEd1bW1pZXNcIikpLnRvQmVJblRoZURvY3VtZW50KCk7XG4gICAgZXhwZWN0KHRvYXN0KS5ub3QudG9IYXZlQmVlbkNhbGxlZCgpO1xuICB9KTtcblxuICBpdChcImFueSBvdGhlciBlcnJvcjogdGhlIGdsb2JhbCBoYW5kbGVyJ3Mgc2luZ2xlIHRvYXN0LCBhbmQgbm8gZGlhbG9nXCIsIGFzeW5jICgpID0+IHtcbiAgICByZWplY3QoNTAwLCB7IG1lc3NhZ2U6IFwiQm9vbVwiIH0pO1xuICAgIHNhdmUoKTtcbiAgICBhd2FpdCB3YWl0Rm9yKCgpID0+IGV4cGVjdCh0b2FzdCkudG9IYXZlQmVlbkNhbGxlZFRpbWVzKDEpKTtcbiAgICBleHBlY3QodG9hc3QubW9jay5jYWxsc1swXVswXSkudG9NYXRjaE9iamVjdCh7IHRpdGxlOiBcIkJvb21cIiwgdmFyaWFudDogXCJlcnJvclwiIH0pO1xuICAgIGV4cGVjdChzY3JlZW4ucXVlcnlCeVJvbGUoXCJkaWFsb2dcIikpLnRvQmVOdWxsKCk7XG4gIH0pO1xufSk7XG4iXSwibmFtZXMiOlsiamVzdCIsIm1vY2siLCJ1c2VSb3V0ZXIiLCJwdXNoIiwiZm4iLCJSZUF1dGhQcm92aWRlciIsImNoaWxkcmVuIiwiUGxhbkdhdGVOb3RpY2UiLCJyZXF1aXJlQWN0dWFsIiwidXNlVG9hc3QiLCJ0b2FzdCIsImFwaUNsaWVudCIsInBvc3QiLCJhIiwiSG9zdCIsInNhdmUiLCJ1c2VNdXRhdGlvbiIsIm11dGF0aW9uRm4iLCJsaW5lcyIsInNldExpbmVzIiwiUmVhY3QiLCJ1c2VTdGF0ZSIsImJ1dHRvbiIsIm9uQ2xpY2siLCJtdXRhdGUiLCJ1bmRlZmluZWQiLCJvbkVycm9yIiwiZSIsInBhcnNlU2VsbGluZ1Jlc3RyaWN0ZWQiLCJCbG9ja2VkTGluZXNEaWFsb2ciLCJvbkNsb3NlIiwicmVqZWN0Iiwic3RhdHVzIiwiZGF0YSIsIm1vY2tSZWplY3RlZFZhbHVlT25jZSIsIk9iamVjdCIsImFzc2lnbiIsIkVycm9yIiwicmVzcG9uc2UiLCJyZW5kZXIiLCJQcm92aWRlcnMiLCJmaXJlRXZlbnQiLCJjbGljayIsInNjcmVlbiIsImdldEJ5Um9sZSIsIm5hbWUiLCJiZWZvcmVFYWNoIiwiY2xlYXJBbGxNb2NrcyIsImRlc2NyaWJlIiwiaXQiLCJjb2RlIiwiYmxvY2tlZExpbmVzIiwicHJvZHVjdElkIiwicHJvZHVjdE5hbWUiLCJydWxlSWQiLCJyZWFzb24iLCJtZXNzYWdlIiwiZXhwZWN0IiwiZmluZEJ5VGV4dCIsInRvQmVJblRoZURvY3VtZW50Iiwibm90IiwidG9IYXZlQmVlbkNhbGxlZCIsIndhaXRGb3IiLCJ0b0hhdmVCZWVuQ2FsbGVkVGltZXMiLCJjYWxscyIsInRvTWF0Y2hPYmplY3QiLCJ0aXRsZSIsInZhcmlhbnQiLCJxdWVyeUJ5Um9sZSIsInRvQmVOdWxsIl0sIm1hcHBpbmdzIjoiO0FBZ0JBQSxLQUFLQyxJQUFJLENBQUMsbUJBQW1CLElBQU8sQ0FBQTtRQUFFQyxXQUFXLElBQU8sQ0FBQTtnQkFBRUMsTUFBTUgsS0FBS0ksRUFBRTtZQUFHLENBQUE7SUFBRyxDQUFBO0FBQzdFSixLQUFLQyxJQUFJLENBQUMsK0JBQStCLElBQU8sQ0FBQTtRQUM5Q0ksZ0JBQWdCLENBQUMsRUFBRUMsUUFBUSxFQUFPLEdBQUtBO0lBQ3pDLENBQUE7QUFDQU4sS0FBS0MsSUFBSSxDQUFDLCtCQUErQixJQUFPLENBQUE7UUFBRU0sZ0JBQWdCLElBQU07SUFBSyxDQUFBO0FBQzdFUCxLQUFLQyxJQUFJLENBQUMscUJBQXFCLElBQU8sQ0FBQTtRQUNwQyxHQUFHRCxLQUFLUSxhQUFhLENBQUMsb0JBQW9CO1FBQzFDQyxVQUFVLElBQU8sQ0FB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

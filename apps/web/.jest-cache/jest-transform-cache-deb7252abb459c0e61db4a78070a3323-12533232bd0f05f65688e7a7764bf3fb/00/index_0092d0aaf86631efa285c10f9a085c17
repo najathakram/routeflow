@@ -1,0 +1,38 @@
+f50e9028b7507a93e8e71ade4c2f2163
+"use strict";
+var __createBinding = (void 0) && (void 0).__createBinding || (Object.create ? function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+        desc = {
+            enumerable: true,
+            get: function() {
+                return m[k];
+            }
+        };
+    }
+    Object.defineProperty(o, k2, desc);
+} : function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+});
+var __exportStar = (void 0) && (void 0).__exportStar || function(m, exports1) {
+    for(var p in m)if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports1, p)) __createBinding(exports1, m, p);
+};
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+// ─── Return-key generation is a caller concern, not a package opinion ─────────
+//
+// `buildCaptureRequest` itself never generates a returnKey — it takes one as a plain parameter
+// and only carries whatever the caller already minted. This package DOES export one generation
+// helper, `mintReturnKey` (a fresh random identifier per capture attempt, held in memory) — but
+// that is web's own strategy, offered here because web happens to use it, not this package's
+// opinion on how every consumer must generate a key. A caller that has to survive an app kill
+// and replay the same submission cannot use `mintReturnKey` at all, since a replay must
+// reproduce the SAME key rather than mint a new one — it derives one instead, entirely outside
+// this package. Either strategy is valid; the seam is that `buildCaptureRequest` only ever
+// receives the result, never the strategy.
+__exportStar(require("./inline-return-state"), exports); //# sourceMappingURL=index.js.map
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiaW5kZXguanMiLCJzb3VyY2VzIjpbIi4uL3NyYy9pbmRleC50cyJdLCJzb3VyY2VSb290IjoiIiwibmFtZXMiOltdLCJtYXBwaW5ncyI6Ijs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7QUFBQSxpRkFBaUY7QUFDakYsRUFBRTtBQUNGLCtGQUErRjtBQUMvRiwrRkFBK0Y7QUFDL0YsZ0dBQWdHO0FBQ2hHLDZGQUE2RjtBQUM3Riw4RkFBOEY7QUFDOUYsd0ZBQXdGO0FBQ3hGLCtGQUErRjtBQUMvRiwyRkFBMkY7QUFDM0YsMkNBQTJDO0FBQzNDLGFBQUEsUUFBQSwwQkFBQSxTQUFzQyJ9

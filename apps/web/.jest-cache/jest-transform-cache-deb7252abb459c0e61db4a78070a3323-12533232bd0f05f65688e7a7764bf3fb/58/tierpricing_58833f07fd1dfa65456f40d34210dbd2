@@ -1,0 +1,65 @@
+ef4150196576fb3786dcad9e8591cd31
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+exports.TIER_FIELDS = void 0;
+exports.getTierPrice = getTierPrice;
+exports.cascadeTierPrices = cascadeTierPrices;
+const pricing_1 = require("./pricing");
+function getTierPrice(product, tier) {
+    const fallback = Number(product.pricePerUnit) || 0;
+    switch(tier){
+        case 1:
+            return fallback;
+        case 2:
+            return Number(product.priceTier2 ?? product.pricePerUnit) || fallback;
+        case 3:
+            return Number(product.priceTier3 ?? product.pricePerUnit) || fallback;
+        case 4:
+            return Number(product.priceTier4 ?? product.pricePerUnit) || fallback;
+        case 5:
+            return Number(product.priceTier5 ?? product.pricePerUnit) || fallback;
+        default:
+            return fallback;
+    }
+}
+exports.TIER_FIELDS = [
+    "pricePerUnit",
+    "priceTier2",
+    "priceTier3",
+    "priceTier4",
+    "priceTier5"
+];
+/**
+ * Tier-edit cascade: COMMITTING a new price on tier N copies it down to every lower tier
+ * (N+1..5) unconditionally, so an operator can walk the ladder setting each break once.
+ * Returns ONLY the cascaded fields, as 2-dp decimal strings (ready for a form draft or a
+ * PATCH payload); the edited field itself stays the caller's own write.
+ *
+ * Returns {} for tier 5 (nothing below it), negative, or non-finite input.
+ *
+ * NOT used for Tier 1 / `pricePerUnit` — the list price keeps its existing "smart" behavior
+ * (only tiers that still matched the OLD list price follow it), which preserves a
+ * deliberately customized ladder when the list price is re-priced.
+ *
+ * Committing 0 cascades an explicit "0.00", which under getTierPrice's `|| fallback` guard
+ * means "these tiers inherit the list price again" — that is intended.
+ *
+ * Change detection ("the user focused and typed but did not actually change anything")
+ * belongs to the caller's commit mechanism, never to this function.
+ *
+ * REG-B122: the cent rounding MUST go through {@link roundMoney} — never re-inline a
+ * rounding expression here. An inlined `+ Number.EPSILON` nudge round-DOWNS every
+ * half-cent value (2.135 -> "2.13"), which is a tier price a cent below what the same
+ * number becomes on every other money path.
+ */ function cascadeTierPrices(field, value) {
+    const idx = exports.TIER_FIELDS.indexOf(field);
+    if (idx < 1 || !Number.isFinite(value) || value < 0) return {};
+    const v = (0, pricing_1.roundMoney)(Math.abs(value)).toFixed(2);
+    const patch = {};
+    for(let i = idx + 1; i < exports.TIER_FIELDS.length; i++)patch[exports.TIER_FIELDS[i]] = v;
+    return patch;
+} //# sourceMappingURL=tier-pricing.js.map
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoidGllci1wcmljaW5nLmpzIiwic291cmNlcyI6WyIuLi9zcmMvdGllci1wcmljaW5nLnRzIl0sInNvdXJjZVJvb3QiOiIiLCJuYW1lcyI6W10sIm1hcHBpbmdzIjoiOzs7OztBQUVBLFFBQUEsWUFBQSxHQUFBLGFBZ0JDO0FBbUNELFFBQUEsaUJBQUEsR0FBQSxrQkFVQztBQS9ERCxNQUFBLFlBQUEsUUFBQSxhQUF1QztBQUV2QyxTQUFnQixZQUFZLENBQUMsT0FBWSxFQUFFLElBQVk7SUFDckQsTUFBTSxRQUFRLEdBQUcsTUFBTSxDQUFDLE9BQU8sQ0FBQyxZQUFZLENBQUMsSUFBSSxDQUFDLENBQUM7SUFDbkQsT0FBUSxJQUFJLEVBQUUsQ0FBQztRQUNiLEtBQUssQ0FBQztZQUNKLE9BQU8sUUFBUSxDQUFDO1FBQ2xCLEtBQUssQ0FBQztZQUNKLE9BQU8sTUFBTSxDQUFDLE9BQU8sQ0FBQyxVQUFVLElBQUksT0FBTyxDQUFDLFlBQVksQ0FBQyxJQUFJLFFBQVEsQ0FBQztRQUN4RSxLQUFLLENBQUM7WUFDSixPQUFPLE1BQU0sQ0FBQyxPQUFPLENBQUMsVUFBVSxJQUFJLE9BQU8sQ0FBQyxZQUFZLENBQUMsSUFBSSxRQUFRLENBQUM7UUFDeEUsS0FBSyxDQUFDO1lBQ0osT0FBTyxNQUFNLENBQUMsT0FBTyxDQUFDLFVBQVUsSUFBSSxPQUFPLENBQUMsWUFBWSxDQUFDLElBQUksUUFBUSxDQUFDO1FBQ3hFLEtBQUssQ0FBQztZQUNKLE9BQU8sTUFBTSxDQUFDLE9BQU8sQ0FBQyxVQUFVLElBQUksT0FBTyxDQUFDLFlBQVksQ0FBQyxJQUFJLFFBQVEsQ0FBQztRQUN4RTtZQUNFLE9BQU8sUUFBUSxDQUFDO0lBQ3BCLENBQUM7QUFDSCxDQUFDO0FBSVksUUFBQSxXQUFXLEdBQXlCO0lBQy9DLGNBQWM7SUFDZCxZQUFZO0lBQ1osWUFBWTtJQUNaLFlBQVk7SUFDWixZQUFZO0NBQ2IsQ0FBQztBQUVGOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7O0dBc0JHLENBQ0gsU0FBZ0IsaUJBQWlCLENBQy9CLEtBQWdCLEVBQ2hCLEtBQWE7SUFFYixNQUFNLEdBQUcsR0FBRyxRQUFBLFdBQVcsQ0FBQyxPQUFPLENBQUMsS0FBSyxDQUFDLENBQUM7SUFDdkMsSUFBSSxHQUFHLEdBQUcsQ0FBQyxJQUFJLENBQUMsTUFBTSxDQUFDLFFBQVEsQ0FBQyxLQUFLLENBQUMsSUFBSSxLQUFLLEdBQUcsQ0FBQyxFQUFFLE9BQU8sQ0FBQSxDQUFFLENBQUM7SUFDL0QsTUFBTSxDQUFDLEdBQUcsQ0FBQSxHQUFBLFVBQUEsVUFBQSxBQUFVLEVBQUMsSUFBSSxDQUFDLEdBQUcsQ0FBQyxLQUFLLENBQUMsQ0FBQyxDQUFDLE9BQU8sQ0FBQyxDQUFDLENBQUMsQ0FBQztJQUNqRCxNQUFNLEtBQUssR0FBdUMsQ0FBQSxDQUFFLENBQUM7SUFDckQsSUFBSyxJQUFJLENBQUMsR0FBRyxHQUFHLEdBQUcsQ0FBQyxFQUFFLENBQUMsR0FBRyxRQUFBLFdBQVcsQ0FBQyxNQUFNLEVBQUUsQ0FBQyxFQUFFLENBQUUsS0FBSyxDQUFDLFFBQUEsV0FBVyxDQUFDLENBQUMsQ0FBQyxDQUFDLEdBQUcsQ0FBQyxDQUFDO0lBQzdFLE9BQU8sS0FBSyxDQUFDO0FBQ2YsQ0FBQyJ9

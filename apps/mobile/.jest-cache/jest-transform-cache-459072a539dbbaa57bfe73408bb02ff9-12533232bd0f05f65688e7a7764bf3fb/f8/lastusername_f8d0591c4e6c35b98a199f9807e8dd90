@@ -1,0 +1,81 @@
+cf9225f9b9d9548aba7757305e00d97a
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.LAST_USERNAME_KEY = void 0;
+exports.getLastUsername = getLastUsername;
+exports.setLastUsername = setLastUsername;
+const react_native_1 = require("react-native");
+const secure_key_1 = require("./secure-key");
+/**
+ * Remembers the last successfully signed-in staff username so the login screen
+ * can prefill it after a session expires — one less field to retype on the
+ * re-login path. A convenience prefill, not a secret; it deliberately survives
+ * logout and token wipes.
+ */
+exports.LAST_USERNAME_KEY = "rf:lastUsername";
+async function storageGet(key) {
+    if (react_native_1.Platform.OS === "web")
+        return localStorage.getItem(key);
+    const { getItemAsync } = await Promise.resolve().then(() => __importStar(require("expo-secure-store")));
+    return getItemAsync((0, secure_key_1.toSecureStoreKey)(key));
+}
+async function storageSet(key, value) {
+    if (react_native_1.Platform.OS === "web") {
+        localStorage.setItem(key, value);
+        return;
+    }
+    const { setItemAsync } = await Promise.resolve().then(() => __importStar(require("expo-secure-store")));
+    await setItemAsync((0, secure_key_1.toSecureStoreKey)(key), value);
+}
+async function getLastUsername() {
+    try {
+        return await storageGet(exports.LAST_USERNAME_KEY);
+    }
+    catch {
+        return null;
+    }
+}
+async function setLastUsername(username) {
+    if (!username)
+        return;
+    try {
+        await storageSet(exports.LAST_USERNAME_KEY, username);
+    }
+    catch {
+        // Best-effort — a failed prefill save must never break login.
+    }
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL2xhc3QtdXNlcm5hbWUudHMiLCJtYXBwaW5ncyI6Ijs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7O0FBMkJBLDBDQU1DO0FBRUQsMENBT0M7QUExQ0QsK0NBQXdDO0FBQ3hDLDZDQUFnRDtBQUVoRDs7Ozs7R0FLRztBQUVVLFFBQUEsaUJBQWlCLEdBQUcsaUJBQWlCLENBQUM7QUFFbkQsS0FBSyxVQUFVLFVBQVUsQ0FBQyxHQUFXO0lBQ25DLElBQUksdUJBQVEsQ0FBQyxFQUFFLEtBQUssS0FBSztRQUFFLE9BQU8sWUFBWSxDQUFDLE9BQU8sQ0FBQyxHQUFHLENBQUMsQ0FBQztJQUM1RCxNQUFNLEVBQUUsWUFBWSxFQUFFLEdBQUcsd0RBQWEsbUJBQW1CLEdBQUMsQ0FBQztJQUMzRCxPQUFPLFlBQVksQ0FBQyxJQUFBLDZCQUFnQixFQUFDLEdBQUcsQ0FBQyxDQUFDLENBQUM7QUFDN0MsQ0FBQztBQUVELEtBQUssVUFBVSxVQUFVLENBQUMsR0FBVyxFQUFFLEtBQWE7SUFDbEQsSUFBSSx1QkFBUSxDQUFDLEVBQUUsS0FBSyxLQUFLLEVBQUUsQ0FBQztRQUMxQixZQUFZLENBQUMsT0FBTyxDQUFDLEdBQUcsRUFBRSxLQUFLLENBQUMsQ0FBQztRQUNqQyxPQUFPO0lBQ1QsQ0FBQztJQUNELE1BQU0sRUFBRSxZQUFZLEVBQUUsR0FBRyx3REFBYSxtQkFBbUIsR0FBQyxDQUFDO0lBQzNELE1BQU0sWUFBWSxDQUFDLElBQUEsNkJBQWdCLEVBQUMsR0FBRyxDQUFDLEVBQUUsS0FBSyxDQUFDLENBQUM7QUFDbkQsQ0FBQztBQUVNLEtBQUssVUFBVSxlQUFlO0lBQ25DLElBQUksQ0FBQztRQUNILE9BQU8sTUFBTSxVQUFVLENBQUMseUJBQWlCLENBQUMsQ0FBQztJQUM3QyxDQUFDO0lBQUMsTUFBTSxDQUFDO1FBQ1AsT0FBTyxJQUFJLENBQUM7SUFDZCxDQUFDO0FBQ0gsQ0FBQztBQUVNLEtBQUssVUFBVSxlQUFlLENBQUMsUUFBZ0I7SUFDcEQsSUFBSSxDQUFDLFFBQVE7UUFBRSxPQUFPO0lBQ3RCLElBQUksQ0FBQztRQUNILE1BQU0sVUFBVSxDQUFDLHlCQUFpQixFQUFFLFFBQVEsQ0FBQyxDQUFDO0lBQ2hELENBQUM7SUFBQyxNQUFNLENBQUM7UUFDUCw4REFBOEQ7SUFDaEUsQ0FBQztBQUNILENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL2xhc3QtdXNlcm5hbWUudHMiXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IHsgUGxhdGZvcm0gfSBmcm9tIFwicmVhY3QtbmF0aXZlXCI7XG5pbXBvcnQgeyB0b1NlY3VyZVN0b3JlS2V5IH0gZnJvbSBcIi4vc2VjdXJlLWtleVwiO1xuXG4vKipcbiAqIFJlbWVtYmVycyB0aGUgbGFzdCBzdWNjZXNzZnVsbHkgc2lnbmVkLWluIHN0YWZmIHVzZXJuYW1lIHNvIHRoZSBsb2dpbiBzY3JlZW5cbiAqIGNhbiBwcmVmaWxsIGl0IGFmdGVyIGEgc2Vzc2lvbiBleHBpcmVzIOKAlCBvbmUgbGVzcyBmaWVsZCB0byByZXR5cGUgb24gdGhlXG4gKiByZS1sb2dpbiBwYXRoLiBBIGNvbnZlbmllbmNlIHByZWZpbGwsIG5vdCBhIHNlY3JldDsgaXQgZGVsaWJlcmF0ZWx5IHN1cnZpdmVzXG4gKiBsb2dvdXQgYW5kIHRva2VuIHdpcGVzLlxuICovXG5cbmV4cG9ydCBjb25zdCBMQVNUX1VTRVJOQU1FX0tFWSA9IFwicmY6bGFzdFVzZXJuYW1lXCI7XG5cbmFzeW5jIGZ1bmN0aW9uIHN0b3JhZ2VHZXQoa2V5OiBzdHJpbmcpOiBQcm9taXNlPHN0cmluZyB8IG51bGw+IHtcbiAgaWYgKFBsYXRmb3JtLk9TID09PSBcIndlYlwiKSByZXR1cm4gbG9jYWxTdG9yYWdlLmdldEl0ZW0oa2V5KTtcbiAgY29uc3QgeyBnZXRJdGVtQXN5bmMgfSA9IGF3YWl0IGltcG9ydChcImV4cG8tc2VjdXJlLXN0b3JlXCIpO1xuICByZXR1cm4gZ2V0SXRlbUFzeW5jKHRvU2VjdXJlU3RvcmVLZXkoa2V5KSk7XG59XG5cbmFzeW5jIGZ1bmN0aW9uIHN0b3JhZ2VTZXQoa2V5OiBzdHJpbmcsIHZhbHVlOiBzdHJpbmcpOiBQcm9taXNlPHZvaWQ+IHtcbiAgaWYgKFBsYXRmb3JtLk9TID09PSBcIndlYlwiKSB7XG4gICAgbG9jYWxTdG9yYWdlLnNldEl0ZW0oa2V5LCB2YWx1ZSk7XG4gICAgcmV0dXJuO1xuICB9XG4gIGNvbnN0IHsgc2V0SXRlbUFzeW5jIH0gPSBhd2FpdCBpbXBvcnQoXCJleHBvLXNlY3VyZS1zdG9yZVwiKTtcbiAgYXdhaXQgc2V0SXRlbUFzeW5jKHRvU2VjdXJlU3RvcmVLZXkoa2V5KSwgdmFsdWUpO1xufVxuXG5leHBvcnQgYXN5bmMgZnVuY3Rpb24gZ2V0TGFzdFVzZXJuYW1lKCk6IFByb21pc2U8c3RyaW5nIHwgbnVsbD4ge1xuICB0cnkge1xuICAgIHJldHVybiBhd2FpdCBzdG9yYWdlR2V0KExBU1RfVVNFUk5BTUVfS0VZKTtcbiAgfSBjYXRjaCB7XG4gICAgcmV0dXJuIG51bGw7XG4gIH1cbn1cblxuZXhwb3J0IGFzeW5jIGZ1bmN0aW9uIHNldExhc3RVc2VybmFtZSh1c2VybmFtZTogc3RyaW5nKTogUHJvbWlzZTx2b2lkPiB7XG4gIGlmICghdXNlcm5hbWUpIHJldHVybjtcbiAgdHJ5IHtcbiAgICBhd2FpdCBzdG9yYWdlU2V0KExBU1RfVVNFUk5BTUVfS0VZLCB1c2VybmFtZSk7XG4gIH0gY2F0Y2gge1xuICAgIC8vIEJlc3QtZWZmb3J0IOKAlCBhIGZhaWxlZCBwcmVmaWxsIHNhdmUgbXVzdCBuZXZlciBicmVhayBsb2dpbi5cbiAgfVxufVxuIl0sInZlcnNpb24iOjN9

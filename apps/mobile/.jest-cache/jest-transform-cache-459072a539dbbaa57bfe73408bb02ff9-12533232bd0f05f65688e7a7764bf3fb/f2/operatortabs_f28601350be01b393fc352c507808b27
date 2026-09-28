@@ -1,0 +1,91 @@
+3a032fe23f1701f18f082814353c54c5
+"use strict";
+/**
+ * Which bottom-nav tab "owns" the operator route you're currently on.
+ *
+ * The operator bar is rendered in `(operator)/_layout.tsx`, OUTSIDE the `(tabs)`
+ * navigator, so it has no navigator state to read a focused index from — 88 of
+ * the ~106 operator screens aren't children of that navigator at all. Instead we
+ * derive the active tab from the route segments, which works at any depth and
+ * for both on-tab and off-tab routes.
+ *
+ * Pure on purpose: mobile Jest is node-only with no renderer, so this is the
+ * part that can actually be tested. See `__tests__/operator-tabs.test.ts`.
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.OPERATOR_TAB_ROOT = exports.OPERATOR_TABS = void 0;
+exports.visibleOperatorTabs = visibleOperatorTabs;
+exports.activeOperatorTab = activeOperatorTab;
+/** Left-to-right order in the bar. */
+exports.OPERATOR_TABS = [
+    "home",
+    "dispatch",
+    "orders",
+    "warehouse",
+    "more",
+];
+exports.OPERATOR_TAB_ROOT = {
+    home: "/(operator)/(tabs)/home",
+    dispatch: "/(operator)/(tabs)/dispatch",
+    orders: "/(operator)/(tabs)/orders",
+    warehouse: "/(operator)/(tabs)/warehouse",
+    more: "/(operator)/(tabs)/more",
+};
+/**
+ * First route segment under `(operator)` → the tab that owns that section.
+ *
+ * Only sections reachable from a tab's own screens are listed. Everything else
+ * falls through to "more", which is correct rather than lazy: `(tabs)/more.tsx`
+ * is a hub linking to 27 sections, and every unlisted section here is one of
+ * them — so More is literally where the operator came from.
+ */
+const SECTION_TO_TAB = {
+    home: "home",
+    dispatch: "dispatch",
+    routes: "dispatch",
+    "route-runs": "dispatch",
+    drivers: "dispatch",
+    driver: "dispatch",
+    fleet: "dispatch",
+    trips: "dispatch",
+    orders: "orders",
+    "new-order": "orders",
+    warehouse: "warehouse",
+    products: "warehouse",
+    movements: "warehouse",
+    pick: "warehouse",
+    "purchase-orders": "warehouse",
+    more: "more",
+};
+/**
+ * Which tabs the bar should render for the current tenant/loading state.
+ *
+ * Per-tenant addons gate the Dispatch tab: it fronts the driver/route/fleet
+ * surfaces AND the ad-hoc order-delivery entry, so `dispatchAccess` is EITHER
+ * feature's access — `recurring_routes || order_delivery` (owner decision
+ * 2026-08-28: `developer_mode` no longer unlocks either). Pure — pass `false`
+ * while the addon fetch is loading so the tab never flashes then vanishes (see
+ * `OperatorTabBar`, which composes it from `useRoutesAccess`/`useDeliveryAccess`).
+ */
+function visibleOperatorTabs(dispatchAccess) {
+    return dispatchAccess ? [...exports.OPERATOR_TABS] : exports.OPERATOR_TABS.filter((t) => t !== "dispatch");
+}
+/** expo-router segments keep their parens: "(operator)", "(tabs)". */
+const isGroup = (s) => s.startsWith("(") && s.endsWith(")");
+/**
+ * Never returns null — an operator route with no mapping highlights More. A bar
+ * with nothing lit reads as broken.
+ */
+function activeOperatorTab(segments) {
+    const start = segments.indexOf("(operator)");
+    if (start === -1)
+        return "more";
+    // The owning section is segments[start+2] inside (tabs) and segments[start+1]
+    // outside it — "first non-group" covers both without hardcoding either, and
+    // survives someone adding another route group later.
+    const section = segments.slice(start + 1).find((s) => !isGroup(s));
+    if (!section)
+        return "home"; // bare /(operator)
+    return SECTION_TO_TAB[section] ?? "more";
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL29wZXJhdG9yLXRhYnMudHMiLCJtYXBwaW5ncyI6IjtBQUFBOzs7Ozs7Ozs7OztHQVdHOzs7QUE4REgsa0RBRUM7QUFTRCw4Q0FTQztBQTlFRCxzQ0FBc0M7QUFDekIsUUFBQSxhQUFhLEdBQThCO0lBQ3RELE1BQU07SUFDTixVQUFVO0lBQ1YsUUFBUTtJQUNSLFdBQVc7SUFDWCxNQUFNO0NBQ0UsQ0FBQztBQUVFLFFBQUEsaUJBQWlCLEdBQW1DO0lBQy9ELElBQUksRUFBRSx5QkFBeUI7SUFDL0IsUUFBUSxFQUFFLDZCQUE2QjtJQUN2QyxNQUFNLEVBQUUsMkJBQTJCO0lBQ25DLFNBQVMsRUFBRSw4QkFBOEI7SUFDekMsSUFBSSxFQUFFLHlCQUF5QjtDQUNoQyxDQUFDO0FBRUY7Ozs7Ozs7R0FPRztBQUNILE1BQU0sY0FBYyxHQUE2QztJQUMvRCxJQUFJLEVBQUUsTUFBTTtJQUVaLFFBQVEsRUFBRSxVQUFVO0lBQ3BCLE1BQU0sRUFBRSxVQUFVO0lBQ2xCLFlBQVksRUFBRSxVQUFVO0lBQ3hCLE9BQU8sRUFBRSxVQUFVO0lBQ25CLE1BQU0sRUFBRSxVQUFVO0lBQ2xCLEtBQUssRUFBRSxVQUFVO0lBQ2pCLEtBQUssRUFBRSxVQUFVO0lBRWpCLE1BQU0sRUFBRSxRQUFRO0lBQ2hCLFdBQVcsRUFBRSxRQUFRO0lBRXJCLFNBQVMsRUFBRSxXQUFXO0lBQ3RCLFFBQVEsRUFBRSxXQUFXO0lBQ3JCLFNBQVMsRUFBRSxXQUFXO0lBQ3RCLElBQUksRUFBRSxXQUFXO0lBQ2pCLGlCQUFpQixFQUFFLFdBQVc7SUFFOUIsSUFBSSxFQUFFLE1BQU07Q0FDYixDQUFDO0FBRUY7Ozs7Ozs7OztHQVNHO0FBQ0gsU0FBZ0IsbUJBQW1CLENBQUMsY0FBdUI7SUFDekQsT0FBTyxjQUFjLENBQUMsQ0FBQyxDQUFDLENBQUMsR0FBRyxxQkFBYSxDQUFDLENBQUMsQ0FBQyxDQUFDLHFCQUFhLENBQUMsTUFBTSxDQUFDLENBQUMsQ0FBQyxFQUFFLEVBQUUsQ0FBQyxDQUFDLEtBQUssVUFBVSxDQUFDLENBQUM7QUFDN0YsQ0FBQztBQUVELHNFQUFzRTtBQUN0RSxNQUFNLE9BQU8sR0FBRyxDQUFDLENBQVMsRUFBRSxFQUFFLENBQUMsQ0FBQyxDQUFDLFVBQVUsQ0FBQyxHQUFHLENBQUMsSUFBSSxDQUFDLENBQUMsUUFBUSxDQUFDLEdBQUcsQ0FBQyxDQUFDO0FBRXBFOzs7R0FHRztBQUNILFNBQWdCLGlCQUFpQixDQUFDLFFBQTJCO0lBQzNELE1BQU0sS0FBSyxHQUFHLFFBQVEsQ0FBQyxPQUFPLENBQUMsWUFBWSxDQUFDLENBQUM7SUFDN0MsSUFBSSxLQUFLLEtBQUssQ0FBQyxDQUFDO1FBQUUsT0FBTyxNQUFNLENBQUM7SUFDaEMsOEVBQThFO0lBQzlFLDRFQUE0RTtJQUM1RSxxREFBcUQ7SUFDckQsTUFBTSxPQUFPLEdBQUcsUUFBUSxDQUFDLEtBQUssQ0FBQyxLQUFLLEdBQUcsQ0FBQyxDQUFDLENBQUMsSUFBSSxDQUFDLENBQUMsQ0FBQyxFQUFFLEVBQUUsQ0FBQyxDQUFDLE9BQU8sQ0FBQyxDQUFDLENBQUMsQ0FBQyxDQUFDO0lBQ25FLElBQUksQ0FBQyxPQUFPO1FBQUUsT0FBTyxNQUFNLENBQUMsQ0FBQyxtQkFBbUI7SUFDaEQsT0FBTyxjQUFjLENBQUMsT0FBTyxDQUFDLElBQUksTUFBTSxDQUFDO0FBQzNDLENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL29wZXJhdG9yLXRhYnMudHMiXSwic291cmNlc0NvbnRlbnQiOlsiLyoqXG4gKiBXaGljaCBib3R0b20tbmF2IHRhYiBcIm93bnNcIiB0aGUgb3BlcmF0b3Igcm91dGUgeW91J3JlIGN1cnJlbnRseSBvbi5cbiAqXG4gKiBUaGUgb3BlcmF0b3IgYmFyIGlzIHJlbmRlcmVkIGluIGAob3BlcmF0b3IpL19sYXlvdXQudHN4YCwgT1VUU0lERSB0aGUgYCh0YWJzKWBcbiAqIG5hdmlnYXRvciwgc28gaXQgaGFzIG5vIG5hdmlnYXRvciBzdGF0ZSB0byByZWFkIGEgZm9jdXNlZCBpbmRleCBmcm9tIOKAlCA4OCBvZlxuICogdGhlIH4xMDYgb3BlcmF0b3Igc2NyZWVucyBhcmVuJ3QgY2hpbGRyZW4gb2YgdGhhdCBuYXZpZ2F0b3IgYXQgYWxsLiBJbnN0ZWFkIHdlXG4gKiBkZXJpdmUgdGhlIGFjdGl2ZSB0YWIgZnJvbSB0aGUgcm91dGUgc2VnbWVudHMsIHdoaWNoIHdvcmtzIGF0IGFueSBkZXB0aCBhbmRcbiAqIGZvciBib3RoIG9uLXRhYiBhbmQgb2ZmLXRhYiByb3V0ZXMuXG4gKlxuICogUHVyZSBvbiBwdXJwb3NlOiBtb2JpbGUgSmVzdCBpcyBub2RlLW9ubHkgd2l0aCBubyByZW5kZXJlciwgc28gdGhpcyBpcyB0aGVcbiAqIHBhcnQgdGhhdCBjYW4gYWN0dWFsbHkgYmUgdGVzdGVkLiBTZWUgYF9fdGVzdHNfXy9vcGVyYXRvci10YWJzLnRlc3QudHNgLlxuICovXG5cbmV4cG9ydCB0eXBlIE9wZXJhdG9yVGFiS2V5ID0gXCJob21lXCIgfCBcImRpc3BhdGNoXCIgfCBcIm9yZGVyc1wiIHwgXCJ3YXJlaG91c2VcIiB8IFwibW9yZVwiO1xuXG4vKiogTGVmdC10by1yaWdodCBvcmRlciBpbiB0aGUgYmFyLiAqL1xuZXhwb3J0IGNvbnN0IE9QRVJBVE9SX1RBQlM6IHJlYWRvbmx5IE9wZXJhdG9yVGFiS2V5W10gPSBbXG4gIFwiaG9tZVwiLFxuICBcImRpc3BhdGNoXCIsXG4gIFwib3JkZXJzXCIsXG4gIFwid2FyZWhvdXNlXCIsXG4gIFwibW9yZVwiLFxuXSBhcyBjb25zdDtcblxuZXhwb3J0IGNvbnN0IE9QRVJBVE9SX1RBQl9ST09UOiBSZWNvcmQ8T3BlcmF0b3JUYWJLZXksIHN0cmluZz4gPSB7XG4gIGhvbWU6IFwiLyhvcGVyYXRvcikvKHRhYnMpL2hvbWVcIixcbiAgZGlzcGF0Y2g6IFwiLyhvcGVyYXRvcikvKHRhYnMpL2Rpc3BhdGNoXCIsXG4gIG9yZGVyczogXCIvKG9wZXJhdG9yKS8odGFicykvb3JkZXJzXCIsXG4gIHdhcmVob3VzZTogXCIvKG9wZXJhdG9yKS8odGFicykvd2FyZWhvdXNlXCIsXG4gIG1vcmU6IFwiLyhvcGVyYXRvcikvKHRhYnMpL21vcmVcIixcbn07XG5cbi8qKlxuICogRmlyc3Qgcm91dGUgc2VnbWVudCB1bmRlciBgKG9wZXJhdG9yKWAg4oaSIHRoZSB0YWIgdGhhdCBvd25zIHRoYXQgc2VjdGlvbi5cbiAqXG4gKiBPbmx5IHNlY3Rpb25zIHJlYWNoYWJsZSBmcm9tIGEgdGFiJ3Mgb3duIHNjcmVlbnMgYXJlIGxpc3RlZC4gRXZlcnl0aGluZyBlbHNlXG4gKiBmYWxscyB0aHJvdWdoIHRvIFwibW9yZVwiLCB3aGljaCBpcyBjb3JyZWN0IHJhdGhlciB0aGFuIGxhenk6IGAodGFicykvbW9yZS50c3hgXG4gKiBpcyBhIGh1YiBsaW5raW5nIHRvIDI3IHNlY3Rpb25zLCBhbmQgZXZlcnkgdW5saXN0ZWQgc2VjdGlvbiBoZXJlIGlzIG9uZSBvZlxuICogdGhlbSDigJQgc28gTW9yZSBpcyBsaXRlcmFsbHkgd2hlcmUgdGhlIG9wZXJhdG9yIGNhbWUgZnJvbS5cbiAqL1xuY29uc3QgU0VDVElPTl9UT19UQUI6IFJlYWRvbmx5PFJlY29yZDxzdHJpbmcsIE9wZXJhdG9yVGFiS2V5Pj4gPSB7XG4gIGhvbWU6IFwiaG9tZVwiLFxuXG4gIGRpc3BhdGNoOiBcImRpc3BhdGNoXCIsXG4gIHJvdXRlczogXCJkaXNwYXRjaFwiLFxuICBcInJvdXRlLXJ1bnNcIjogXCJkaXNwYXRjaFwiLFxuICBkcml2ZXJzOiBcImRpc3BhdGNoXCIsXG4gIGRyaXZlcjogXCJkaXNwYXRjaFwiLFxuICBmbGVldDogXCJkaXNwYXRjaFwiLFxuICB0cmlwczogXCJkaXNwYXRjaFwiLFxuXG4gIG9yZGVyczogXCJvcmRlcnNcIixcbiAgXCJuZXctb3JkZXJcIjogXCJvcmRlcnNcIixcblxuICB3YXJlaG91c2U6IFwid2FyZWhvdXNlXCIsXG4gIHByb2R1Y3RzOiBcIndhcmVob3VzZVwiLFxuICBtb3ZlbWVudHM6IFwid2FyZWhvdXNlXCIsXG4gIHBpY2s6IFwid2FyZWhvdXNlXCIsXG4gIFwicHVyY2hhc2Utb3JkZXJzXCI6IFwid2FyZWhvdXNlXCIsXG5cbiAgbW9yZTogXCJtb3JlXCIsXG59O1xuXG4vKipcbiAqIFdoaWNoIHRhYnMgdGhlIGJhciBzaG91bGQgcmVuZGVyIGZvciB0aGUgY3VycmVudCB0ZW5hbnQvbG9hZGluZyBzdGF0ZS5cbiAqXG4gKiBQZXItdGVuYW50IGFkZG9ucyBnYXRlIHRoZSBEaXNwYXRjaCB0YWI6IGl0IGZyb250cyB0aGUgZHJpdmVyL3JvdXRlL2ZsZWV0XG4gKiBzdXJmYWNlcyBBTkQgdGhlIGFkLWhvYyBvcmRlci1kZWxpdmVyeSBlbnRyeSwgc28gYGRpc3BhdGNoQWNjZXNzYCBpcyBFSVRIRVJcbiAqIGZlYXR1cmUncyBhY2Nlc3Mg4oCUIGByZWN1cnJpbmdfcm91dGVzIHx8IG9yZGVyX2RlbGl2ZXJ5YCAob3duZXIgZGVjaXNpb25cbiAqIDIwMjYtMDgtMjg6IGBkZXZlbG9wZXJfbW9kZWAgbm8gbG9uZ2VyIHVubG9ja3MgZWl0aGVyKS4gUHVyZSDigJQgcGFzcyBgZmFsc2VgXG4gKiB3aGlsZSB0aGUgYWRkb24gZmV0Y2ggaXMgbG9hZGluZyBzbyB0aGUgdGFiIG5ldmVyIGZsYXNoZXMgdGhlbiB2YW5pc2hlcyAoc2VlXG4gKiBgT3BlcmF0b3JUYWJCYXJgLCB3aGljaCBjb21wb3NlcyBpdCBmcm9tIGB1c2VSb3V0ZXNBY2Nlc3NgL2B1c2VEZWxpdmVyeUFjY2Vzc2ApLlxuICovXG5leHBvcnQgZnVuY3Rpb24gdmlzaWJsZU9wZXJhdG9yVGFicyhkaXNwYXRjaEFjY2VzczogYm9vbGVhbik6IE9wZXJhdG9yVGFiS2V5W10ge1xuICByZXR1cm4gZGlzcGF0Y2hBY2Nlc3MgPyBbLi4uT1BFUkFUT1JfVEFCU10gOiBPUEVSQVRPUl9UQUJTLmZpbHRlcigodCkgPT4gdCAhPT0gXCJkaXNwYXRjaFwiKTtcbn1cblxuLyoqIGV4cG8tcm91dGVyIHNlZ21lbnRzIGtlZXAgdGhlaXIgcGFyZW5zOiBcIihvcGVyYXRvcilcIiwgXCIodGFicylcIi4gKi9cbmNvbnN0IGlzR3JvdXAgPSAoczogc3RyaW5nKSA9PiBzLnN0YXJ0c1dpdGgoXCIoXCIpICYmIHMuZW5kc1dpdGgoXCIpXCIpO1xuXG4vKipcbiAqIE5ldmVyIHJldHVybnMgbnVsbCDigJQgYW4gb3BlcmF0b3Igcm91dGUgd2l0aCBubyBtYXBwaW5nIGhpZ2hsaWdodHMgTW9yZS4gQSBiYXJcbiAqIHdpdGggbm90aGluZyBsaXQgcmVhZHMgYXMgYnJva2VuLlxuICovXG5leHBvcnQgZnVuY3Rpb24gYWN0aXZlT3BlcmF0b3JUYWIoc2VnbWVudHM6IHJlYWRvbmx5IHN0cmluZ1tdKTogT3BlcmF0b3JUYWJLZXkge1xuICBjb25zdCBzdGFydCA9IHNlZ21lbnRzLmluZGV4T2YoXCIob3BlcmF0b3IpXCIpO1xuICBpZiAoc3RhcnQgPT09IC0xKSByZXR1cm4gXCJtb3JlXCI7XG4gIC8vIFRoZSBvd25pbmcgc2VjdGlvbiBpcyBzZWdtZW50c1tzdGFydCsyXSBpbnNpZGUgKHRhYnMpIGFuZCBzZWdtZW50c1tzdGFydCsxXVxuICAvLyBvdXRzaWRlIGl0IOKAlCBcImZpcnN0IG5vbi1ncm91cFwiIGNvdmVycyBib3RoIHdpdGhvdXQgaGFyZGNvZGluZyBlaXRoZXIsIGFuZFxuICAvLyBzdXJ2aXZlcyBzb21lb25lIGFkZGluZyBhbm90aGVyIHJvdXRlIGdyb3VwIGxhdGVyLlxuICBjb25zdCBzZWN0aW9uID0gc2VnbWVudHMuc2xpY2Uoc3RhcnQgKyAxKS5maW5kKChzKSA9PiAhaXNHcm91cChzKSk7XG4gIGlmICghc2VjdGlvbikgcmV0dXJuIFwiaG9tZVwiOyAvLyBiYXJlIC8ob3BlcmF0b3IpXG4gIHJldHVybiBTRUNUSU9OX1RPX1RBQltzZWN0aW9uXSA/PyBcIm1vcmVcIjtcbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

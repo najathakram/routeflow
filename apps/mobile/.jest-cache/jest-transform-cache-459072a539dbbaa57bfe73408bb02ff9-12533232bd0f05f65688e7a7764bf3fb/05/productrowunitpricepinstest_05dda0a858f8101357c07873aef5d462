@@ -1,0 +1,20 @@
+2273932e6fc8559a4967f6abb323c79d
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const fs_1 = require("fs");
+const path_1 = require("path");
+/**
+ * SA-105 LOW: `listPrice` is the PACK's own tier-1 price — comparing a unit-sold line's price
+ * against it to decide the "was $X" strikethrough is meaningless (a $2 Piece would render "was
+ * $24.00 $2.00 / Piece", and a genuinely tier-discounted Case would show no strikethrough at
+ * all, since a Case's price is never smaller than the pack's list price). Mobile Jest has no
+ * RN renderer, so this is a source pin, matching this repo's convention for component-embedded
+ * logic that isn't worth extracting into lib on its own (`edit-items-scan-price.test.ts`, etc.).
+ */
+describe("ProductRow suppresses the was-price marker on a unit-sold line (SA-105 LOW)", () => {
+    const src = (0, fs_1.readFileSync)((0, path_1.join)(__dirname, "..", "components", "ProductRow.tsx"), "utf8");
+    it("isSpecial is false whenever unitLabel is set, regardless of the pack's listPrice", () => {
+        expect(src).toMatch(/const isSpecial = !unitLabel && price < listPrice - 0\.0001;/);
+    });
+});
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvX190ZXN0c19fL3Byb2R1Y3Qtcm93LXVuaXQtcHJpY2UucGlucy50ZXN0LnRzIiwibWFwcGluZ3MiOiI7O0FBQUEsMkJBQWtDO0FBQ2xDLCtCQUE0QjtBQUU1Qjs7Ozs7OztHQU9HO0FBQ0gsUUFBUSxDQUFDLDZFQUE2RSxFQUFFLEdBQUcsRUFBRTtJQUMzRixNQUFNLEdBQUcsR0FBRyxJQUFBLGlCQUFZLEVBQUMsSUFBQSxXQUFJLEVBQUMsU0FBUyxFQUFFLElBQUksRUFBRSxZQUFZLEVBQUUsZ0JBQWdCLENBQUMsRUFBRSxNQUFNLENBQUMsQ0FBQztJQUV4RixFQUFFLENBQUMsa0ZBQWtGLEVBQUUsR0FBRyxFQUFFO1FBQzFGLE1BQU0sQ0FBQyxHQUFHLENBQUMsQ0FBQyxPQUFPLENBQUMsOERBQThELENBQUMsQ0FBQztJQUN0RixDQUFDLENBQUMsQ0FBQztBQUNMLENBQUMsQ0FBQyxDQUFDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvbW9iaWxlL19fdGVzdHNfXy9wcm9kdWN0LXJvdy11bml0LXByaWNlLnBpbnMudGVzdC50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgeyByZWFkRmlsZVN5bmMgfSBmcm9tIFwiZnNcIjtcbmltcG9ydCB7IGpvaW4gfSBmcm9tIFwicGF0aFwiO1xuXG4vKipcbiAqIFNBLTEwNSBMT1c6IGBsaXN0UHJpY2VgIGlzIHRoZSBQQUNLJ3Mgb3duIHRpZXItMSBwcmljZSDigJQgY29tcGFyaW5nIGEgdW5pdC1zb2xkIGxpbmUncyBwcmljZVxuICogYWdhaW5zdCBpdCB0byBkZWNpZGUgdGhlIFwid2FzICRYXCIgc3RyaWtldGhyb3VnaCBpcyBtZWFuaW5nbGVzcyAoYSAkMiBQaWVjZSB3b3VsZCByZW5kZXIgXCJ3YXNcbiAqICQyNC4wMCAkMi4wMCAvIFBpZWNlXCIsIGFuZCBhIGdlbnVpbmVseSB0aWVyLWRpc2NvdW50ZWQgQ2FzZSB3b3VsZCBzaG93IG5vIHN0cmlrZXRocm91Z2ggYXRcbiAqIGFsbCwgc2luY2UgYSBDYXNlJ3MgcHJpY2UgaXMgbmV2ZXIgc21hbGxlciB0aGFuIHRoZSBwYWNrJ3MgbGlzdCBwcmljZSkuIE1vYmlsZSBKZXN0IGhhcyBub1xuICogUk4gcmVuZGVyZXIsIHNvIHRoaXMgaXMgYSBzb3VyY2UgcGluLCBtYXRjaGluZyB0aGlzIHJlcG8ncyBjb252ZW50aW9uIGZvciBjb21wb25lbnQtZW1iZWRkZWRcbiAqIGxvZ2ljIHRoYXQgaXNuJ3Qgd29ydGggZXh0cmFjdGluZyBpbnRvIGxpYiBvbiBpdHMgb3duIChgZWRpdC1pdGVtcy1zY2FuLXByaWNlLnRlc3QudHNgLCBldGMuKS5cbiAqL1xuZGVzY3JpYmUoXCJQcm9kdWN0Um93IHN1cHByZXNzZXMgdGhlIHdhcy1wcmljZSBtYXJrZXIgb24gYSB1bml0LXNvbGQgbGluZSAoU0EtMTA1IExPVylcIiwgKCkgPT4ge1xuICBjb25zdCBzcmMgPSByZWFkRmlsZVN5bmMoam9pbihfX2Rpcm5hbWUsIFwiLi5cIiwgXCJjb21wb25lbnRzXCIsIFwiUHJvZHVjdFJvdy50c3hcIiksIFwidXRmOFwiKTtcblxuICBpdChcImlzU3BlY2lhbCBpcyBmYWxzZSB3aGVuZXZlciB1bml0TGFiZWwgaXMgc2V0LCByZWdhcmRsZXNzIG9mIHRoZSBwYWNrJ3MgbGlzdFByaWNlXCIsICgpID0+IHtcbiAgICBleHBlY3Qoc3JjKS50b01hdGNoKC9jb25zdCBpc1NwZWNpYWwgPSAhdW5pdExhYmVsICYmIHByaWNlIDwgbGlzdFByaWNlIC0gMFxcLjAwMDE7Lyk7XG4gIH0pO1xufSk7XG4iXSwidmVyc2lvbiI6M30=

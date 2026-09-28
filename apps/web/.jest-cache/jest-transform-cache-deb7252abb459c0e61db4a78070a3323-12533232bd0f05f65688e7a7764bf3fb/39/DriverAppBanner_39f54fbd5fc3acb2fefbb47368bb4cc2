@@ -1,0 +1,42 @@
+e26859a7308a7cfb85a95f5e3520665a
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+Object.defineProperty(exports, "DriverAppBanner", {
+    enumerable: true,
+    get: function() {
+        return DriverAppBanner;
+    }
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _driverapplink = require("../../../lib/driver-app-link");
+function DriverAppBanner({ visible, onDismiss }) {
+    if (!visible) return null;
+    return /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+        role: "status",
+        className: "flex items-center justify-between gap-3 rounded-lg border border-surface-border bg-surface-raised px-4 py-2.5 text-sm text-navy",
+        children: [
+            /*#__PURE__*/ (0, _jsxruntime.jsxs)("span", {
+                children: [
+                    "Get the full driver experience in the app.",
+                    " ",
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("a", {
+                        href: _driverapplink.DRIVER_APP_LOGIN_URL,
+                        className: "font-medium text-[#0B6E6B] hover:underline",
+                        children: "Open the driver app →"
+                    })
+                ]
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                type: "button",
+                "aria-label": "Dismiss",
+                onClick: onDismiss,
+                className: "shrink-0 text-navy/50 hover:text-navy",
+                children: "✕"
+            })
+        ]
+    });
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS9kYXNoYm9hcmQvRHJpdmVyQXBwQmFubmVyLnRzeCJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgeyBEUklWRVJfQVBQX0xPR0lOX1VSTCB9IGZyb20gXCJAL2xpYi9kcml2ZXItYXBwLWxpbmtcIjtcblxuLyoqXG4gKiBPd25lciBydWxpbmcgKG1vYmlsZS13ZWItcHJveHktcmVkZXNpZ24pOiBhIERSSVZFUi1yb2xlIGFjY291bnQgc2lnbmVkIGluIG9uXG4gKiB0aGUgd2ViIGRhc2hib2FyZCBpcyBudWRnZWQgdG93YXJkIHRoZSBpbnN0YWxsZWQgZHJpdmVyIGFwcCDigJQgbm90IGZvcmNlZFxuICogdGhlcmUgKHdlYiBkcml2ZXIgbW9kZSBpcyB0aGUgUEhBU0UgMWEgd29yayBzdGlsbCBpbiBwcm9ncmVzcykuIEV4dHJhY3RlZFxuICogZnJvbSBkYXNoYm9hcmQvcGFnZS50c3ggc28gdGhpcyBzbWFsbCwgc3RhdGVsZXNzIHBpZWNlIGNhbiBiZSBwaW5uZWRcbiAqIGRpcmVjdGx5LCB3aXRob3V0IG1vdW50aW5nIHRoZSB3aG9sZSBkYXNoYm9hcmQncyBkYXRhLWZldGNoaW5nIGhvb2tzLlxuICovXG5leHBvcnQgZnVuY3Rpb24gRHJpdmVyQXBwQmFubmVyKHtcbiAgdmlzaWJsZSxcbiAgb25EaXNtaXNzLFxufToge1xuICB2aXNpYmxlOiBib29sZWFuO1xuICBvbkRpc21pc3M6ICgpID0+IHZvaWQ7XG59KSB7XG4gIGlmICghdmlzaWJsZSkgcmV0dXJuIG51bGw7XG4gIHJldHVybiAoXG4gICAgPGRpdlxuICAgICAgcm9sZT1cInN0YXR1c1wiXG4gICAgICBjbGFzc05hbWU9XCJmbGV4IGl0ZW1zLWNlbnRlciBqdXN0aWZ5LWJldHdlZW4gZ2FwLTMgcm91bmRlZC1sZyBib3JkZXIgYm9yZGVyLXN1cmZhY2UtYm9yZGVyIGJnLXN1cmZhY2UtcmFpc2VkIHB4LTQgcHktMi41IHRleHQtc20gdGV4dC1uYXZ5XCJcbiAgICA+XG4gICAgICA8c3Bhbj5cbiAgICAgICAgR2V0IHRoZSBmdWxsIGRyaXZlciBleHBlcmllbmNlIGluIHRoZSBhcHAue1wiIFwifVxuICAgICAgICA8YSBocmVmPXtEUklWRVJfQVBQX0xPR0lOX1VSTH0gY2xhc3NOYW1lPVwiZm9udC1tZWRpdW0gdGV4dC1bIzBCNkU2Ql0gaG92ZXI6dW5kZXJsaW5lXCI+XG4gICAgICAgICAgT3BlbiB0aGUgZHJpdmVyIGFwcCDihpJcbiAgICAgICAgPC9hPlxuICAgICAgPC9zcGFuPlxuICAgICAgPGJ1dHRvblxuICAgICAgICB0eXBlPVwiYnV0dG9uXCJcbiAgICAgICAgYXJpYS1sYWJlbD1cIkRpc21pc3NcIlxuICAgICAgICBvbkNsaWNrPXtvbkRpc21pc3N9XG4gICAgICAgIGNsYXNzTmFtZT1cInNocmluay0wIHRleHQtbmF2eS81MCBob3Zlcjp0ZXh0LW5hdnlcIlxuICAgICAgPlxuICAgICAgICDinJVcbiAgICAgIDwvYnV0dG9uPlxuICAgIDwvZGl2PlxuICApO1xufVxuIl0sIm5hbWVzIjpbIkRyaXZlckFwcEJhbm5lciIsInZpc2libGUiLCJvbkRpc21pc3MiLCJkaXYiLCJyb2xlIiwiY2xhc3NOYW1lIiwic3BhbiIsImEiLCJocmVmIiwiRFJJVkVSX0FQUF9MT0dJTl9VUkwiLCJidXR0b24iLCJ0eXBlIiwiYXJpYS1sYWJlbCIsIm9uQ2xpY2siXSwibWFwcGluZ3MiOiI7Ozs7K0JBU2dCQTs7O2VBQUFBOzs7OytCQVRxQjtBQVM5QixTQUFTQSxnQkFBZ0IsRUFDOUJDLE9BQU8sRUFDUEMsU0FBUyxFQUlWO0lBQ0MsSUFBSSxDQUFDRCxTQUFTLE9BQU87SUFDckIscUJBQ0Usc0JBQUNFO1FBQ0NDLE1BQUs7UUFDTEMsV0FBVTs7MEJBRVYsc0JBQUNDOztvQkFBSztvQkFDdUM7a0NBQzNDLHFCQUFDQzt3QkFBRUMsTUFBTUMsbUNBQW9CO3dCQUFFSixXQUFVO2tDQUE2Qzs7OzswQkFJeEYscUJBQUNLO2dCQUNDQyxNQUFLO2dCQUNMQyxjQUFXO2dCQUNYQyxTQUFTWDtnQkFDVEcsV0FBVTswQkFDWDs7OztBQUtQIn0=

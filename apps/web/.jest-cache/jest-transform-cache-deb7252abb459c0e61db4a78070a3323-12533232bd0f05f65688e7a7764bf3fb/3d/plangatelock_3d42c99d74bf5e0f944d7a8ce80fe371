@@ -1,0 +1,38 @@
+cf7f240cb4e535e8c00c2e60a4c49c07
+/**
+ * B449 fix-round finding 2: a tiny cross-component bridge between `PlanGateBoundary`
+ * (app/(dashboard)/_components/gates/PlanGateBoundary.tsx) and `PlanGateNotice`
+ * (components/PlanGateNotice.tsx). `PlanGateBoundary` marks a pathname LOCKED the
+ * moment it decides to render the lock (and unmarks it the moment it stops), so
+ * `PlanGateNotice` can refuse to turn a stray 403 into a toast on that path — the
+ * boundary itself already emitted the ONE deterministic notice for that navigation,
+ * naming the route's own gate tier; a 403 arriving from some other widget must never
+ * add a second, possibly-contradictory one.
+ */ "use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, {
+        enumerable: true,
+        get: Object.getOwnPropertyDescriptor(all, name).get
+    });
+}
+_export(exports, {
+    get isRouteLocked () {
+        return isRouteLocked;
+    },
+    get setRouteLocked () {
+        return setRouteLocked;
+    }
+});
+const lockedPaths = new Set();
+function setRouteLocked(pathname, locked) {
+    if (locked) lockedPaths.add(pathname);
+    else lockedPaths.delete(pathname);
+}
+function isRouteLocked(pathname) {
+    return lockedPaths.has(pathname);
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2xpYi9wbGFuLWdhdGUtbG9jay50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqIEI0NDkgZml4LXJvdW5kIGZpbmRpbmcgMjogYSB0aW55IGNyb3NzLWNvbXBvbmVudCBicmlkZ2UgYmV0d2VlbiBgUGxhbkdhdGVCb3VuZGFyeWBcbiAqIChhcHAvKGRhc2hib2FyZCkvX2NvbXBvbmVudHMvZ2F0ZXMvUGxhbkdhdGVCb3VuZGFyeS50c3gpIGFuZCBgUGxhbkdhdGVOb3RpY2VgXG4gKiAoY29tcG9uZW50cy9QbGFuR2F0ZU5vdGljZS50c3gpLiBgUGxhbkdhdGVCb3VuZGFyeWAgbWFya3MgYSBwYXRobmFtZSBMT0NLRUQgdGhlXG4gKiBtb21lbnQgaXQgZGVjaWRlcyB0byByZW5kZXIgdGhlIGxvY2sgKGFuZCB1bm1hcmtzIGl0IHRoZSBtb21lbnQgaXQgc3RvcHMpLCBzb1xuICogYFBsYW5HYXRlTm90aWNlYCBjYW4gcmVmdXNlIHRvIHR1cm4gYSBzdHJheSA0MDMgaW50byBhIHRvYXN0IG9uIHRoYXQgcGF0aCDigJQgdGhlXG4gKiBib3VuZGFyeSBpdHNlbGYgYWxyZWFkeSBlbWl0dGVkIHRoZSBPTkUgZGV0ZXJtaW5pc3RpYyBub3RpY2UgZm9yIHRoYXQgbmF2aWdhdGlvbixcbiAqIG5hbWluZyB0aGUgcm91dGUncyBvd24gZ2F0ZSB0aWVyOyBhIDQwMyBhcnJpdmluZyBmcm9tIHNvbWUgb3RoZXIgd2lkZ2V0IG11c3QgbmV2ZXJcbiAqIGFkZCBhIHNlY29uZCwgcG9zc2libHktY29udHJhZGljdG9yeSBvbmUuXG4gKi9cbmNvbnN0IGxvY2tlZFBhdGhzID0gbmV3IFNldDxzdHJpbmc+KCk7XG5cbmV4cG9ydCBmdW5jdGlvbiBzZXRSb3V0ZUxvY2tlZChwYXRobmFtZTogc3RyaW5nLCBsb2NrZWQ6IGJvb2xlYW4pOiB2b2lkIHtcbiAgaWYgKGxvY2tlZCkgbG9ja2VkUGF0aHMuYWRkKHBhdGhuYW1lKTtcbiAgZWxzZSBsb2NrZWRQYXRocy5kZWxldGUocGF0aG5hbWUpO1xufVxuXG5leHBvcnQgZnVuY3Rpb24gaXNSb3V0ZUxvY2tlZChwYXRobmFtZTogc3RyaW5nKTogYm9vbGVhbiB7XG4gIHJldHVybiBsb2NrZWRQYXRocy5oYXMocGF0aG5hbWUpO1xufVxuIl0sIm5hbWVzIjpbImlzUm91dGVMb2NrZWQiLCJzZXRSb3V0ZUxvY2tlZCIsImxvY2tlZFBhdGhzIiwiU2V0IiwicGF0aG5hbWUiLCJsb2NrZWQiLCJhZGQiLCJkZWxldGUiLCJoYXMiXSwibWFwcGluZ3MiOiJBQUFBOzs7Ozs7Ozs7Q0FTQzs7Ozs7Ozs7Ozs7UUFRZUE7ZUFBQUE7O1FBTEFDO2VBQUFBOzs7QUFGaEIsTUFBTUMsY0FBYyxJQUFJQztBQUVqQixTQUFTRixlQUFlRyxRQUFnQixFQUFFQyxNQUFlO0lBQzlELElBQUlBLFFBQVFILFlBQVlJLEdBQUcsQ0FBQ0Y7U0FDdkJGLFlBQVlLLE1BQU0sQ0FBQ0g7QUFDMUI7QUFFTyxTQUFTSixjQUFjSSxRQUFnQjtJQUM1QyxPQUFPRixZQUFZTSxHQUFHLENBQUNKO0FBQ3pCIn0=

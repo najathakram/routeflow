@@ -1,0 +1,187 @@
+9af3ebaa08063a67d77ce247763c243b
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, {
+        enumerable: true,
+        get: Object.getOwnPropertyDescriptor(all, name).get
+    });
+}
+_export(exports, {
+    get RetailerArt () {
+        return RetailerArt;
+    },
+    get RetailerDetail () {
+        return RetailerDetail;
+    }
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _link = /*#__PURE__*/ _interop_require_default(require("next/link"));
+const _lucidereact = require("lucide-react");
+const _authlinks = require("./auth-links");
+function _interop_require_default(obj) {
+    return obj && obj.__esModule ? obj : {
+        default: obj
+    };
+}
+function RetailerArt() {
+    return /*#__PURE__*/ (0, _jsxruntime.jsxs)("figure", {
+        className: "retailer-art",
+        children: [
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("img", {
+                src: "/marketing/retailer-technology.webp",
+                alt: "Conceptual retailer web ordering on a phone, connected to a storefront and delivery cartons.",
+                width: 1448,
+                height: 1086,
+                decoding: "async"
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                className: "art-chip browser-chip",
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.Globe, {
+                        size: 17
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                        children: "YOUR SUPPLIERS. ONE PORTAL."
+                    })
+                ]
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                className: "art-chip order-chip",
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                        className: "order-chip-check",
+                        children: /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.Check, {
+                            size: 18
+                        })
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                children: "A clearer next restock."
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("small", {
+                                children: "Catalogs, orders, and history."
+                            })
+                        ]
+                    })
+                ]
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("figcaption", {
+                children: "Conceptual product illustration \xb7 Web portal available"
+            })
+        ]
+    });
+}
+function RetailerDetail() {
+    return /*#__PURE__*/ (0, _jsxruntime.jsxs)("section", {
+        className: "retailer-detail-section wrap",
+        children: [
+            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("p", {
+                        className: "eyebrow",
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {}),
+                            "THE DETAILS BEHIND THE ORDER"
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("h2", {
+                        children: [
+                            "Know what you ordered.",
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("br", {}),
+                            "Find it when you need it."
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                        children: "Keep purchases with their supplier context, so you can refer back to your last restock."
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)(_link.default, {
+                        className: "text-link",
+                        href: _authlinks.authLinks.retailerSignUp,
+                        children: [
+                            "Explore the retailer portal ",
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.ArrowUpRight, {
+                                size: 18
+                            })
+                        ]
+                    })
+                ]
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                className: "retailer-detail-card",
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                        className: "record-caption",
+                        children: [
+                            "SAMPLE ORDER ",
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.Package, {
+                                size: 21
+                            })
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("h3", {
+                        children: "Parkside Market"
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                        children: "From your connected distributor"
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                        className: "record-rows",
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                children: [
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                        children: "Spring water \xb7 2 cases"
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                        children: "$48.00"
+                                    })
+                                ]
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                children: [
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                        children: "Sparkling water \xb7 2 cases"
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                        children: "$36.00"
+                                    })
+                                ]
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                children: [
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                        children: "Mixed snacks \xb7 1 case"
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                        children: "$30.00"
+                                    })
+                                ]
+                            })
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                        className: "cart-total",
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                children: "Sample subtotal"
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                children: "$114.00"
+                            })
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                        className: "sample-note",
+                        children: "Illustrative products and prices."
+                    })
+                ]
+            })
+        ]
+    });
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8obWFya2V0aW5nKS9jb21wb25lbnRzL3RlY2hub2xvZ3ktYXJ0LnRzeCJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgTGluayBmcm9tIFwibmV4dC9saW5rXCI7XG5pbXBvcnQgeyBDaGVjaywgR2xvYmUsIFBhY2thZ2UsIEFycm93VXBSaWdodCB9IGZyb20gXCJsdWNpZGUtcmVhY3RcIjtcbmltcG9ydCB7IGF1dGhMaW5rcyB9IGZyb20gXCIuL2F1dGgtbGlua3NcIjtcblxuLy8gYFJldGFpbGVyQXJ0YCBhbmQgYFJldGFpbGVyRGV0YWlsYCBvbmx5IOKAlCBgTmV0d29ya0FydGAvYFByb2R1Y3RDaW5lbWFgIGFyZVxuLy8gbm90IGltcG9ydGVkIGJ5IGFueSBsaXZlIHJvdXRlIChNMSDCpzExKSBhbmQgYXJlIG5vdCBwb3J0ZWQuIENvcHkgdmVyYmF0aW1cbi8vIGZyb20gdGhlIHJlZGVzaWduJ3MgY29tcG9uZW50cy90ZWNobm9sb2d5LWFydC50c3ggKE0xIMKnMmMpLlxuXG5leHBvcnQgZnVuY3Rpb24gUmV0YWlsZXJBcnQoKSB7XG4gIHJldHVybiAoXG4gICAgPGZpZ3VyZSBjbGFzc05hbWU9XCJyZXRhaWxlci1hcnRcIj5cbiAgICAgIHsvKiBQbGFpbiA8aW1nPiwgbm90IG5leHQvaW1hZ2U6IG5vIGBpbWFnZXNgIGNvbmZpZyB1bmRlclxuICAgICAgICAgIGBvdXRwdXQ6IFwic3RhbmRhbG9uZVwiYCAocnVsaW5nIEIxKS4gQWJvdmUgdGhlIGZvbGQgb24gL3JldGFpbGVycywgc29cbiAgICAgICAgICBpdCBzdGF5cyBlYWdlcmx5IGxvYWRlZCAodGhlIGZvcm1lciBgcHJpb3JpdHlgKS4gKi99XG4gICAgICB7LyogZXNsaW50LWRpc2FibGUtbmV4dC1saW5lIEBuZXh0L25leHQvbm8taW1nLWVsZW1lbnQgLS0gc2VlIGFib3ZlICovfVxuICAgICAgPGltZ1xuICAgICAgICBzcmM9XCIvbWFya2V0aW5nL3JldGFpbGVyLXRlY2hub2xvZ3kud2VicFwiXG4gICAgICAgIGFsdD1cIkNvbmNlcHR1YWwgcmV0YWlsZXIgd2ViIG9yZGVyaW5nIG9uIGEgcGhvbmUsIGNvbm5lY3RlZCB0byBhIHN0b3JlZnJvbnQgYW5kIGRlbGl2ZXJ5IGNhcnRvbnMuXCJcbiAgICAgICAgd2lkdGg9ezE0NDh9XG4gICAgICAgIGhlaWdodD17MTA4Nn1cbiAgICAgICAgZGVjb2Rpbmc9XCJhc3luY1wiXG4gICAgICAvPlxuICAgICAgPGRpdiBjbGFzc05hbWU9XCJhcnQtY2hpcCBicm93c2VyLWNoaXBcIj5cbiAgICAgICAgPEdsb2JlIHNpemU9ezE3fSAvPlxuICAgICAgICA8c3Bhbj5ZT1VSIFNVUFBMSUVSUy4gT05FIFBPUlRBTC48L3NwYW4+XG4gICAgICA8L2Rpdj5cbiAgICAgIDxkaXYgY2xhc3NOYW1lPVwiYXJ0LWNoaXAgb3JkZXItY2hpcFwiPlxuICAgICAgICA8c3BhbiBjbGFzc05hbWU9XCJvcmRlci1jaGlwLWNoZWNrXCI+XG4gICAgICAgICAgPENoZWNrIHNpemU9ezE4fSAvPlxuICAgICAgICA8L3NwYW4+XG4gICAgICAgIDxkaXY+XG4gICAgICAgICAgPHN0cm9uZz5BIGNsZWFyZXIgbmV4dCByZXN0b2NrLjwvc3Ryb25nPlxuICAgICAgICAgIDxzbWFsbD5DYXRhbG9ncywgb3JkZXJzLCBhbmQgaGlzdG9yeS48L3NtYWxsPlxuICAgICAgICA8L2Rpdj5cbiAgICAgIDwvZGl2PlxuICAgICAgPGZpZ2NhcHRpb24+Q29uY2VwdHVhbCBwcm9kdWN0IGlsbHVzdHJhdGlvbiDCtyBXZWIgcG9ydGFsIGF2YWlsYWJsZTwvZmlnY2FwdGlvbj5cbiAgICA8L2ZpZ3VyZT5cbiAgKTtcbn1cblxuZXhwb3J0IGZ1bmN0aW9uIFJldGFpbGVyRGV0YWlsKCkge1xuICByZXR1cm4gKFxuICAgIDxzZWN0aW9uIGNsYXNzTmFtZT1cInJldGFpbGVyLWRldGFpbC1zZWN0aW9uIHdyYXBcIj5cbiAgICAgIDxkaXY+XG4gICAgICAgIDxwIGNsYXNzTmFtZT1cImV5ZWJyb3dcIj5cbiAgICAgICAgICA8c3BhbiAvPlxuICAgICAgICAgIFRIRSBERVRBSUxTIEJFSElORCBUSEUgT1JERVJcbiAgICAgICAgPC9wPlxuICAgICAgICA8aDI+XG4gICAgICAgICAgS25vdyB3aGF0IHlvdSBvcmRlcmVkLlxuICAgICAgICAgIDxiciAvPlxuICAgICAgICAgIEZpbmQgaXQgd2hlbiB5b3UgbmVlZCBpdC5cbiAgICAgICAgPC9oMj5cbiAgICAgICAgPHA+XG4gICAgICAgICAgS2VlcCBwdXJjaGFzZXMgd2l0aCB0aGVpciBzdXBwbGllciBjb250ZXh0LCBzbyB5b3UgY2FuIHJlZmVyIGJhY2sgdG8geW91ciBsYXN0IHJlc3RvY2suXG4gICAgICAgIDwvcD5cbiAgICAgICAgPExpbmsgY2xhc3NOYW1lPVwidGV4dC1saW5rXCIgaHJlZj17YXV0aExpbmtzLnJldGFpbGVyU2lnblVwfT5cbiAgICAgICAgICBFeHBsb3JlIHRoZSByZXRhaWxlciBwb3J0YWwgPEFycm93VXBSaWdodCBzaXplPXsxOH0gLz5cbiAgICAgICAgPC9MaW5rPlxuICAgICAgPC9kaXY+XG4gICAgICA8ZGl2IGNsYXNzTmFtZT1cInJldGFpbGVyLWRldGFpbC1jYXJkXCI+XG4gICAgICAgIDxkaXYgY2xhc3NOYW1lPVwicmVjb3JkLWNhcHRpb25cIj5cbiAgICAgICAgICBTQU1QTEUgT1JERVIgPFBhY2thZ2Ugc2l6ZT17MjF9IC8+XG4gICAgICAgIDwvZGl2PlxuICAgICAgICA8aDM+UGFya3NpZGUgTWFya2V0PC9oMz5cbiAgICAgICAgPHA+RnJvbSB5b3VyIGNvbm5lY3RlZCBkaXN0cmlidXRvcjwvcD5cbiAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJyZWNvcmQtcm93c1wiPlxuICAgICAgICAgIDxkaXY+XG4gICAgICAgICAgICA8c3Bhbj5TcHJpbmcgd2F0ZXIgwrcgMiBjYXNlczwvc3Bhbj5cbiAgICAgICAgICAgIDxzdHJvbmc+JDQ4LjAwPC9zdHJvbmc+XG4gICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgPGRpdj5cbiAgICAgICAgICAgIDxzcGFuPlNwYXJrbGluZyB3YXRlciDCtyAyIGNhc2VzPC9zcGFuPlxuICAgICAgICAgICAgPHN0cm9uZz4kMzYuMDA8L3N0cm9uZz5cbiAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgICA8ZGl2PlxuICAgICAgICAgICAgPHNwYW4+TWl4ZWQgc25hY2tzIMK3IDEgY2FzZTwvc3Bhbj5cbiAgICAgICAgICAgIDxzdHJvbmc+JDMwLjAwPC9zdHJvbmc+XG4gICAgICAgICAgPC9kaXY+XG4gICAgICAgIDwvZGl2PlxuICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cImNhcnQtdG90YWxcIj5cbiAgICAgICAgICA8c3Bhbj5TYW1wbGUgc3VidG90YWw8L3NwYW4+XG4gICAgICAgICAgPHN0cm9uZz4kMTE0LjAwPC9zdHJvbmc+XG4gICAgICAgIDwvZGl2PlxuICAgICAgICA8cCBjbGFzc05hbWU9XCJzYW1wbGUtbm90ZVwiPklsbHVzdHJhdGl2ZSBwcm9kdWN0cyBhbmQgcHJpY2VzLjwvcD5cbiAgICAgIDwvZGl2PlxuICAgIDwvc2VjdGlvbj5cbiAgKTtcbn1cbiJdLCJuYW1lcyI6WyJSZXRhaWxlckFydCIsIlJldGFpbGVyRGV0YWlsIiwiZmlndXJlIiwiY2xhc3NOYW1lIiwiaW1nIiwic3JjIiwiYWx0Iiwid2lkdGgiLCJoZWlnaHQiLCJkZWNvZGluZyIsImRpdiIsIkdsb2JlIiwic2l6ZSIsInNwYW4iLCJDaGVjayIsInN0cm9uZyIsInNtYWxsIiwiZmlnY2FwdGlvbiIsInNlY3Rpb24iLCJwIiwiaDIiLCJiciIsIkxpbmsiLCJocmVmIiwiYXV0aExpbmtzIiwicmV0YWlsZXJTaWduVXAiLCJBcnJvd1VwUmlnaHQiLCJQYWNrYWdlIiwiaDMiXSwibWFwcGluZ3MiOiI7Ozs7Ozs7Ozs7O1FBUWdCQTtlQUFBQTs7UUFnQ0FDO2VBQUFBOzs7OzZEQXhDQzs2QkFDbUM7MkJBQzFCOzs7Ozs7QUFNbkIsU0FBU0Q7SUFDZCxxQkFDRSxzQkFBQ0U7UUFBT0MsV0FBVTs7MEJBS2hCLHFCQUFDQztnQkFDQ0MsS0FBSTtnQkFDSkMsS0FBSTtnQkFDSkMsT0FBTztnQkFDUEMsUUFBUTtnQkFDUkMsVUFBUzs7MEJBRVgsc0JBQUNDO2dCQUFJUCxXQUFVOztrQ0FDYixxQkFBQ1Esa0JBQUs7d0JBQUNDLE1BQU07O2tDQUNiLHFCQUFDQztrQ0FBSzs7OzswQkFFUixzQkFBQ0g7Z0JBQUlQLFdBQVU7O2tDQUNiLHFCQUFDVTt3QkFBS1YsV0FBVTtrQ0FDZCxjQUFBLHFCQUFDVyxrQkFBSzs0QkFBQ0YsTUFBTTs7O2tDQUVmLHNCQUFDRjs7MENBQ0MscUJBQUNLOzBDQUFPOzswQ0FDUixxQkFBQ0M7MENBQU07Ozs7OzswQkFHWCxxQkFBQ0M7MEJBQVc7Ozs7QUFHbEI7QUFFTyxTQUFTaEI7SUFDZCxxQkFDRSxzQkFBQ2lCO1FBQVFmLFdBQVU7OzBCQUNqQixzQkFBQ087O2tDQUNDLHNCQUFDUzt3QkFBRWhCLFdBQVU7OzBDQUNYLHFCQUFDVTs0QkFBTzs7O2tDQUdWLHNCQUFDTzs7NEJBQUc7MENBRUYscUJBQUNDOzRCQUFLOzs7a0NBR1IscUJBQUNGO2tDQUFFOztrQ0FHSCxzQkFBQ0csYUFBSTt3QkFBQ25CLFdBQVU7d0JBQVlvQixNQUFNQyxvQkFBUyxDQUFDQyxjQUFjOzs0QkFBRTswQ0FDOUIscUJBQUNDLHlCQUFZO2dDQUFDZCxNQUFNOzs7Ozs7MEJBR3BELHNCQUFDRjtnQkFBSVAsV0FBVTs7a0NBQ2Isc0JBQUNPO3dCQUFJUCxXQUFVOzs0QkFBaUI7MENBQ2pCLHFCQUFDd0Isb0JBQU87Z0NBQUNmLE1BQU07Ozs7a0NBRTlCLHFCQUFDZ0I7a0NBQUc7O2tDQUNKLHFCQUFDVDtrQ0FBRTs7a0NBQ0gsc0JBQUNUO3dCQUFJUCxXQUFVOzswQ0FDYixzQkFBQ087O2tEQUNDLHFCQUFDRztrREFBSzs7a0RBQ04scUJBQUNFO2tEQUFPOzs7OzBDQUVWLHNCQUFDTDs7a0RBQ0MscUJBQUNHO2tEQUFLOztrREFDTixxQkFBQ0U7a0RBQU87Ozs7MENBRVYsc0JBQUNMOztrREFDQyxxQkFBQ0c7a0RBQUs7O2tEQUNOLHFCQUFDRTtrREFBTzs7Ozs7O2tDQUdaLHNCQUFDTDt3QkFBSVAsV0FBVTs7MENBQ2IscUJBQUNVOzBDQUFLOzswQ0FDTixxQkFBQ0U7MENBQU87Ozs7a0NBRVYscUJBQUNJO3dCQUFFaEIsV0FBVTtrQ0FBYzs7Ozs7O0FBSW5DIn0=

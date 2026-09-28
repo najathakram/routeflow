@@ -1,0 +1,188 @@
+2670fc4578a3b124faba596e4d7d89ad
+/**
+ * @jest-environment node
+ */ // `next/server` touches the Fetch API globals (`Request`, `Response`,
+// `Headers`) at import time, and the jsdom environment this workspace defaults
+// to does not define them — importing it under jsdom throws
+// `ReferenceError: Request is not defined` before a single assertion runs.
+// The node environment (Node 18+ undici globals) provides them.
+//
+// This file lives under `app/(marketing)/` rather than at the workspace root
+// because apps/web/jest.config.js scopes `roots` to app/components/lib/hooks;
+// a root-level test file is never collected.
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _server = require("next/server");
+const _middleware = require("../../middleware");
+const _marketingroutes = require("../../lib/marketing-routes");
+const _presencecookies = require("../../lib/presence-cookies");
+const _site = require("./lib/site");
+// R-MKT T11 (owner ruling, mobile-web-proxy-redesign) — the middleware used to
+// rewrite every phone-UA request to the Expo mobile-web build, which never
+// got the redesign; Android/iPhone Chrome users kept seeing the old UI.
+// Removed: phones now get the same redesigned Next web site as desktop, and
+// the middleware no longer branches on user-agent at all. These tests are
+// RED-FIRST proof against the old code — the rows below name the exact paths
+// the old proxy carve-out logic special-cased (login, dashboard, "/" signed
+// in, "/" with the old mobile-app marker) and assert none of them are
+// rewritten anymore, for any UA.
+const IPHONE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/120.0.6099.119 Mobile/15E148 Safari/604.1";
+const ANDROID_UA = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
+const DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+// The marker a phone that WAS proxied under the old code would have carried.
+// The middleware no longer mints or reads this cookie at all — kept here only
+// as a literal so the "old marker changes nothing now" row means what it says
+// without depending on an export the removal deleted.
+const OLD_MOBILE_APP_MARKER = "rf-mobile-app=1";
+function requestFor(pathname, userAgent, cookie) {
+    const headers = {
+        "user-agent": userAgent
+    };
+    if (cookie) headers.cookie = cookie;
+    return new _server.NextRequest(`http://localhost:3001${pathname}`, {
+        headers
+    });
+}
+// NextResponse.rewrite() stamps an `x-middleware-rewrite` response header
+// with the target URL; NextResponse.next() does not. Reading that header is
+// how a middleware test observes a rewrite decision without depending on any
+// particular internal helper name — and, post-removal, without depending on
+// anything that no longer exists.
+function rewriteTarget(response) {
+    return response.headers.get("x-middleware-rewrite");
+}
+describe("middleware — no user-agent-based rewriting (R-MKT T11, red-first)", ()=>{
+    it.each([
+        [
+            "/login",
+            IPHONE_UA,
+            undefined
+        ],
+        [
+            "/login",
+            ANDROID_UA,
+            undefined
+        ],
+        [
+            "/dashboard",
+            IPHONE_UA,
+            undefined
+        ],
+        [
+            "/dashboard",
+            ANDROID_UA,
+            undefined
+        ],
+        [
+            "/",
+            IPHONE_UA,
+            `${_presencecookies.OP_PRESENCE_COOKIE}=1`
+        ],
+        [
+            "/",
+            ANDROID_UA,
+            `${_presencecookies.BUYER_PRESENCE_COOKIE}=1`
+        ],
+        [
+            "/",
+            IPHONE_UA,
+            OLD_MOBILE_APP_MARKER
+        ]
+    ])("never rewrites %s for %s (cookie: %s)", (pathname, ua, cookie)=>{
+        const response = (0, _middleware.middleware)(requestFor(pathname, ua, cookie));
+        expect(rewriteTarget(response)).toBeNull();
+    });
+    // The old marker alone, with no presence cookie, used to mean "proxy to the
+    // app" — now it means nothing: a signed-out visitor is a signed-out visitor,
+    // marketing home, no redirect at all (not even to /login).
+    it("a signed-out phone with only the old mobile-app marker gets the marketing home, no redirect", ()=>{
+        const response = (0, _middleware.middleware)(requestFor("/", IPHONE_UA, OLD_MOBILE_APP_MARKER));
+        expect(rewriteTarget(response)).toBeNull();
+        expect(response.status).not.toBe(307);
+        expect(response.status).not.toBe(308);
+    });
+});
+describe("middleware — signed-in landing redirect is UA-independent (R-MKT T11)", ()=>{
+    it.each([
+        [
+            "an operator on iPhone",
+            IPHONE_UA,
+            `${_presencecookies.OP_PRESENCE_COOKIE}=1`,
+            /\/dashboard$/
+        ],
+        [
+            "an operator on Android",
+            ANDROID_UA,
+            `${_presencecookies.OP_PRESENCE_COOKIE}=1`,
+            /\/dashboard$/
+        ],
+        [
+            "an operator on desktop",
+            DESKTOP_UA,
+            `${_presencecookies.OP_PRESENCE_COOKIE}=1`,
+            /\/dashboard$/
+        ],
+        [
+            "a buyer on iPhone",
+            IPHONE_UA,
+            `${_presencecookies.BUYER_PRESENCE_COOKIE}=1`,
+            /\/buyer\/portal$/
+        ]
+    ])("307s / to the right surface for %s", (_label, ua, cookie, expected)=>{
+        const response = (0, _middleware.middleware)(requestFor("/", ua, cookie));
+        expect(response.status).toBe(307);
+        expect(response.headers.get("location")).toMatch(expected);
+    });
+    it("does not redirect / for a first-time visitor on any UA", ()=>{
+        for (const ua of [
+            IPHONE_UA,
+            ANDROID_UA,
+            DESKTOP_UA
+        ]){
+            const response = (0, _middleware.middleware)(requestFor("/", ua));
+            expect(response.status).not.toBe(307);
+            expect(rewriteTarget(response)).toBeNull();
+        }
+    });
+    it("does not redirect /pricing for a signed-in operator on any UA — scoped to exactly /", ()=>{
+        for (const ua of [
+            IPHONE_UA,
+            ANDROID_UA,
+            DESKTOP_UA
+        ]){
+            const response = (0, _middleware.middleware)(requestFor("/pricing", ua, `${_presencecookies.OP_PRESENCE_COOKIE}=1`));
+            expect(response.status).not.toBe(307);
+        }
+    });
+});
+describe("middleware — ?desktop=1 / prefer-desktop are accepted and inert (R-MKT T11)", ()=>{
+    it("does not error and sets no prefer-desktop cookie for ?desktop=1 on a phone", ()=>{
+        const response = (0, _middleware.middleware)(requestFor("/dashboard?desktop=1", IPHONE_UA));
+        expect(response.headers.get("set-cookie") ?? "").not.toContain("prefer-desktop");
+    });
+    it("an old prefer-desktop cookie has no special effect anymore", ()=>{
+        const response = (0, _middleware.middleware)(requestFor("/dashboard", IPHONE_UA, "prefer-desktop=1"));
+        expect(rewriteTarget(response)).toBeNull();
+        expect(response.status).not.toBe(307);
+    });
+});
+// One source for the marketing path list (L-072): adding a row to site.ts's
+// `routes` without updating MARKETING_PAGE_PATHS should turn this red. Kept
+// here per lib/marketing-routes.ts's own header pointer, even though the
+// export it validates is no longer consumed by this middleware itself.
+describe("marketing path list parity — MKT-PIN T11-parity", ()=>{
+    it("MARKETING_PAGE_PATHS equals site.ts routes plus / and /distributors (MKT-PIN T11-parity)", ()=>{
+        const fromSite = [
+            "/",
+            "/distributors",
+            ..._site.routes.map((route)=>`/${route.slug}`)
+        ];
+        expect([
+            ..._marketingroutes.MARKETING_PAGE_PATHS
+        ].sort()).toEqual(fromSite.sort());
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8obWFya2V0aW5nKS9taWRkbGV3YXJlLm1hcmtldGluZy50ZXN0LnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogQGplc3QtZW52aXJvbm1lbnQgbm9kZVxuICovXG4vLyBgbmV4dC9zZXJ2ZXJgIHRvdWNoZXMgdGhlIEZldGNoIEFQSSBnbG9iYWxzIChgUmVxdWVzdGAsIGBSZXNwb25zZWAsXG4vLyBgSGVhZGVyc2ApIGF0IGltcG9ydCB0aW1lLCBhbmQgdGhlIGpzZG9tIGVudmlyb25tZW50IHRoaXMgd29ya3NwYWNlIGRlZmF1bHRzXG4vLyB0byBkb2VzIG5vdCBkZWZpbmUgdGhlbSDigJQgaW1wb3J0aW5nIGl0IHVuZGVyIGpzZG9tIHRocm93c1xuLy8gYFJlZmVyZW5jZUVycm9yOiBSZXF1ZXN0IGlzIG5vdCBkZWZpbmVkYCBiZWZvcmUgYSBzaW5nbGUgYXNzZXJ0aW9uIHJ1bnMuXG4vLyBUaGUgbm9kZSBlbnZpcm9ubWVudCAoTm9kZSAxOCsgdW5kaWNpIGdsb2JhbHMpIHByb3ZpZGVzIHRoZW0uXG4vL1xuLy8gVGhpcyBmaWxlIGxpdmVzIHVuZGVyIGBhcHAvKG1hcmtldGluZykvYCByYXRoZXIgdGhhbiBhdCB0aGUgd29ya3NwYWNlIHJvb3Rcbi8vIGJlY2F1c2UgYXBwcy93ZWIvamVzdC5jb25maWcuanMgc2NvcGVzIGByb290c2AgdG8gYXBwL2NvbXBvbmVudHMvbGliL2hvb2tzO1xuLy8gYSByb290LWxldmVsIHRlc3QgZmlsZSBpcyBuZXZlciBjb2xsZWN0ZWQuXG5pbXBvcnQgeyBOZXh0UmVxdWVzdCB9IGZyb20gXCJuZXh0L3NlcnZlclwiO1xuaW1wb3J0IHsgbWlkZGxld2FyZSB9IGZyb20gXCIuLi8uLi9taWRkbGV3YXJlXCI7XG5pbXBvcnQgeyBNQVJLRVRJTkdfUEFHRV9QQVRIUyB9IGZyb20gXCJAL2xpYi9tYXJrZXRpbmctcm91dGVzXCI7XG5pbXBvcnQgeyBCVVlFUl9QUkVTRU5DRV9DT09LSUUsIE9QX1BSRVNFTkNFX0NPT0tJRSB9IGZyb20gXCJAL2xpYi9wcmVzZW5jZS1jb29raWVzXCI7XG5pbXBvcnQgeyByb3V0ZXMgfSBmcm9tIFwiLi9saWIvc2l0ZVwiO1xuXG4vLyBSLU1LVCBUMTEgKG93bmVyIHJ1bGluZywgbW9iaWxlLXdlYi1wcm94eS1yZWRlc2lnbikg4oCUIHRoZSBtaWRkbGV3YXJlIHVzZWQgdG9cbi8vIHJld3JpdGUgZXZlcnkgcGhvbmUtVUEgcmVxdWVzdCB0byB0aGUgRXhwbyBtb2JpbGUtd2ViIGJ1aWxkLCB3aGljaCBuZXZlclxuLy8gZ290IHRoZSByZWRlc2lnbjsgQW5kcm9pZC9pUGhvbmUgQ2hyb21lIHVzZXJzIGtlcHQgc2VlaW5nIHRoZSBvbGQgVUkuXG4vLyBSZW1vdmVkOiBwaG9uZXMgbm93IGdldCB0aGUgc2FtZSByZWRlc2lnbmVkIE5leHQgd2ViIHNpdGUgYXMgZGVza3RvcCwgYW5kXG4vLyB0aGUgbWlkZGxld2FyZSBubyBsb25nZXIgYnJhbmNoZXMgb24gdXNlci1hZ2VudCBhdCBhbGwuIFRoZXNlIHRlc3RzIGFyZVxuLy8gUkVELUZJUlNUIHByb29mIGFnYWluc3QgdGhlIG9sZCBjb2RlIOKAlCB0aGUgcm93cyBiZWxvdyBuYW1lIHRoZSBleGFjdCBwYXRoc1xuLy8gdGhlIG9sZCBwcm94eSBjYXJ2ZS1vdXQgbG9naWMgc3BlY2lhbC1jYXNlZCAobG9naW4sIGRhc2hib2FyZCwgXCIvXCIgc2lnbmVkXG4vLyBpbiwgXCIvXCIgd2l0aCB0aGUgb2xkIG1vYmlsZS1hcHAgbWFya2VyKSBhbmQgYXNzZXJ0IG5vbmUgb2YgdGhlbSBhcmVcbi8vIHJld3JpdHRlbiBhbnltb3JlLCBmb3IgYW55IFVBLlxuXG5jb25zdCBJUEhPTkVfVUEgPVxuICBcIk1vemlsbGEvNS4wIChpUGhvbmU7IENQVSBpUGhvbmUgT1MgMTdfMCBsaWtlIE1hYyBPUyBYKSBBcHBsZVdlYktpdC82MDUuMS4xNSAoS0hUTUwsIGxpa2UgR2Vja28pIENyaU9TLzEyMC4wLjYwOTkuMTE5IE1vYmlsZS8xNUUxNDggU2FmYXJpLzYwNC4xXCI7XG5jb25zdCBBTkRST0lEX1VBID1cbiAgXCJNb3ppbGxhLzUuMCAoTGludXg7IEFuZHJvaWQgMTQ7IFBpeGVsIDgpIEFwcGxlV2ViS2l0LzUzNy4zNiAoS0hUTUwsIGxpa2UgR2Vja28pIENocm9tZS8xMjAuMC4wLjAgTW9iaWxlIFNhZmFyaS81MzcuMzZcIjtcbmNvbnN0IERFU0tUT1BfVUEgPVxuICBcIk1vemlsbGEvNS4wIChXaW5kb3dzIE5UIDEwLjA7IFdpbjY0OyB4NjQpIEFwcGxlV2ViS2l0LzUzNy4zNiAoS0hUTUwsIGxpa2UgR2Vja28pIENocm9tZS8xMjAuMC4wLjAgU2FmYXJpLzUzNy4zNlwiO1xuXG4vLyBUaGUgbWFya2VyIGEgcGhvbmUgdGhhdCBXQVMgcHJveGllZCB1bmRlciB0aGUgb2xkIGNvZGUgd291bGQgaGF2ZSBjYXJyaWVkLlxuLy8gVGhlIG1pZGRsZXdhcmUgbm8gbG9uZ2VyIG1pbnRzIG9yIHJlYWRzIHRoaXMgY29va2llIGF0IGFsbCDigJQga2VwdCBoZXJlIG9ubHlcbi8vIGFzIGEgbGl0ZXJhbCBzbyB0aGUgXCJvbGQgbWFya2VyIGNoYW5nZXMgbm90aGluZyBub3dcIiByb3cgbWVhbnMgd2hhdCBpdCBzYXlzXG4vLyB3aXRob3V0IGRlcGVuZGluZyBvbiBhbiBleHBvcnQgdGhlIHJlbW92YWwgZGVsZXRlZC5cbmNvbnN0IE9MRF9NT0JJTEVfQVBQX01BUktFUiA9IFwicmYtbW9iaWxlLWFwcD0xXCI7XG5cbmZ1bmN0aW9uIHJlcXVlc3RGb3IocGF0aG5hbWU6IHN0cmluZywgdXNlckFnZW50OiBzdHJpbmcsIGNvb2tpZT86IHN0cmluZyk6IE5leHRSZXF1ZXN0IHtcbiAgY29uc3QgaGVhZGVyczogUmVjb3JkPHN0cmluZywgc3RyaW5nPiA9IHsgXCJ1c2VyLWFnZW50XCI6IHVzZXJBZ2VudCB9O1xuICBpZiAoY29va2llKSBoZWFkZXJzLmNvb2tpZSA9IGNvb2tpZTtcbiAgcmV0dXJuIG5ldyBOZXh0UmVxdWVzdChgaHR0cDovL2xvY2FsaG9zdDozMDAxJHtwYXRobmFtZX1gLCB7IGhlYWRlcnMgfSk7XG59XG5cbi8vIE5leHRSZXNwb25zZS5yZXdyaXRlKCkgc3RhbXBzIGFuIGB4LW1pZGRsZXdhcmUtcmV3cml0ZWAgcmVzcG9uc2UgaGVhZGVyXG4vLyB3aXRoIHRoZSB0YXJnZXQgVVJMOyBOZXh0UmVzcG9uc2UubmV4dCgpIGRvZXMgbm90LiBSZWFkaW5nIHRoYXQgaGVhZGVyIGlzXG4vLyBob3cgYSBtaWRkbGV3YXJlIHRlc3Qgb2JzZXJ2ZXMgYSByZXdyaXRlIGRlY2lzaW9uIHdpdGhvdXQgZGVwZW5kaW5nIG9uIGFueVxuLy8gcGFydGljdWxhciBpbnRlcm5hbCBoZWxwZXIgbmFtZSDigJQgYW5kLCBwb3N0LXJlbW92YWwsIHdpdGhvdXQgZGVwZW5kaW5nIG9uXG4vLyBhbnl0aGluZyB0aGF0IG5vIGxvbmdlciBleGlzdHMuXG5mdW5jdGlvbiByZXdyaXRlVGFyZ2V0KHJlc3BvbnNlOiBSZXNwb25zZSk6IHN0cmluZyB8IG51bGwge1xuICByZXR1cm4gcmVzcG9uc2UuaGVhZGVycy5nZXQoXCJ4LW1pZGRsZXdhcmUtcmV3cml0ZVwiKTtcbn1cblxuZGVzY3JpYmUoXCJtaWRkbGV3YXJlIOKAlCBubyB1c2VyLWFnZW50LWJhc2VkIHJld3JpdGluZyAoUi1NS1QgVDExLCByZWQtZmlyc3QpXCIsICgpID0+IHtcbiAgaXQuZWFjaChbXG4gICAgW1wiL2xvZ2luXCIsIElQSE9ORV9VQSwgdW5kZWZpbmVkXSxcbiAgICBbXCIvbG9naW5cIiwgQU5EUk9JRF9VQSwgdW5kZWZpbmVkXSxcbiAgICBbXCIvZGFzaGJvYXJkXCIsIElQSE9ORV9VQSwgdW5kZWZpbmVkXSxcbiAgICBbXCIvZGFzaGJvYXJkXCIsIEFORFJPSURfVUEsIHVuZGVmaW5lZF0sXG4gICAgW1wiL1wiLCBJUEhPTkVfVUEsIGAke09QX1BSRVNFTkNFX0NPT0tJRX09MWBdLCAvLyBcIi9cIiBzaWduZWQgaW4sIHBob25lXG4gICAgW1wiL1wiLCBBTkRST0lEX1VBLCBgJHtCVVlFUl9QUkVTRU5DRV9DT09LSUV9PTFgXSwgLy8gXCIvXCIgc2lnbmVkIGluIGFzIGJ1eWVyLCBwaG9uZVxuICAgIFtcIi9cIiwgSVBIT05FX1VBLCBPTERfTU9CSUxFX0FQUF9NQVJLRVJdLCAvLyBcIi9cIiBjYXJyeWluZyB0aGUgb2xkIG1hcmtlciwgc2lnbmVkIG91dFxuICBdKShcIm5ldmVyIHJld3JpdGVzICVzIGZvciAlcyAoY29va2llOiAlcylcIiwgKHBhdGhuYW1lLCB1YSwgY29va2llKSA9PiB7XG4gICAgY29uc3QgcmVzcG9uc2UgPSBtaWRkbGV3YXJlKHJlcXVlc3RGb3IocGF0aG5hbWUsIHVhLCBjb29raWUpKTtcbiAgICBleHBlY3QocmV3cml0ZVRhcmdldChyZXNwb25zZSkpLnRvQmVOdWxsKCk7XG4gIH0pO1xuXG4gIC8vIFRoZSBvbGQgbWFya2VyIGFsb25lLCB3aXRoIG5vIHByZXNlbmNlIGNvb2tpZSwgdXNlZCB0byBtZWFuIFwicHJveHkgdG8gdGhlXG4gIC8vIGFwcFwiIOKAlCBub3cgaXQgbWVhbnMgbm90aGluZzogYSBzaWduZWQtb3V0IHZpc2l0b3IgaXMgYSBzaWduZWQtb3V0IHZpc2l0b3IsXG4gIC8vIG1hcmtldGluZyBob21lLCBubyByZWRpcmVjdCBhdCBhbGwgKG5vdCBldmVuIHRvIC9sb2dpbikuXG4gIGl0KFwiYSBzaWduZWQtb3V0IHBob25lIHdpdGggb25seSB0aGUgb2xkIG1vYmlsZS1hcHAgbWFya2VyIGdldHMgdGhlIG1hcmtldGluZyBob21lLCBubyByZWRpcmVjdFwiLCAoKSA9PiB7XG4gICAgY29uc3QgcmVzcG9uc2UgPSBtaWRkbGV3YXJlKHJlcXVlc3RGb3IoXCIvXCIsIElQSE9ORV9VQSwgT0xEX01PQklMRV9BUFBfTUFSS0VSKSk7XG4gICAgZXhwZWN0KHJld3JpdGVUYXJnZXQocmVzcG9uc2UpKS50b0JlTnVsbCgpO1xuICAgIGV4cGVjdChyZXNwb25zZS5zdGF0dXMpLm5vdC50b0JlKDMwNyk7XG4gICAgZXhwZWN0KHJlc3BvbnNlLnN0YXR1cykubm90LnRvQmUoMzA4KTtcbiAgfSk7XG59KTtcblxuZGVzY3JpYmUoXCJtaWRkbGV3YXJlIOKAlCBzaWduZWQtaW4gbGFuZGluZyByZWRpcmVjdCBpcyBVQS1pbmRlcGVuZGVudCAoUi1NS1QgVDExKVwiLCAoKSA9PiB7XG4gIGl0LmVhY2goW1xuICAgIFtcImFuIG9wZXJhdG9yIG9uIGlQaG9uZVwiLCBJUEhPTkVfVUEsIGAke09QX1BSRVNFTkNFX0NPT0tJRX09MWAsIC9cXC9kYXNoYm9hcmQkL10sXG4gICAgW1wiYW4gb3BlcmF0b3Igb24gQW5kcm9pZFwiLCBBTkRST0lEX1VBLCBgJHtPUF9QUkVTRU5DRV9DT09LSUV9PTFgLCAvXFwvZGFzaGJvYXJkJC9dLFxuICAgIFtcImFuIG9wZXJhdG9yIG9uIGRlc2t0b3BcIiwgREVTS1RPUF9VQSwgYCR7T1BfUFJFU0VOQ0VfQ09PS0lFfT0xYCwgL1xcL2Rhc2hib2FyZCQvXSxcbiAgICBbXCJhIGJ1eWVyIG9uIGlQaG9uZVwiLCBJUEhPTkVfVUEsIGAke0JVWUVSX1BSRVNFTkNFX0NPT0tJRX09MWAsIC9cXC9idXllclxcL3BvcnRhbCQvXSxcbiAgXSkoXCIzMDdzIC8gdG8gdGhlIHJpZ2h0IHN1cmZhY2UgZm9yICVzXCIsIChfbGFiZWwsIHVhLCBjb29raWUsIGV4cGVjdGVkKSA9PiB7XG4gICAgY29uc3QgcmVzcG9uc2UgPSBtaWRkbGV3YXJlKHJlcXVlc3RGb3IoXCIvXCIsIHVhLCBjb29raWUpKTtcbiAgICBleHBlY3QocmVzcG9uc2Uuc3RhdHVzKS50b0JlKDMwNyk7XG4gICAgZXhwZWN0KHJlc3BvbnNlLmhlYWRlcnMuZ2V0KFwibG9jYXRpb25cIikpLnRvTWF0Y2goZXhwZWN0ZWQpO1xuICB9KTtcblxuICBpdChcImRvZXMgbm90IHJlZGlyZWN0IC8gZm9yIGEgZmlyc3QtdGltZSB2aXNpdG9yIG9uIGFueSBVQVwiLCAoKSA9PiB7XG4gICAgZm9yIChjb25zdCB1YSBvZiBbSVBIT05FX1VBLCBBTkRST0lEX1VBLCBERVNLVE9QX1VBXSkge1xuICAgICAgY29uc3QgcmVzcG9uc2UgPSBtaWRkbGV3YXJlKHJlcXVlc3RGb3IoXCIvXCIsIHVhKSk7XG4gICAgICBleHBlY3QocmVzcG9uc2Uuc3RhdHVzKS5ub3QudG9CZSgzMDcpO1xuICAgICAgZXhwZWN0KHJld3JpdGVUYXJnZXQocmVzcG9uc2UpKS50b0JlTnVsbCgpO1xuICAgIH1cbiAgfSk7XG5cbiAgaXQoXCJkb2VzIG5vdCByZWRpcmVjdCAvcHJpY2luZyBmb3IgYSBzaWduZWQtaW4gb3BlcmF0b3Igb24gYW55IFVBIOKAlCBzY29wZWQgdG8gZXhhY3RseSAvXCIsICgpID0+IHtcbiAgICBmb3IgKGNvbnN0IHVhIG9mIFtJUEhPTkVfVUEsIEFORFJPSURfVUEsIERFU0tUT1BfVUFdKSB7XG4gICAgICBjb25zdCByZXNwb25zZSA9IG1pZGRsZXdhcmUocmVxdWVzdEZvcihcIi9wcmljaW5nXCIsIHVhLCBgJHtPUF9QUkVTRU5DRV9DT09LSUV9PTFgKSk7XG4gICAgICBleHBlY3QocmVzcG9uc2Uuc3RhdHVzKS5ub3QudG9CZSgzMDcpO1xuICAgIH1cbiAgfSk7XG59KTtcblxuZGVzY3JpYmUoXCJtaWRkbGV3YXJlIOKAlCA/ZGVza3RvcD0xIC8gcHJlZmVyLWRlc2t0b3AgYXJlIGFjY2VwdGVkIGFuZCBpbmVydCAoUi1NS1QgVDExKVwiLCAoKSA9PiB7XG4gIGl0KFwiZG9lcyBub3QgZXJyb3IgYW5kIHNldHMgbm8gcHJlZmVyLWRlc2t0b3AgY29va2llIGZvciA/ZGVza3RvcD0xIG9uIGEgcGhvbmVcIiwgKCkgPT4ge1xuICAgIGNvbnN0IHJlc3BvbnNlID0gbWlkZGxld2FyZShyZXF1ZXN0Rm9yKFwiL2Rhc2hib2FyZD9kZXNrdG9wPTFcIiwgSVBIT05FX1VBKSk7XG4gICAgZXhwZWN0KHJlc3BvbnNlLmhlYWRlcnMuZ2V0KFwic2V0LWNvb2tpZVwiKSA/PyBcIlwiKS5ub3QudG9Db250YWluKFwicHJlZmVyLWRlc2t0b3BcIik7XG4gIH0pO1xuXG4gIGl0KFwiYW4gb2xkIHByZWZlci1kZXNrdG9wIGNvb2tpZSBoYXMgbm8gc3BlY2lhbCBlZmZlY3QgYW55bW9yZVwiLCAoKSA9PiB7XG4gICAgY29uc3QgcmVzcG9uc2UgPSBtaWRkbGV3YXJlKHJlcXVlc3RGb3IoXCIvZGFzaGJvYXJkXCIsIElQSE9ORV9VQSwgXCJwcmVmZXItZGVza3RvcD0xXCIpKTtcbiAgICBleHBlY3QocmV3cml0ZVRhcmdldChyZXNwb25zZSkpLnRvQmVOdWxsKCk7XG4gICAgZXhwZWN0KHJlc3BvbnNlLnN0YXR1cykubm90LnRvQmUoMzA3KTtcbiAgfSk7XG59KTtcblxuLy8gT25lIHNvdXJjZSBmb3IgdGhlIG1hcmtldGluZyBwYXRoIGxpc3QgKEwtMDcyKTogYWRkaW5nIGEgcm93IHRvIHNpdGUudHMnc1xuLy8gYHJvdXRlc2Agd2l0aG91dCB1cGRhdGluZyBNQVJLRVRJTkdfUEFHRV9QQVRIUyBzaG91bGQgdHVybiB0aGlzIHJlZC4gS2VwdFxuLy8gaGVyZSBwZXIgbGliL21hcmtldGluZy1yb3V0ZXMudHMncyBvd24gaGVhZGVyIHBvaW50ZXIsIGV2ZW4gdGhvdWdoIHRoZVxuLy8gZXhwb3J0IGl0IHZhbGlkYXRlcyBpcyBubyBsb25nZXIgY29uc3VtZWQgYnkgdGhpcyBtaWRkbGV3YXJlIGl0c2VsZi5cbmRlc2NyaWJlKFwibWFya2V0aW5nIHBhdGggbGlzdCBwYXJpdHkg4oCUIE1LVC1QSU4gVDExLXBhcml0eVwiLCAoKSA9PiB7XG4gIGl0KFwiTUFSS0VUSU5HX1BBR0VfUEFUSFMgZXF1YWxzIHNpdGUudHMgcm91dGVzIHBsdXMgLyBhbmQgL2Rpc3RyaWJ1dG9ycyAoTUtULVBJTiBUMTEtcGFyaXR5KVwiLCAoKSA9PiB7XG4gICAgY29uc3QgZnJvbVNpdGUgPSBbXCIvXCIsIFwiL2Rpc3RyaWJ1dG9yc1wiLCAuLi5yb3V0ZXMubWFwKChyb3V0ZSkgPT4gYC8ke3JvdXRlLnNsdWd9YCldO1xuICAgIGV4cGVjdChbLi4uTUFSS0VUSU5HX1BBR0VfUEFUSFNdLnNvcnQoKSkudG9FcXVhbChmcm9tU2l0ZS5zb3J0KCkpO1xuICB9KTtcbn0pO1xuIl0sIm5hbWVzIjpbIklQSE9ORV9VQSIsIkFORFJPSURfVUEiLCJERVNLVE9QX1VBIiwiT0xEX01PQklMRV9BUFBfTUFSS0VSIiwicmVxdWVzdEZvciIsInBhdGhuYW1lIiwidXNlckFnZW50IiwiY29va2llIiwiaGVhZGVycyIsIk5leHRSZXF1ZXN0IiwicmV3cml0ZVRhcmdldCIsInJlc3BvbnNlIiwiZ2V0IiwiZGVzY3JpYmUiLCJpdCIsImVhY2giLCJ1bmRlZmluZWQiLCJPUF9QUkVTRU5DRV9DT09LSUUiLCJCVVlFUl9QUkVTRU5DRV9DT09LSUUiLCJ1YSIsIm1pZGRsZXdhcmUiLCJleHBlY3QiLCJ0b0JlTnVsbCIsInN0YXR1cyIsIm5vdCIsInRvQmUiLCJfbGFiZWwiLCJleHBlY3RlZCIsInRvTWF0Y2giLCJ0b0NvbnRhaW4iLCJmcm9tU2l0ZSIsInJvdXRlcyIsIm1hcCIsInJvdXRlIiwic2x1ZyIsIk1BUktFVElOR19QQUdFX1BBVEhTIiwic29ydCIsInRvRXF1YWwiXSwibWFwcGluZ3MiOiJBQUFBOztDQUVDLEdBQ0Qsc0VBQXNFO0FBQ3RFLCtFQUErRTtBQUMvRSw0REFBNEQ7QUFDNUQsMkVBQTJFO0FBQzNFLGdFQUFnRTtBQUNoRSxFQUFFO0FBQ0YsNkVBQTZFO0FBQzdFLDhFQUE4RTtBQUM5RSw2Q0FBNkM7Ozs7O3dCQUNqQjs0QkFDRDtpQ0FDVTtpQ0FDcUI7c0JBQ25DO0FBRXZCLCtFQUErRTtBQUMvRSwyRUFBMkU7QUFDM0Usd0VBQXdFO0FBQ3hFLDRFQUE0RTtBQUM1RSwwRUFBMEU7QUFDMUUsNkVBQTZFO0FBQzdFLDRFQUE0RTtBQUM1RSxzRUFBc0U7QUFDdEUsaUNBQWlDO0FBRWpDLE1BQU1BLFlBQ0o7QUFDRixNQUFNQyxhQUNKO0FBQ0YsTUFBTUMsYUFDSjtBQUVGLDZFQUE2RTtBQUM3RSw4RUFBOEU7QUFDOUUsOEVBQThFO0FBQzlF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

@@ -1,0 +1,56 @@
+9584b3087bca112e5e9bc4822eb745ce
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.classifyMutationError = classifyMutationError;
+exports.isStopAlreadyCompletedError = isStopAlreadyCompletedError;
+/**
+ * REG-B308: api-client.ts:183 rejects an offline-queued mutation with
+ * `isOfflineQueued: true` after enqueueing it — that is a pending success,
+ * not a failure. Mirrors the pattern already correct in skip-stop.ts:48-57.
+ */
+function classifyMutationError(e) {
+    if (e?.isOfflineQueued === true) {
+        return { kind: "queued", message: e.message };
+    }
+    return {
+        kind: "error",
+        message: e?.response?.data?.message ?? e?.message ?? "Try again.",
+    };
+}
+/**
+ * Driver-durability lane. `completeWithPayment` mints a fresh idempotency key
+ * on every manual retry (see payment.tsx's `closeStop`), so RF-019 cannot
+ * collapse a retry after a lost response — but the server refuses ANY write
+ * once the stop is COMPLETED, before its transaction
+ * (apps/api/src/routes/routes.service.ts `throw new BadRequestException("Stop
+ * is already completed")`, thrown before the idempotency read). So this 400
+ * on a retry means the FIRST call already landed; the caller should treat it
+ * as success (refresh + navigate), not surface it as an error.
+ *
+ * Deliberately a SEPARATE predicate from `classifyMutationError` above, not a
+ * third `kind` on its return type: that classifier is also used by
+ * `components/NewOrderScreen.tsx`'s order-submit error handling, and baking a
+ * route/stop-completion-specific server message into its generic `kind` union
+ * would leak stop-completion semantics into an unrelated screen's error
+ * handling and force every other caller to reason about a branch that can
+ * never apply to them.
+ *
+ * Requires BOTH `status === 400` AND the message substring — never any 400 —
+ * so a genuinely different 400 (wrong amount, validation failure) is never
+ * misclassified as success. Substring match (not exact-string), matching the
+ * existing precedent at `lib/returns-logic.ts#summarizeSubmissions`, since the
+ * server has no error `code` for this path, only a raw `BadRequestException`
+ * message — a substring match survives a minor server wording tweak.
+ *
+ * An API spec (`apps/api`) should separately assert `completeWithPayment`
+ * throws exactly `"Stop is already completed"` at its guard(s), so a server
+ * wording change is caught on that side too — see this run's `open_issues`;
+ * a cross-workspace source-text pin from `apps/mobile` reading `apps/api`
+ * source is deliberately NOT added here.
+ */
+function isStopAlreadyCompletedError(e) {
+    const status = e?.response?.status;
+    const message = String(e?.response?.data?.message ?? "").toLowerCase();
+    return status === 400 && message.includes("already completed");
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL29mZmxpbmUtZXJyb3JzLnRzIiwibWFwcGluZ3MiOiI7O0FBS0Esc0RBUUM7QUFpQ0Qsa0VBSUM7QUFsREQ7Ozs7R0FJRztBQUNILFNBQWdCLHFCQUFxQixDQUFDLENBQVU7SUFDOUMsSUFBSyxDQUFTLEVBQUUsZUFBZSxLQUFLLElBQUksRUFBRSxDQUFDO1FBQ3pDLE9BQU8sRUFBRSxJQUFJLEVBQUUsUUFBUSxFQUFFLE9BQU8sRUFBRyxDQUFTLENBQUMsT0FBTyxFQUFFLENBQUM7SUFDekQsQ0FBQztJQUNELE9BQU87UUFDTCxJQUFJLEVBQUUsT0FBTztRQUNiLE9BQU8sRUFBRyxDQUFTLEVBQUUsUUFBUSxFQUFFLElBQUksRUFBRSxPQUFPLElBQUssQ0FBUyxFQUFFLE9BQU8sSUFBSSxZQUFZO0tBQ3BGLENBQUM7QUFDSixDQUFDO0FBRUQ7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7OztHQThCRztBQUNILFNBQWdCLDJCQUEyQixDQUFDLENBQVU7SUFDcEQsTUFBTSxNQUFNLEdBQUksQ0FBUyxFQUFFLFFBQVEsRUFBRSxNQUFNLENBQUM7SUFDNUMsTUFBTSxPQUFPLEdBQUcsTUFBTSxDQUFFLENBQVMsRUFBRSxRQUFRLEVBQUUsSUFBSSxFQUFFLE9BQU8sSUFBSSxFQUFFLENBQUMsQ0FBQyxXQUFXLEVBQUUsQ0FBQztJQUNoRixPQUFPLE1BQU0sS0FBSyxHQUFHLElBQUksT0FBTyxDQUFDLFFBQVEsQ0FBQyxtQkFBbUIsQ0FBQyxDQUFDO0FBQ2pFLENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL29mZmxpbmUtZXJyb3JzLnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogUkVHLUIzMDg6IGFwaS1jbGllbnQudHM6MTgzIHJlamVjdHMgYW4gb2ZmbGluZS1xdWV1ZWQgbXV0YXRpb24gd2l0aFxuICogYGlzT2ZmbGluZVF1ZXVlZDogdHJ1ZWAgYWZ0ZXIgZW5xdWV1ZWluZyBpdCDigJQgdGhhdCBpcyBhIHBlbmRpbmcgc3VjY2VzcyxcbiAqIG5vdCBhIGZhaWx1cmUuIE1pcnJvcnMgdGhlIHBhdHRlcm4gYWxyZWFkeSBjb3JyZWN0IGluIHNraXAtc3RvcC50czo0OC01Ny5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIGNsYXNzaWZ5TXV0YXRpb25FcnJvcihlOiB1bmtub3duKTogeyBraW5kOiBcInF1ZXVlZFwiIHwgXCJlcnJvclwiOyBtZXNzYWdlOiBzdHJpbmcgfSB7XG4gIGlmICgoZSBhcyBhbnkpPy5pc09mZmxpbmVRdWV1ZWQgPT09IHRydWUpIHtcbiAgICByZXR1cm4geyBraW5kOiBcInF1ZXVlZFwiLCBtZXNzYWdlOiAoZSBhcyBhbnkpLm1lc3NhZ2UgfTtcbiAgfVxuICByZXR1cm4ge1xuICAgIGtpbmQ6IFwiZXJyb3JcIixcbiAgICBtZXNzYWdlOiAoZSBhcyBhbnkpPy5yZXNwb25zZT8uZGF0YT8ubWVzc2FnZSA/PyAoZSBhcyBhbnkpPy5tZXNzYWdlID8/IFwiVHJ5IGFnYWluLlwiLFxuICB9O1xufVxuXG4vKipcbiAqIERyaXZlci1kdXJhYmlsaXR5IGxhbmUuIGBjb21wbGV0ZVdpdGhQYXltZW50YCBtaW50cyBhIGZyZXNoIGlkZW1wb3RlbmN5IGtleVxuICogb24gZXZlcnkgbWFudWFsIHJldHJ5IChzZWUgcGF5bWVudC50c3gncyBgY2xvc2VTdG9wYCksIHNvIFJGLTAxOSBjYW5ub3RcbiAqIGNvbGxhcHNlIGEgcmV0cnkgYWZ0ZXIgYSBsb3N0IHJlc3BvbnNlIOKAlCBidXQgdGhlIHNlcnZlciByZWZ1c2VzIEFOWSB3cml0ZVxuICogb25jZSB0aGUgc3RvcCBpcyBDT01QTEVURUQsIGJlZm9yZSBpdHMgdHJhbnNhY3Rpb25cbiAqIChhcHBzL2FwaS9zcmMvcm91dGVzL3JvdXRlcy5zZXJ2aWNlLnRzIGB0aHJvdyBuZXcgQmFkUmVxdWVzdEV4Y2VwdGlvbihcIlN0b3BcbiAqIGlzIGFscmVhZHkgY29tcGxldGVkXCIpYCwgdGhyb3duIGJlZm9yZSB0aGUgaWRlbXBvdGVuY3kgcmVhZCkuIFNvIHRoaXMgNDAwXG4gKiBvbiBhIHJldHJ5IG1lYW5zIHRoZSBGSVJTVCBjYWxsIGFscmVhZHkgbGFuZGVkOyB0aGUgY2FsbGVyIHNob3VsZCB0cmVhdCBpdFxuICogYXMgc3VjY2VzcyAocmVmcmVzaCArIG5hdmlnYXRlKSwgbm90IHN1cmZhY2UgaXQgYXMgYW4gZXJyb3IuXG4gKlxuICogRGVsaWJlcmF0ZWx5IGEgU0VQQVJBVEUgcHJlZGljYXRlIGZyb20gYGNsYXNzaWZ5TXV0YXRpb25FcnJvcmAgYWJvdmUsIG5vdCBhXG4gKiB0aGlyZCBga2luZGAgb24gaXRzIHJldHVybiB0eXBlOiB0aGF0IGNsYXNzaWZpZXIgaXMgYWxzbyB1c2VkIGJ5XG4gKiBgY29tcG9uZW50cy9OZXdPcmRlclNjcmVlbi50c3hgJ3Mgb3JkZXItc3VibWl0IGVycm9yIGhhbmRsaW5nLCBhbmQgYmFraW5nIGFcbiAqIHJvdXRlL3N0b3AtY29tcGxldGlvbi1zcGVjaWZpYyBzZXJ2ZXIgbWVzc2FnZSBpbnRvIGl0cyBnZW5lcmljIGBraW5kYCB1bmlvblxuICogd291bGQgbGVhayBzdG9wLWNvbXBsZXRpb24gc2VtYW50aWNzIGludG8gYW4gdW5yZWxhdGVkIHNjcmVlbidzIGVycm9yXG4gKiBoYW5kbGluZyBhbmQgZm9yY2UgZXZlcnkgb3RoZXIgY2FsbGVyIHRvIHJlYXNvbiBhYm91dCBhIGJyYW5jaCB0aGF0IGNhblxuICogbmV2ZXIgYXBwbHkgdG8gdGhlbS5cbiAqXG4gKiBSZXF1aXJlcyBCT1RIIGBzdGF0dXMgPT09IDQwMGAgQU5EIHRoZSBtZXNzYWdlIHN1YnN0cmluZyDigJQgbmV2ZXIgYW55IDQwMCDigJRcbiAqIHNvIGEgZ2VudWluZWx5IGRpZmZlcmVudCA0MDAgKHdyb25nIGFtb3VudCwgdmFsaWRhdGlvbiBmYWlsdXJlKSBpcyBuZXZlclxuICogbWlzY2xhc3NpZmllZCBhcyBzdWNjZXNzLiBTdWJzdHJpbmcgbWF0Y2ggKG5vdCBleGFjdC1zdHJpbmcpLCBtYXRjaGluZyB0aGVcbiAqIGV4aXN0aW5nIHByZWNlZGVudCBhdCBgbGliL3JldHVybnMtbG9naWMudHMjc3VtbWFyaXplU3VibWlzc2lvbnNgLCBzaW5jZSB0aGVcbiAqIHNlcnZlciBoYXMgbm8gZXJyb3IgYGNvZGVgIGZvciB0aGlzIHBhdGgsIG9ubHkgYSByYXcgYEJhZFJlcXVlc3RFeGNlcHRpb25gXG4gKiBtZXNzYWdlIOKAlCBhIHN1YnN0cmluZyBtYXRjaCBzdXJ2aXZlcyBhIG1pbm9yIHNlcnZlciB3b3JkaW5nIHR3ZWFrLlxuICpcbiAqIEFuIEFQSSBzcGVjIChgYXBwcy9hcGlgKSBzaG91bGQgc2VwYXJhdGVseSBhc3NlcnQgYGNvbXBsZXRlV2l0aFBheW1lbnRgXG4gKiB0aHJvd3MgZXhhY3RseSBgXCJTdG9wIGlzIGFscmVhZHkgY29tcGxldGVkXCJgIGF0IGl0cyBndWFyZChzKSwgc28gYSBzZXJ2ZXJcbiAqIHdvcmRpbmcgY2hhbmdlIGlzIGNhdWdodCBvbiB0aGF0IHNpZGUgdG9vIOKAlCBzZWUgdGhpcyBydW4ncyBgb3Blbl9pc3N1ZXNgO1xuICogYSBjcm9zcy13b3Jrc3BhY2Ugc291cmNlLXRleHQgcGluIGZyb20gYGFwcHMvbW9iaWxlYCByZWFkaW5nIGBhcHBzL2FwaWBcbiAqIHNvdXJjZSBpcyBkZWxpYmVyYXRlbHkgTk9UIGFkZGVkIGhlcmUuXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiBpc1N0b3BBbHJlYWR5Q29tcGxldGVkRXJyb3IoZTogdW5rbm93bik6IGJvb2xlYW4ge1xuICBjb25zdCBzdGF0dXMgPSAoZSBhcyBhbnkpPy5yZXNwb25zZT8uc3RhdHVzO1xuICBjb25zdCBtZXNzYWdlID0gU3RyaW5nKChlIGFzIGFueSk/LnJlc3BvbnNlPy5kYXRhPy5tZXNzYWdlID8/IFwiXCIpLnRvTG93ZXJDYXNlKCk7XG4gIHJldHVybiBzdGF0dXMgPT09IDQwMCAmJiBtZXNzYWdlLmluY2x1ZGVzKFwiYWxyZWFkeSBjb21wbGV0ZWRcIik7XG59XG4iXSwidmVyc2lvbiI6M30=

@@ -1,0 +1,80 @@
+35d6b8ce5d761d4cc058ece54986cc61
+"use client";
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+Object.defineProperty(exports, "AdminTabs", {
+    enumerable: true,
+    get: function() {
+        return AdminTabs;
+    }
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+function AdminTabs({ tabs, active, onChange }) {
+    return(// B559: a plain `flex` row of 5 tabs has no room at 390px — with no wrap and the browser's
+    // default `min-width: auto` on each flex-item button, the row refuses to shrink below its
+    // combined min-content width (~621px measured) and blows out `(platform-admin)/layout.tsx`'s
+    // `<main className="flex-1 overflow-y-auto">` shell, which silently becomes a second
+    // horizontal scroll container (overflow-y:auto forces overflow-x:auto too) — invisible at
+    // rest, then snapped into view (clipping the left edge) the moment a tab click's native
+    // focus-scroll drags it into frame. House pattern for a tab strip that must fit small
+    // viewports: scroll the strip itself (`overflow-x-auto`) with `shrink-0 whitespace-nowrap` on
+    // each trigger, same as `customers/[id]/page.tsx`'s `Tabs.List`/`TabTrigger` — never let the
+    // row's own overflow escape into an ancestor.
+    /*#__PURE__*/ (0, _jsxruntime.jsx)("div", {
+        className: "flex gap-1 overflow-x-auto border-b border-slate-700 mb-6",
+        children: tabs.map((tab)=>/*#__PURE__*/ (0, _jsxruntime.jsxs)("button", {
+                onClick: ()=>onChange(tab.key),
+                className: `flex shrink-0 items-center gap-2 whitespace-nowrap px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px ${active === tab.key ? "border-indigo-500 text-white" : "border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600"}`,
+                children: [
+                    tab.icon,
+                    tab.label
+                ]
+            }, tab.key))
+    }));
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8ocGxhdGZvcm0tYWRtaW4pL19jb21wb25lbnRzL0FkbWluVGFicy50c3giXSwic291cmNlc0NvbnRlbnQiOlsiXCJ1c2UgY2xpZW50XCI7XG5cbmltcG9ydCAqIGFzIFJlYWN0IGZyb20gXCJyZWFjdFwiO1xuXG5leHBvcnQgaW50ZXJmYWNlIFRhYiB7XG4gIGtleTogc3RyaW5nO1xuICBsYWJlbDogc3RyaW5nO1xuICBpY29uPzogUmVhY3QuUmVhY3ROb2RlO1xufVxuXG5pbnRlcmZhY2UgQWRtaW5UYWJzUHJvcHMge1xuICB0YWJzOiBUYWJbXTtcbiAgYWN0aXZlOiBzdHJpbmc7XG4gIG9uQ2hhbmdlOiAoa2V5OiBzdHJpbmcpID0+IHZvaWQ7XG59XG5cbmV4cG9ydCBmdW5jdGlvbiBBZG1pblRhYnMoeyB0YWJzLCBhY3RpdmUsIG9uQ2hhbmdlIH06IEFkbWluVGFic1Byb3BzKSB7XG4gIHJldHVybiAoXG4gICAgLy8gQjU1OTogYSBwbGFpbiBgZmxleGAgcm93IG9mIDUgdGFicyBoYXMgbm8gcm9vbSBhdCAzOTBweCDigJQgd2l0aCBubyB3cmFwIGFuZCB0aGUgYnJvd3NlcidzXG4gICAgLy8gZGVmYXVsdCBgbWluLXdpZHRoOiBhdXRvYCBvbiBlYWNoIGZsZXgtaXRlbSBidXR0b24sIHRoZSByb3cgcmVmdXNlcyB0byBzaHJpbmsgYmVsb3cgaXRzXG4gICAgLy8gY29tYmluZWQgbWluLWNvbnRlbnQgd2lkdGggKH42MjFweCBtZWFzdXJlZCkgYW5kIGJsb3dzIG91dCBgKHBsYXRmb3JtLWFkbWluKS9sYXlvdXQudHN4YCdzXG4gICAgLy8gYDxtYWluIGNsYXNzTmFtZT1cImZsZXgtMSBvdmVyZmxvdy15LWF1dG9cIj5gIHNoZWxsLCB3aGljaCBzaWxlbnRseSBiZWNvbWVzIGEgc2Vjb25kXG4gICAgLy8gaG9yaXpvbnRhbCBzY3JvbGwgY29udGFpbmVyIChvdmVyZmxvdy15OmF1dG8gZm9yY2VzIG92ZXJmbG93LXg6YXV0byB0b28pIOKAlCBpbnZpc2libGUgYXRcbiAgICAvLyByZXN0LCB0aGVuIHNuYXBwZWQgaW50byB2aWV3IChjbGlwcGluZyB0aGUgbGVmdCBlZGdlKSB0aGUgbW9tZW50IGEgdGFiIGNsaWNrJ3MgbmF0aXZlXG4gICAgLy8gZm9jdXMtc2Nyb2xsIGRyYWdzIGl0IGludG8gZnJhbWUuIEhvdXNlIHBhdHRlcm4gZm9yIGEgdGFiIHN0cmlwIHRoYXQgbXVzdCBmaXQgc21hbGxcbiAgICAvLyB2aWV3cG9ydHM6IHNjcm9sbCB0aGUgc3RyaXAgaXRzZWxmIChgb3ZlcmZsb3cteC1hdXRvYCkgd2l0aCBgc2hyaW5rLTAgd2hpdGVzcGFjZS1ub3dyYXBgIG9uXG4gICAgLy8gZWFjaCB0cmlnZ2VyLCBzYW1lIGFzIGBjdXN0b21lcnMvW2lkXS9wYWdlLnRzeGAncyBgVGFicy5MaXN0YC9gVGFiVHJpZ2dlcmAg4oCUIG5ldmVyIGxldCB0aGVcbiAgICAvLyByb3cncyBvd24gb3ZlcmZsb3cgZXNjYXBlIGludG8gYW4gYW5jZXN0b3IuXG4gICAgPGRpdiBjbGFzc05hbWU9XCJmbGV4IGdhcC0xIG92ZXJmbG93LXgtYXV0byBib3JkZXItYiBib3JkZXItc2xhdGUtNzAwIG1iLTZcIj5cbiAgICAgIHt0YWJzLm1hcCgodGFiKSA9PiAoXG4gICAgICAgIDxidXR0b25cbiAgICAgICAgICBrZXk9e3RhYi5rZXl9XG4gICAgICAgICAgb25DbGljaz17KCkgPT4gb25DaGFuZ2UodGFiLmtleSl9XG4gICAgICAgICAgY2xhc3NOYW1lPXtgZmxleCBzaHJpbmstMCBpdGVtcy1jZW50ZXIgZ2FwLTIgd2hpdGVzcGFjZS1ub3dyYXAgcHgtNCBweS0yLjUgdGV4dC1zbSBmb250LW1lZGl1bSB0cmFuc2l0aW9uLWNvbG9ycyBib3JkZXItYi0yIC1tYi1weCAke1xuICAgICAgICAgICAgYWN0aXZlID09PSB0YWIua2V5XG4gICAgICAgICAgICAgID8gXCJib3JkZXItaW5kaWdvLTUwMCB0ZXh0LXdoaXRlXCJcbiAgICAgICAgICAgICAgOiBcImJvcmRlci10cmFuc3BhcmVudCB0ZXh0LXNsYXRlLTQwMCBob3Zlcjp0ZXh0LXNsYXRlLTIwMCBob3Zlcjpib3JkZXItc2xhdGUtNjAwXCJcbiAgICAgICAgICB9YH1cbiAgICAgICAgPlxuICAgICAgICAgIHt0YWIuaWNvbn1cbiAgICAgICAgICB7dGFiLmxhYmVsfVxuICAgICAgICA8L2J1dHRvbj5cbiAgICAgICkpfVxuICAgIDwvZGl2PlxuICApO1xufVxuIl0sIm5hbWVzIjpbIkFkbWluVGFicyIsInRhYnMiLCJhY3RpdmUiLCJvbkNoYW5nZSIsImRpdiIsImNsYXNzTmFtZSIsIm1hcCIsInRhYiIsImJ1dHRvbiIsIm9uQ2xpY2siLCJrZXkiLCJpY29uIiwibGFiZWwiXSwibWFwcGluZ3MiOiJBQUFBOzs7OzsrQkFnQmdCQTs7O2VBQUFBOzs7OytEQWRPOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7QUFjaEIsU0FBU0EsVUFBVSxFQUFFQyxJQUFJLEVBQUVDLE1BQU0sRUFBRUMsUUFBUSxFQUFrQjtJQUNsRSxPQUNFLDJGQUEyRjtJQUMzRiwwRkFBMEY7SUFDMUYsNkZBQTZGO0lBQzdGLHFGQUFxRjtJQUNyRiwwRkFBMEY7SUFDMUYsd0ZBQXdGO0lBQ3hGLHNGQUFzRjtJQUN0Riw4RkFBOEY7SUFDOUYsNkZBQTZGO0lBQzdGLDhDQUE4QztrQkFDOUMscUJBQUNDO1FBQUlDLFdBQVU7a0JBQ1pKLEtBQUtLLEdBQUcsQ0FBQyxDQUFDQyxvQkFDVCxzQkFBQ0M7Z0JBRUNDLFNBQVMsSUFBTU4sU0FBU0ksSUFBSUcsR0FBRztnQkFDL0JMLFdBQVcsQ0FBQyx1SEFBdUgsRUFDaklILFdBQVdLLElBQUlHLEdBQUcsR0FDZCxpQ0FDQSxpRkFDSjs7b0JBRURILElBQUlJLElBQUk7b0JBQ1JKLElBQUlLLEtBQUs7O2VBVExMLElBQUlHLEdBQUc7O0FBY3RCIn0=

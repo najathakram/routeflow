@@ -1,0 +1,57 @@
+33332d12d7cf2f75dd5a8d8376d3370d
+"use client";
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, {
+        enumerable: true,
+        get: Object.getOwnPropertyDescriptor(all, name).get
+    });
+}
+_export(exports, {
+    get AdminBadge () {
+        return AdminBadge;
+    },
+    get planLabel () {
+        return planLabel;
+    }
+});
+const _jsxruntime = require("react/jsx-runtime");
+const STATUS_COLORS = {
+    ACTIVE: "bg-green-900/40 text-green-400 ring-green-600/30",
+    TRIAL: "bg-yellow-900/40 text-yellow-400 ring-yellow-600/30",
+    SUSPENDED: "bg-red-900/40 text-red-400 ring-red-600/30",
+    CANCELLED: "bg-slate-700 text-slate-300 ring-slate-600/30"
+};
+const PLAN_COLORS = {
+    STARTER: "bg-slate-700 text-slate-300 ring-slate-600/30",
+    PROFESSIONAL: "bg-blue-900/40 text-blue-400 ring-blue-600/30",
+    GROWTH: "bg-teal-900/40 text-teal-400 ring-teal-600/30",
+    SCALE: "bg-indigo-900/40 text-indigo-400 ring-indigo-600/30",
+    ENTERPRISE: "bg-purple-900/40 text-purple-400 ring-purple-600/30"
+};
+// Display labels — the plan enum's middle tier is branded "Business" in the
+// designs (dashboard donut, plans editor). Enum values stay unchanged.
+const PLAN_LABELS = {
+    STARTER: "Starter",
+    PROFESSIONAL: "Business",
+    GROWTH: "Growth",
+    SCALE: "Scale",
+    ENTERPRISE: "Enterprise"
+};
+function planLabel(plan) {
+    return PLAN_LABELS[plan] ?? plan;
+}
+function AdminBadge({ children, variant = "status", className = "" }) {
+    const colors = variant === "plan" ? PLAN_COLORS : STATUS_COLORS;
+    const colorClass = colors[children] ?? "bg-slate-700 text-slate-300 ring-slate-600/30";
+    const text = variant === "plan" ? planLabel(children) : children;
+    return /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+        className: `inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ${colorClass} ${className}`,
+        children: text
+    });
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8ocGxhdGZvcm0tYWRtaW4pL19jb21wb25lbnRzL0FkbWluQmFkZ2UudHN4Il0sInNvdXJjZXNDb250ZW50IjpbIlwidXNlIGNsaWVudFwiO1xuXG5jb25zdCBTVEFUVVNfQ09MT1JTOiBSZWNvcmQ8c3RyaW5nLCBzdHJpbmc+ID0ge1xuICBBQ1RJVkU6IFwiYmctZ3JlZW4tOTAwLzQwIHRleHQtZ3JlZW4tNDAwIHJpbmctZ3JlZW4tNjAwLzMwXCIsXG4gIFRSSUFMOiBcImJnLXllbGxvdy05MDAvNDAgdGV4dC15ZWxsb3ctNDAwIHJpbmcteWVsbG93LTYwMC8zMFwiLFxuICBTVVNQRU5ERUQ6IFwiYmctcmVkLTkwMC80MCB0ZXh0LXJlZC00MDAgcmluZy1yZWQtNjAwLzMwXCIsXG4gIENBTkNFTExFRDogXCJiZy1zbGF0ZS03MDAgdGV4dC1zbGF0ZS0zMDAgcmluZy1zbGF0ZS02MDAvMzBcIixcbn07XG5cbmNvbnN0IFBMQU5fQ09MT1JTOiBSZWNvcmQ8c3RyaW5nLCBzdHJpbmc+ID0ge1xuICBTVEFSVEVSOiBcImJnLXNsYXRlLTcwMCB0ZXh0LXNsYXRlLTMwMCByaW5nLXNsYXRlLTYwMC8zMFwiLFxuICBQUk9GRVNTSU9OQUw6IFwiYmctYmx1ZS05MDAvNDAgdGV4dC1ibHVlLTQwMCByaW5nLWJsdWUtNjAwLzMwXCIsXG4gIEdST1dUSDogXCJiZy10ZWFsLTkwMC80MCB0ZXh0LXRlYWwtNDAwIHJpbmctdGVhbC02MDAvMzBcIixcbiAgU0NBTEU6IFwiYmctaW5kaWdvLTkwMC80MCB0ZXh0LWluZGlnby00MDAgcmluZy1pbmRpZ28tNjAwLzMwXCIsXG4gIEVOVEVSUFJJU0U6IFwiYmctcHVycGxlLTkwMC80MCB0ZXh0LXB1cnBsZS00MDAgcmluZy1wdXJwbGUtNjAwLzMwXCIsXG59O1xuXG4vLyBEaXNwbGF5IGxhYmVscyDigJQgdGhlIHBsYW4gZW51bSdzIG1pZGRsZSB0aWVyIGlzIGJyYW5kZWQgXCJCdXNpbmVzc1wiIGluIHRoZVxuLy8gZGVzaWducyAoZGFzaGJvYXJkIGRvbnV0LCBwbGFucyBlZGl0b3IpLiBFbnVtIHZhbHVlcyBzdGF5IHVuY2hhbmdlZC5cbmNvbnN0IFBMQU5fTEFCRUxTOiBSZWNvcmQ8c3RyaW5nLCBzdHJpbmc+ID0ge1xuICBTVEFSVEVSOiBcIlN0YXJ0ZXJcIixcbiAgUFJPRkVTU0lPTkFMOiBcIkJ1c2luZXNzXCIsXG4gIEdST1dUSDogXCJHcm93dGhcIixcbiAgU0NBTEU6IFwiU2NhbGVcIixcbiAgRU5URVJQUklTRTogXCJFbnRlcnByaXNlXCIsXG59O1xuXG4vKiogRnJpZW5kbHkgZGlzcGxheSBuYW1lIGZvciBhIHBsYW4gZW51bSB2YWx1ZSAoZmFsbHMgYmFjayB0byB0aGUgcmF3IHZhbHVlKS4gKi9cbmV4cG9ydCBmdW5jdGlvbiBwbGFuTGFiZWwocGxhbjogc3RyaW5nKTogc3RyaW5nIHtcbiAgcmV0dXJuIFBMQU5fTEFCRUxTW3BsYW5dID8/IHBsYW47XG59XG5cbmludGVyZmFjZSBBZG1pbkJhZGdlUHJvcHMge1xuICBjaGlsZHJlbjogc3RyaW5nO1xuICB2YXJpYW50PzogXCJzdGF0dXNcIiB8IFwicGxhblwiO1xuICBjbGFzc05hbWU/OiBzdHJpbmc7XG59XG5cbmV4cG9ydCBmdW5jdGlvbiBBZG1pbkJhZGdlKHsgY2hpbGRyZW4sIHZhcmlhbnQgPSBcInN0YXR1c1wiLCBjbGFzc05hbWUgPSBcIlwiIH06IEFkbWluQmFkZ2VQcm9wcykge1xuICBjb25zdCBjb2xvcnMgPSB2YXJpYW50ID09PSBcInBsYW5cIiA/IFBMQU5fQ09MT1JTIDogU1RBVFVTX0NPTE9SUztcbiAgY29uc3QgY29sb3JDbGFzcyA9IGNvbG9yc1tjaGlsZHJlbl0gPz8gXCJiZy1zbGF0ZS03MDAgdGV4dC1zbGF0ZS0zMDAgcmluZy1zbGF0ZS02MDAvMzBcIjtcbiAgY29uc3QgdGV4dCA9IHZhcmlhbnQgPT09IFwicGxhblwiID8gcGxhbkxhYmVsKGNoaWxkcmVuKSA6IGNoaWxkcmVuO1xuICByZXR1cm4gKFxuICAgIDxzcGFuXG4gICAgICBjbGFzc05hbWU9e2BpbmxpbmUtZmxleCByb3VuZGVkLWZ1bGwgcHgtMi41IHB5LTAuNSB0ZXh0LXhzIGZvbnQtbWVkaXVtIHJpbmctMSAke2NvbG9yQ2xhc3N9ICR7Y2xhc3NOYW1lfWB9XG4gICAgPlxuICAgICAge3RleHR9XG4gICAgPC9zcGFuPlxuICApO1xufVxuIl0sIm5hbWVzIjpbIkFkbWluQmFkZ2UiLCJwbGFuTGFiZWwiLCJTVEFUVVNfQ09MT1JTIiwiQUNUSVZFIiwiVFJJQUwiLCJTVVNQRU5ERUQiLCJDQU5DRUxMRUQiLCJQTEFOX0NPTE9SUyIsIlNUQVJURVIiLCJQUk9GRVNTSU9OQUwiLCJHUk9XVEgiLCJTQ0FMRSIsIkVOVEVSUFJJU0UiLCJQTEFOX0xBQkVMUyIsInBsYW4iLCJjaGlsZHJlbiIsInZhcmlhbnQiLCJjbGFzc05hbWUiLCJjb2xvcnMiLCJjb2xvckNsYXNzIiwidGV4dCIsInNwYW4iXSwibWFwcGluZ3MiOiJBQUFBOzs7Ozs7Ozs7Ozs7UUFzQ2dCQTtlQUFBQTs7UUFWQUM7ZUFBQUE7Ozs7QUExQmhCLE1BQU1DLGdCQUF3QztJQUM1Q0MsUUFBUTtJQUNSQyxPQUFPO0lBQ1BDLFdBQVc7SUFDWEMsV0FBVztBQUNiO0FBRUEsTUFBTUMsY0FBc0M7SUFDMUNDLFNBQVM7SUFDVEMsY0FBYztJQUNkQyxRQUFRO0lBQ1JDLE9BQU87SUFDUEMsWUFBWTtBQUNkO0FBRUEsNEVBQTRFO0FBQzVFLHVFQUF1RTtBQUN2RSxNQUFNQyxjQUFzQztJQUMxQ0wsU0FBUztJQUNUQyxjQUFjO0lBQ2RDLFFBQVE7SUFDUkMsT0FBTztJQUNQQyxZQUFZO0FBQ2Q7QUFHTyxTQUFTWCxVQUFVYSxJQUFZO0lBQ3BDLE9BQU9ELFdBQVcsQ0FBQ0MsS0FBSyxJQUFJQTtBQUM5QjtBQVFPLFNBQVNkLFdBQVcsRUFBRWUsUUFBUSxFQUFFQyxVQUFVLFFBQVEsRUFBRUMsWUFBWSxFQUFFLEVBQW1CO0lBQzFGLE1BQU1DLFNBQVNGLFlBQVksU0FBU1QsY0FBY0w7SUFDbEQsTUFBTWlCLGFBQWFELE1BQU0sQ0FBQ0gsU0FBUyxJQUFJO0lBQ3ZDLE1BQU1LLE9BQU9KLFlBQVksU0FBU2YsVUFBVWMsWUFBWUE7SUFDeEQscUJBQ0UscUJBQUNNO1FBQ0NKLFdBQVcsQ0FBQyxrRUFBa0UsRUFBRUUsV0FBVyxDQUFDLEVBQUVGLFdBQVc7a0JBRXhHRzs7QUFHUCJ9

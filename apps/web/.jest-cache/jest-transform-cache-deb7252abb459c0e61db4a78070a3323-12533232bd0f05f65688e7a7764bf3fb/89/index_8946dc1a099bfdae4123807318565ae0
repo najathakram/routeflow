@@ -1,0 +1,33 @@
+5ff9abdac24e7ee7d9f7b4b2d977285c
+/**
+ * @routeflow/scanning — the continuous-scan engine shared by apps/mobile and apps/web.
+ *
+ * - `scan-loop`: the dedupe gate (per-code cooldown + absence clocks, multi-slot LRU) and the
+ *   `ScanOutcome`/`ScanFeedback` types every scan handler returns.
+ * - `scan-pending-buffer`: bounded FIFO so a detection arriving mid-resolve is queued, not lost.
+ * - `scan-engine`: sequences gate then buffer per camera frame / manual entry / settle.
+ * - `scan-feedback`: `cueForOutcome` — which accept/reject cue an outcome earns. The sound and
+ *   vibration themselves are per-platform side effects and stay in each app's `scan-cue`.
+ */ "use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+_export_star(require("./scan-loop"), exports);
+_export_star(require("./scan-pending-buffer"), exports);
+_export_star(require("./scan-engine"), exports);
+_export_star(require("./scan-feedback"), exports);
+function _export_star(from, to) {
+    Object.keys(from).forEach(function(k) {
+        if (k !== "default" && !Object.prototype.hasOwnProperty.call(to, k)) {
+            Object.defineProperty(to, k, {
+                enumerable: true,
+                get: function() {
+                    return from[k];
+                }
+            });
+        }
+    });
+    return from;
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L3BhY2thZ2VzL3NjYW5uaW5nL3NyYy9pbmRleC50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqIEByb3V0ZWZsb3cvc2Nhbm5pbmcg4oCUIHRoZSBjb250aW51b3VzLXNjYW4gZW5naW5lIHNoYXJlZCBieSBhcHBzL21vYmlsZSBhbmQgYXBwcy93ZWIuXG4gKlxuICogLSBgc2Nhbi1sb29wYDogdGhlIGRlZHVwZSBnYXRlIChwZXItY29kZSBjb29sZG93biArIGFic2VuY2UgY2xvY2tzLCBtdWx0aS1zbG90IExSVSkgYW5kIHRoZVxuICogICBgU2Nhbk91dGNvbWVgL2BTY2FuRmVlZGJhY2tgIHR5cGVzIGV2ZXJ5IHNjYW4gaGFuZGxlciByZXR1cm5zLlxuICogLSBgc2Nhbi1wZW5kaW5nLWJ1ZmZlcmA6IGJvdW5kZWQgRklGTyBzbyBhIGRldGVjdGlvbiBhcnJpdmluZyBtaWQtcmVzb2x2ZSBpcyBxdWV1ZWQsIG5vdCBsb3N0LlxuICogLSBgc2Nhbi1lbmdpbmVgOiBzZXF1ZW5jZXMgZ2F0ZSB0aGVuIGJ1ZmZlciBwZXIgY2FtZXJhIGZyYW1lIC8gbWFudWFsIGVudHJ5IC8gc2V0dGxlLlxuICogLSBgc2Nhbi1mZWVkYmFja2A6IGBjdWVGb3JPdXRjb21lYCDigJQgd2hpY2ggYWNjZXB0L3JlamVjdCBjdWUgYW4gb3V0Y29tZSBlYXJucy4gVGhlIHNvdW5kIGFuZFxuICogICB2aWJyYXRpb24gdGhlbXNlbHZlcyBhcmUgcGVyLXBsYXRmb3JtIHNpZGUgZWZmZWN0cyBhbmQgc3RheSBpbiBlYWNoIGFwcCdzIGBzY2FuLWN1ZWAuXG4gKi9cbmV4cG9ydCAqIGZyb20gXCIuL3NjYW4tbG9vcFwiO1xuZXhwb3J0ICogZnJvbSBcIi4vc2Nhbi1wZW5kaW5nLWJ1ZmZlclwiO1xuZXhwb3J0ICogZnJvbSBcIi4vc2Nhbi1lbmdpbmVcIjtcbmV4cG9ydCAqIGZyb20gXCIuL3NjYW4tZmVlZGJhY2tcIjtcbiJdLCJuYW1lcyI6W10sIm1hcHBpbmdzIjoiQUFBQTs7Ozs7Ozs7O0NBU0M7Ozs7cUJBQ2E7cUJBQ0E7cUJBQ0E7cUJBQ0EifQ==

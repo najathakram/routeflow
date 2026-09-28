@@ -1,0 +1,38 @@
+bbbf1d7c616eef40adf7a03c863e0a41
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const purchase_receive_logic_1 = require("../lib/purchase-receive-logic");
+describe("nextUnitCost (F4, independent review — PR-3)", () => {
+    it("REG-F4: scan A then scan B WITHOUT clearing the cost field — B's prefill replaces A's, never bills B at A's cost", () => {
+        // The exact sequence the bug needs: product A picked (empty field ->
+        // prefills to A's cost), then product B picked before the operator
+        // touches the field. TODAY (pre-fix): the field is non-empty (holds
+        // A's cost), so the "only prefill when empty" rule keeps it — B's
+        // receipt would record at A's cost.
+        const afterA = (0, purchase_receive_logic_1.nextUnitCost)("", /* isNewProduct */ true, 4.5);
+        expect(afterA).toBe("4.5");
+        const afterB = (0, purchase_receive_logic_1.nextUnitCost)(afterA, /* isNewProduct */ true, 9.25);
+        expect(afterB).toBe("9.25");
+        expect(afterB).not.toBe(afterA);
+    });
+    it("REG-F4: re-picking the SAME product does not clobber a cost the operator already typed", () => {
+        // The operator corrected the prefilled cost by hand, then re-scanned
+        // the SAME product (e.g. a second unit of the same barcode) — their
+        // typed value must survive.
+        const typed = (0, purchase_receive_logic_1.nextUnitCost)("4.5", /* isNewProduct */ false, 9.99);
+        expect(typed).toBe("4.5");
+    });
+    it("REG-F4: a new product still prefills into an empty field (unchanged baseline)", () => {
+        expect((0, purchase_receive_logic_1.nextUnitCost)("", true, 4.5)).toBe("4.5");
+    });
+    it("REG-F4: no prefill value (non-finite) leaves the field untouched either way", () => {
+        expect((0, purchase_receive_logic_1.nextUnitCost)("4.5", true, NaN)).toBe("4.5");
+        expect((0, purchase_receive_logic_1.nextUnitCost)("", true, NaN)).toBe("");
+    });
+    it("REG-F4: a box-scaled prefill still overwrites on a product change", () => {
+        // standardCost * unitsPerBox, already computed by the caller — this
+        // function only decides WHETHER to write it, not the value's shape.
+        expect((0, purchase_receive_logic_1.nextUnitCost)("2.1", true, 25.2)).toBe("25.2");
+    });
+});
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvX190ZXN0c19fL3B1cmNoYXNlLXJlY2VpdmUtbG9naWMudGVzdC50cyIsIm1hcHBpbmdzIjoiOztBQUFBLDBFQUE2RDtBQUU3RCxRQUFRLENBQUMsOENBQThDLEVBQUUsR0FBRyxFQUFFO0lBQzVELEVBQUUsQ0FBQyxrSEFBa0gsRUFBRSxHQUFHLEVBQUU7UUFDMUgscUVBQXFFO1FBQ3JFLG1FQUFtRTtRQUNuRSxvRUFBb0U7UUFDcEUsa0VBQWtFO1FBQ2xFLG9DQUFvQztRQUNwQyxNQUFNLE1BQU0sR0FBRyxJQUFBLHFDQUFZLEVBQUMsRUFBRSxFQUFFLGtCQUFrQixDQUFDLElBQUksRUFBRSxHQUFHLENBQUMsQ0FBQztRQUM5RCxNQUFNLENBQUMsTUFBTSxDQUFDLENBQUMsSUFBSSxDQUFDLEtBQUssQ0FBQyxDQUFDO1FBRTNCLE1BQU0sTUFBTSxHQUFHLElBQUEscUNBQVksRUFBQyxNQUFNLEVBQUUsa0JBQWtCLENBQUMsSUFBSSxFQUFFLElBQUksQ0FBQyxDQUFDO1FBQ25FLE1BQU0sQ0FBQyxNQUFNLENBQUMsQ0FBQyxJQUFJLENBQUMsTUFBTSxDQUFDLENBQUM7UUFDNUIsTUFBTSxDQUFDLE1BQU0sQ0FBQyxDQUFDLEdBQUcsQ0FBQyxJQUFJLENBQUMsTUFBTSxDQUFDLENBQUM7SUFDbEMsQ0FBQyxDQUFDLENBQUM7SUFFSCxFQUFFLENBQUMsd0ZBQXdGLEVBQUUsR0FBRyxFQUFFO1FBQ2hHLHFFQUFxRTtRQUNyRSxvRUFBb0U7UUFDcEUsNEJBQTRCO1FBQzVCLE1BQU0sS0FBSyxHQUFHLElBQUEscUNBQVksRUFBQyxLQUFLLEVBQUUsa0JBQWtCLENBQUMsS0FBSyxFQUFFLElBQUksQ0FBQyxDQUFDO1FBQ2xFLE1BQU0sQ0FBQyxLQUFLLENBQUMsQ0FBQyxJQUFJLENBQUMsS0FBSyxDQUFDLENBQUM7SUFDNUIsQ0FBQyxDQUFDLENBQUM7SUFFSCxFQUFFLENBQUMsK0VBQStFLEVBQUUsR0FBRyxFQUFFO1FBQ3ZGLE1BQU0sQ0FBQyxJQUFBLHFDQUFZLEVBQUMsRUFBRSxFQUFFLElBQUksRUFBRSxHQUFHLENBQUMsQ0FBQyxDQUFDLElBQUksQ0FBQyxLQUFLLENBQUMsQ0FBQztJQUNsRCxDQUFDLENBQUMsQ0FBQztJQUVILEVBQUUsQ0FBQyw2RUFBNkUsRUFBRSxHQUFHLEVBQUU7UUFDckYsTUFBTSxDQUFDLElBQUEscUNBQVksRUFBQyxLQUFLLEVBQUUsSUFBSSxFQUFFLEdBQUcsQ0FBQyxDQUFDLENBQUMsSUFBSSxDQUFDLEtBQUssQ0FBQyxDQUFDO1FBQ25ELE1BQU0sQ0FBQyxJQUFBLHFDQUFZLEVBQUMsRUFBRSxFQUFFLElBQUksRUFBRSxHQUFHLENBQUMsQ0FBQyxDQUFDLElBQUksQ0FBQyxFQUFFLENBQUMsQ0FBQztJQUMvQyxDQUFDLENBQUMsQ0FBQztJQUVILEVBQUUsQ0FBQyxtRUFBbUUsRUFBRSxHQUFHLEVBQUU7UUFDM0Usb0VBQW9FO1FBQ3BFLG9FQUFvRTtRQUNwRSxNQUFNLENBQUMsSUFBQSxxQ0FBWSxFQUFDLEtBQUssRUFBRSxJQUFJLEVBQUUsSUFBSSxDQUFDLENBQUMsQ0FBQyxJQUFJLENBQUMsTUFBTSxDQUFDLENBQUM7SUFDdkQsQ0FBQyxDQUFDLENBQUM7QUFDTCxDQUFDLENBQUMsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9hcHBzL21vYmlsZS9fX3Rlc3RzX18vcHVyY2hhc2UtcmVjZWl2ZS1sb2dpYy50ZXN0LnRzIl0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCB7IG5leHRVbml0Q29zdCB9IGZyb20gXCIuLi9saWIvcHVyY2hhc2UtcmVjZWl2ZS1sb2dpY1wiO1xuXG5kZXNjcmliZShcIm5leHRVbml0Q29zdCAoRjQsIGluZGVwZW5kZW50IHJldmlldyDigJQgUFItMylcIiwgKCkgPT4ge1xuICBpdChcIlJFRy1GNDogc2NhbiBBIHRoZW4gc2NhbiBCIFdJVEhPVVQgY2xlYXJpbmcgdGhlIGNvc3QgZmllbGQg4oCUIEIncyBwcmVmaWxsIHJlcGxhY2VzIEEncywgbmV2ZXIgYmlsbHMgQiBhdCBBJ3MgY29zdFwiLCAoKSA9PiB7XG4gICAgLy8gVGhlIGV4YWN0IHNlcXVlbmNlIHRoZSBidWcgbmVlZHM6IHByb2R1Y3QgQSBwaWNrZWQgKGVtcHR5IGZpZWxkIC0+XG4gICAgLy8gcHJlZmlsbHMgdG8gQSdzIGNvc3QpLCB0aGVuIHByb2R1Y3QgQiBwaWNrZWQgYmVmb3JlIHRoZSBvcGVyYXRvclxuICAgIC8vIHRvdWNoZXMgdGhlIGZpZWxkLiBUT0RBWSAocHJlLWZpeCk6IHRoZSBmaWVsZCBpcyBub24tZW1wdHkgKGhvbGRzXG4gICAgLy8gQSdzIGNvc3QpLCBzbyB0aGUgXCJvbmx5IHByZWZpbGwgd2hlbiBlbXB0eVwiIHJ1bGUga2VlcHMgaXQg4oCUIEInc1xuICAgIC8vIHJlY2VpcHQgd291bGQgcmVjb3JkIGF0IEEncyBjb3N0LlxuICAgIGNvbnN0IGFmdGVyQSA9IG5leHRVbml0Q29zdChcIlwiLCAvKiBpc05ld1Byb2R1Y3QgKi8gdHJ1ZSwgNC41KTtcbiAgICBleHBlY3QoYWZ0ZXJBKS50b0JlKFwiNC41XCIpO1xuXG4gICAgY29uc3QgYWZ0ZXJCID0gbmV4dFVuaXRDb3N0KGFmdGVyQSwgLyogaXNOZXdQcm9kdWN0ICovIHRydWUsIDkuMjUpO1xuICAgIGV4cGVjdChhZnRlckIpLnRvQmUoXCI5LjI1XCIpO1xuICAgIGV4cGVjdChhZnRlckIpLm5vdC50b0JlKGFmdGVyQSk7XG4gIH0pO1xuXG4gIGl0KFwiUkVHLUY0OiByZS1waWNraW5nIHRoZSBTQU1FIHByb2R1Y3QgZG9lcyBub3QgY2xvYmJlciBhIGNvc3QgdGhlIG9wZXJhdG9yIGFscmVhZHkgdHlwZWRcIiwgKCkgPT4ge1xuICAgIC8vIFRoZSBvcGVyYXRvciBjb3JyZWN0ZWQgdGhlIHByZWZpbGxlZCBjb3N0IGJ5IGhhbmQsIHRoZW4gcmUtc2Nhbm5lZFxuICAgIC8vIHRoZSBTQU1FIHByb2R1Y3QgKGUuZy4gYSBzZWNvbmQgdW5pdCBvZiB0aGUgc2FtZSBiYXJjb2RlKSDigJQgdGhlaXJcbiAgICAvLyB0eXBlZCB2YWx1ZSBtdXN0IHN1cnZpdmUuXG4gICAgY29uc3QgdHlwZWQgPSBuZXh0VW5pdENvc3QoXCI0LjVcIiwgLyogaXNOZXdQcm9kdWN0ICovIGZhbHNlLCA5Ljk5KTtcbiAgICBleHBlY3QodHlwZWQpLnRvQmUoXCI0LjVcIik7XG4gIH0pO1xuXG4gIGl0KFwiUkVHLUY0OiBhIG5ldyBwcm9kdWN0IHN0aWxsIHByZWZpbGxzIGludG8gYW4gZW1wdHkgZmllbGQgKHVuY2hhbmdlZCBiYXNlbGluZSlcIiwgKCkgPT4ge1xuICAgIGV4cGVjdChuZXh0VW5pdENvc3QoXCJcIiwgdHJ1ZSwgNC41KSkudG9CZShcIjQuNVwiKTtcbiAgfSk7XG5cbiAgaXQoXCJSRUctRjQ6IG5vIHByZWZpbGwgdmFsdWUgKG5vbi1maW5pdGUpIGxlYXZlcyB0aGUgZmllbGQgdW50b3VjaGVkIGVpdGhlciB3YXlcIiwgKCkgPT4ge1xuICAgIGV4cGVjdChuZXh0VW5pdENvc3QoXCI0LjVcIiwgdHJ1ZSwgTmFOKSkudG9CZShcIjQuNVwiKTtcbiAgICBleHBlY3QobmV4dFVuaXRDb3N0KFwiXCIsIHRydWUsIE5hTikpLnRvQmUoXCJcIik7XG4gIH0pO1xuXG4gIGl0KFwiUkVHLUY0OiBhIGJveC1zY2FsZWQgcHJlZmlsbCBzdGlsbCBvdmVyd3JpdGVzIG9uIGEgcHJvZHVjdCBjaGFuZ2VcIiwgKCkgPT4ge1xuICAgIC8vIHN0YW5kYXJkQ29zdCAqIHVuaXRzUGVyQm94LCBhbHJlYWR5IGNvbXB1dGVkIGJ5IHRoZSBjYWxsZXIg4oCUIHRoaXNcbiAgICAvLyBmdW5jdGlvbiBvbmx5IGRlY2lkZXMgV0hFVEhFUiB0byB3cml0ZSBpdCwgbm90IHRoZSB2YWx1ZSdzIHNoYXBlLlxuICAgIGV4cGVjdChuZXh0VW5pdENvc3QoXCIyLjFcIiwgdHJ1ZSwgMjUuMikpLnRvQmUoXCIyNS4yXCIpO1xuICB9KTtcbn0pO1xuIl0sInZlcnNpb24iOjN9

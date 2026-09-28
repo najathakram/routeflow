@@ -34,6 +34,92 @@ export interface InlineReturnLineDraft {
   /** Per-item reason override — optional; falls back to the capture-level reason. */
   reason: ReturnReason | "";
   note: string;
+  /** #2695 (SA-557): a staff-only CREDIT price per selling unit (one box when boxed), as typed —
+   *  blank means none. Lower-only: the server refuses anything above its own default
+   *  (`RETURN_CREDIT_OVER_CAP`). Only rendered for {@link canOverrideReturnCredit} roles. */
+  creditUnitPrice?: string;
+  /** #2695: why — required with `creditUnitPrice`. */
+  overrideReason?: string;
+}
+
+// ─── #2695: staff credit price override ─────────────────────────────────────────
+
+/** The roles the server lets override a return's credit price (SA-557). Every other caller
+ *  that sends the fields is refused with a 400, so the input is never offered to them. */
+export const CREDIT_OVERRIDE_ROLES: readonly string[] = ["OPERATOR", "TENANT_ADMIN"];
+
+export function canOverrideReturnCredit(role: string | null | undefined): boolean {
+  return role != null && CREDIT_OVERRIDE_ROLES.includes(role);
+}
+
+export const CREDIT_OVERRIDE_REASON_MAX = 200;
+
+export type CreditOverrideParse =
+  | { kind: "none" }
+  | { kind: "ok"; creditUnitPrice: number; overrideReason: string }
+  | { kind: "invalid"; message: string };
+
+/** A line's override as the wire will carry it: none (both blank), ok, or why it can't be sent.
+ *  The quote and the capture both read THIS, so they always price the same chunks. */
+export function parseCreditOverride(
+  line: Pick<InlineReturnLineDraft, "creditUnitPrice" | "overrideReason">,
+): CreditOverrideParse {
+  const rawPrice = (line.creditUnitPrice ?? "").trim();
+  const reason = (line.overrideReason ?? "").trim();
+  if (rawPrice === "" && reason === "") return { kind: "none" };
+  if (rawPrice === "") {
+    return { kind: "invalid", message: "Enter a credit price, or clear the price reason." };
+  }
+  if (!/^\d+(\.\d{1,2})?$/.test(rawPrice)) {
+    return { kind: "invalid", message: "Enter the credit price as dollars and cents, like 4.50." };
+  }
+  if (reason === "") return { kind: "invalid", message: "Say why the credit price is lower." };
+  if (reason.length > CREDIT_OVERRIDE_REASON_MAX) {
+    return {
+      kind: "invalid",
+      message: `Keep the price reason to ${CREDIT_OVERRIDE_REASON_MAX} characters.`,
+    };
+  }
+  return { kind: "ok", creditUnitPrice: Number(rawPrice), overrideReason: reason };
+}
+
+/** The first line whose override can't be sent, named — null when every line is sendable. A host
+ *  disables "Get quote" on it (the server would refuse the same request with a 400). */
+export function creditOverrideProblem(
+  lines: Pick<InlineReturnLineDraft, "productName" | "creditUnitPrice" | "overrideReason">[],
+): string | null {
+  for (const line of lines) {
+    const parsed = parseCreditOverride(line);
+    if (parsed.kind === "invalid") return `${line.productName}: ${parsed.message}`;
+  }
+  return null;
+}
+
+/** A lowered credit, as the server priced it (`priceSource` MANUAL): the price, the default it
+ *  replaced, and why — null for every other chunk. `money` is the host's own formatter. */
+export function creditOverrideNote(
+  chunk: Pick<
+    InlineReturnQuoteChunk,
+    "priceSource" | "unitPrice" | "originalPrice" | "overrideReason"
+  >,
+  money: (n: number) => string,
+): string | null {
+  if (chunk.priceSource !== "MANUAL") return null;
+  return (
+    `Credit lowered to ${money(chunk.unitPrice ?? 0)}` +
+    (chunk.originalPrice != null ? ` from ${money(chunk.originalPrice)}` : "") +
+    (chunk.overrideReason ? ` — ${chunk.overrideReason}` : "")
+  );
+}
+
+function overrideFields(line: Pick<InlineReturnLineDraft, "creditUnitPrice" | "overrideReason">): {
+  creditUnitPrice?: number;
+  overrideReason?: string;
+} {
+  const parsed = parseCreditOverride(line);
+  return parsed.kind === "ok"
+    ? { creditUnitPrice: parsed.creditUnitPrice, overrideReason: parsed.overrideReason }
+    : {};
 }
 
 export function isBoxedProduct(line: Pick<InlineReturnLineDraft, "unitsPerBox">): boolean {
@@ -100,10 +186,17 @@ export function buildQuoteRequest(
         productId: l.productId,
         boxes: parseNonNegativeInt(l.boxes),
         pieces: parseNonNegativeInt(l.pieces),
+        ...overrideFields(l),
       }))
       .filter((i) => i.boxes > 0 || i.pieces > 0)
-      .map((i) => ({ productId: i.productId, qty: 1, boxes: i.boxes, pieces: i.pieces })),
-  );
+      .map((i) => ({ ...i, qty: 1 })),
+  ).map(({ productId, qty, boxes, pieces, creditUnitPrice, overrideReason }) => ({
+    productId,
+    qty,
+    boxes,
+    pieces,
+    ...(creditUnitPrice !== undefined ? { creditUnitPrice, overrideReason } : {}),
+  }));
   return routeRunStopId ? { customerId, items, routeRunStopId } : { customerId, items };
 }
 
@@ -211,10 +304,18 @@ export function dropExcessAndRequote(
   customerId: string,
   quote: InlineReturnQuoteResponse,
   routeRunStopId?: string,
+  /** #2695: the lines the quote came from — a product's credit price override (its FIRST row's,
+   *  the same rule the request merge uses) carries into the re-quote, so the reduced quote and
+   *  the capture that follows price the same chunks. */
+  lines: Pick<InlineReturnLineDraft, "productId" | "creditUnitPrice" | "overrideReason">[] = [],
 ): QuoteInlineReturnRequest {
+  const firstLine = (productId: string) => lines.find((l) => l.productId === productId);
   const items: QuoteInlineReturnItem[] = [...coveredPiecesByProduct(quote).entries()]
     .filter(([, pieces]) => pieces > 0)
-    .map(([productId, pieces]) => ({ productId, qty: 1, boxes: 0, pieces }));
+    .map(([productId, pieces]) => {
+      const line = firstLine(productId);
+      return { productId, qty: 1, boxes: 0, pieces, ...(line ? overrideFields(line) : {}) };
+    });
   return routeRunStopId ? { customerId, items, routeRunStopId } : { customerId, items };
 }
 
@@ -254,7 +355,9 @@ export function applyCoveredPiecesToLines(
 /**
  * Builds the capture request. THE CLIENT SENDS QUANTITIES ONLY (SA-071b item 5) —
  * boxes/pieces, reason codes, notes, `returnKey`. Never a price the quote displayed; the
- * server recomputes through the same pricing engine at capture time.
+ * server recomputes through the same pricing engine at capture time. The one price it may carry
+ * is a staff member's own typed credit override (#2695) — the same one its quote sent, and still
+ * capped server-side at the engine's default.
  */
 export function buildCaptureRequest(params: {
   customerId: string;
@@ -275,6 +378,7 @@ export function buildCaptureRequest(params: {
         pieces: parseNonNegativeInt(l.pieces),
         reason: l.reason || undefined,
         condition: l.note.trim() || undefined,
+        ...overrideFields(l),
       }))
       .filter((i) => i.boxes > 0 || i.pieces > 0),
   ).map((i) => ({
@@ -284,6 +388,9 @@ export function buildCaptureRequest(params: {
     pieces: i.pieces,
     ...(i.reason ? { reason: i.reason } : {}),
     ...(i.condition ? { condition: i.condition } : {}),
+    ...(i.creditUnitPrice !== undefined
+      ? { creditUnitPrice: i.creditUnitPrice, overrideReason: i.overrideReason }
+      : {}),
   }));
 
   return {

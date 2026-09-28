@@ -1,0 +1,28 @@
+0d7bf9d4cdfeb8642fb3dee6d5e7c1c3
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.EDIT_ITEMS_MODULES = exports.EDIT_ITEMS_SCREEN = void 0;
+exports.readEditItemsSurface = readEditItemsSurface;
+const fs_1 = require("fs");
+const path_1 = require("path");
+/**
+ * #2340 prefactor: the operator edit-items surface is now the route file PLUS the modules it was
+ * sliced into (components/edit-items/*). Source pins that asserted wiring anywhere in the old
+ * single file read this instead — screen first, then each module in a fixed order, so a pin's
+ * ordering checks inside the screen body are unchanged. Not a test file (jest's testMatch is
+ * `*.test.ts`).
+ */
+const MOBILE = (0, path_1.join)(__dirname, "..", "..");
+exports.EDIT_ITEMS_SCREEN = (0, path_1.join)(MOBILE, "app/(operator)/(tabs)/orders/[id]/edit-items.tsx");
+exports.EDIT_ITEMS_MODULES = [
+    "DraftItemCard.tsx",
+    "PriceOverrideModal.tsx",
+    "UnlistedDraft.tsx",
+    "CreateCreditNoteModal.tsx",
+    "ProductPicker.tsx",
+    "styles.ts",
+].map((f) => (0, path_1.join)(MOBILE, "components/edit-items", f));
+function readEditItemsSurface() {
+    return [exports.EDIT_ITEMS_SCREEN, ...exports.EDIT_ITEMS_MODULES].map((p) => (0, fs_1.readFileSync)(p, "utf8")).join("\n");
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvX190ZXN0c19fL3N1cHBvcnQvZWRpdC1pdGVtcy1zb3VyY2UudHMiLCJtYXBwaW5ncyI6Ijs7O0FBcUJBLG9EQUVDO0FBdkJELDJCQUFrQztBQUNsQywrQkFBNEI7QUFFNUI7Ozs7OztHQU1HO0FBQ0gsTUFBTSxNQUFNLEdBQUcsSUFBQSxXQUFJLEVBQUMsU0FBUyxFQUFFLElBQUksRUFBRSxJQUFJLENBQUMsQ0FBQztBQUM5QixRQUFBLGlCQUFpQixHQUFHLElBQUEsV0FBSSxFQUFDLE1BQU0sRUFBRSxrREFBa0QsQ0FBQyxDQUFDO0FBQ3JGLFFBQUEsa0JBQWtCLEdBQUc7SUFDaEMsbUJBQW1CO0lBQ25CLHdCQUF3QjtJQUN4QixtQkFBbUI7SUFDbkIsMkJBQTJCO0lBQzNCLG1CQUFtQjtJQUNuQixXQUFXO0NBQ1osQ0FBQyxHQUFHLENBQUMsQ0FBQyxDQUFDLEVBQUUsRUFBRSxDQUFDLElBQUEsV0FBSSxFQUFDLE1BQU0sRUFBRSx1QkFBdUIsRUFBRSxDQUFDLENBQUMsQ0FBQyxDQUFDO0FBRXZELFNBQWdCLG9CQUFvQjtJQUNsQyxPQUFPLENBQUMseUJBQWlCLEVBQUUsR0FBRywwQkFBa0IsQ0FBQyxDQUFDLEdBQUcsQ0FBQyxDQUFDLENBQUMsRUFBRSxFQUFFLENBQUMsSUFBQSxpQkFBWSxFQUFDLENBQUMsRUFBRSxNQUFNLENBQUMsQ0FBQyxDQUFDLElBQUksQ0FBQyxJQUFJLENBQUMsQ0FBQztBQUNuRyxDQUFDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvbW9iaWxlL19fdGVzdHNfXy9zdXBwb3J0L2VkaXQtaXRlbXMtc291cmNlLnRzIl0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCB7IHJlYWRGaWxlU3luYyB9IGZyb20gXCJmc1wiO1xuaW1wb3J0IHsgam9pbiB9IGZyb20gXCJwYXRoXCI7XG5cbi8qKlxuICogIzIzNDAgcHJlZmFjdG9yOiB0aGUgb3BlcmF0b3IgZWRpdC1pdGVtcyBzdXJmYWNlIGlzIG5vdyB0aGUgcm91dGUgZmlsZSBQTFVTIHRoZSBtb2R1bGVzIGl0IHdhc1xuICogc2xpY2VkIGludG8gKGNvbXBvbmVudHMvZWRpdC1pdGVtcy8qKS4gU291cmNlIHBpbnMgdGhhdCBhc3NlcnRlZCB3aXJpbmcgYW55d2hlcmUgaW4gdGhlIG9sZFxuICogc2luZ2xlIGZpbGUgcmVhZCB0aGlzIGluc3RlYWQg4oCUIHNjcmVlbiBmaXJzdCwgdGhlbiBlYWNoIG1vZHVsZSBpbiBhIGZpeGVkIG9yZGVyLCBzbyBhIHBpbidzXG4gKiBvcmRlcmluZyBjaGVja3MgaW5zaWRlIHRoZSBzY3JlZW4gYm9keSBhcmUgdW5jaGFuZ2VkLiBOb3QgYSB0ZXN0IGZpbGUgKGplc3QncyB0ZXN0TWF0Y2ggaXNcbiAqIGAqLnRlc3QudHNgKS5cbiAqL1xuY29uc3QgTU9CSUxFID0gam9pbihfX2Rpcm5hbWUsIFwiLi5cIiwgXCIuLlwiKTtcbmV4cG9ydCBjb25zdCBFRElUX0lURU1TX1NDUkVFTiA9IGpvaW4oTU9CSUxFLCBcImFwcC8ob3BlcmF0b3IpLyh0YWJzKS9vcmRlcnMvW2lkXS9lZGl0LWl0ZW1zLnRzeFwiKTtcbmV4cG9ydCBjb25zdCBFRElUX0lURU1TX01PRFVMRVMgPSBbXG4gIFwiRHJhZnRJdGVtQ2FyZC50c3hcIixcbiAgXCJQcmljZU92ZXJyaWRlTW9kYWwudHN4XCIsXG4gIFwiVW5saXN0ZWREcmFmdC50c3hcIixcbiAgXCJDcmVhdGVDcmVkaXROb3RlTW9kYWwudHN4XCIsXG4gIFwiUHJvZHVjdFBpY2tlci50c3hcIixcbiAgXCJzdHlsZXMudHNcIixcbl0ubWFwKChmKSA9PiBqb2luKE1PQklMRSwgXCJjb21wb25lbnRzL2VkaXQtaXRlbXNcIiwgZikpO1xuXG5leHBvcnQgZnVuY3Rpb24gcmVhZEVkaXRJdGVtc1N1cmZhY2UoKTogc3RyaW5nIHtcbiAgcmV0dXJuIFtFRElUX0lURU1TX1NDUkVFTiwgLi4uRURJVF9JVEVNU19NT0RVTEVTXS5tYXAoKHApID0+IHJlYWRGaWxlU3luYyhwLCBcInV0ZjhcIikpLmpvaW4oXCJcXG5cIik7XG59XG4iXSwidmVyc2lvbiI6M30=

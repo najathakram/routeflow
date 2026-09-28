@@ -1,0 +1,25 @@
+69e924293df8870b56ab7924adbc6a64
+/**
+ * Web mirror of `apps/api/src/common/tier-label.ts#tierLabel` — keep in sync.
+ * Configured tenant label for a pricing tier, hard-falling back to "Tier N".
+ * A blank/whitespace-only configured label is treated as unset. Behavior
+ * locked by `apps/api/src/common/tier-label.spec.ts`.
+ */ "use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+Object.defineProperty(exports, "tierLabel", {
+    enumerable: true,
+    get: function() {
+        return tierLabel;
+    }
+});
+function tierLabel(labels, n) {
+    const key = String(n ?? "");
+    const custom = labels?.[key]?.trim();
+    if (custom) return custom;
+    const num = Number(key);
+    return Number.isFinite(num) && num >= 1 ? `Tier ${num}` : "Tier ?";
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2xpYi90aWVyLWxhYmVsLnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogV2ViIG1pcnJvciBvZiBgYXBwcy9hcGkvc3JjL2NvbW1vbi90aWVyLWxhYmVsLnRzI3RpZXJMYWJlbGAg4oCUIGtlZXAgaW4gc3luYy5cbiAqIENvbmZpZ3VyZWQgdGVuYW50IGxhYmVsIGZvciBhIHByaWNpbmcgdGllciwgaGFyZC1mYWxsaW5nIGJhY2sgdG8gXCJUaWVyIE5cIi5cbiAqIEEgYmxhbmsvd2hpdGVzcGFjZS1vbmx5IGNvbmZpZ3VyZWQgbGFiZWwgaXMgdHJlYXRlZCBhcyB1bnNldC4gQmVoYXZpb3JcbiAqIGxvY2tlZCBieSBgYXBwcy9hcGkvc3JjL2NvbW1vbi90aWVyLWxhYmVsLnNwZWMudHNgLlxuICovXG5leHBvcnQgZnVuY3Rpb24gdGllckxhYmVsKFxuICBsYWJlbHM6IFJlY29yZDxzdHJpbmcsIHN0cmluZz4gfCBudWxsIHwgdW5kZWZpbmVkLFxuICBuOiBudW1iZXIgfCBzdHJpbmcgfCBudWxsIHwgdW5kZWZpbmVkLFxuKTogc3RyaW5nIHtcbiAgY29uc3Qga2V5ID0gU3RyaW5nKG4gPz8gXCJcIik7XG4gIGNvbnN0IGN1c3RvbSA9IGxhYmVscz8uW2tleV0/LnRyaW0oKTtcbiAgaWYgKGN1c3RvbSkgcmV0dXJuIGN1c3RvbTtcbiAgY29uc3QgbnVtID0gTnVtYmVyKGtleSk7XG4gIHJldHVybiBOdW1iZXIuaXNGaW5pdGUobnVtKSAmJiBudW0gPj0gMSA/IGBUaWVyICR7bnVtfWAgOiBcIlRpZXIgP1wiO1xufVxuIl0sIm5hbWVzIjpbInRpZXJMYWJlbCIsImxhYmVscyIsIm4iLCJrZXkiLCJTdHJpbmciLCJjdXN0b20iLCJ0cmltIiwibnVtIiwiTnVtYmVyIiwiaXNGaW5pdGUiXSwibWFwcGluZ3MiOiJBQUFBOzs7OztDQUtDOzs7OytCQUNlQTs7O2VBQUFBOzs7QUFBVCxTQUFTQSxVQUNkQyxNQUFpRCxFQUNqREMsQ0FBcUM7SUFFckMsTUFBTUMsTUFBTUMsT0FBT0YsS0FBSztJQUN4QixNQUFNRyxTQUFTSixRQUFRLENBQUNFLElBQUksRUFBRUc7SUFDOUIsSUFBSUQsUUFBUSxPQUFPQTtJQUNuQixNQUFNRSxNQUFNQyxPQUFPTDtJQUNuQixPQUFPSyxPQUFPQyxRQUFRLENBQUNGLFFBQVFBLE9BQU8sSUFBSSxDQUFDLEtBQUssRUFBRUEsS0FBSyxHQUFHO0FBQzVEIn0=

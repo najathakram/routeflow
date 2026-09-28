@@ -1,0 +1,120 @@
+354a506ee00be25b45c1d1b24818e76f
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+const _userevent = /*#__PURE__*/ _interop_require_default(require("@testing-library/user-event"));
+const _render = require("../../../../test-utils/render");
+const _EditDriverModal = require("./EditDriverModal");
+function _interop_require_default(obj) {
+    return obj && obj.__esModule ? obj : {
+        default: obj
+    };
+}
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+const driver = {
+    id: "d1",
+    contactName: "Jane Smith",
+    phone: "512-555-0100",
+    vehicleMake: "Ford",
+    vehicleModel: "Transit",
+    vehicleColour: "White",
+    vehiclePlate: "TX-1234",
+    homeAddress: null,
+    homeLat: null,
+    homeLng: null,
+    status: "ACTIVE",
+    user: {
+        id: "u1",
+        username: "jsmith",
+        email: "jane@example.com",
+        status: "ACTIVE",
+        forcePasswordChange: false
+    },
+    createdAt: new Date().toISOString()
+};
+describe("EditDriverModal", ()=>{
+    it("shows the zod validation message and never calls onSave when the required name is cleared", async ()=>{
+        const onSave = jest.fn();
+        const user = _userevent.default.setup();
+        (0, _render.renderWithProviders)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_EditDriverModal.EditDriverModal, {
+            driver: driver,
+            isOpen: true,
+            onClose: jest.fn(),
+            onSave: onSave
+        }));
+        const name = _render.screen.getByLabelText("Full Name");
+        await user.clear(name);
+        await user.click(_render.screen.getByRole("button", {
+            name: /save changes/i
+        }));
+        expect(await _render.screen.findByText("Required")).toBeInTheDocument();
+        expect(onSave).not.toHaveBeenCalled();
+    });
+    it("saves the edited fields", async ()=>{
+        const onSave = jest.fn().mockResolvedValue(undefined);
+        const user = _userevent.default.setup();
+        (0, _render.renderWithProviders)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_EditDriverModal.EditDriverModal, {
+            driver: driver,
+            isOpen: true,
+            onClose: jest.fn(),
+            onSave: onSave
+        }));
+        const phone = _render.screen.getByLabelText("Phone");
+        await user.clear(phone);
+        await user.type(phone, "512-555-0199");
+        await user.click(_render.screen.getByRole("button", {
+            name: /save changes/i
+        }));
+        await (0, _render.waitFor)(()=>{
+            expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+                contactName: "Jane Smith",
+                phone: "512-555-0199"
+            }));
+        });
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS9kcml2ZXJzL19jb21wb25lbnRzL0VkaXREcml2ZXJNb2RhbC50ZXN0LnRzeCJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgKiBhcyBSZWFjdCBmcm9tIFwicmVhY3RcIjtcbmltcG9ydCB1c2VyRXZlbnQgZnJvbSBcIkB0ZXN0aW5nLWxpYnJhcnkvdXNlci1ldmVudFwiO1xuaW1wb3J0IHsgcmVuZGVyV2l0aFByb3ZpZGVycywgc2NyZWVuLCB3YWl0Rm9yIH0gZnJvbSBcIkAvdGVzdC11dGlscy9yZW5kZXJcIjtcbmltcG9ydCB7IEVkaXREcml2ZXJNb2RhbCB9IGZyb20gXCIuL0VkaXREcml2ZXJNb2RhbFwiO1xuaW1wb3J0IHR5cGUgeyBEcml2ZXIgfSBmcm9tIFwiQC9saWIvYXBpL2RyaXZlcnNcIjtcblxuY29uc3QgZHJpdmVyOiBEcml2ZXIgPSB7XG4gIGlkOiBcImQxXCIsXG4gIGNvbnRhY3ROYW1lOiBcIkphbmUgU21pdGhcIixcbiAgcGhvbmU6IFwiNTEyLTU1NS0wMTAwXCIsXG4gIHZlaGljbGVNYWtlOiBcIkZvcmRcIixcbiAgdmVoaWNsZU1vZGVsOiBcIlRyYW5zaXRcIixcbiAgdmVoaWNsZUNvbG91cjogXCJXaGl0ZVwiLFxuICB2ZWhpY2xlUGxhdGU6IFwiVFgtMTIzNFwiLFxuICBob21lQWRkcmVzczogbnVsbCxcbiAgaG9tZUxhdDogbnVsbCxcbiAgaG9tZUxuZzogbnVsbCxcbiAgc3RhdHVzOiBcIkFDVElWRVwiLFxuICB1c2VyOiB7XG4gICAgaWQ6IFwidTFcIixcbiAgICB1c2VybmFtZTogXCJqc21pdGhcIixcbiAgICBlbWFpbDogXCJqYW5lQGV4YW1wbGUuY29tXCIsXG4gICAgc3RhdHVzOiBcIkFDVElWRVwiLFxuICAgIGZvcmNlUGFzc3dvcmRDaGFuZ2U6IGZhbHNlLFxuICB9LFxuICBjcmVhdGVkQXQ6IG5ldyBEYXRlKCkudG9JU09TdHJpbmcoKSxcbn07XG5cbmRlc2NyaWJlKFwiRWRpdERyaXZlck1vZGFsXCIsICgpID0+IHtcbiAgaXQoXCJzaG93cyB0aGUgem9kIHZhbGlkYXRpb24gbWVzc2FnZSBhbmQgbmV2ZXIgY2FsbHMgb25TYXZlIHdoZW4gdGhlIHJlcXVpcmVkIG5hbWUgaXMgY2xlYXJlZFwiLCBhc3luYyAoKSA9PiB7XG4gICAgY29uc3Qgb25TYXZlID0gamVzdC5mbigpO1xuICAgIGNvbnN0IHVzZXIgPSB1c2VyRXZlbnQuc2V0dXAoKTtcbiAgICByZW5kZXJXaXRoUHJvdmlkZXJzKFxuICAgICAgPEVkaXREcml2ZXJNb2RhbCBkcml2ZXI9e2RyaXZlcn0gaXNPcGVuIG9uQ2xvc2U9e2plc3QuZm4oKX0gb25TYXZlPXtvblNhdmV9IC8+LFxuICAgICk7XG5cbiAgICBjb25zdCBuYW1lID0gc2NyZWVuLmdldEJ5TGFiZWxUZXh0KFwiRnVsbCBOYW1lXCIpO1xuICAgIGF3YWl0IHVzZXIuY2xlYXIobmFtZSk7XG4gICAgYXdhaXQgdXNlci5jbGljayhzY3JlZW4uZ2V0QnlSb2xlKFwiYnV0dG9uXCIsIHsgbmFtZTogL3NhdmUgY2hhbmdlcy9pIH0pKTtcblxuICAgIGV4cGVjdChhd2FpdCBzY3JlZW4uZmluZEJ5VGV4dChcIlJlcXVpcmVkXCIpKS50b0JlSW5UaGVEb2N1bWVudCgpO1xuICAgIGV4cGVjdChvblNhdmUpLm5vdC50b0hhdmVCZWVuQ2FsbGVkKCk7XG4gIH0pO1xuXG4gIGl0KFwic2F2ZXMgdGhlIGVkaXRlZCBmaWVsZHNcIiwgYXN5bmMgKCkgPT4ge1xuICAgIGNvbnN0IG9uU2F2ZSA9IGplc3QuZm4oKS5tb2NrUmVzb2x2ZWRWYWx1ZSh1bmRlZmluZWQpO1xuICAgIGNvbnN0IHVzZXIgPSB1c2VyRXZlbnQuc2V0dXAoKTtcbiAgICByZW5kZXJXaXRoUHJvdmlkZXJzKFxuICAgICAgPEVkaXREcml2ZXJNb2RhbCBkcml2ZXI9e2RyaXZlcn0gaXNPcGVuIG9uQ2xvc2U9e2plc3QuZm4oKX0gb25TYXZlPXtvblNhdmV9IC8+LFxuICAgICk7XG5cbiAgICBjb25zdCBwaG9uZSA9IHNjcmVlbi5nZXRCeUxhYmVsVGV4dChcIlBob25lXCIpO1xuICAgIGF3YWl0IHVzZXIuY2xlYXIocGhvbmUpO1xuICAgIGF3YWl0IHVzZXIudHlwZShwaG9uZSwgXCI1MTItNTU1LTAxOTlcIik7XG4gICAgYXdhaXQgdXNlci5jbGljayhzY3JlZW4uZ2V0QnlSb2xlKFwiYnV0dG9uXCIsIHsgbmFtZTogL3NhdmUgY2hhbmdlcy9pIH0pKTtcblxuICAgIGF3YWl0IHdhaXRGb3IoKCkgPT4ge1xuICAgICAgZXhwZWN0KG9uU2F2ZSkudG9IYXZlQmVlbkNhbGxlZFdpdGgoXG4gICAgICAgIGV4cGVjdC5vYmplY3RDb250YWluaW5nKHsgY29udGFjdE5hbWU6IFwiSmFuZSBTbWl0aFwiLCBwaG9uZTogXCI1MTItNTU1LTAxOTlcIiB9KSxcbiAgICAgICk7XG4gICAgfSk7XG4gIH0pO1xufSk7XG4iXSwibmFtZXMiOlsiZHJpdmVyIiwiaWQiLCJjb250YWN0TmFtZSIsInBob25lIiwidmVoaWNsZU1ha2UiLCJ2ZWhpY2xlTW9kZWwiLCJ2ZWhpY2xlQ29sb3VyIiwidmVoaWNsZVBsYXRlIiwiaG9tZUFkZHJlc3MiLCJob21lTGF0IiwiaG9tZUxuZyIsInN0YXR1cyIsInVzZXIiLCJ1c2VybmFtZSIsImVtYWlsIiwiZm9yY2VQYXNzd29yZENoYW5nZSIsImNyZWF0ZWRBdCIsIkRhdGUiLCJ0b0lTT1N0cmluZyIsImRlc2NyaWJlIiwiaXQiLCJvblNhdmUiLCJqZXN0IiwiZm4iLCJ1c2VyRXZlbnQiLCJzZXR1cCIsInJlbmRlcldpdGhQcm92aWRlcnMiLCJFZGl0RHJpdmVyTW9kYWwiLCJpc09wZW4iLCJvbkNsb3NlIiwibmFtZSIsInNjcmVlbiIsImdldEJ5TGFiZWxUZXh0IiwiY2xlYXIiLCJjbGljayIsImdldEJ5Um9sZSIsImV4cGVjdCIsImZpbmRCeVRleHQiLCJ0b0JlSW5UaGVEb2N1bWVudCIsIm5vdCIsInRvSGF2ZUJlZW5DYWxsZWQiLCJtb2NrUmVzb2x2ZWRWYWx1ZSIsInVuZGVmaW5lZCIsInR5cGUiLCJ3YWl0Rm9yIiwidG9IYXZlQmVlbkNhbGxlZFdpdGgiLCJvYmplY3RDb250YWluaW5nIl0sIm1hcHBpbmdzIjoiOzs7OzsrREFBdUI7a0VBQ0Q7d0JBQytCO2lDQUNyQjs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7QUFHaEMsTUFBTUEsU0FBaUI7SUFDckJDLElBQUk7SUFDSkMsYUFBYTtJQUNiQyxPQUFPO0lBQ1BDLGFBQWE7SUFDYkMsY0FBYztJQUNkQyxlQUFlO0lBQ2ZDLGNBQWM7SUFDZEMsYUFBYTtJQUNiQyxTQUFTO0lBQ1RDLFNBQVM7SUFDVEMsUUFBUTtJQUNSQyxNQUFNO1FBQ0pYLElBQUk7UUFDSlksVUFBVTtRQUNWQyxPQUFPO1FBQ1BILFFBQVE7UUFDUkkscUJBQXFCO0lBQ3ZCO0lBQ0FDLFdBQVcsSUFBSUMsT0FBT0MsV0FBVztBQUNuQztBQUVBQyxTQUFTLG1CQUFtQjtJQUMxQkMsR0FBRyw2RkFBNkY7UUFDOUYsTUFBTUMsU0FBU0MsS0FBS0MsRUFBRTtRQUN0QixNQUFNWCxPQUFPWSxrQkFBUyxDQUFDQyxLQUFLO1FBQzVCQyxJQUFBQSwyQkFBbUIsZ0JBQ2pCLHFCQUFDQyxnQ0FBZTtZQUFDM0IsUUFBUUE7WUFBUTRCLE1BQU07WUFBQ0MsU0FBU1AsS0FBS0MsRUFBRTtZQUFJRixRQUFRQTs7UUFHdEUsTUFBTVMsT0FBT0MsY0FBTSxDQUFDQyxjQUFjLENBQUM7UUFDbkMsTUFBTXBCLEtBQUtxQixLQUFLLENBQUNIO1FBQ2pCLE1BQU1sQixLQUFLc0IsS0FBSyxDQUFDSCxjQUFNLENBQUNJLFNBQVMsQ0FBQyxVQUFVO1lBQUVMLE1BQU07UUFBZ0I7UUFFcEVNLE9BQU8sTUFBTUwsY0FBTSxDQUFDTSxVQUFVLENBQUMsYUFBYUMsaUJBQWlCO1FBQzdERixPQUFPZixRQUFRa0IsR0FBRyxDQUFDQyxnQkFBZ0I7SUFDckM7SUFFQXBCLEdBQUcsMkJBQTJCO1FBQzVCLE1BQU1DLFNBQVNDLEtBQUtDLEVBQUUsR0FBR2tCLGlCQUFpQixDQUFDQztRQUMzQyxNQUFNOUIsT0FBT1ksa0JBQVMsQ0FBQ0MsS0FBSztRQUM1QkMsSUFBQUEsMkJBQW1CLGdCQUNqQixxQkFBQ0MsZ0NBQWU7WUFBQzNCLFFBQVFBO1lBQVE0QixNQUFNO1lBQUNDLFNBQVNQLEtBQUtDLEVBQUU7WUFBSUYsUUFBUUE7O1FBR3RFLE1BQU1sQixRQUFRNEIsY0FBTSxDQUFDQyxjQUFjLENBQUM7UUFDcEMsTUFBTXBCLEtBQUtxQixLQUFLLENBQUM5QjtRQUNqQixNQUFNUyxLQUFLK0IsSUFBSSxDQUFDeEMsT0FBTztRQUN2QixNQUFNUyxLQUFLc0IsS0FBSyxDQUFDSCxjQUFNLENBQUNJLFNBQVMsQ0FBQyxVQUFVO1lBQUVMLE1BQU07UUFBZ0I7UUFFcEUsTUFBTWMsSUFBQUEsZUFBTyxFQUFDO1lBQ1pSLE9BQU9mLFFBQVF3QixvQkFBb0IsQ0FDakNULE9BQU9VLGdCQUFnQixDQUFDO2dCQUFFNUMsYUFBYTtnQkFBY0MsT0FBTztZQUFlO1FBRS9FO0lBQ0Y7QUFDRiJ9

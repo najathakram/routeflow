@@ -1,0 +1,8 @@
+a06c613ceb40ea7c7f2a4b45f43f9369
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.cueForOutcome = void 0;
+/** Moved to `@routeflow/scanning`; this path is kept so existing `../lib/scan-feedback` imports still resolve. */
+var scanning_1 = require("@routeflow/scanning");
+Object.defineProperty(exports, "cueForOutcome", { enumerable: true, get: function () { return scanning_1.cueForOutcome; } });
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3NjYW4tZmVlZGJhY2sudHMiLCJtYXBwaW5ncyI6Ijs7O0FBQUEsa0hBQWtIO0FBQ2xILGdEQUFvRDtBQUEzQyx5R0FBQSxhQUFhLE9BQUEiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3NjYW4tZmVlZGJhY2sudHMiXSwic291cmNlc0NvbnRlbnQiOlsiLyoqIE1vdmVkIHRvIGBAcm91dGVmbG93L3NjYW5uaW5nYDsgdGhpcyBwYXRoIGlzIGtlcHQgc28gZXhpc3RpbmcgYC4uL2xpYi9zY2FuLWZlZWRiYWNrYCBpbXBvcnRzIHN0aWxsIHJlc29sdmUuICovXG5leHBvcnQgeyBjdWVGb3JPdXRjb21lIH0gZnJvbSBcIkByb3V0ZWZsb3cvc2Nhbm5pbmdcIjtcbmV4cG9ydCB0eXBlIHsgU2NhbkN1ZSB9IGZyb20gXCJAcm91dGVmbG93L3NjYW5uaW5nXCI7XG4iXSwidmVyc2lvbiI6M30=

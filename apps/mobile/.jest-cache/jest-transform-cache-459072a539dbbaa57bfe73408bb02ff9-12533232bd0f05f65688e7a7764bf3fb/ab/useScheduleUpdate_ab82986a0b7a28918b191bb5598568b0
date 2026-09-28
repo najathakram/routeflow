@@ -1,0 +1,56 @@
+5e6a29e1bd31d76d33435579796a2260
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.useScheduleUpdate = useScheduleUpdate;
+const React = __importStar(require("react"));
+const NavigationBuilderContext_js_1 = require("./NavigationBuilderContext.js");
+const useClientLayoutEffect_js_1 = require("./useClientLayoutEffect.js");
+/**
+ * When screen config changes, we want to update the navigator in the same update phase.
+ * However, navigation state is in the root component and React won't let us update it from a child during render.
+ * The render could also be interrupted in concurrent mode, so we need to update after commit.
+ * So we queue the update in an insertion effect and flush it in a layout effect.
+ * Insertion effects run before layout effects, so every navigator in the tree has queued its update before we flush.
+ * This lets nested updates be applied from the root down without clobbering each other.
+ */
+function useScheduleUpdate(callback) {
+    const { scheduleUpdate, flushUpdates } = React.useContext(NavigationBuilderContext_js_1.NavigationBuilderContext);
+    React.useInsertionEffect(() => {
+        scheduleUpdate(callback);
+    });
+    (0, useClientLayoutEffect_js_1.useClientLayoutEffect)(flushUpdates);
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0Mzcvbm9kZV9tb2R1bGVzL0ByZWFjdC1uYXZpZ2F0aW9uL2NvcmUvbGliL21vZHVsZS91c2VTY2hlZHVsZVVwZGF0ZS5qcyIsIm1hcHBpbmdzIjoiQUFBQSxZQUFZLENBQUM7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7O0FBY2IsOENBU0M7QUFyQkQsNkNBQStCO0FBQy9CLCtFQUF5RTtBQUN6RSx5RUFBbUU7QUFFbkU7Ozs7Ozs7R0FPRztBQUNILFNBQWdCLGlCQUFpQixDQUFDLFFBQVE7SUFDeEMsTUFBTSxFQUNKLGNBQWMsRUFDZCxZQUFZLEVBQ2IsR0FBRyxLQUFLLENBQUMsVUFBVSxDQUFDLHNEQUF3QixDQUFDLENBQUM7SUFDL0MsS0FBSyxDQUFDLGtCQUFrQixDQUFDLEdBQUcsRUFBRTtRQUM1QixjQUFjLENBQUMsUUFBUSxDQUFDLENBQUM7SUFDM0IsQ0FBQyxDQUFDLENBQUM7SUFDSCxJQUFBLGdEQUFxQixFQUFDLFlBQVksQ0FBQyxDQUFDO0FBQ3RDLENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0Mzcvbm9kZV9tb2R1bGVzL0ByZWFjdC1uYXZpZ2F0aW9uL2NvcmUvbGliL21vZHVsZS91c2VTY2hlZHVsZVVwZGF0ZS5qcyJdLCJzb3VyY2VzQ29udGVudCI6WyJcInVzZSBzdHJpY3RcIjtcblxuaW1wb3J0ICogYXMgUmVhY3QgZnJvbSAncmVhY3QnO1xuaW1wb3J0IHsgTmF2aWdhdGlvbkJ1aWxkZXJDb250ZXh0IH0gZnJvbSBcIi4vTmF2aWdhdGlvbkJ1aWxkZXJDb250ZXh0LmpzXCI7XG5pbXBvcnQgeyB1c2VDbGllbnRMYXlvdXRFZmZlY3QgfSBmcm9tIFwiLi91c2VDbGllbnRMYXlvdXRFZmZlY3QuanNcIjtcblxuLyoqXG4gKiBXaGVuIHNjcmVlbiBjb25maWcgY2hhbmdlcywgd2Ugd2FudCB0byB1cGRhdGUgdGhlIG5hdmlnYXRvciBpbiB0aGUgc2FtZSB1cGRhdGUgcGhhc2UuXG4gKiBIb3dldmVyLCBuYXZpZ2F0aW9uIHN0YXRlIGlzIGluIHRoZSByb290IGNvbXBvbmVudCBhbmQgUmVhY3Qgd29uJ3QgbGV0IHVzIHVwZGF0ZSBpdCBmcm9tIGEgY2hpbGQgZHVyaW5nIHJlbmRlci5cbiAqIFRoZSByZW5kZXIgY291bGQgYWxzbyBiZSBpbnRlcnJ1cHRlZCBpbiBjb25jdXJyZW50IG1vZGUsIHNvIHdlIG5lZWQgdG8gdXBkYXRlIGFmdGVyIGNvbW1pdC5cbiAqIFNvIHdlIHF1ZXVlIHRoZSB1cGRhdGUgaW4gYW4gaW5zZXJ0aW9uIGVmZmVjdCBhbmQgZmx1c2ggaXQgaW4gYSBsYXlvdXQgZWZmZWN0LlxuICogSW5zZXJ0aW9uIGVmZmVjdHMgcnVuIGJlZm9yZSBsYXlvdXQgZWZmZWN0cywgc28gZXZlcnkgbmF2aWdhdG9yIGluIHRoZSB0cmVlIGhhcyBxdWV1ZWQgaXRzIHVwZGF0ZSBiZWZvcmUgd2UgZmx1c2guXG4gKiBUaGlzIGxldHMgbmVzdGVkIHVwZGF0ZXMgYmUgYXBwbGllZCBmcm9tIHRoZSByb290IGRvd24gd2l0aG91dCBjbG9iYmVyaW5nIGVhY2ggb3RoZXIuXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiB1c2VTY2hlZHVsZVVwZGF0ZShjYWxsYmFjaykge1xuICBjb25zdCB7XG4gICAgc2NoZWR1bGVVcGRhdGUsXG4gICAgZmx1c2hVcGRhdGVzXG4gIH0gPSBSZWFjdC51c2VDb250ZXh0KE5hdmlnYXRpb25CdWlsZGVyQ29udGV4dCk7XG4gIFJlYWN0LnVzZUluc2VydGlvbkVmZmVjdCgoKSA9PiB7XG4gICAgc2NoZWR1bGVVcGRhdGUoY2FsbGJhY2spO1xuICB9KTtcbiAgdXNlQ2xpZW50TGF5b3V0RWZmZWN0KGZsdXNoVXBkYXRlcyk7XG59XG4vLyMgc291cmNlTWFwcGluZ1VSTD11c2VTY2hlZHVsZVVwZGF0ZS5qcy5tYXAiXSwidmVyc2lvbiI6M30=

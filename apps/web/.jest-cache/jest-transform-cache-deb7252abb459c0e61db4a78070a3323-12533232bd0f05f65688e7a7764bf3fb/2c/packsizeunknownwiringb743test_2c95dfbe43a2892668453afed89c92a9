@@ -1,0 +1,37 @@
+47365856fe851fdaa2b4be0fb6385eb3
+/**
+ * B743 PR B (REG-B743-web): the two receive surfaces route PACK_SIZE_UNKNOWN to an explicit
+ * choice. The bill page and ScanInvoiceModal have no RTL harness (both are large client
+ * components), so their wiring is pinned from source, like scanner-refocus-wiring-b744.test.ts.
+ */ "use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _fs = require("fs");
+const _path = require("path");
+const WEB = (0, _path.join)(__dirname, "..", "..", "..");
+const page = (0, _fs.readFileSync)((0, _path.join)(__dirname, "[id]", "page.tsx"), "utf8");
+const scan = (0, _fs.readFileSync)((0, _path.join)(WEB, "components", "ScanInvoiceModal.tsx"), "utf8");
+describe("B743 — PACK_SIZE_UNKNOWN wiring (REG-B743-web)", ()=>{
+    it("the bill page checks PACK_SIZE_UNKNOWN before the unlinked-lines dialog", ()=>{
+        const onError = page.slice(page.indexOf("onError: (err: any) => {"));
+        expect(onError.indexOf("getPackSizeUnknownError(err)")).toBeGreaterThan(-1);
+        expect(onError.indexOf("getPackSizeUnknownError(err)")).toBeLessThan(onError.indexOf("getUnlinkedItemsError(err)"));
+    });
+    it("the bill page acknowledges the pack ONLY from the dialog's loose-pieces choice", ()=>{
+        expect(page).toContain("onReceiveLoose={() => handleReceive(lastAckUnlinked, pendingReceiveItems, true)}");
+        // Every other receive call leaves the third argument (the pack acknowledgement) unset.
+        const calls = page.match(/handleReceive\([^)]*\)/g) ?? [];
+        const acknowledging = calls.filter((c)=>/,\s*true\)$/.test(c) && c.split(",").length === 3);
+        expect(acknowledging).toEqual([
+            "handleReceive(lastAckUnlinked, pendingReceiveItems, true)"
+        ]);
+    });
+    it("ScanInvoiceModal never sends acknowledgePackSizeUnknown, and routes the refusal to a note", ()=>{
+        expect(scan).not.toContain("acknowledgePackSizeUnknown");
+        expect(scan).toContain("getPackSizeUnknownError(receiveErr)");
+        expect(scan).toContain("don't state units per case");
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS92ZW5kb3ItYmlsbHMvcGFjay1zaXplLXVua25vd24td2lyaW5nLWI3NDMudGVzdC50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqIEI3NDMgUFIgQiAoUkVHLUI3NDMtd2ViKTogdGhlIHR3byByZWNlaXZlIHN1cmZhY2VzIHJvdXRlIFBBQ0tfU0laRV9VTktOT1dOIHRvIGFuIGV4cGxpY2l0XG4gKiBjaG9pY2UuIFRoZSBiaWxsIHBhZ2UgYW5kIFNjYW5JbnZvaWNlTW9kYWwgaGF2ZSBubyBSVEwgaGFybmVzcyAoYm90aCBhcmUgbGFyZ2UgY2xpZW50XG4gKiBjb21wb25lbnRzKSwgc28gdGhlaXIgd2lyaW5nIGlzIHBpbm5lZCBmcm9tIHNvdXJjZSwgbGlrZSBzY2FubmVyLXJlZm9jdXMtd2lyaW5nLWI3NDQudGVzdC50cy5cbiAqL1xuaW1wb3J0IHsgcmVhZEZpbGVTeW5jIH0gZnJvbSBcImZzXCI7XG5pbXBvcnQgeyBqb2luIH0gZnJvbSBcInBhdGhcIjtcblxuY29uc3QgV0VCID0gam9pbihfX2Rpcm5hbWUsIFwiLi5cIiwgXCIuLlwiLCBcIi4uXCIpO1xuY29uc3QgcGFnZSA9IHJlYWRGaWxlU3luYyhqb2luKF9fZGlybmFtZSwgXCJbaWRdXCIsIFwicGFnZS50c3hcIiksIFwidXRmOFwiKTtcbmNvbnN0IHNjYW4gPSByZWFkRmlsZVN5bmMoam9pbihXRUIsIFwiY29tcG9uZW50c1wiLCBcIlNjYW5JbnZvaWNlTW9kYWwudHN4XCIpLCBcInV0ZjhcIik7XG5cbmRlc2NyaWJlKFwiQjc0MyDigJQgUEFDS19TSVpFX1VOS05PV04gd2lyaW5nIChSRUctQjc0My13ZWIpXCIsICgpID0+IHtcbiAgaXQoXCJ0aGUgYmlsbCBwYWdlIGNoZWNrcyBQQUNLX1NJWkVfVU5LTk9XTiBiZWZvcmUgdGhlIHVubGlua2VkLWxpbmVzIGRpYWxvZ1wiLCAoKSA9PiB7XG4gICAgY29uc3Qgb25FcnJvciA9IHBhZ2Uuc2xpY2UocGFnZS5pbmRleE9mKFwib25FcnJvcjogKGVycjogYW55KSA9PiB7XCIpKTtcbiAgICBleHBlY3Qob25FcnJvci5pbmRleE9mKFwiZ2V0UGFja1NpemVVbmtub3duRXJyb3IoZXJyKVwiKSkudG9CZUdyZWF0ZXJUaGFuKC0xKTtcbiAgICBleHBlY3Qob25FcnJvci5pbmRleE9mKFwiZ2V0UGFja1NpemVVbmtub3duRXJyb3IoZXJyKVwiKSkudG9CZUxlc3NUaGFuKFxuICAgICAgb25FcnJvci5pbmRleE9mKFwiZ2V0VW5saW5rZWRJdGVtc0Vycm9yKGVycilcIiksXG4gICAgKTtcbiAgfSk7XG5cbiAgaXQoXCJ0aGUgYmlsbCBwYWdlIGFja25vd2xlZGdlcyB0aGUgcGFjayBPTkxZIGZyb20gdGhlIGRpYWxvZydzIGxvb3NlLXBpZWNlcyBjaG9pY2VcIiwgKCkgPT4ge1xuICAgIGV4cGVjdChwYWdlKS50b0NvbnRhaW4oXG4gICAgICBcIm9uUmVjZWl2ZUxvb3NlPXsoKSA9PiBoYW5kbGVSZWNlaXZlKGxhc3RBY2tVbmxpbmtlZCwgcGVuZGluZ1JlY2VpdmVJdGVtcywgdHJ1ZSl9XCIsXG4gICAgKTtcbiAgICAvLyBFdmVyeSBvdGhlciByZWNlaXZlIGNhbGwgbGVhdmVzIHRoZSB0aGlyZCBhcmd1bWVudCAodGhlIHBhY2sgYWNrbm93bGVkZ2VtZW50KSB1bnNldC5cbiAgICBjb25zdCBjYWxscyA9IHBhZ2UubWF0Y2goL2hhbmRsZVJlY2VpdmVcXChbXildKlxcKS9nKSA/PyBbXTtcbiAgICBjb25zdCBhY2tub3dsZWRnaW5nID0gY2FsbHMuZmlsdGVyKChjKSA9PiAvLFxccyp0cnVlXFwpJC8udGVzdChjKSAmJiBjLnNwbGl0KFwiLFwiKS5sZW5ndGggPT09IDMpO1xuICAgIGV4cGVjdChhY2tub3dsZWRnaW5nKS50b0VxdWFsKFtcImhhbmRsZVJlY2VpdmUobGFzdEFja1VubGlua2VkLCBwZW5kaW5nUmVjZWl2ZUl0ZW1zLCB0cnVlKVwiXSk7XG4gIH0pO1xuXG4gIGl0KFwiU2Nhbkludm9pY2VNb2RhbCBuZXZlciBzZW5kcyBhY2tub3dsZWRnZVBhY2tTaXplVW5rbm93biwgYW5kIHJvdXRlcyB0aGUgcmVmdXNhbCB0byBhIG5vdGVcIiwgKCkgPT4ge1xuICAgIGV4cGVjdChzY2FuKS5ub3QudG9Db250YWluKFwiYWNrbm93bGVkZ2VQYWNrU2l6ZVVua25vd25cIik7XG4gICAgZXhwZWN0KHNjYW4pLnRvQ29udGFpbihcImdldFBhY2tTaXplVW5rbm93bkVycm9yKHJlY2VpdmVFcnIpXCIpO1xuICAgIGV4cGVjdChzY2FuKS50b0NvbnRhaW4oXCJkb24ndCBzdGF0ZSB1bml0cyBwZXIgY2FzZVwiKTtcbiAgfSk7XG59KTtcbiJdLCJuYW1lcyI6WyJXRUIiLCJqb2luIiwiX19kaXJuYW1lIiwicGFnZSIsInJlYWRGaWxlU3luYyIsInNjYW4iLCJkZXNjcmliZSIsIml0Iiwib25FcnJvciIsInNsaWNlIiwiaW5kZXhPZiIsImV4cGVjdCIsInRvQmVHcmVhdGVyVGhhbiIsInRvQmVMZXNzVGhhbiIsInRvQ29udGFpbiIsImNhbGxzIiwibWF0Y2giLCJhY2tub3dsZWRnaW5nIiwiZmlsdGVyIiwiYyIsInRlc3QiLCJzcGxpdCIsImxlbmd0aCIsInRvRXF1YWwiLCJub3QiXSwibWFwcGluZ3MiOiJBQUFBOzs7O0NBSUM7Ozs7b0JBQzRCO3NCQUNSO0FBRXJCLE1BQU1BLE1BQU1DLElBQUFBLFVBQUksRUFBQ0MsV0FBVyxNQUFNLE1BQU07QUFDeEMsTUFBTUMsT0FBT0MsSUFBQUEsZ0JBQVksRUFBQ0gsSUFBQUEsVUFBSSxFQUFDQyxXQUFXLFFBQVEsYUFBYTtBQUMvRCxNQUFNRyxPQUFPRCxJQUFBQSxnQkFBWSxFQUFDSCxJQUFBQSxVQUFJLEVBQUNELEtBQUssY0FBYyx5QkFBeUI7QUFFM0VNLFNBQVMsa0RBQWtEO0lBQ3pEQyxHQUFHLDJFQUEyRTtRQUM1RSxNQUFNQyxVQUFVTCxLQUFLTSxLQUFLLENBQUNOLEtBQUtPLE9BQU8sQ0FBQztRQUN4Q0MsT0FBT0gsUUFBUUUsT0FBTyxDQUFDLGlDQUFpQ0UsZUFBZSxDQUFDLENBQUM7UUFDekVELE9BQU9ILFFBQVFFLE9BQU8sQ0FBQyxpQ0FBaUNHLFlBQVksQ0FDbEVMLFFBQVFFLE9BQU8sQ0FBQztJQUVwQjtJQUVBSCxHQUFHLGtGQUFrRjtRQUNuRkksT0FBT1IsTUFBTVcsU0FBUyxDQUNwQjtRQUVGLHVGQUF1RjtRQUN2RixNQUFNQyxRQUFRWixLQUFLYSxLQUFLLENBQUMsOEJBQThCLEVBQUU7UUFDekQsTUFBTUMsZ0JBQWdCRixNQUFNRyxNQUFNLENBQUMsQ0FBQ0MsSUFBTSxjQUFjQyxJQUFJLENBQUNELE1BQU1BLEVBQUVFLEtBQUssQ0FBQyxLQUFLQyxNQUFNLEtBQUs7UUFDM0ZYLE9BQU9NLGVBQWVNLE9BQU8sQ0FBQztZQUFDO1NBQTREO0lBQzdGO0lBRUFoQixHQUFHLDZGQUE2RjtRQUM5RkksT0FBT04sTUFBTW1CLEdBQUcsQ0FBQ1YsU0FBUyxDQUFDO1FBQzNCSCxPQUFPTixNQUFNUyxTQUFTLENBQUM7UUFDdkJILE9BQU9OLE1BQU1TLFNBQVMsQ0FBQztJQUN6QjtBQUNGIn0=

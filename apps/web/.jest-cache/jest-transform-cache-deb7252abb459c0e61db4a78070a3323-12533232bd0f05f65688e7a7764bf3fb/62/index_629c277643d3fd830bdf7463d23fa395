@@ -1,0 +1,28 @@
+2137790fb133ada78aa864a0c0f41cd4
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+Object.defineProperty(exports, "AuthShell", {
+    enumerable: true,
+    get: function() {
+        return _AuthShell.AuthShell;
+    }
+});
+const _AuthShell = require("./AuthShell");
+_export_star(require("./auth-copy"), exports);
+function _export_star(from, to) {
+    Object.keys(from).forEach(function(k) {
+        if (k !== "default" && !Object.prototype.hasOwnProperty.call(to, k)) {
+            Object.defineProperty(to, k, {
+                enumerable: true,
+                get: function() {
+                    return from[k];
+                }
+            });
+        }
+    });
+    return from;
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2NvbXBvbmVudHMvYXV0aC9pbmRleC50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJleHBvcnQgeyBBdXRoU2hlbGwgfSBmcm9tIFwiLi9BdXRoU2hlbGxcIjtcbmV4cG9ydCB0eXBlIHsgQXV0aFNoZWxsUHJvcHMgfSBmcm9tIFwiLi9BdXRoU2hlbGxcIjtcbmV4cG9ydCAqIGZyb20gXCIuL2F1dGgtY29weVwiO1xuIl0sIm5hbWVzIjpbIkF1dGhTaGVsbCJdLCJtYXBwaW5ncyI6Ijs7OzsrQkFBU0E7OztlQUFBQSxvQkFBUzs7OzJCQUFRO3FCQUVaIn0=

@@ -1,0 +1,28 @@
+ddb0a1d19197baa6e042aa38021c6d8f
+"use strict";
+/**
+ * B653: the operator invoice detail's per-line qty/unit text (`(operator)/(tabs)/invoices/[id].tsx`).
+ * `invoiceLineQtyText` itself now lives in `@routeflow/pricing` (the ONE formatter shared by
+ * web/api/mobile — this file's own local copy got the factor-1 unit case wrong: a bare "5"
+ * instead of "5 Piece", #1275 review round). `usesUnitDisplay`/`invoiceLineUnitNoun` are this
+ * screen's own routing/noun decisions and stay pure + testable here for the same reason
+ * `order-line-display.ts`'s helpers do — RN cannot import a web component to assert against.
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.usesUnitDisplay = usesUnitDisplay;
+exports.invoiceLineUnitNoun = invoiceLineUnitNoun;
+/**
+ * Whether a line routes through the unit-aware display (qty text + unit noun) instead of the
+ * plain "qty × price" line. A boxed split routes through it as before; a units_v1 FACTOR-1 line
+ * (no split — e.g. "5 Piece") has neither boxes nor pieces but DOES carry its own unitLabel, so
+ * it must route through it too, or it silently falls back to the plain "5 × $2.00" form with no
+ * unit named at all (#1275 review round).
+ */
+function usesUnitDisplay(item) {
+    return item.boxes != null || item.pieces != null || (item.unitLabel?.trim() ?? "") !== "";
+}
+/** The box-level noun for the "@ price/<noun>" suffix — "Case" for a units_v1 line, "box" default. */
+function invoiceLineUnitNoun(item) {
+    return item.unitLabel?.trim() || "box";
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL2ludm9pY2UtbGluZS1kaXNwbGF5LnRzIiwibWFwcGluZ3MiOiI7QUFBQTs7Ozs7OztHQU9HOztBQVNILDBDQU1DO0FBR0Qsa0RBRUM7QUFsQkQ7Ozs7OztHQU1HO0FBQ0gsU0FBZ0IsZUFBZSxDQUFDLElBSS9CO0lBQ0MsT0FBTyxJQUFJLENBQUMsS0FBSyxJQUFJLElBQUksSUFBSSxJQUFJLENBQUMsTUFBTSxJQUFJLElBQUksSUFBSSxDQUFDLElBQUksQ0FBQyxTQUFTLEVBQUUsSUFBSSxFQUFFLElBQUksRUFBRSxDQUFDLEtBQUssRUFBRSxDQUFDO0FBQzVGLENBQUM7QUFFRCxzR0FBc0c7QUFDdEcsU0FBZ0IsbUJBQW1CLENBQUMsSUFBbUM7SUFDckUsT0FBTyxJQUFJLENBQUMsU0FBUyxFQUFFLElBQUksRUFBRSxJQUFJLEtBQUssQ0FBQztBQUN6QyxDQUFDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvbW9iaWxlL2xpYi9pbnZvaWNlLWxpbmUtZGlzcGxheS50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqIEI2NTM6IHRoZSBvcGVyYXRvciBpbnZvaWNlIGRldGFpbCdzIHBlci1saW5lIHF0eS91bml0IHRleHQgKGAob3BlcmF0b3IpLyh0YWJzKS9pbnZvaWNlcy9baWRdLnRzeGApLlxuICogYGludm9pY2VMaW5lUXR5VGV4dGAgaXRzZWxmIG5vdyBsaXZlcyBpbiBgQHJvdXRlZmxvdy9wcmljaW5nYCAodGhlIE9ORSBmb3JtYXR0ZXIgc2hhcmVkIGJ5XG4gKiB3ZWIvYXBpL21vYmlsZSDigJQgdGhpcyBmaWxlJ3Mgb3duIGxvY2FsIGNvcHkgZ290IHRoZSBmYWN0b3ItMSB1bml0IGNhc2Ugd3Jvbmc6IGEgYmFyZSBcIjVcIlxuICogaW5zdGVhZCBvZiBcIjUgUGllY2VcIiwgIzEyNzUgcmV2aWV3IHJvdW5kKS4gYHVzZXNVbml0RGlzcGxheWAvYGludm9pY2VMaW5lVW5pdE5vdW5gIGFyZSB0aGlzXG4gKiBzY3JlZW4ncyBvd24gcm91dGluZy9ub3VuIGRlY2lzaW9ucyBhbmQgc3RheSBwdXJlICsgdGVzdGFibGUgaGVyZSBmb3IgdGhlIHNhbWUgcmVhc29uXG4gKiBgb3JkZXItbGluZS1kaXNwbGF5LnRzYCdzIGhlbHBlcnMgZG8g4oCUIFJOIGNhbm5vdCBpbXBvcnQgYSB3ZWIgY29tcG9uZW50IHRvIGFzc2VydCBhZ2FpbnN0LlxuICovXG5cbi8qKlxuICogV2hldGhlciBhIGxpbmUgcm91dGVzIHRocm91Z2ggdGhlIHVuaXQtYXdhcmUgZGlzcGxheSAocXR5IHRleHQgKyB1bml0IG5vdW4pIGluc3RlYWQgb2YgdGhlXG4gKiBwbGFpbiBcInF0eSDDlyBwcmljZVwiIGxpbmUuIEEgYm94ZWQgc3BsaXQgcm91dGVzIHRocm91Z2ggaXQgYXMgYmVmb3JlOyBhIHVuaXRzX3YxIEZBQ1RPUi0xIGxpbmVcbiAqIChubyBzcGxpdCDigJQgZS5nLiBcIjUgUGllY2VcIikgaGFzIG5laXRoZXIgYm94ZXMgbm9yIHBpZWNlcyBidXQgRE9FUyBjYXJyeSBpdHMgb3duIHVuaXRMYWJlbCwgc29cbiAqIGl0IG11c3Qgcm91dGUgdGhyb3VnaCBpdCB0b28sIG9yIGl0IHNpbGVudGx5IGZhbGxzIGJhY2sgdG8gdGhlIHBsYWluIFwiNSDDlyAkMi4wMFwiIGZvcm0gd2l0aCBub1xuICogdW5pdCBuYW1lZCBhdCBhbGwgKCMxMjc1IHJldmlldyByb3VuZCkuXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiB1c2VzVW5pdERpc3BsYXkoaXRlbToge1xuICBib3hlcz86IG51bWJlciB8IG51bGw7XG4gIHBpZWNlcz86IG51bWJlciB8IG51bGw7XG4gIHVuaXRMYWJlbD86IHN0cmluZyB8IG51bGw7XG59KTogYm9vbGVhbiB7XG4gIHJldHVybiBpdGVtLmJveGVzICE9IG51bGwgfHwgaXRlbS5waWVjZXMgIT0gbnVsbCB8fCAoaXRlbS51bml0TGFiZWw/LnRyaW0oKSA/PyBcIlwiKSAhPT0gXCJcIjtcbn1cblxuLyoqIFRoZSBib3gtbGV2ZWwgbm91biBmb3IgdGhlIFwiQCBwcmljZS88bm91bj5cIiBzdWZmaXgg4oCUIFwiQ2FzZVwiIGZvciBhIHVuaXRzX3YxIGxpbmUsIFwiYm94XCIgZGVmYXVsdC4gKi9cbmV4cG9ydCBmdW5jdGlvbiBpbnZvaWNlTGluZVVuaXROb3VuKGl0ZW06IHsgdW5pdExhYmVsPzogc3RyaW5nIHwgbnVsbCB9KTogc3RyaW5nIHtcbiAgcmV0dXJuIGl0ZW0udW5pdExhYmVsPy50cmltKCkgfHwgXCJib3hcIjtcbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

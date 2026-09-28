@@ -1,0 +1,36 @@
+b67047866cba70f8e4335706a23efcb7
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.unitLineCount = unitLineCount;
+/**
+ * #2276 / SA-388 (#938, tier 1): the ONE count function for a stored unit-aware order line — the
+ * count of its named unit ("3 Cases"), derived from the server's stored fields. Web (orders/[id]
+ * edit) and mobile (edit-items-draft, buyer edit-items) both import this; there are no copies.
+ *
+ * - `boxes` when it is a positive integer (unit-line-build.ts stores the COUNT there);
+ * - else `qty ÷ unitsPerBox` — the line's SNAPSHOT factor — when that factor is an integer ≥ 1 and
+ *   `qty` (base pieces) is a POSITIVE integer and a whole multiple of it (factor-1 "Each" lines,
+ *   boxes null, land here);
+ * - else `null`: LOCKED. There is no safe count, so the caller takes no qty edit and refuses a
+ *   price/note edit rather than guessing. Falling back to raw `qty` read base pieces as the count —
+ *   a price-only save re-billed a 3-Case line as 36 Cases (12x).
+ *
+ * Fields are `unknown` so both apps' line shapes (numbers, or Decimal-as-string JSON) fit.
+ */
+function unitLineCount(li) {
+    const boxes = li.boxes == null ? null : Number(li.boxes);
+    if (boxes != null && Number.isInteger(boxes) && boxes > 0)
+        return boxes;
+    const factor = li.unitsPerBox == null ? null : Number(li.unitsPerBox);
+    const qty = Number(li.qty);
+    if (factor != null &&
+        Number.isInteger(factor) &&
+        factor >= 1 &&
+        Number.isInteger(qty) &&
+        qty > 0 &&
+        qty % factor === 0) {
+        return qty / factor;
+    }
+    return null;
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvcGFja2FnZXMvcHJpY2luZy9zcmMvdW5pdC1saW5lLWNvdW50LnRzIiwibWFwcGluZ3MiOiI7O0FBZUEsc0NBb0JDO0FBbkNEOzs7Ozs7Ozs7Ozs7OztHQWNHO0FBQ0gsU0FBZ0IsYUFBYSxDQUFDLEVBSTdCO0lBQ0MsTUFBTSxLQUFLLEdBQUcsRUFBRSxDQUFDLEtBQUssSUFBSSxJQUFJLENBQUMsQ0FBQyxDQUFDLElBQUksQ0FBQyxDQUFDLENBQUMsTUFBTSxDQUFDLEVBQUUsQ0FBQyxLQUFLLENBQUMsQ0FBQztJQUN6RCxJQUFJLEtBQUssSUFBSSxJQUFJLElBQUksTUFBTSxDQUFDLFNBQVMsQ0FBQyxLQUFLLENBQUMsSUFBSSxLQUFLLEdBQUcsQ0FBQztRQUFFLE9BQU8sS0FBSyxDQUFDO0lBQ3hFLE1BQU0sTUFBTSxHQUFHLEVBQUUsQ0FBQyxXQUFXLElBQUksSUFBSSxDQUFDLENBQUMsQ0FBQyxJQUFJLENBQUMsQ0FBQyxDQUFDLE1BQU0sQ0FBQyxFQUFFLENBQUMsV0FBVyxDQUFDLENBQUM7SUFDdEUsTUFBTSxHQUFHLEdBQUcsTUFBTSxDQUFDLEVBQUUsQ0FBQyxHQUFHLENBQUMsQ0FBQztJQUMzQixJQUNFLE1BQU0sSUFBSSxJQUFJO1FBQ2QsTUFBTSxDQUFDLFNBQVMsQ0FBQyxNQUFNLENBQUM7UUFDeEIsTUFBTSxJQUFJLENBQUM7UUFDWCxNQUFNLENBQUMsU0FBUyxDQUFDLEdBQUcsQ0FBQztRQUNyQixHQUFHLEdBQUcsQ0FBQztRQUNQLEdBQUcsR0FBRyxNQUFNLEtBQUssQ0FBQyxFQUNsQixDQUFDO1FBQ0QsT0FBTyxHQUFHLEdBQUcsTUFBTSxDQUFDO0lBQ3RCLENBQUM7SUFDRCxPQUFPLElBQUksQ0FBQztBQUNkLENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvcGFja2FnZXMvcHJpY2luZy9zcmMvdW5pdC1saW5lLWNvdW50LnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogIzIyNzYgLyBTQS0zODggKCM5MzgsIHRpZXIgMSk6IHRoZSBPTkUgY291bnQgZnVuY3Rpb24gZm9yIGEgc3RvcmVkIHVuaXQtYXdhcmUgb3JkZXIgbGluZSDigJQgdGhlXG4gKiBjb3VudCBvZiBpdHMgbmFtZWQgdW5pdCAoXCIzIENhc2VzXCIpLCBkZXJpdmVkIGZyb20gdGhlIHNlcnZlcidzIHN0b3JlZCBmaWVsZHMuIFdlYiAob3JkZXJzL1tpZF1cbiAqIGVkaXQpIGFuZCBtb2JpbGUgKGVkaXQtaXRlbXMtZHJhZnQsIGJ1eWVyIGVkaXQtaXRlbXMpIGJvdGggaW1wb3J0IHRoaXM7IHRoZXJlIGFyZSBubyBjb3BpZXMuXG4gKlxuICogLSBgYm94ZXNgIHdoZW4gaXQgaXMgYSBwb3NpdGl2ZSBpbnRlZ2VyICh1bml0LWxpbmUtYnVpbGQudHMgc3RvcmVzIHRoZSBDT1VOVCB0aGVyZSk7XG4gKiAtIGVsc2UgYHF0eSDDtyB1bml0c1BlckJveGAg4oCUIHRoZSBsaW5lJ3MgU05BUFNIT1QgZmFjdG9yIOKAlCB3aGVuIHRoYXQgZmFjdG9yIGlzIGFuIGludGVnZXIg4omlIDEgYW5kXG4gKiAgIGBxdHlgIChiYXNlIHBpZWNlcykgaXMgYSBQT1NJVElWRSBpbnRlZ2VyIGFuZCBhIHdob2xlIG11bHRpcGxlIG9mIGl0IChmYWN0b3ItMSBcIkVhY2hcIiBsaW5lcyxcbiAqICAgYm94ZXMgbnVsbCwgbGFuZCBoZXJlKTtcbiAqIC0gZWxzZSBgbnVsbGA6IExPQ0tFRC4gVGhlcmUgaXMgbm8gc2FmZSBjb3VudCwgc28gdGhlIGNhbGxlciB0YWtlcyBubyBxdHkgZWRpdCBhbmQgcmVmdXNlcyBhXG4gKiAgIHByaWNlL25vdGUgZWRpdCByYXRoZXIgdGhhbiBndWVzc2luZy4gRmFsbGluZyBiYWNrIHRvIHJhdyBgcXR5YCByZWFkIGJhc2UgcGllY2VzIGFzIHRoZSBjb3VudCDigJRcbiAqICAgYSBwcmljZS1vbmx5IHNhdmUgcmUtYmlsbGVkIGEgMy1DYXNlIGxpbmUgYXMgMzYgQ2FzZXMgKDEyeCkuXG4gKlxuICogRmllbGRzIGFyZSBgdW5rbm93bmAgc28gYm90aCBhcHBzJyBsaW5lIHNoYXBlcyAobnVtYmVycywgb3IgRGVjaW1hbC1hcy1zdHJpbmcgSlNPTikgZml0LlxuICovXG5leHBvcnQgZnVuY3Rpb24gdW5pdExpbmVDb3VudChsaToge1xuICBxdHk/OiB1bmtub3duO1xuICBib3hlcz86IHVua25vd247XG4gIHVuaXRzUGVyQm94PzogdW5rbm93bjtcbn0pOiBudW1iZXIgfCBudWxsIHtcbiAgY29uc3QgYm94ZXMgPSBsaS5ib3hlcyA9PSBudWxsID8gbnVsbCA6IE51bWJlcihsaS5ib3hlcyk7XG4gIGlmIChib3hlcyAhPSBudWxsICYmIE51bWJlci5pc0ludGVnZXIoYm94ZXMpICYmIGJveGVzID4gMCkgcmV0dXJuIGJveGVzO1xuICBjb25zdCBmYWN0b3IgPSBsaS51bml0c1BlckJveCA9PSBudWxsID8gbnVsbCA6IE51bWJlcihsaS51bml0c1BlckJveCk7XG4gIGNvbnN0IHF0eSA9IE51bWJlcihsaS5xdHkpO1xuICBpZiAoXG4gICAgZmFjdG9yICE9IG51bGwgJiZcbiAgICBOdW1iZXIuaXNJbnRlZ2VyKGZhY3RvcikgJiZcbiAgICBmYWN0b3IgPj0gMSAmJlxuICAgIE51bWJlci5pc0ludGVnZXIocXR5KSAmJlxuICAgIHF0eSA+IDAgJiZcbiAgICBxdHkgJSBmYWN0b3IgPT09IDBcbiAgKSB7XG4gICAgcmV0dXJuIHF0eSAvIGZhY3RvcjtcbiAgfVxuICByZXR1cm4gbnVsbDtcbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

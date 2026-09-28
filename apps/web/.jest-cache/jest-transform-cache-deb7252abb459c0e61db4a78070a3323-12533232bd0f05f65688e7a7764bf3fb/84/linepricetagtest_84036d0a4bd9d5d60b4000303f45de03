@@ -1,0 +1,217 @@
+a26d7db479d7c4a3b11356cdb04c74a7
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+const _react1 = require("@testing-library/react");
+const _OrderLineItemsTable = require("../app/(dashboard)/orders/[id]/_components/OrderLineItemsTable");
+const _linepricetag = require("./line-price-tag");
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+describe("linePriceTag", ()=>{
+    it("SPECIAL: strikes the original and shows Special (green)", ()=>{
+        expect((0, _linepricetag.linePriceTag)({
+            priceType: "SPECIAL",
+            originalPrice: 80,
+            unitPrice: 65
+        })).toEqual({
+            label: "Special",
+            tone: "emerald",
+            strikeOriginal: true
+        });
+    });
+    it("SPECIAL with no original price has nothing to strike", ()=>{
+        expect((0, _linepricetag.linePriceTag)({
+            priceType: "SPECIAL",
+            originalPrice: null,
+            unitPrice: 65
+        })).toEqual({
+            label: "Special",
+            tone: "emerald",
+            strikeOriginal: false
+        });
+    });
+    it("MANUAL above the original is an Upsell — the base is never struck", ()=>{
+        expect((0, _linepricetag.linePriceTag)({
+            priceType: "MANUAL",
+            originalPrice: 50,
+            unitPrice: 65
+        })).toEqual({
+            label: "Upsell",
+            tone: "emerald",
+            strikeOriginal: false
+        });
+    });
+    it.each([
+        [
+            "DISCOUNTED",
+            "Discounted"
+        ],
+        [
+            "PROMO",
+            "Promo"
+        ],
+        [
+            "MANUAL",
+            "Adjusted"
+        ]
+    ])("%s below the original strikes it and reads %s (amber)", (priceType, label)=>{
+        expect((0, _linepricetag.linePriceTag)({
+            priceType,
+            originalPrice: 80,
+            unitPrice: 65
+        })).toEqual({
+            label,
+            tone: "amber",
+            strikeOriginal: true
+        });
+    });
+    it("STANDARD, a missing original, and a missing type show no tag", ()=>{
+        expect((0, _linepricetag.linePriceTag)({
+            priceType: "STANDARD",
+            originalPrice: 80,
+            unitPrice: 65
+        })).toBeNull();
+        expect((0, _linepricetag.linePriceTag)({
+            priceType: "DISCOUNTED",
+            originalPrice: null,
+            unitPrice: 65
+        })).toBeNull();
+        expect((0, _linepricetag.linePriceTag)({
+            priceType: "MANUAL",
+            originalPrice: null,
+            unitPrice: 65
+        })).toBeNull();
+        expect((0, _linepricetag.linePriceTag)({
+            unitPrice: 65
+        })).toBeNull();
+    });
+    it("accepts Prisma Decimal strings", ()=>{
+        expect((0, _linepricetag.linePriceTag)({
+            priceType: "MANUAL",
+            originalPrice: "50.00",
+            unitPrice: "65.00"
+        })?.label).toBe("Upsell");
+    });
+});
+/**
+ * Parity with the table the card list replaces: for the same order line, the label the table
+ * prints and the label `linePriceTag` returns must be the same word (or both absent).
+ */ describe("linePriceTag ↔ OrderLineItemsTable parity", ()=>{
+    const CASES = [
+        [
+            "SPECIAL",
+            80
+        ],
+        [
+            "MANUAL",
+            50
+        ],
+        [
+            "MANUAL",
+            90
+        ],
+        [
+            "DISCOUNTED",
+            80
+        ],
+        [
+            "PROMO",
+            80
+        ],
+        [
+            "DISCOUNTED",
+            null
+        ],
+        [
+            "STANDARD",
+            80
+        ],
+        [
+            "MANUAL",
+            null
+        ]
+    ];
+    it.each(CASES)("priceType %s, original %s", (priceType, originalPrice)=>{
+        const item = {
+            id: "li-1",
+            productId: "p-1",
+            product: {
+                id: "p-1",
+                name: "Sample Cola 12oz",
+                unit: "each"
+            },
+            qty: 1,
+            unitPrice: 65,
+            priceType,
+            originalPrice,
+            status: "PENDING",
+            subtotal: 65
+        };
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_OrderLineItemsTable.OrderLineItemsTable, {
+            lineItems: [
+                item
+            ],
+            orderStatus: "CONFIRMED",
+            total: 65
+        }));
+        const tag = (0, _linepricetag.linePriceTag)({
+            priceType,
+            originalPrice,
+            unitPrice: 65
+        });
+        for (const word of [
+            "Special",
+            "Upsell",
+            "Promo",
+            "Adjusted",
+            "Discounted"
+        ]){
+            const inTable = _react1.screen.queryByText(word) !== null;
+            expect(inTable).toBe(tag?.label === word);
+        }
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2NvbXBvbmVudHMvbGluZS1wcmljZS10YWcudGVzdC50c3giXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0ICogYXMgUmVhY3QgZnJvbSBcInJlYWN0XCI7XG5pbXBvcnQgeyByZW5kZXIsIHNjcmVlbiB9IGZyb20gXCJAdGVzdGluZy1saWJyYXJ5L3JlYWN0XCI7XG5pbXBvcnQgdHlwZSB7IE9yZGVySXRlbSB9IGZyb20gXCJAL2xpYi9hcGkvb3JkZXJzXCI7XG5pbXBvcnQgeyBPcmRlckxpbmVJdGVtc1RhYmxlIH0gZnJvbSBcIkAvYXBwLyhkYXNoYm9hcmQpL29yZGVycy9baWRdL19jb21wb25lbnRzL09yZGVyTGluZUl0ZW1zVGFibGVcIjtcbmltcG9ydCB7IGxpbmVQcmljZVRhZyB9IGZyb20gXCIuL2xpbmUtcHJpY2UtdGFnXCI7XG5cbmRlc2NyaWJlKFwibGluZVByaWNlVGFnXCIsICgpID0+IHtcbiAgaXQoXCJTUEVDSUFMOiBzdHJpa2VzIHRoZSBvcmlnaW5hbCBhbmQgc2hvd3MgU3BlY2lhbCAoZ3JlZW4pXCIsICgpID0+IHtcbiAgICBleHBlY3QobGluZVByaWNlVGFnKHsgcHJpY2VUeXBlOiBcIlNQRUNJQUxcIiwgb3JpZ2luYWxQcmljZTogODAsIHVuaXRQcmljZTogNjUgfSkpLnRvRXF1YWwoe1xuICAgICAgbGFiZWw6IFwiU3BlY2lhbFwiLFxuICAgICAgdG9uZTogXCJlbWVyYWxkXCIsXG4gICAgICBzdHJpa2VPcmlnaW5hbDogdHJ1ZSxcbiAgICB9KTtcbiAgfSk7XG5cbiAgaXQoXCJTUEVDSUFMIHdpdGggbm8gb3JpZ2luYWwgcHJpY2UgaGFzIG5vdGhpbmcgdG8gc3RyaWtlXCIsICgpID0+IHtcbiAgICBleHBlY3QobGluZVByaWNlVGFnKHsgcHJpY2VUeXBlOiBcIlNQRUNJQUxcIiwgb3JpZ2luYWxQcmljZTogbnVsbCwgdW5pdFByaWNlOiA2NSB9KSkudG9FcXVhbCh7XG4gICAgICBsYWJlbDogXCJTcGVjaWFsXCIsXG4gICAgICB0b25lOiBcImVtZXJhbGRcIixcbiAgICAgIHN0cmlrZU9yaWdpbmFsOiBmYWxzZSxcbiAgICB9KTtcbiAgfSk7XG5cbiAgaXQoXCJNQU5VQUwgYWJvdmUgdGhlIG9yaWdpbmFsIGlzIGFuIFVwc2VsbCDigJQgdGhlIGJhc2UgaXMgbmV2ZXIgc3RydWNrXCIsICgpID0+IHtcbiAgICBleHBlY3QobGluZVByaWNlVGFnKHsgcHJpY2VUeXBlOiBcIk1BTlVBTFwiLCBvcmlnaW5hbFByaWNlOiA1MCwgdW5pdFByaWNlOiA2NSB9KSkudG9FcXVhbCh7XG4gICAgICBsYWJlbDogXCJVcHNlbGxcIixcbiAgICAgIHRvbmU6IFwiZW1lcmFsZFwiLFxuICAgICAgc3RyaWtlT3JpZ2luYWw6IGZhbHNlLFxuICAgIH0pO1xuICB9KTtcblxuICBpdC5lYWNoKFtcbiAgICBbXCJESVNDT1VOVEVEXCIsIFwiRGlzY291bnRlZFwiXSxcbiAgICBbXCJQUk9NT1wiLCBcIlByb21vXCJdLFxuICAgIFtcIk1BTlVBTFwiLCBcIkFkanVzdGVkXCJdLFxuICBdKShcIiVzIGJlbG93IHRoZSBvcmlnaW5hbCBzdHJpa2VzIGl0IGFuZCByZWFkcyAlcyAoYW1iZXIpXCIsIChwcmljZVR5cGUsIGxhYmVsKSA9PiB7XG4gICAgZXhwZWN0KGxpbmVQcmljZVRhZyh7IHByaWNlVHlwZSwgb3JpZ2luYWxQcmljZTogODAsIHVuaXRQcmljZTogNjUgfSkpLnRvRXF1YWwoe1xuICAgICAgbGFiZWwsXG4gICAgICB0b25lOiBcImFtYmVyXCIsXG4gICAgICBzdHJpa2VPcmlnaW5hbDogdHJ1ZSxcbiAgICB9KTtcbiAgfSk7XG5cbiAgaXQoXCJTVEFOREFSRCwgYSBtaXNzaW5nIG9yaWdpbmFsLCBhbmQgYSBtaXNzaW5nIHR5cGUgc2hvdyBubyB0YWdcIiwgKCkgPT4ge1xuICAgIGV4cGVjdChsaW5lUHJpY2VUYWcoeyBwcmljZVR5cGU6IFwiU1RBTkRBUkRcIiwgb3JpZ2luYWxQcmljZTogODAsIHVuaXRQcmljZTogNjUgfSkpLnRvQmVOdWxsKCk7XG4gICAgZXhwZWN0KFxuICAgICAgbGluZVByaWNlVGFnKHsgcHJpY2VUeXBlOiBcIkRJU0NPVU5URURcIiwgb3JpZ2luYWxQcmljZTogbnVsbCwgdW5pdFByaWNlOiA2NSB9KSxcbiAgICApLnRvQmVOdWxsKCk7XG4gICAgZXhwZWN0KGxpbmVQcmljZVRhZyh7IHByaWNlVHlwZTogXCJNQU5VQUxcIiwgb3JpZ2luYWxQcmljZTogbnVsbCwgdW5pdFByaWNlOiA2NSB9KSkudG9CZU51bGwoKTtcbiAgICBleHBlY3QobGluZVByaWNlVGFnKHsgdW5pdFByaWNlOiA2NSB9KSkudG9CZU51bGwoKTtcbiAgfSk7XG5cbiAgaXQoXCJhY2NlcHRzIFByaXNtYSBEZWNpbWFsIHN0cmluZ3NcIiwgKCkgPT4ge1xuICAgIGV4cGVjdChcbiAgICAgIGxpbmVQcmljZVRhZyh7IHByaWNlVHlwZTogXCJNQU5VQUxcIiwgb3JpZ2luYWxQcmljZTogXCI1MC4wMFwiLCB1bml0UHJpY2U6IFwiNjUuMDBcIiB9KT8ubGFiZWwsXG4gICAgKS50b0JlKFwiVXBzZWxsXCIpO1xuICB9KTtcbn0pO1xuXG4vKipcbiAqIFBhcml0eSB3aXRoIHRoZSB0YWJsZSB0aGUgY2FyZCBsaXN0IHJlcGxhY2VzOiBmb3IgdGhlIHNhbWUgb3JkZXIgbGluZSwgdGhlIGxhYmVsIHRoZSB0YWJsZVxuICogcHJpbnRzIGFuZCB0aGUgbGFiZWwgYGxpbmVQcmljZVRhZ2AgcmV0dXJucyBtdXN0IGJlIHRoZSBzYW1lIHdvcmQgKG9yIGJvdGggYWJzZW50KS5cbiAqL1xuZGVzY3JpYmUoXCJsaW5lUHJpY2VUYWcg4oaUIE9yZGVyTGluZUl0ZW1zVGFibGUgcGFyaXR5XCIsICgpID0+IHtcbiAgY29uc3QgQ0FTRVM6IFtzdHJpbmcsIG51bWJlciB8IG51bGxdW10gPSBbXG4gICAgW1wiU1BFQ0lBTFwiLCA4MF0sXG4gICAgW1wiTUFOVUFMXCIsIDUwXSwgLy8gdXBzZWxsICh1bml0IDY1ID4gNTApXG4gICAgW1wiTUFOVUFMXCIsIDkwXSwgLy8gYWRqdXN0ZWQgKHVuaXQgNjUgPCA5MClcbiAgICBbXCJESVNDT1VOVEVEXCIsIDgwXSxcbiAgICBbXCJQUk9NT1wiLCA4MF0sXG4gICAgW1wiRElTQ09VTlRFRFwiLCBudWxsXSxcbiAgICBbXCJTVEFOREFSRFwiLCA4MF0sXG4gICAgW1wiTUFOVUFMXCIsIG51bGxdLFxuICBdO1xuXG4gIGl0LmVhY2goQ0FTRVMpKFwicHJpY2VUeXBlICVzLCBvcmlnaW5hbCAlc1wiLCAocHJpY2VUeXBlLCBvcmlnaW5hbFByaWNlKSA9PiB7XG4gICAgY29uc3QgaXRlbSA9IHtcbiAgICAgIGlkOiBcImxpLTFcIixcbiAgICAgIHByb2R1Y3RJZDogXCJwLTFcIixcbiAgICAgIHByb2R1Y3Q6IHsgaWQ6IFwicC0xXCIsIG5hbWU6IFwiU2FtcGxlIENvbGEgMTJvelwiLCB1bml0OiBcImVhY2hcIiB9LFxuICAgICAgcXR5OiAxLFxuICAgICAgdW5pdFByaWNlOiA2NSxcbiAgICAgIHByaWNlVHlwZSxcbiAgICAgIG9yaWdpbmFsUHJpY2UsXG4gICAgICBzdGF0dXM6IFwiUEVORElOR1wiLFxuICAgICAgc3VidG90YWw6IDY1LFxuICAgIH0gYXMgdW5rbm93biBhcyBPcmRlckl0ZW07XG4gICAgcmVuZGVyKDxPcmRlckxpbmVJdGVtc1RhYmxlIGxpbmVJdGVtcz17W2l0ZW1dfSBvcmRlclN0YXR1cz1cIkNPTkZJUk1FRFwiIHRvdGFsPXs2NX0gLz4pO1xuXG4gICAgY29uc3QgdGFnID0gbGluZVByaWNlVGFnKHsgcHJpY2VUeXBlLCBvcmlnaW5hbFByaWNlLCB1bml0UHJpY2U6IDY1IH0pO1xuICAgIGZvciAoY29uc3Qgd29yZCBvZiBbXCJTcGVjaWFsXCIsIFwiVXBzZWxsXCIsIFwiUHJvbW9cIiwgXCJBZGp1c3RlZFwiLCBcIkRpc2NvdW50ZWRcIl0pIHtcbiAgICAgIGNvbnN0IGluVGFibGUgPSBzY3JlZW4ucXVlcnlCeVRleHQod29yZCkgIT09IG51bGw7XG4gICAgICBleHBlY3QoaW5UYWJsZSkudG9CZSh0YWc/LmxhYmVsID09PSB3b3JkKTtcbiAgICB9XG4gIH0pO1xufSk7XG4iXSwibmFtZXMiOlsiZGVzY3JpYmUiLCJpdCIsImV4cGVjdCIsImxpbmVQcmljZVRhZyIsInByaWNlVHlwZSIsIm9yaWdpbmFsUHJpY2UiLCJ1bml0UHJpY2UiLCJ0b0VxdWFsIiwibGFiZWwiLCJ0b25lIiwic3RyaWtlT3JpZ2luYWwiLCJlYWNoIiwidG9CZU51bGwiLCJ0b0JlIiwiQ0FTRVMiLCJpdGVtIiwiaWQiLCJwcm9kdWN0SWQiLCJwcm9kdWN0IiwibmFtZSIsInVuaXQiLCJxdHkiLCJzdGF0dXMiLCJzdWJ0b3RhbCIsInJlbmRlciIsIk9yZGVyTGluZUl0ZW1zVGFibGUiLCJsaW5lSXRlbXMiLCJvcmRlclN0YXR1cyIsInRvdGFsIiwidGFnIiwid29yZCIsImluVGFibGUiLCJzY3JlZW4iLCJxdWVyeUJ5VGV4dCJdLCJtYXBwaW5ncyI6Ijs7Ozs7K0RBQXVCO3dCQUNRO3FDQUVLOzhCQUNQOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7QUFFN0JBLFNBQVMsZ0JBQWdCO0lBQ3ZCQyxHQUFHLDJEQUEyRDtRQUM1REMsT0FBT0MsSUFBQUEsMEJBQVksRUFBQztZQUFFQyxXQUFXO1lBQVdDLGVBQWU7WUFBSUMsV0FBVztRQUFHLElBQUlDLE9BQU8sQ0FBQztZQUN2RkMsT0FBTztZQUNQQyxNQUFNO1lBQ05DLGdCQUFnQjtRQUNsQjtJQUNGO0lBRUFULEdBQUcsd0RBQXdEO1FBQ3pEQyxPQUFPQyxJQUFBQSwwQkFBWSxFQUFDO1lBQUVDLFdBQVc7WUFBV0MsZUFBZTtZQUFNQyxXQUFXO1FBQUcsSUFBSUMsT0FBTyxDQUFDO1lBQ3pGQyxPQUFPO1lBQ1BDLE1BQU07WUFDTkMsZ0JBQWdCO1FBQ2xCO0lBQ0Y7SUFFQVQsR0FBRyxxRUFBcUU7UUFDdEVDLE9BQU9DLElBQUFBLDBCQUFZLEVBQUM7WUFBRUMsV0FB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

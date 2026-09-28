@@ -1,0 +1,45 @@
+ba287edb6e24d5202029ec9e7e71a0ad
+/**
+ * Shared utility for managing the tenant-slug cookie.
+ *
+ * The tenant-slug cookie is the mechanism that tells the Axios interceptor
+ * which tenant to send in the X-Tenant-Slug header with every API request.
+ * It must be kept in sync with the actual tenant context at all times.
+ */ // 30 days — must not expire before the session does (refresh-token TTL is
+// 30d): a live session with a dead tenant-slug cookie silently drops the
+// X-Tenant-Slug header while auth still works.
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, {
+        enumerable: true,
+        get: Object.getOwnPropertyDescriptor(all, name).get
+    });
+}
+_export(exports, {
+    get clearTenantCookie () {
+        return clearTenantCookie;
+    },
+    get getTenantCookie () {
+        return getTenantCookie;
+    },
+    get setTenantCookie () {
+        return setTenantCookie;
+    }
+});
+const COOKIE_MAX_AGE = 60 * 60 * 24 * 30;
+function setTenantCookie(slug) {
+    document.cookie = `tenant-slug=${encodeURIComponent(slug)}; path=/; max-age=${COOKIE_MAX_AGE}; samesite=lax`;
+}
+function getTenantCookie() {
+    if (typeof document === "undefined") return null;
+    const match = document.cookie.match(/(?:^|;\s*)tenant-slug=([^;]+)/);
+    return match && match[1] ? decodeURIComponent(match[1]) : null;
+}
+function clearTenantCookie() {
+    document.cookie = "tenant-slug=; path=/; max-age=0; path=/";
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2xpYi90ZW5hbnQtY29va2llLnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogU2hhcmVkIHV0aWxpdHkgZm9yIG1hbmFnaW5nIHRoZSB0ZW5hbnQtc2x1ZyBjb29raWUuXG4gKlxuICogVGhlIHRlbmFudC1zbHVnIGNvb2tpZSBpcyB0aGUgbWVjaGFuaXNtIHRoYXQgdGVsbHMgdGhlIEF4aW9zIGludGVyY2VwdG9yXG4gKiB3aGljaCB0ZW5hbnQgdG8gc2VuZCBpbiB0aGUgWC1UZW5hbnQtU2x1ZyBoZWFkZXIgd2l0aCBldmVyeSBBUEkgcmVxdWVzdC5cbiAqIEl0IG11c3QgYmUga2VwdCBpbiBzeW5jIHdpdGggdGhlIGFjdHVhbCB0ZW5hbnQgY29udGV4dCBhdCBhbGwgdGltZXMuXG4gKi9cblxuLy8gMzAgZGF5cyDigJQgbXVzdCBub3QgZXhwaXJlIGJlZm9yZSB0aGUgc2Vzc2lvbiBkb2VzIChyZWZyZXNoLXRva2VuIFRUTCBpc1xuLy8gMzBkKTogYSBsaXZlIHNlc3Npb24gd2l0aCBhIGRlYWQgdGVuYW50LXNsdWcgY29va2llIHNpbGVudGx5IGRyb3BzIHRoZVxuLy8gWC1UZW5hbnQtU2x1ZyBoZWFkZXIgd2hpbGUgYXV0aCBzdGlsbCB3b3Jrcy5cbmNvbnN0IENPT0tJRV9NQVhfQUdFID0gNjAgKiA2MCAqIDI0ICogMzA7XG5cbmV4cG9ydCBmdW5jdGlvbiBzZXRUZW5hbnRDb29raWUoc2x1Zzogc3RyaW5nKTogdm9pZCB7XG4gIGRvY3VtZW50LmNvb2tpZSA9IGB0ZW5hbnQtc2x1Zz0ke2VuY29kZVVSSUNvbXBvbmVudChzbHVnKX07IHBhdGg9LzsgbWF4LWFnZT0ke0NPT0tJRV9NQVhfQUdFfTsgc2FtZXNpdGU9bGF4YDtcbn1cblxuLyoqIFJlYWQgdGhlIHRlbmFudC1zbHVnIGNvb2tpZSBzZXQgYnkgdGhlIE5leHQuanMgbWlkZGxld2FyZSBvciBsb2dpbiBmb3JtLiAqL1xuZXhwb3J0IGZ1bmN0aW9uIGdldFRlbmFudENvb2tpZSgpOiBzdHJpbmcgfCBudWxsIHtcbiAgaWYgKHR5cGVvZiBkb2N1bWVudCA9PT0gXCJ1bmRlZmluZWRcIikgcmV0dXJuIG51bGw7XG4gIGNvbnN0IG1hdGNoID0gZG9jdW1lbnQuY29va2llLm1hdGNoKC8oPzpefDtcXHMqKXRlbmFudC1zbHVnPShbXjtdKykvKTtcbiAgcmV0dXJuIG1hdGNoICYmIG1hdGNoWzFdID8gZGVjb2RlVVJJQ29tcG9uZW50KG1hdGNoWzFdKSA6IG51bGw7XG59XG5cbmV4cG9ydCBmdW5jdGlvbiBjbGVhclRlbmFudENvb2tpZSgpOiB2b2lkIHtcbiAgZG9jdW1lbnQuY29va2llID0gXCJ0ZW5hbnQtc2x1Zz07IHBhdGg9LzsgbWF4LWFnZT0wOyBwYXRoPS9cIjtcbn1cbiJdLCJuYW1lcyI6WyJjbGVhclRlbmFudENvb2tpZSIsImdldFRlbmFudENvb2tpZSIsInNldFRlbmFudENvb2tpZSIsIkNPT0tJRV9NQVhfQUdFIiwic2x1ZyIsImRvY3VtZW50IiwiY29va2llIiwiZW5jb2RlVVJJQ29tcG9uZW50IiwibWF0Y2giLCJkZWNvZGVVUklDb21wb25lbnQiXSwibWFwcGluZ3MiOiJBQUFBOzs7Ozs7Q0FNQyxHQUVELDBFQUEwRTtBQUMxRSx5RUFBeUU7QUFDekUsK0NBQStDOzs7Ozs7Ozs7Ozs7UUFjL0JBO2VBQUFBOztRQU5BQztlQUFBQTs7UUFMQUM7ZUFBQUE7OztBQUZoQixNQUFNQyxpQkFBaUIsS0FBSyxLQUFLLEtBQUs7QUFFL0IsU0FBU0QsZ0JBQWdCRSxJQUFZO0lBQzFDQyxTQUFTQyxNQUFNLEdBQUcsQ0FBQyxZQUFZLEVBQUVDLG1CQUFtQkgsTUFBTSxrQkFBa0IsRUFBRUQsZUFBZSxjQUFjLENBQUM7QUFDOUc7QUFHTyxTQUFTRjtJQUNkLElBQUksT0FBT0ksYUFBYSxhQUFhLE9BQU87SUFDNUMsTUFBTUcsUUFBUUgsU0FBU0MsTUFBTSxDQUFDRSxLQUFLLENBQUM7SUFDcEMsT0FBT0EsU0FBU0EsS0FBSyxDQUFDLEVBQUUsR0FBR0MsbUJBQW1CRCxLQUFLLENBQUMsRUFBRSxJQUFJO0FBQzVEO0FBRU8sU0FBU1I7SUFDZEssU0FBU0MsTUFBTSxHQUFHO0FBQ3BCIn0=

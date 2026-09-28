@@ -1,0 +1,28 @@
+8a6d383002a239c8787096ac99094245
+/**
+ * The 409 `{ code: "CREDIT_LIMIT_EXCEEDED", limit, exposure, message }` the credit guard throws when
+ * an order edit / send-out / delivery would push the customer's exposure over their limit. Returns
+ * the server's own numbers and sentence (never recomputed here), or null for any other error.
+ * Mirrors apps/mobile/lib/credit-limit-error.ts. There is NO server-side override — the only exits
+ * are to collect a payment (reduces exposure) or to cancel the change.
+ */ "use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+Object.defineProperty(exports, "parseCreditLimitError", {
+    enumerable: true,
+    get: function() {
+        return parseCreditLimitError;
+    }
+});
+function parseCreditLimitError(err) {
+    const res = err?.response;
+    if (res?.status !== 409 || res.data?.code !== "CREDIT_LIMIT_EXCEEDED") return null;
+    return {
+        limit: Number(res.data.limit ?? 0),
+        exposure: Number(res.data.exposure ?? 0),
+        message: res.data.message ?? "This would exceed the customer's credit limit."
+    };
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2xpYi9hcGkvY3JlZGl0LWxpbWl0LnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogVGhlIDQwOSBgeyBjb2RlOiBcIkNSRURJVF9MSU1JVF9FWENFRURFRFwiLCBsaW1pdCwgZXhwb3N1cmUsIG1lc3NhZ2UgfWAgdGhlIGNyZWRpdCBndWFyZCB0aHJvd3Mgd2hlblxuICogYW4gb3JkZXIgZWRpdCAvIHNlbmQtb3V0IC8gZGVsaXZlcnkgd291bGQgcHVzaCB0aGUgY3VzdG9tZXIncyBleHBvc3VyZSBvdmVyIHRoZWlyIGxpbWl0LiBSZXR1cm5zXG4gKiB0aGUgc2VydmVyJ3Mgb3duIG51bWJlcnMgYW5kIHNlbnRlbmNlIChuZXZlciByZWNvbXB1dGVkIGhlcmUpLCBvciBudWxsIGZvciBhbnkgb3RoZXIgZXJyb3IuXG4gKiBNaXJyb3JzIGFwcHMvbW9iaWxlL2xpYi9jcmVkaXQtbGltaXQtZXJyb3IudHMuIFRoZXJlIGlzIE5PIHNlcnZlci1zaWRlIG92ZXJyaWRlIOKAlCB0aGUgb25seSBleGl0c1xuICogYXJlIHRvIGNvbGxlY3QgYSBwYXltZW50IChyZWR1Y2VzIGV4cG9zdXJlKSBvciB0byBjYW5jZWwgdGhlIGNoYW5nZS5cbiAqL1xuZXhwb3J0IGludGVyZmFjZSBDcmVkaXRMaW1pdEluZm8ge1xuICBsaW1pdDogbnVtYmVyO1xuICBleHBvc3VyZTogbnVtYmVyO1xuICAvKiogVGhlIHNlcnZlcidzIHNlbnRlbmNlIOKAlCBzaG93biB2ZXJiYXRpbS4gKi9cbiAgbWVzc2FnZTogc3RyaW5nO1xufVxuXG5leHBvcnQgZnVuY3Rpb24gcGFyc2VDcmVkaXRMaW1pdEVycm9yKGVycjogdW5rbm93bik6IENyZWRpdExpbWl0SW5mbyB8IG51bGwge1xuICBjb25zdCByZXMgPSAoXG4gICAgZXJyIGFzIHtcbiAgICAgIHJlc3BvbnNlPzoge1xuICAgICAgICBzdGF0dXM/OiBudW1iZXI7XG4gICAgICAgIGRhdGE/OiB7IGNvZGU/OiBzdHJpbmc7IGxpbWl0PzogbnVtYmVyOyBleHBvc3VyZT86IG51bWJlcjsgbWVzc2FnZT86IHN0cmluZyB9O1xuICAgICAgfTtcbiAgICB9XG4gICk/LnJlc3BvbnNlO1xuICBpZiAocmVzPy5zdGF0dXMgIT09IDQwOSB8fCByZXMuZGF0YT8uY29kZSAhPT0gXCJDUkVESVRfTElNSVRfRVhDRUVERURcIikgcmV0dXJuIG51bGw7XG4gIHJldHVybiB7XG4gICAgbGltaXQ6IE51bWJlcihyZXMuZGF0YS5saW1pdCA/PyAwKSxcbiAgICBleHBvc3VyZTogTnVtYmVyKHJlcy5kYXRhLmV4cG9zdXJlID8/IDApLFxuICAgIG1lc3NhZ2U6IHJlcy5kYXRhLm1lc3NhZ2UgPz8gXCJUaGlzIHdvdWxkIGV4Y2VlZCB0aGUgY3VzdG9tZXIncyBjcmVkaXQgbGltaXQuXCIsXG4gIH07XG59XG4iXSwibmFtZXMiOlsicGFyc2VDcmVkaXRMaW1pdEVycm9yIiwiZXJyIiwicmVzIiwicmVzcG9uc2UiLCJzdGF0dXMiLCJkYXRhIiwiY29kZSIsImxpbWl0IiwiTnVtYmVyIiwiZXhwb3N1cmUiLCJtZXNzYWdlIl0sIm1hcHBpbmdzIjoiQUFBQTs7Ozs7O0NBTUM7Ozs7K0JBUWVBOzs7ZUFBQUE7OztBQUFULFNBQVNBLHNCQUFzQkMsR0FBWTtJQUNoRCxNQUFNQyxNQUNKRCxLQU1DRTtJQUNILElBQUlELEtBQUtFLFdBQVcsT0FBT0YsSUFBSUcsSUFBSSxFQUFFQyxTQUFTLHlCQUF5QixPQUFPO0lBQzlFLE9BQU87UUFDTEMsT0FBT0MsT0FBT04sSUFBSUcsSUFBSSxDQUFDRSxLQUFLLElBQUk7UUFDaENFLFVBQVVELE9BQU9OLElBQUlHLElBQUksQ0FBQ0ksUUFBUSxJQUFJO1FBQ3RDQyxTQUFTUixJQUFJRyxJQUFJLENBQUNLLE9BQU8sSUFBSTtJQUMvQjtBQUNGIn0=

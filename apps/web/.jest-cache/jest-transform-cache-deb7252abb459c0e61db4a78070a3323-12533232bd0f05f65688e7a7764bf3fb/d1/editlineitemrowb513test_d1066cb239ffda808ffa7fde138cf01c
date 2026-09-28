@@ -1,0 +1,84 @@
+1e73fdab8145058f0dded93e7d9b594f
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _fs = /*#__PURE__*/ _interop_require_default(require("fs"));
+const _path = /*#__PURE__*/ _interop_require_default(require("path"));
+function _interop_require_default(obj) {
+    return obj && obj.__esModule ? obj : {
+        default: obj
+    };
+}
+/**
+ * B513 (C2 390px audit): the DRAFT-bill edit-mode line-item row used a
+ * hardcoded `grid-cols-[1fr_72px_72px_100px_32px]` — 276px of fixed tracks
+ * alone, no scroll wrapper anywhere in the ancestor chain — which overflowed
+ * a 390px card regardless of content (a STATIC fact, unlike the orders
+ * edit-row counterpart audited alongside it, which needs a real-browser
+ * confirmation before any fix and is intentionally NOT touched here). This
+ * pins the responsive stack: one column below `sm`, the original fixed grid
+ * at `sm` and up.
+ *
+ * B535 note: the delete-button assertion below used to pin the FULL
+ * `className` source string. B535 (44x44 tap-target work, additive) wraps
+ * it in `cn(TAP_TARGET, "...")` and drops the now-redundant explicit `h-9`
+ * in favor of TAP_TARGET's own min-h/min-w sizing — neither of which is
+ * what B513 was about (row-stacking alignment, not button height). A
+ * full-string match breaks on that additive change, so this now extracts
+ * the button's whole opening JSX tag (anchored on its unique `title`
+ * attribute) and asserts the specific re-alignment tokens B513 depends on.
+ */ function read() {
+    return _fs.default.readFileSync(_path.default.join(__dirname, "[id]", "page.tsx"), "utf8");
+}
+/**
+ * Index of the `>` that closes a JSX opening tag, scanning forward from
+ * `fromIndex`. Skips `=>` (arrow functions inside prop expressions) so it
+ * doesn't stop early on an onClick/onChange handler.
+ */ function closingAngleIndex(src, fromIndex) {
+    let i = fromIndex;
+    while(i < src.length){
+        const idx = src.indexOf(">", i);
+        if (idx === -1) throw new Error("no closing '>' found");
+        if (src[idx - 1] !== "=") return idx;
+        i = idx + 1;
+    }
+    throw new Error("no closing '>' found");
+}
+/**
+ * Extracts a `<button ...>` element's full opening tag text, located by a
+ * unique marker string inside it (e.g. `title="Remove line"`). Anchoring on
+ * the tag boundaries rather than a full className string means the
+ * assertion survives attribute reordering or additive wrapper calls
+ * (`cn(TAP_TARGET, ...)`) — it only cares what ends up in the rendered tag.
+ */ function extractButtonOpenTag(src, marker) {
+    const markerIndex = src.indexOf(marker);
+    if (markerIndex === -1) throw new Error(`marker not found: ${marker}`);
+    const tagStart = src.lastIndexOf("<button", markerIndex);
+    if (tagStart === -1) throw new Error(`no <button before marker: ${marker}`);
+    const tagEnd = closingAngleIndex(src, markerIndex + marker.length);
+    return src.slice(tagStart, tagEnd + 1);
+}
+describe("B513 — vendor-bill edit-mode line-item row stacks on mobile", ()=>{
+    it("the row grid is single-column below sm, fixed-track grid at sm and up", ()=>{
+        const src = read();
+        expect(src).toContain('className="grid grid-cols-1 items-start gap-2 sm:grid-cols-[1fr_72px_72px_100px_32px]"');
+        expect(src).not.toContain('className="grid grid-cols-[1fr_72px_72px_100px_32px] gap-2 items-start"');
+    });
+    it("the row delete button re-aligns for the stacked layout instead of floating mid-row", ()=>{
+        const src = read();
+        const deleteTag = extractButtonOpenTag(src, 'title="Remove line"');
+        // These are the tokens the B513 fix actually depends on: the button
+        // sits at the row's own top margin and floats to the row's end below
+        // `sm` (stacked layout), then reverts to a taller top margin and
+        // auto-alignment at `sm` and up (fixed-grid layout). Losing any one of
+        // them puts the delete control back to floating mid-row on a stacked
+        // card, which is the B513 regression.
+        expect(deleteTag).toMatch(/\bmt-1\b/);
+        expect(deleteTag).toMatch(/\bjustify-self-end\b/);
+        expect(deleteTag).toMatch(/\bsm:mt-6\b/);
+        expect(deleteTag).toMatch(/\bsm:justify-self-auto\b/);
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS92ZW5kb3ItYmlsbHMvZWRpdC1saW5lLWl0ZW0tcm93LWI1MTMudGVzdC50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgZnMgZnJvbSBcImZzXCI7XG5pbXBvcnQgcGF0aCBmcm9tIFwicGF0aFwiO1xuXG4vKipcbiAqIEI1MTMgKEMyIDM5MHB4IGF1ZGl0KTogdGhlIERSQUZULWJpbGwgZWRpdC1tb2RlIGxpbmUtaXRlbSByb3cgdXNlZCBhXG4gKiBoYXJkY29kZWQgYGdyaWQtY29scy1bMWZyXzcycHhfNzJweF8xMDBweF8zMnB4XWAg4oCUIDI3NnB4IG9mIGZpeGVkIHRyYWNrc1xuICogYWxvbmUsIG5vIHNjcm9sbCB3cmFwcGVyIGFueXdoZXJlIGluIHRoZSBhbmNlc3RvciBjaGFpbiDigJQgd2hpY2ggb3ZlcmZsb3dlZFxuICogYSAzOTBweCBjYXJkIHJlZ2FyZGxlc3Mgb2YgY29udGVudCAoYSBTVEFUSUMgZmFjdCwgdW5saWtlIHRoZSBvcmRlcnNcbiAqIGVkaXQtcm93IGNvdW50ZXJwYXJ0IGF1ZGl0ZWQgYWxvbmdzaWRlIGl0LCB3aGljaCBuZWVkcyBhIHJlYWwtYnJvd3NlclxuICogY29uZmlybWF0aW9uIGJlZm9yZSBhbnkgZml4IGFuZCBpcyBpbnRlbnRpb25hbGx5IE5PVCB0b3VjaGVkIGhlcmUpLiBUaGlzXG4gKiBwaW5zIHRoZSByZXNwb25zaXZlIHN0YWNrOiBvbmUgY29sdW1uIGJlbG93IGBzbWAsIHRoZSBvcmlnaW5hbCBmaXhlZCBncmlkXG4gKiBhdCBgc21gIGFuZCB1cC5cbiAqXG4gKiBCNTM1IG5vdGU6IHRoZSBkZWxldGUtYnV0dG9uIGFzc2VydGlvbiBiZWxvdyB1c2VkIHRvIHBpbiB0aGUgRlVMTFxuICogYGNsYXNzTmFtZWAgc291cmNlIHN0cmluZy4gQjUzNSAoNDR4NDQgdGFwLXRhcmdldCB3b3JrLCBhZGRpdGl2ZSkgd3JhcHNcbiAqIGl0IGluIGBjbihUQVBfVEFSR0VULCBcIi4uLlwiKWAgYW5kIGRyb3BzIHRoZSBub3ctcmVkdW5kYW50IGV4cGxpY2l0IGBoLTlgXG4gKiBpbiBmYXZvciBvZiBUQVBfVEFSR0VUJ3Mgb3duIG1pbi1oL21pbi13IHNpemluZyDigJQgbmVpdGhlciBvZiB3aGljaCBpc1xuICogd2hhdCBCNTEzIHdhcyBhYm91dCAocm93LXN0YWNraW5nIGFsaWdubWVudCwgbm90IGJ1dHRvbiBoZWlnaHQpLiBBXG4gKiBmdWxsLXN0cmluZyBtYXRjaCBicmVha3Mgb24gdGhhdCBhZGRpdGl2ZSBjaGFuZ2UsIHNvIHRoaXMgbm93IGV4dHJhY3RzXG4gKiB0aGUgYnV0dG9uJ3Mgd2hvbGUgb3BlbmluZyBKU1ggdGFnIChhbmNob3JlZCBvbiBpdHMgdW5pcXVlIGB0aXRsZWBcbiAqIGF0dHJpYnV0ZSkgYW5kIGFzc2VydHMgdGhlIHNwZWNpZmljIHJlLWFsaWdubWVudCB0b2tlbnMgQjUxMyBkZXBlbmRzIG9uLlxuICovXG5mdW5jdGlvbiByZWFkKCk6IHN0cmluZyB7XG4gIHJldHVybiBmcy5yZWFkRmlsZVN5bmMocGF0aC5qb2luKF9fZGlybmFtZSwgXCJbaWRdXCIsIFwicGFnZS50c3hcIiksIFwidXRmOFwiKTtcbn1cblxuLyoqXG4gKiBJbmRleCBvZiB0aGUgYD5gIHRoYXQgY2xvc2VzIGEgSlNYIG9wZW5pbmcgdGFnLCBzY2FubmluZyBmb3J3YXJkIGZyb21cbiAqIGBmcm9tSW5kZXhgLiBTa2lwcyBgPT5gIChhcnJvdyBmdW5jdGlvbnMgaW5zaWRlIHByb3AgZXhwcmVzc2lvbnMpIHNvIGl0XG4gKiBkb2Vzbid0IHN0b3AgZWFybHkgb24gYW4gb25DbGljay9vbkNoYW5nZSBoYW5kbGVyLlxuICovXG5mdW5jdGlvbiBjbG9zaW5nQW5nbGVJbmRleChzcmM6IHN0cmluZywgZnJvbUluZGV4OiBudW1iZXIpOiBudW1iZXIge1xuICBsZXQgaSA9IGZyb21JbmRleDtcbiAgd2hpbGUgKGkgPCBzcmMubGVuZ3RoKSB7XG4gICAgY29uc3QgaWR4ID0gc3JjLmluZGV4T2YoXCI+XCIsIGkpO1xuICAgIGlmIChpZHggPT09IC0xKSB0aHJvdyBuZXcgRXJyb3IoXCJubyBjbG9zaW5nICc+JyBmb3VuZFwiKTtcbiAgICBpZiAoc3JjW2lkeCAtIDFdICE9PSBcIj1cIikgcmV0dXJuIGlkeDtcbiAgICBpID0gaWR4ICsgMTtcbiAgfVxuICB0aHJvdyBuZXcgRXJyb3IoXCJubyBjbG9zaW5nICc+JyBmb3VuZFwiKTtcbn1cblxuLyoqXG4gKiBFeHRyYWN0cyBhIGA8YnV0dG9uIC4uLj5gIGVsZW1lbnQncyBmdWxsIG9wZW5pbmcgdGFnIHRleHQsIGxvY2F0ZWQgYnkgYVxuICogdW5pcXVlIG1hcmtlciBzdHJpbmcgaW5zaWRlIGl0IChlLmcuIGB0aXRsZT1cIlJlbW92ZSBsaW5lXCJgKS4gQW5jaG9yaW5nIG9uXG4gKiB0aGUgdGFnIGJvdW5kYXJpZXMgcmF0aGVyIHRoYW4gYSBmdWxsIGNsYXNzTmFtZSBzdHJpbmcgbWVhbnMgdGhlXG4gKiBhc3NlcnRpb24gc3Vydml2ZXMgYXR0cmlidXRlIHJlb3JkZXJpbmcgb3IgYWRkaXRpdmUgd3JhcHBlciBjYWxsc1xuICogKGBjbihUQVBfVEFSR0VULCAuLi4pYCkg4oCUIGl0IG9ubHkgY2FyZXMgd2hhdCBlbmRzIHVwIGluIHRoZSByZW5kZXJlZCB0YWcuXG4gKi9cbmZ1bmN0aW9uIGV4dHJhY3RCdXR0b25PcGVuVGFnKHNyYzogc3RyaW5nLCBtYXJrZXI6IHN0cmluZyk6IHN0cmluZyB7XG4gIGNvbnN0IG1hcmtlckluZGV4ID0gc3JjLmluZGV4T2YobWFya2VyKTtcbiAgaWYgKG1hcmtlckluZGV4ID09PSAtMSkgdGhyb3cgbmV3IEVycm9yKGBtYXJrZXIgbm90IGZvdW5kOiAke21hcmtlcn1gKTtcbiAgY29uc3QgdGFnU3RhcnQgPSBzcmMubGFzdEluZGV4T2YoXCI8YnV0dG9uXCIsIG1hcmtlckluZGV4KTtcbiAgaWYgKHRhZ1N0YXJ0ID09PSAtMSkgdGhyb3cgbmV3IEVycm9yKGBubyA8YnV0dG9uIGJlZm9yZSBtYXJrZXI6ICR7bWFya2VyfWApO1xuICBjb25zdCB0YWdFbmQgPSBjbG9zaW5nQW5nbGVJbmRleChzcmMsIG1hcmtlckluZGV4ICsgbWFya2VyLmxlbmd0aCk7XG4gIHJldHVybiBzcmMuc2xpY2UodGFnU3RhcnQsIHRhZ0VuZCArIDEpO1xufVxuXG5kZXNjcmliZShcIkI1MTMg4oCUIHZlbmRvci1iaWxsIGVkaXQtbW9kZSBsaW5lLWl0ZW0gcm93IHN0YWNrcyBvbiBtb2JpbGVcIiwgKCkgPT4ge1xuICBpdChcInRoZSByb3cgZ3JpZCBpcyBzaW5nbGUtY29sdW1uIGJlbG93IHNtLCBmaXhlZC10cmFjayBncmlkIGF0IHNtIGFuZCB1cFwiLCAoKSA9PiB7XG4gICAgY29uc3Qgc3JjID0gcmVhZCgpO1xuICAgIGV4cGVjdChzcmMpLnRvQ29udGFpbihcbiAgICAgICdjbGFzc05hbWU9XCJncmlkIGdyaWQtY29scy0xIGl0ZW1zLXN0YXJ0IGdhcC0yIHNtOmdyaWQtY29scy1bMWZyXzcycHhfNzJweF8xMDBweF8zMnB4XVwiJyxcbiAgICApO1xuICAgIGV4cGVjdChzcmMpLm5vdC50b0NvbnRhaW4oXG4gICAgICAnY2xhc3NOYW1lPVwiZ3JpZCBncmlkLWNvbHMtWzFmcl83MnB4XzcycHhfMTAwcHhfMzJweF0gZ2FwLTIgaXRlbXMtc3RhcnRcIicsXG4gICAgKTtcbiAgfSk7XG5cbiAgaXQoXCJ0aGUgcm93IGRlbGV0ZSBidXR0b24gcmUtYWxpZ25zIGZvciB0aGUgc3RhY2tlZCBsYXlvdXQgaW5zdGVhZCBvZiBmbG9hdGluZyBtaWQtcm93XCIsICgpID0+IHtcbiAgICBjb25zdCBzcmMgPSByZWFkKCk7XG4gICAgY29uc3QgZGVsZXRlVGFnID0gZXh0cmFjdEJ1dHRvbk9wZW5UYWcoc3JjLCAndGl0bGU9XCJSZW1vdmUgbGluZVwiJyk7XG4gICAgLy8gVGhlc2UgYXJlIHRoZSB0b2tlbnMgdGhlIEI1MTMgZml4IGFjdHVhbGx5IGRlcGVuZHMgb246IHRoZSBidXR0b25cbiAgICAvLyBzaXRzIGF0IHRoZSByb3cncyBvd24gdG9wIG1hcmdpbiBhbmQgZmxvYXRzIHRvIHRoZSByb3cncyBlbmQgYmVsb3dcbiAgICAvLyBgc21gIChzdGFja2VkIGxheW91dCksIHRoZW4gcmV2ZXJ0cyB0byBhIHRhbGxlciB0b3AgbWFyZ2luIGFuZFxuICAgIC8vIGF1dG8tYWxpZ25tZW50IGF0IGBzbWAgYW5kIHVwIChmaXhlZC1ncmlkIGxheW91dCkuIExvc2luZyBhbnkgb25lIG9mXG4gICAgLy8gdGhlbSBwdXRzIHRoZSBkZWxldGUgY29udHJvbCBiYWNrIHRvIGZsb2F0aW5nIG1pZC1yb3cgb24gYSBzdGFja2VkXG4gICAgLy8gY2FyZCwgd2hpY2ggaXMgdGhlIEI1MTMgcmVncmVzc2lvbi5cbiAgICBleHBlY3QoZGVsZXRlVGFnKS50b01hdGNoKC9cXGJtdC0xXFxiLyk7XG4gICAgZXhwZWN0KGRlbGV0ZVRhZykudG9NYXRjaCgvXFxianVzdGlmeS1zZWxmLWVuZFxcYi8pO1xuICAgIGV4cGVjdChkZWxldGVUYWcpLnRvTWF0Y2goL1xcYnNtOm10LTZcXGIvKTtcbiAgICBleHBlY3QoZGVsZXRlVGFnKS50b01hdGNoKC9cXGJzbTpqdXN0aWZ5LXNlbGYtYXV0b1xcYi8pO1xuICB9KTtcbn0pO1xuIl0sIm5hbWVzIjpbInJlYWQiLCJmcyIsInJlYWRGaWxlU3luYyIsInBhdGgiLCJqb2luIiwiX19kaXJuYW1lIiwiY2xvc2luZ0FuZ2xlSW5kZXgiLCJzcmMiLCJmcm9tSW5kZXgiLCJpIiwibGVuZ3RoIiwiaWR4IiwiaW5kZXhPZiIsIkVycm9yIiwiZXh0cmFjdEJ1dHRvbk9wZW5UYWciLCJtYXJrZXIiLCJtYXJrZXJJbmRleCIsInRhZ1N0YXJ0IiwibGFzdEluZGV4T2YiLCJ0YWdFbmQiLCJzbGljZSIsImRlc2NyaWJlIiwiaXQiLCJleHBlY3QiLCJ0b0NvbnRhaW4iLCJub3QiLCJkZWxldGVUYWciLCJ0b01hdGNoIl0sIm1hcHBpbmdzIjoiOzs7OzJEQUFlOzZEQUNFOzs7Ozs7QUFFakI7Ozs7Ozs7Ozs7Ozs7Ozs7OztDQWtCQyxHQUNELFNBQVNBO0lBQ1AsT0FBT0MsV0FBRSxDQUFDQyxZQUFZLENBQUNDLGFBQUksQ0FBQ0MsSUFBSSxDQUFDQyxXQUFXLFFBQVEsYUFBYTtBQUNuRTtBQUVBOzs7O0NBSUMsR0FDRCxTQUFTQyxrQkFBa0JDLEdBQVcsRUFBRUMsU0FBaUI7SUFDdkQsSUFBSUMsSUFBSUQ7SUFDUixNQUFPQyxJQUFJRixJQUFJRyxNQUFNLENBQUU7UUFDckIsTUFBTUMsTUFBTUosSUFBSUssT0FBTyxDQUFDLEtBQUtIO1FBQzdCLElBQUlFLFFBQVEsQ0FBQyxHQUFHLE1BQU0sSUFBSUUsTUFBTTtRQUNoQyxJQUFJTixHQUFHLENBQUNJLE1BQU0sRUFBRSxLQUFLLEtBQUssT0FBT0E7UUFDakNGLElBQUlFLE1BQU07SUFDWjtJQUNBLE1BQU0sSUFBSUUsTUFBTTtBQUNsQjtBQUVBOzs7Ozs7Q0FNQyxHQUNELFNBQVNDLHFCQUFxQlAsR0FBVyxFQUFFUSxNQUFjO0lBQ3ZELE1BQU1DLGNBQWNULElBQUlLLE9BQU8sQ0FBQ0c7SUFDaEMsSUFBSUMsZ0JBQWdCLENBQUMsR0FBRyxNQUFNLElBQUlILE1BQU0sQ0FBQyxrQkFBa0IsRUFBRUUsUUFBUTtJQUNyRSxNQUFNRSxXQUFXVixJQUFJVyxXQUFXLENBQUMsV0FBV0Y7SUFDNUMsSUFBSUMsYUFBYSxDQUFDLEdBQUcsTUFBTSxJQUFJSixNQUFNLENBQUMsMEJBQTBCLEVBQUVFLFFBQVE7SUFDMUUsTUFBTUksU0FBU2Isa0JBQWtCQyxLQUFLUyxjQUFjRCxPQUFPTCxNQUFNO0lBQ2pFLE9BQU9ILElBQUlhLEtBQUssQ0FBQ0gsVUFBVUUsU0FBUztBQUN0QztBQUVBRSxTQUFTLCtEQUErRDtJQUN0RUMsR0FBRyx5RUFBeUU7UUFDMUUsTUFBTWYsTUFBTVA7UUFDWnVCLE9BQU9oQixLQUFLaUIsU0FBUyxDQUNuQjtRQUVGRCxPQUFPaEIsS0FBS2tCLEdBQUcsQ0FBQ0QsU0FBUyxDQUN2QjtJQUVKO0lBRUFGLEdBQUcsc0ZBQXNGO1FBQ3ZGLE1BQU1mLE1BQU1QO1FBQ1osTUFBTTBCLFlBQVlaLHFCQUFxQlAsS0FBSztRQUM1QyxvRUFBb0U7UUFDcEUscUVBQXFFO1FBQ3JFLGlFQUFpRTtRQUNqRSx1RUFBdUU7UUFDdkUscUVBQXFFO1FBQ3JFLHNDQUFzQztRQUN0Q2dCLE9BQU9HLFdBQVdDLE9BQU8sQ0FBQztRQUMxQkosT0FBT0csV0FBV0MsT0FBTyxDQUFDO1FBQzFCSixPQUFPRyxXQUFXQyxPQUFPLENBQUM7UUFDMUJKLE9BQU9HLFdBQVdDLE9BQU8sQ0FBQztJQUM1QjtBQUNGIn0=

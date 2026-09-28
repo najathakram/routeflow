@@ -1,0 +1,111 @@
+0d8840753c9fe9f547044e7e42b1424a
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _page = require("./page");
+function payment(overrides) {
+    return {
+        id: "pay-1",
+        amount: 0,
+        method: "CASH",
+        status: "PAID",
+        createdAt: "2026-09-01T00:00:00.000Z",
+        ...overrides
+    };
+}
+function invoice(overrides) {
+    return {
+        total: 870,
+        payments: [],
+        ...overrides
+    };
+}
+describe("resolveInvoiceListBalance (B421)", ()=>{
+    it("REG-B421 (worst instance): a credit-note application no longer collapses the balance to 0", ()=>{
+        // Before the fix, `paid` summed EVERY payment row with no status or
+        // method filter at all -- a $638 CREDIT_NOTE row alone made an $870
+        // invoice look fully paid off. It should still owe $232.
+        const inv = invoice({
+            payments: [
+                payment({
+                    amount: 638,
+                    method: "CREDIT_NOTE"
+                })
+            ]
+        });
+        expect((0, _page.resolveInvoiceListBalance)(inv)).toBe(232);
+    });
+    it("REG-B421: an ADVANCE application reduces the balance the same way, never counted as cash", ()=>{
+        const inv = invoice({
+            payments: [
+                payment({
+                    amount: 100,
+                    method: "ADVANCE"
+                })
+            ]
+        });
+        expect((0, _page.resolveInvoiceListBalance)(inv)).toBe(770);
+    });
+    it("REG-B421: a DRAFT payment is never counted toward the balance (the old bug had no status filter)", ()=>{
+        const inv = invoice({
+            payments: [
+                payment({
+                    amount: 500,
+                    method: "CASH",
+                    status: "DRAFT"
+                })
+            ]
+        });
+        expect((0, _page.resolveInvoiceListBalance)(inv)).toBe(870);
+    });
+    it("REG-B421: a VOID payment is never counted toward the balance", ()=>{
+        const inv = invoice({
+            payments: [
+                payment({
+                    amount: 500,
+                    method: "CASH",
+                    status: "VOID"
+                })
+            ]
+        });
+        expect((0, _page.resolveInvoiceListBalance)(inv)).toBe(870);
+    });
+    it("prefers the server's own balanceDue when present, ignoring payments entirely", ()=>{
+        const inv = invoice({
+            balanceDue: 50,
+            payments: [
+                payment({
+                    amount: 999999,
+                    method: "CASH"
+                })
+            ]
+        });
+        expect((0, _page.resolveInvoiceListBalance)(inv)).toBe(50);
+    });
+    it("a real cash payment still reduces the balance normally", ()=>{
+        const inv = invoice({
+            payments: [
+                payment({
+                    amount: 232,
+                    method: "CASH"
+                })
+            ]
+        });
+        expect((0, _page.resolveInvoiceListBalance)(inv)).toBe(638);
+    });
+    it("never goes negative", ()=>{
+        const inv = invoice({
+            total: 100,
+            payments: [
+                payment({
+                    amount: 150,
+                    method: "CASH"
+                })
+            ]
+        });
+        expect((0, _page.resolveInvoiceListBalance)(inv)).toBe(0);
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS9pbnZvaWNlcy9yZXNvbHZlLWludm9pY2UtbGlzdC1iYWxhbmNlLnRlc3QudHMiXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IHsgcmVzb2x2ZUludm9pY2VMaXN0QmFsYW5jZSB9IGZyb20gXCIuL3BhZ2VcIjtcbmltcG9ydCB0eXBlIHsgSW52b2ljZSwgSW52b2ljZVBheW1lbnQgfSBmcm9tIFwiQC9saWIvYXBpL2ludm9pY2VzXCI7XG5cbmZ1bmN0aW9uIHBheW1lbnQob3ZlcnJpZGVzOiBQYXJ0aWFsPEludm9pY2VQYXltZW50Pik6IEludm9pY2VQYXltZW50IHtcbiAgcmV0dXJuIHtcbiAgICBpZDogXCJwYXktMVwiLFxuICAgIGFtb3VudDogMCxcbiAgICBtZXRob2Q6IFwiQ0FTSFwiLFxuICAgIHN0YXR1czogXCJQQUlEXCIsXG4gICAgY3JlYXRlZEF0OiBcIjIwMjYtMDktMDFUMDA6MDA6MDAuMDAwWlwiLFxuICAgIC4uLm92ZXJyaWRlcyxcbiAgfSBhcyBJbnZvaWNlUGF5bWVudDtcbn1cblxuZnVuY3Rpb24gaW52b2ljZShcbiAgb3ZlcnJpZGVzOiBQYXJ0aWFsPEludm9pY2U+LFxuKTogUGljazxcbiAgSW52b2ljZSxcbiAgXCJ0b3RhbFwiIHwgXCJiYWxhbmNlRHVlXCIgfCBcInBhaWRBbW91bnRcIiB8IFwiY3JlZGl0QXBwbGllZFwiIHwgXCJhZHZhbmNlQXBwbGllZFwiIHwgXCJwYXltZW50c1wiXG4+IHtcbiAgcmV0dXJuIHsgdG90YWw6IDg3MCwgcGF5bWVudHM6IFtdLCAuLi5vdmVycmlkZXMgfTtcbn1cblxuZGVzY3JpYmUoXCJyZXNvbHZlSW52b2ljZUxpc3RCYWxhbmNlIChCNDIxKVwiLCAoKSA9PiB7XG4gIGl0KFwiUkVHLUI0MjEgKHdvcnN0IGluc3RhbmNlKTogYSBjcmVkaXQtbm90ZSBhcHBsaWNhdGlvbiBubyBsb25nZXIgY29sbGFwc2VzIHRoZSBiYWxhbmNlIHRvIDBcIiwgKCkgPT4ge1xuICAgIC8vIEJlZm9yZSB0aGUgZml4LCBgcGFpZGAgc3VtbWVkIEVWRVJZIHBheW1lbnQgcm93IHdpdGggbm8gc3RhdHVzIG9yXG4gICAgLy8gbWV0aG9kIGZpbHRlciBhdCBhbGwgLS0gYSAkNjM4IENSRURJVF9OT1RFIHJvdyBhbG9uZSBtYWRlIGFuICQ4NzBcbiAgICAvLyBpbnZvaWNlIGxvb2sgZnVsbHkgcGFpZCBvZmYuIEl0IHNob3VsZCBzdGlsbCBvd2UgJDIzMi5cbiAgICBjb25zdCBpbnYgPSBpbnZvaWNlKHtcbiAgICAgIHBheW1lbnRzOiBbcGF5bWVudCh7IGFtb3VudDogNjM4LCBtZXRob2Q6IFwiQ1JFRElUX05PVEVcIiB9KV0sXG4gICAgfSk7XG4gICAgZXhwZWN0KHJlc29sdmVJbnZvaWNlTGlzdEJhbGFuY2UoaW52KSkudG9CZSgyMzIpO1xuICB9KTtcblxuICBpdChcIlJFRy1CNDIxOiBhbiBBRFZBTkNFIGFwcGxpY2F0aW9uIHJlZHVjZXMgdGhlIGJhbGFuY2UgdGhlIHNhbWUgd2F5LCBuZXZlciBjb3VudGVkIGFzIGNhc2hcIiwgKCkgPT4ge1xuICAgIGNvbnN0IGludiA9IGludm9pY2Uoe1xuICAgICAgcGF5bWVudHM6IFtwYXltZW50KHsgYW1vdW50OiAxMDAsIG1ldGhvZDogXCJBRFZBTkNFXCIgfSldLFxuICAgIH0pO1xuICAgIGV4cGVjdChyZXNvbHZlSW52b2ljZUxpc3RCYWxhbmNlKGludikpLnRvQmUoNzcwKTtcbiAgfSk7XG5cbiAgaXQoXCJSRUctQjQyMTogYSBEUkFGVCBwYXltZW50IGlzIG5ldmVyIGNvdW50ZWQgdG93YXJkIHRoZSBiYWxhbmNlICh0aGUgb2xkIGJ1ZyBoYWQgbm8gc3RhdHVzIGZpbHRlcilcIiwgKCkgPT4ge1xuICAgIGNvbnN0IGludiA9IGludm9pY2Uoe1xuICAgICAgcGF5bWVudHM6IFtwYXltZW50KHsgYW1vdW50OiA1MDAsIG1ldGhvZDogXCJDQVNIXCIsIHN0YXR1czogXCJEUkFGVFwiIH0pXSxcbiAgICB9KTtcbiAgICBleHBlY3QocmVzb2x2ZUludm9pY2VMaXN0QmFsYW5jZShpbnYpKS50b0JlKDg3MCk7XG4gIH0pO1xuXG4gIGl0KFwiUkVHLUI0MjE6IGEgVk9JRCBwYXltZW50IGlzIG5ldmVyIGNvdW50ZWQgdG93YXJkIHRoZSBiYWxhbmNlXCIsICgpID0+IHtcbiAgICBjb25zdCBpbnYgPSBpbnZvaWNlKHtcbiAgICAgIHBheW1lbnRzOiBbcGF5bWVudCh7IGFtb3VudDogNTAwLCBtZXRob2Q6IFwiQ0FTSFwiLCBzdGF0dXM6IFwiVk9JRFwiIH0pXSxcbiAgICB9KTtcbiAgICBleHBlY3QocmVzb2x2ZUludm9pY2VMaXN0QmFsYW5jZShpbnYpKS50b0JlKDg3MCk7XG4gIH0pO1xuXG4gIGl0KFwicHJlZmVycyB0aGUgc2VydmVyJ3Mgb3duIGJhbGFuY2VEdWUgd2hlbiBwcmVzZW50LCBpZ25vcmluZyBwYXltZW50cyBlbnRpcmVseVwiLCAoKSA9PiB7XG4gICAgY29uc3QgaW52ID0gaW52b2ljZSh7XG4gICAgICBiYWxhbmNlRHVlOiA1MCxcbiAgICAgIHBheW1lbnRzOiBbcGF5bWVudCh7IGFtb3VudDogOTk5OTk5LCBtZXRob2Q6IFwiQ0FTSFwiIH0pXSxcbiAgICB9KTtcbiAgICBleHBlY3QocmVzb2x2ZUludm9pY2VMaXN0QmFsYW5jZShpbnYpKS50b0JlKDUwKTtcbiAgfSk7XG5cbiAgaXQoXCJhIHJlYWwgY2FzaCBwYXltZW50IHN0aWxsIHJlZHVjZXMgdGhlIGJhbGFuY2Ugbm9ybWFsbHlcIiwgKCkgPT4ge1xuICAgIGNvbnN0IGludiA9IGludm9pY2Uoe1xuICAgICAgcGF5bWVudHM6IFtwYXltZW50KHsgYW1vdW50OiAyMzIsIG1ldGhvZDogXCJDQVNIXCIgfSldLFxuICAgIH0pO1xuICAgIGV4cGVjdChyZXNvbHZlSW52b2ljZUxpc3RCYWxhbmNlKGludikpLnRvQmUoNjM4KTtcbiAgfSk7XG5cbiAgaXQoXCJuZXZlciBnb2VzIG5lZ2F0aXZlXCIsICgpID0+IHtcbiAgICBjb25zdCBpbnYgPSBpbnZvaWNlKHtcbiAgICAgIHRvdGFsOiAxMDAsXG4gICAgICBwYXltZW50czogW3BheW1lbnQoeyBhbW91bnQ6IDE1MCwgbWV0aG9kOiBcIkNBU0hcIiB9KV0sXG4gICAgfSk7XG4gICAgZXhwZWN0KHJlc29sdmVJbnZvaWNlTGlzdEJhbGFuY2UoaW52KSkudG9CZSgwKTtcbiAgfSk7XG59KTtcbiJdLCJuYW1lcyI6WyJwYXltZW50Iiwib3ZlcnJpZGVzIiwiaWQiLCJhbW91bnQiLCJtZXRob2QiLCJzdGF0dXMiLCJjcmVhdGVkQXQiLCJpbnZvaWNlIiwidG90YWwiLCJwYXltZW50cyIsImRlc2NyaWJlIiwiaXQiLCJpbnYiLCJleHBlY3QiLCJyZXNvbHZlSW52b2ljZUxpc3RCYWxhbmNlIiwidG9CZSIsImJhbGFuY2VEdWUiXSwibWFwcGluZ3MiOiI7Ozs7c0JBQTBDO0FBRzFDLFNBQVNBLFFBQVFDLFNBQWtDO0lBQ2pELE9BQU87UUFDTEMsSUFBSTtRQUNKQyxRQUFRO1FBQ1JDLFFBQVE7UUFDUkMsUUFBUTtRQUNSQyxXQUFXO1FBQ1gsR0FBR0wsU0FBUztJQUNkO0FBQ0Y7QUFFQSxTQUFTTSxRQUNQTixTQUEyQjtJQUszQixPQUFPO1FBQUVPLE9BQU87UUFBS0MsVUFBVSxFQUFFO1FBQUUsR0FBR1IsU0FBUztJQUFDO0FBQ2xEO0FBRUFTLFNBQVMsb0NBQW9DO0lBQzNDQyxHQUFHLDZGQUE2RjtRQUM5RixvRUFBb0U7UUFDcEUsb0VBQW9FO1FBQ3BFLHlEQUF5RDtRQUN6RCxNQUFNQyxNQUFNTCxRQUFRO1lBQ2xCRSxVQUFVO2dCQUFDVCxRQUFRO29CQUFFRyxRQUFRO29CQUFLQyxRQUFRO2dCQUFjO2FBQUc7UUFDN0Q7UUFDQVMsT0FBT0MsSUFBQUEsK0JBQXlCLEVBQUNGLE1BQU1HLElBQUksQ0FBQztJQUM5QztJQUVBSixHQUFHLDRGQUE0RjtRQUM3RixNQUFNQyxNQUFNTCxRQUFRO1lBQ2xCRSxVQUFVO2dCQUFDVCxRQUFRO29CQUFFRyxRQUFRO29CQUFLQyxRQUFRO2dCQUFVO2FBQUc7UUFDekQ7UUFDQVMsT0FBT0MsSUFBQUEsK0JBQXlCLEVBQUNGLE1BQU1HLElBQUksQ0FBQztJQUM5QztJQUVBSixHQUFHLG9HQUFvRztRQUNyRyxNQUFNQyxNQUFNTCxRQUFRO1lBQ2xCRSxVQUFVO2dCQUFDVCxRQUFRO29CQUFFRyxRQUFRO29CQUFLQyxRQUFRO29CQUFRQyxRQUFRO2dCQUFRO2FBQUc7UUFDdkU7UUFDQVEsT0FBT0MsSUFBQUEsK0JBQXlCLEVBQUNGLE1BQU1HLElBQUksQ0FBQztJQUM5QztJQUVBSixHQUFHLGdFQUFnRTtRQUNqRSxNQUFNQyxNQUFNTCxRQUFRO1lBQ2xCRSxVQUFVO2dCQUFDVCxRQUFRO29CQUFFRyxRQUFRO29CQUFLQyxRQUFRO29CQUFRQyxRQUFRO2dCQUFPO2FBQUc7UUFDdEU7UUFDQVEsT0FBT0MsSUFBQUEsK0JBQXlCLEVBQUNGLE1BQU1HLElBQUksQ0FBQztJQUM5QztJQUVBSixHQUFHLGdGQUFnRjtRQUNqRixNQUFNQyxNQUFNTCxRQUFRO1lBQ2xCUyxZQUFZO1lBQ1pQLFVBQVU7Z0JBQUNULFFBQVE7b0JBQUVHLFFBQVE7b0JBQVFDLFFBQVE7Z0JBQU87YUFBRztRQUN6RDtRQUNBUyxPQUFPQyxJQUFBQSwrQkFBeUIsRUFBQ0YsTUFBTUcsSUFBSSxDQUFDO0lBQzlDO0lBRUFKLEdBQUcsMERBQTBEO1FBQzNELE1BQU1DLE1BQU1MLFFBQVE7WUFDbEJFLFVBQVU7Z0JBQUNULFFBQVE7b0JBQUVHLFFBQVE7b0JBQUtDLFFBQVE7Z0JBQU87YUFBRztRQUN0RDtRQUNBUyxPQUFPQyxJQUFBQSwrQkFBeUIsRUFBQ0YsTUFBTUcsSUFBSSxDQUFDO0lBQzlDO0lBRUFKLEdBQUcsdUJBQXVCO1FBQ3hCLE1BQU1DLE1BQU1MLFFBQVE7WUFDbEJDLE9BQU87WUFDUEMsVUFBVTtnQkFBQ1QsUUFBUTtvQkFBRUcsUUFBUTtvQkFBS0MsUUFBUTtnQkFBTzthQUFHO1FBQ3REO1FBQ0FTLE9BQU9DLElBQUFBLCtCQUF5QixFQUFDRixNQUFNRyxJQUFJLENBQUM7SUFDOUM7QUFDRiJ9

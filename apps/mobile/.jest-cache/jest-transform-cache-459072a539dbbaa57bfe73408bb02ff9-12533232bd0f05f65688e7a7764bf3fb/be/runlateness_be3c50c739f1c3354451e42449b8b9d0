@@ -1,0 +1,50 @@
+ce9f02284ee434cc232bb1b99024c191
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.isRunPastDue = isRunPastDue;
+const calendar_date_1 = require("./calendar-date");
+/**
+ * Late-route predicate for the operator Exceptions screen — extracted verbatim from
+ * `app/(operator)/exceptions.tsx`'s late-route loop (see B90) so it is directly testable.
+ * `now` replaces the inline `new Date()` so the caller controls "current time" in tests;
+ * the comparison itself is unchanged.
+ *
+ * `scheduledDateIso` is a calendar-date field (UTC-midnight storage convention), so its
+ * calendar day is read via `calendarDateFromIso` — never floored through the runtime's
+ * local clock, which used to read a UTC-midnight instant as the PREVIOUS calendar day for
+ * any negative-UTC-offset viewer (B90). "Today" is the viewer's own local day: when
+ * `timeZone` is supplied it drives "today" via `Intl.DateTimeFormat` (so a test — or a
+ * future caller that knows the viewer's IANA zone — controls the result on every host);
+ * omitted, it falls back to the device's own local day (`localYmd`), since that is
+ * genuinely what "today" means to whoever is holding the device.
+ */
+function localYmd(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+}
+function ymdInZone(now, timeZone) {
+    try {
+        const parts = new Intl.DateTimeFormat("en-US", {
+            timeZone,
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+        }).formatToParts(now);
+        const y = parts.find((p) => p.type === "year")?.value;
+        const m = parts.find((p) => p.type === "month")?.value;
+        const day = parts.find((p) => p.type === "day")?.value;
+        if (!y || !m || !day)
+            return localYmd(now);
+        return `${y}-${m}-${day}`;
+    }
+    catch {
+        return localYmd(now);
+    }
+}
+function isRunPastDue(scheduledDateIso, now, timeZone) {
+    const today = timeZone ? ymdInZone(now, timeZone) : localYmd(now);
+    return (0, calendar_date_1.calendarDateFromIso)(scheduledDateIso) < today;
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3J1bi1sYXRlbmVzcy50cyIsIm1hcHBpbmdzIjoiOztBQTBDQSxvQ0FHQztBQTdDRCxtREFBc0Q7QUFFdEQ7Ozs7Ozs7Ozs7Ozs7O0dBY0c7QUFDSCxTQUFTLFFBQVEsQ0FBQyxDQUFPO0lBQ3ZCLE1BQU0sQ0FBQyxHQUFHLENBQUMsQ0FBQyxXQUFXLEVBQUUsQ0FBQztJQUMxQixNQUFNLENBQUMsR0FBRyxNQUFNLENBQUMsQ0FBQyxDQUFDLFFBQVEsRUFBRSxHQUFHLENBQUMsQ0FBQyxDQUFDLFFBQVEsQ0FBQyxDQUFDLEVBQUUsR0FBRyxDQUFDLENBQUM7SUFDcEQsTUFBTSxHQUFHLEdBQUcsTUFBTSxDQUFDLENBQUMsQ0FBQyxPQUFPLEVBQUUsQ0FBQyxDQUFDLFFBQVEsQ0FBQyxDQUFDLEVBQUUsR0FBRyxDQUFDLENBQUM7SUFDakQsT0FBTyxHQUFHLENBQUMsSUFBSSxDQUFDLElBQUksR0FBRyxFQUFFLENBQUM7QUFDNUIsQ0FBQztBQUVELFNBQVMsU0FBUyxDQUFDLEdBQVMsRUFBRSxRQUFnQjtJQUM1QyxJQUFJLENBQUM7UUFDSCxNQUFNLEtBQUssR0FBRyxJQUFJLElBQUksQ0FBQyxjQUFjLENBQUMsT0FBTyxFQUFFO1lBQzdDLFFBQVE7WUFDUixJQUFJLEVBQUUsU0FBUztZQUNmLEtBQUssRUFBRSxTQUFTO1lBQ2hCLEdBQUcsRUFBRSxTQUFTO1NBQ2YsQ0FBQyxDQUFDLGFBQWEsQ0FBQyxHQUFHLENBQUMsQ0FBQztRQUN0QixNQUFNLENBQUMsR0FBRyxLQUFLLENBQUMsSUFBSSxDQUFDLENBQUMsQ0FBQyxFQUFFLEVBQUUsQ0FBQyxDQUFDLENBQUMsSUFBSSxLQUFLLE1BQU0sQ0FBQyxFQUFFLEtBQUssQ0FBQztRQUN0RCxNQUFNLENBQUMsR0FBRyxLQUFLLENBQUMsSUFBSSxDQUFDLENBQUMsQ0FBQyxFQUFFLEVBQUUsQ0FBQyxDQUFDLENBQUMsSUFBSSxLQUFLLE9BQU8sQ0FBQyxFQUFFLEtBQUssQ0FBQztRQUN2RCxNQUFNLEdBQUcsR0FBRyxLQUFLLENBQUMsSUFBSSxDQUFDLENBQUMsQ0FBQyxFQUFFLEVBQUUsQ0FBQyxDQUFDLENBQUMsSUFBSSxLQUFLLEtBQUssQ0FBQyxFQUFFLEtBQUssQ0FBQztRQUN2RCxJQUFJLENBQUMsQ0FBQyxJQUFJLENBQUMsQ0FBQyxJQUFJLENBQUMsR0FBRztZQUFFLE9BQU8sUUFBUSxDQUFDLEdBQUcsQ0FBQyxDQUFDO1FBQzNDLE9BQU8sR0FBRyxDQUFDLElBQUksQ0FBQyxJQUFJLEdBQUcsRUFBRSxDQUFDO0lBQzVCLENBQUM7SUFBQyxNQUFNLENBQUM7UUFDUCxPQUFPLFFBQVEsQ0FBQyxHQUFHLENBQUMsQ0FBQztJQUN2QixDQUFDO0FBQ0gsQ0FBQztBQUVELFNBQWdCLFlBQVksQ0FBQyxnQkFBd0IsRUFBRSxHQUFTLEVBQUUsUUFBaUI7SUFDakYsTUFBTSxLQUFLLEdBQUcsUUFBUSxDQUFDLENBQUMsQ0FBQyxTQUFTLENBQUMsR0FBRyxFQUFFLFFBQVEsQ0FBQyxDQUFDLENBQUMsQ0FBQyxRQUFRLENBQUMsR0FBRyxDQUFDLENBQUM7SUFDbEUsT0FBTyxJQUFBLG1DQUFtQixFQUFDLGdCQUFnQixDQUFDLEdBQUcsS0FBSyxDQUFDO0FBQ3ZELENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3J1bi1sYXRlbmVzcy50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgeyBjYWxlbmRhckRhdGVGcm9tSXNvIH0gZnJvbSBcIi4vY2FsZW5kYXItZGF0ZVwiO1xuXG4vKipcbiAqIExhdGUtcm91dGUgcHJlZGljYXRlIGZvciB0aGUgb3BlcmF0b3IgRXhjZXB0aW9ucyBzY3JlZW4g4oCUIGV4dHJhY3RlZCB2ZXJiYXRpbSBmcm9tXG4gKiBgYXBwLyhvcGVyYXRvcikvZXhjZXB0aW9ucy50c3hgJ3MgbGF0ZS1yb3V0ZSBsb29wIChzZWUgQjkwKSBzbyBpdCBpcyBkaXJlY3RseSB0ZXN0YWJsZS5cbiAqIGBub3dgIHJlcGxhY2VzIHRoZSBpbmxpbmUgYG5ldyBEYXRlKClgIHNvIHRoZSBjYWxsZXIgY29udHJvbHMgXCJjdXJyZW50IHRpbWVcIiBpbiB0ZXN0cztcbiAqIHRoZSBjb21wYXJpc29uIGl0c2VsZiBpcyB1bmNoYW5nZWQuXG4gKlxuICogYHNjaGVkdWxlZERhdGVJc29gIGlzIGEgY2FsZW5kYXItZGF0ZSBmaWVsZCAoVVRDLW1pZG5pZ2h0IHN0b3JhZ2UgY29udmVudGlvbiksIHNvIGl0c1xuICogY2FsZW5kYXIgZGF5IGlzIHJlYWQgdmlhIGBjYWxlbmRhckRhdGVGcm9tSXNvYCDigJQgbmV2ZXIgZmxvb3JlZCB0aHJvdWdoIHRoZSBydW50aW1lJ3NcbiAqIGxvY2FsIGNsb2NrLCB3aGljaCB1c2VkIHRvIHJlYWQgYSBVVEMtbWlkbmlnaHQgaW5zdGFudCBhcyB0aGUgUFJFVklPVVMgY2FsZW5kYXIgZGF5IGZvclxuICogYW55IG5lZ2F0aXZlLVVUQy1vZmZzZXQgdmlld2VyIChCOTApLiBcIlRvZGF5XCIgaXMgdGhlIHZpZXdlcidzIG93biBsb2NhbCBkYXk6IHdoZW5cbiAqIGB0aW1lWm9uZWAgaXMgc3VwcGxpZWQgaXQgZHJpdmVzIFwidG9kYXlcIiB2aWEgYEludGwuRGF0ZVRpbWVGb3JtYXRgIChzbyBhIHRlc3Qg4oCUIG9yIGFcbiAqIGZ1dHVyZSBjYWxsZXIgdGhhdCBrbm93cyB0aGUgdmlld2VyJ3MgSUFOQSB6b25lIOKAlCBjb250cm9scyB0aGUgcmVzdWx0IG9uIGV2ZXJ5IGhvc3QpO1xuICogb21pdHRlZCwgaXQgZmFsbHMgYmFjayB0byB0aGUgZGV2aWNlJ3Mgb3duIGxvY2FsIGRheSAoYGxvY2FsWW1kYCksIHNpbmNlIHRoYXQgaXNcbiAqIGdlbnVpbmVseSB3aGF0IFwidG9kYXlcIiBtZWFucyB0byB3aG9ldmVyIGlzIGhvbGRpbmcgdGhlIGRldmljZS5cbiAqL1xuZnVuY3Rpb24gbG9jYWxZbWQoZDogRGF0ZSk6IHN0cmluZyB7XG4gIGNvbnN0IHkgPSBkLmdldEZ1bGxZZWFyKCk7XG4gIGNvbnN0IG0gPSBTdHJpbmcoZC5nZXRNb250aCgpICsgMSkucGFkU3RhcnQoMiwgXCIwXCIpO1xuICBjb25zdCBkYXkgPSBTdHJpbmcoZC5nZXREYXRlKCkpLnBhZFN0YXJ0KDIsIFwiMFwiKTtcbiAgcmV0dXJuIGAke3l9LSR7bX0tJHtkYXl9YDtcbn1cblxuZnVuY3Rpb24geW1kSW5ab25lKG5vdzogRGF0ZSwgdGltZVpvbmU6IHN0cmluZyk6IHN0cmluZyB7XG4gIHRyeSB7XG4gICAgY29uc3QgcGFydHMgPSBuZXcgSW50bC5EYXRlVGltZUZvcm1hdChcImVuLVVTXCIsIHtcbiAgICAgIHRpbWVab25lLFxuICAgICAgeWVhcjogXCJudW1lcmljXCIsXG4gICAgICBtb250aDogXCIyLWRpZ2l0XCIsXG4gICAgICBkYXk6IFwiMi1kaWdpdFwiLFxuICAgIH0pLmZvcm1hdFRvUGFydHMobm93KTtcbiAgICBjb25zdCB5ID0gcGFydHMuZmluZCgocCkgPT4gcC50eXBlID09PSBcInllYXJcIik/LnZhbHVlO1xuICAgIGNvbnN0IG0gPSBwYXJ0cy5maW5kKChwKSA9PiBwLnR5cGUgPT09IFwibW9udGhcIik/LnZhbHVlO1xuICAgIGNvbnN0IGRheSA9IHBhcnRzLmZpbmQoKHApID0+IHAudHlwZSA9PT0gXCJkYXlcIik/LnZhbHVlO1xuICAgIGlmICgheSB8fCAhbSB8fCAhZGF5KSByZXR1cm4gbG9jYWxZbWQobm93KTtcbiAgICByZXR1cm4gYCR7eX0tJHttfS0ke2RheX1gO1xuICB9IGNhdGNoIHtcbiAgICByZXR1cm4gbG9jYWxZbWQobm93KTtcbiAgfVxufVxuXG5leHBvcnQgZnVuY3Rpb24gaXNSdW5QYXN0RHVlKHNjaGVkdWxlZERhdGVJc286IHN0cmluZywgbm93OiBEYXRlLCB0aW1lWm9uZT86IHN0cmluZyk6IGJvb2xlYW4ge1xuICBjb25zdCB0b2RheSA9IHRpbWVab25lID8geW1kSW5ab25lKG5vdywgdGltZVpvbmUpIDogbG9jYWxZbWQobm93KTtcbiAgcmV0dXJuIGNhbGVuZGFyRGF0ZUZyb21Jc28oc2NoZWR1bGVkRGF0ZUlzbykgPCB0b2RheTtcbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

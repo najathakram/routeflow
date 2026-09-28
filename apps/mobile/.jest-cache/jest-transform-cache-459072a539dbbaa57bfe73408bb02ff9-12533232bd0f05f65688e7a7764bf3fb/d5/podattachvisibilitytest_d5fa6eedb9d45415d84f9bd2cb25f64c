@@ -1,0 +1,112 @@
+f1666ddd46e6b77fb60f5f4659685bba
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+/**
+ * T4 (bug-test-plan.md) — REG-B111: POD photo attach failures swallowed.
+ *
+ * Design of record: cause-ruling.md §1/§3 D4, at payment.tsx today:
+ *
+ *   const podPhotos = (pod?.photoUrls ?? []).filter((p) => p.startsWith("data:"));
+ *   for (const dataUrl of podPhotos) {
+ *     try {
+ *       await attachPodMut.mutateAsync({ runId, stopId, kind: "photo", dataUrl,
+ *         artifactId: podPhotoArtifactId(dataUrl) });
+ *     } catch {
+ *       // offline-queued or failed — the stop completion must proceed either way
+ *     }
+ *   }
+ *
+ * Two legs: (A) a `file://` fallback photo (PhotoCapture.tsx's transcode-
+ * failure fallback, components/PhotoCapture.tsx:66-68) is silently FILTERED
+ * OUT by `startsWith("data:")` and never sent at all; (B) the bare `catch {}`
+ * swallows a genuine attach failure of a `data:` photo with zero signal. The
+ * fix (D4) converts rather than drops the file:// fallback, and the catch
+ * surfaces the failure (toast/inline + a failedActions queue entry) instead
+ * of silently continuing.
+ *
+ * Source-text spec (mobile Jest has no renderer): comment-stripped, and every
+ * assertion below is scoped to the podPhotos attach loop specifically — not
+ * a whole-file grep — so a match elsewhere in the file can't satisfy it.
+ */
+const fs_1 = require("fs");
+const path_1 = require("path");
+function stripComments(src) {
+    return src
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .split("\n")
+        .filter((line) => !/^\s*\/\//.test(line))
+        .join("\n");
+}
+const PAYMENT_PATH = (0, path_1.join)(__dirname, "..", "app", "(driver)", "route", "stop", "[stopId]", "payment.tsx");
+const paymentSrc = stripComments((0, fs_1.readFileSync)(PAYMENT_PATH, "utf8"));
+// Isolate the podPhotos attach loop specifically (bounded by two literal
+// anchors either side of it) so neither assertion can be satisfied by an
+// unrelated filter/catch elsewhere in this large screen. A miss is a HARNESS
+// failure, not a test result: throwing at module scope fails the whole suite
+// as a setup error (the anchors moved) instead of contributing a green test.
+const attachLoopMatch = paymentSrc.match(/const podPhotos[\s\S]*?const idempotencyKey/);
+if (!attachLoopMatch) {
+    throw new Error("payment.tsx podPhotos attach loop not found — update the anchors");
+}
+const attachLoop = attachLoopMatch[0];
+describe("REG-B111-A: file:// fallback photos are not filtered out of the attach loop", () => {
+    it('no longer drops every photo that isn\'t already a data: URL — TODAY: .filter((p) => p.startsWith("data:")) is present', () => {
+        const dataOnlyFilter = /\.filter\(\s*\(?\s*p\s*\)?\s*=>\s*p\.startsWith\(\s*["'`]data:["'`]\s*\)\s*\)/;
+        expect(attachLoop).not.toMatch(dataOnlyFilter);
+    });
+});
+describe("REG-B111-B: an attach failure is surfaced, never a silent empty catch", () => {
+    it("the catch body is non-empty and references both error feedback and the offline queue — TODAY: bare `catch {}`", () => {
+        const catchMatch = attachLoop.match(/catch\s*(?:\([^)]*\))?\s*\{([\s\S]*?)\}\s*\}/);
+        const catchBody = catchMatch ? catchMatch[1].trim() : "";
+        // TODAY this is empty (only a comment, already stripped) — the gating
+        // assertion that fails cleanly before the more specific checks below.
+        expect(catchBody).not.toBe("");
+        // Feedback: this file's own existing error-display path (setAmountError,
+        // already used above for the delivery/regulated-pod validation errors)
+        // or the codebase's standard toast/alert primitives.
+        expect(catchBody).toMatch(/setAmountError|showToast|alertInfo|Alert\.alert/);
+        // Queue: the failure must be persisted where the operator can see it —
+        // the same failedActions mechanism REG-B143/B111's queue drain already
+        // uses (offline-queue-failed.test.ts), not just a toast that vanishes.
+        expect(catchBody).toMatch(/addFailedAction|useOfflineQueue|enqueue/);
+    });
+});
+describe("REG-B111-C: file:// captures are converted before attach, never sent raw", () => {
+    it("the attach loop converts through podPhotoToDataUrl and never attaches a raw uri as dataUrl", () => {
+        expect(attachLoop).toMatch(/podPhotoToDataUrl\s*\(/);
+        // TODAY (pre-fix) this would be satisfied trivially since the raw `file://`
+        // capture is filtered out before ever reaching a `dataUrl:` field — this
+        // pins that a bypass of the converter (attaching `rawUrl` directly) can't
+        // sneak back in once the filter above is gone.
+        expect(attachLoop).not.toMatch(/dataUrl:\s*rawUrl\b/);
+    });
+});
+describe("REG-B111-D: a conversion failure is surfaced and the capture is kept", () => {
+    it("the conversion-failure branch records unsentUris and a failedActions entry", () => {
+        expect(attachLoop).toMatch(/unsentUris\.push\(/);
+        expect(attachLoop).toMatch(/addFailedAction\s*\(/);
+    });
+});
+describe("REG-B111-E: attaches reconcile against the server's existing artifacts", () => {
+    it("the attach loop dedupes candidates through pendingPodArtifacts + artifactIdsFromPodPhotoUrls", () => {
+        expect(attachLoop).toMatch(/pendingPodArtifacts\s*\(/);
+        expect(attachLoop).toMatch(/artifactIdsFromPodPhotoUrls\s*\(/);
+    });
+});
+describe("REG-B111-F: the converter resizes and caps the data URL to the server's budget", () => {
+    it("podPhotoToDataUrl resizes to DATA_URL_MAX_WIDTH and enforces MAX_POD_DATA_URL_LENGTH", () => {
+        const converterMatch = paymentSrc.match(/const podPhotoToDataUrl[\s\S]*?(?=const podPhotos)/);
+        if (!converterMatch) {
+            throw new Error("payment.tsx podPhotoToDataUrl definition not found — update the anchors");
+        }
+        const converter = converterMatch[0];
+        expect(converter).toMatch(/resize\s*:\s*\{\s*width\s*:\s*DATA_URL_MAX_WIDTH/);
+        expect(converter).toMatch(/MAX_POD_DATA_URL_LENGTH/);
+    });
+});
+// The photo.tsx counterpart guard ("photo.tsx does not itself drop file:// URIs")
+// asserts a property the file ALREADY satisfies, so it is green before and after
+// the fix: it lives in `session-teardown.pins.test.ts` with this package's other
+// pin, which the red gate excludes via --testPathIgnorePatterns pins.
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvX190ZXN0c19fL3BvZC1hdHRhY2gtdmlzaWJpbGl0eS50ZXN0LnRzIiwibWFwcGluZ3MiOiI7O0FBQUE7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7O0dBMEJHO0FBQ0gsMkJBQWtDO0FBQ2xDLCtCQUE0QjtBQUU1QixTQUFTLGFBQWEsQ0FBQyxHQUFXO0lBQ2hDLE9BQU8sR0FBRztTQUNQLE9BQU8sQ0FBQyxtQkFBbUIsRUFBRSxFQUFFLENBQUM7U0FDaEMsS0FBSyxDQUFDLElBQUksQ0FBQztTQUNYLE1BQU0sQ0FBQyxDQUFDLElBQUksRUFBRSxFQUFFLENBQUMsQ0FBQyxVQUFVLENBQUMsSUFBSSxDQUFDLElBQUksQ0FBQyxDQUFDO1NBQ3hDLElBQUksQ0FBQyxJQUFJLENBQUMsQ0FBQztBQUNoQixDQUFDO0FBRUQsTUFBTSxZQUFZLEdBQUcsSUFBQSxXQUFJLEVBQ3ZCLFNBQVMsRUFDVCxJQUFJLEVBQ0osS0FBSyxFQUNMLFVBQVUsRUFDVixPQUFPLEVBQ1AsTUFBTSxFQUNOLFVBQVUsRUFDVixhQUFhLENBQ2QsQ0FBQztBQUVGLE1BQU0sVUFBVSxHQUFHLGFBQWEsQ0FBQyxJQUFBLGlCQUFZLEVBQUMsWUFBWSxFQUFFLE1BQU0sQ0FBQyxDQUFDLENBQUM7QUFFckUseUVBQXlFO0FBQ3pFLHlFQUF5RTtBQUN6RSw2RUFBNkU7QUFDN0UsNkVBQTZFO0FBQzdFLDZFQUE2RTtBQUM3RSxNQUFNLGVBQWUsR0FBRyxVQUFVLENBQUMsS0FBSyxDQUFDLDZDQUE2QyxDQUFDLENBQUM7QUFDeEYsSUFBSSxDQUFDLGVBQWUsRUFBRSxDQUFDO0lBQ3JCLE1BQU0sSUFBSSxLQUFLLENBQUMsa0VBQWtFLENBQUMsQ0FBQztBQUN0RixDQUFDO0FBQ0QsTUFBTSxVQUFVLEdBQUcsZUFBZSxDQUFDLENBQUMsQ0FBQyxDQUFDO0FBRXRDLFFBQVEsQ0FBQyw2RUFBNkUsRUFBRSxHQUFHLEVBQUU7SUFDM0YsRUFB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Q0FBQyxDQUFDO1FBQzlFLE1BQU0sQ0FBQyxTQUFTLENBQUMsQ0FBQyxPQUFPLENBQUMseUJBQXlCLENBQUMsQ0FBQztJQUN2RCxDQUFDLENBQUMsQ0FBQztBQUNMLENBQUMsQ0FBQyxDQUFDO0FBRUgsa0ZBQWtGO0FBQ2xGLGlGQUFpRjtBQUNqRixpRkFBaUY7QUFDakYsc0VBQXNFIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvbW9iaWxlL19fdGVzdHNfXy9wb2QtYXR0YWNoLXZpc2liaWxpdHkudGVzdC50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqIFQ0IChidWctdGVzdC1wbGFuLm1kKSDigJQgUkVHLUIxMTE6IFBPRCBwaG90byBhdHRhY2ggZmFpbHVyZXMgc3dhbGxvd2VkLlxuICpcbiAqIERlc2lnbiBvZiByZWNvcmQ6IGNhdXNlLXJ1bGluZy5tZCDCpzEvwqczIEQ0LCBhdCBwYXltZW50LnRzeCB0b2RheTpcbiAqXG4gKiAgIGNvbnN0IHBvZFBob3RvcyA9IChwb2Q/LnBob3RvVXJscyA/PyBbXSkuZmlsdGVyKChwKSA9PiBwLnN0YXJ0c1dpdGgoXCJkYXRhOlwiKSk7XG4gKiAgIGZvciAoY29uc3QgZGF0YVVybCBvZiBwb2RQaG90b3MpIHtcbiAqICAgICB0cnkge1xuICogICAgICAgYXdhaXQgYXR0YWNoUG9kTXV0Lm11dGF0ZUFzeW5jKHsgcnVuSWQsIHN0b3BJZCwga2luZDogXCJwaG90b1wiLCBkYXRhVXJsLFxuICogICAgICAgICBhcnRpZmFjdElkOiBwb2RQaG90b0FydGlmYWN0SWQoZGF0YVVybCkgfSk7XG4gKiAgICAgfSBjYXRjaCB7XG4gKiAgICAgICAvLyBvZmZsaW5lLXF1ZXVlZCBvciBmYWlsZWQg4oCUIHRoZSBzdG9wIGNvbXBsZXRpb24gbXVzdCBwcm9jZWVkIGVpdGhlciB3YXlcbiAqICAgICB9XG4gKiAgIH1cbiAqXG4gKiBUd28gbGVnczogKEEpIGEgYGZpbGU6Ly9gIGZhbGxiYWNrIHBob3RvIChQaG90b0NhcHR1cmUudHN4J3MgdHJhbnNjb2RlLVxuICogZmFpbHVyZSBmYWxsYmFjaywgY29tcG9uZW50cy9QaG90b0NhcHR1cmUudHN4OjY2LTY4KSBpcyBzaWxlbnRseSBGSUxURVJFRFxuICogT1VUIGJ5IGBzdGFydHNXaXRoKFwiZGF0YTpcIilgIGFuZCBuZXZlciBzZW50IGF0IGFsbDsgKEIpIHRoZSBiYXJlIGBjYXRjaCB7fWBcbiAqIHN3YWxsb3dzIGEgZ2VudWluZSBhdHRhY2ggZmFpbHVyZSBvZiBhIGBkYXRhOmAgcGhvdG8gd2l0aCB6ZXJvIHNpZ25hbC4gVGhlXG4gKiBmaXggKEQ0KSBjb252ZXJ0cyByYXRoZXIgdGhhbiBkcm9wcyB0aGUgZmlsZTovLyBmYWxsYmFjaywgYW5kIHRoZSBjYXRjaFxuICogc3VyZmFjZXMgdGhlIGZhaWx1cmUgKHRvYXN0L2lubGluZSArIGEgZmFpbGVkQWN0aW9ucyBxdWV1ZSBlbnRyeSkgaW5zdGVhZFxuICogb2Ygc2lsZW50bHkgY29udGludWluZy5cbiAqXG4gKiBTb3VyY2UtdGV4dCBzcGVjIChtb2JpbGUgSmVzdCBoYXMgbm8gcmVuZGVyZXIpOiBjb21tZW50LXN0cmlwcGVkLCBhbmQgZXZlcnlcbiAqIGFzc2VydGlvbiBiZWxvdyBpcyBzY29wZWQgdG8gdGhlIHBvZFBob3RvcyBhdHRhY2ggbG9vcCBzcGVjaWZpY2FsbHkg4oCUIG5vdFxuICogYSB3aG9sZS1maWxlIGdyZXAg4oCUIHNvIGEgbWF0Y2ggZWxzZXdoZXJlIGluIHRoZSBmaWxlIGNhbid0IHNhdGlzZnkgaXQuXG4gKi9cbmltcG9ydCB7IHJlYWRGaWxlU3luYyB9IGZyb20gXCJmc1wiO1xuaW1wb3J0IHsgam9pbiB9IGZyb20gXCJwYXRoXCI7XG5cbmZ1bmN0aW9uIHN0cmlwQ29tbWVudHMoc3JjOiBzdHJpbmcpOiBzdHJpbmcge1xuICByZXR1cm4gc3JjXG4gICAgLnJlcGxhY2UoL1xcL1xcKltcXHNcXFNdKj9cXCpcXC8vZywgXCJcIilcbiAgICAuc3BsaXQoXCJcXG5cIilcbiAgICAuZmlsdGVyKChsaW5lKSA9PiAhL15cXHMqXFwvXFwvLy50ZXN0KGxpbmUpKVxuICAgIC5qb2luKFwiXFxuXCIpO1xufVxuXG5jb25zdCBQQVlNRU5UX1BBVEggPSBqb2luKFxuICBfX2Rpcm5hbWUsXG4gIFwiLi5cIixcbiAgXCJhcHBcIixcbiAgXCIoZHJpdmVyKVwiLFxuICBcInJvdXRlXCIsXG4gIFwic3RvcFwiLFxuICBcIltzdG9wSWRdXCIsXG4gIFwicGF5bWVudC50c3hcIixcbik7XG5cbmNvbnN0IHBheW1lbnRTcmMgPSBzdHJpcENvbW1lbnRzKHJlYWRGaWxlU3luYyhQQVlNRU5UX1BBVEgsIFwidXRmOFwiKSk7XG5cbi8vIElzb2xhdGUgdGhlIHBvZFBob3RvcyBhdHRhY2ggbG9vcCBzcGVjaWZpY2FsbHkgKGJvdW5kZWQgYnkgdHdvIGxpdGVyYWxcbi8vIGFuY2hvcnMgZWl0aGVyIHNpZGUgb2YgaXQpIHNvIG5laXRoZXIgYXNzZXJ0aW9uIGNhbiBiZSBzYXRpc2ZpZWQgYnkgYW5cbi8vIHVucmVsYXRlZCBmaWx0ZXIvY2F0Y2ggZWxzZXdoZXJlIGluIHRoaXMgbGFyZ2Ugc2NyZWVuLiBBIG1pc3MgaXMgYSBIQVJORVNTXG4vLyBmYWlsdXJlLCBub3QgYSB0ZXN0IHJlc3VsdDogdGhyb3dpbmcgYXQgbW9kdWxlIHNjb3BlIGZhaWxzIHRoZSB3aG9sZSBzdWl0ZVxuLy8gYXMgYSBzZXR1cCBlcnJvciAodGhlIGFuY2hvcnMgbW92ZWQpIGluc3RlYWQgb2YgY29udHJpYnV0aW5nIGEgZ3JlZW4gdGVzdC5cbmNvbnN0IGF0dGFjaExvb3BNYXRjaCA9IHBheW1lbnRTcmMubWF0Y2goL2NvbnN0IHBvZFBob3Rvc1tcXHNcXFNdKj9jb25zdCBpZGVtcG90ZW5jeUtleS8pO1xuaWYgKCFhdHRhY2hMb29wTWF0Y2gpIHtcbiAgdGhyb3cgbmV3IEVycm9yKFwicGF5bWVudC50c3ggcG9kUGhvdG9zIGF0dGFjaCBsb29wIG5vdCBmb3VuZCDigJQgdXBkYXRlIHRoZSBhbmNob3JzXCIpO1xufVxuY29uc3QgYXR0YWNoTG9vcCA9IGF0dGFjaExvb3BNYXRjaFswXTtcblxuZGVzY3JpYmUoXCJSRUctQjExMS1BOiBmaWxlOi8vIGZhbGxiYWNrIHBob3RvcyBhcmUgbm90IGZpbHRlcmVkIG91dCBvZiB0aGUgYXR0YWNoIGxvb3BcIiwgKCkgPT4ge1xuICBpdCgnbm8gbG9uZ2VyIGRyb3BzIGV2ZXJ5IHBob3RvIHRoYXQgaXNuXFwndCBhbHJlYWR5IGEgZGF0YTogVVJMIOKAlCBUT0RBWTogLmZpbHRlcigocCkgPT4gcC5zdGFydHNXaXRoKFwiZGF0YTpcIikpIGlzIHByZXNlbnQnLCAoKSA9PiB7XG4gICAgY29uc3QgZGF0YU9ubHlGaWx0ZXIgPVxuICAgICAgL1xcLmZpbHRlclxcKFxccypcXCg/XFxzKnBcXHMqXFwpP1xccyo9PlxccypwXFwuc3RhcnRzV2l0aFxcKFxccypbXCInYF1kYXRhOltcIidgXVxccypcXClcXHMqXFwpLztcbiAgICBleHBlY3QoYXR0YWNoTG9vcCkubm90LnRvTWF0Y2goZGF0YU9ubHlGaWx0ZXIpO1xuICB9KTtcbn0pO1xuXG5kZXNjcmliZShcIlJFRy1CMTExLUI6IGFuIGF0dGFjaCBmYWlsdXJlIGlzIHN1cmZhY2VkLCBuZXZlciBhIHNpbGVudCBlbXB0eSBjYXRjaFwiLCAoKSA9PiB7XG4gIGl0KFwidGhlIGNhdGNoIGJvZHkgaXMgbm9uLWVtcHR5IGFuZCByZWZlcmVuY2VzIGJvdGggZXJyb3IgZmVlZGJhY2sgYW5kIHRoZSBvZmZsaW5lIHF1ZXVlIOKAlCBUT0RBWTogYmFyZSBgY2F0Y2gge31gXCIsICgpID0+IHtcbiAgICBjb25zdCBjYXRjaE1hdGNoID0gYXR0YWNoTG9vcC5tYXRjaCgvY2F0Y2hcXHMqKD86XFwoW14pXSpcXCkpP1xccypcXHsoW1xcc1xcU10qPylcXH1cXHMqXFx9Lyk7XG4gICAgY29uc3QgY2F0Y2hCb2R5ID0gY2F0Y2hNYXRjaCA/IGNhdGNoTWF0Y2hbMV0udHJpbSgpIDogXCJcIjtcblxuICAgIC8vIFRPREFZIHRoaXMgaXMgZW1wdHkgKG9ubHkgYSBjb21tZW50LCBhbHJlYWR5IHN0cmlwcGVkKSDigJQgdGhlIGdhdGluZ1xuICAgIC8vIGFzc2VydGlvbiB0aGF0IGZhaWxzIGNsZWFubHkgYmVmb3JlIHRoZSBtb3JlIHNwZWNpZmljIGNoZWNrcyBiZWxvdy5cbiAgICBleHBlY3QoY2F0Y2hCb2R5KS5ub3QudG9CZShcIlwiKTtcblxuICAgIC8vIEZlZWRiYWNrOiB0aGlzIGZpbGUncyBvd24gZXhpc3RpbmcgZXJyb3ItZGlzcGxheSBwYXRoIChzZXRBbW91bnRFcnJvcixcbiAgICAvLyBhbHJlYWR5IHVzZWQgYWJvdmUgZm9yIHRoZSBkZWxpdmVyeS9yZWd1bGF0ZWQtcG9kIHZhbGlkYXRpb24gZXJyb3JzKVxuICAgIC8vIG9yIHRoZSBjb2RlYmFzZSdzIHN0YW5kYXJkIHRvYXN0L2FsZXJ0IHByaW1pdGl2ZXMuXG4gICAgZXhwZWN0KGNhdGNoQm9keSkudG9NYXRjaCgvc2V0QW1vdW50RXJyb3J8c2hvd1RvYXN0fGFsZXJ0SW5mb3xBbGVydFxcLmFsZXJ0Lyk7XG5cbiAgICAvLyBRdWV1ZTogdGhlIGZhaWx1cmUgbXVzdCBiZSBwZXJzaXN0ZWQgd2hlcmUgdGhlIG9wZXJhdG9yIGNhbiBzZWUgaXQg4oCUXG4gICAgLy8gdGhlIHNhbWUgZmFpbGVkQWN0aW9ucyBtZWNoYW5pc20gUkVHLUIxNDMvQjExMSdzIHF1ZXVlIGRyYWluIGFscmVhZHlcbiAgICAvLyB1c2VzIChvZmZsaW5lLXF1ZXVlLWZhaWxlZC50ZXN0LnRzKSwgbm90IGp1c3QgYSB0b2FzdCB0aGF0IHZhbmlzaGVzLlxuICAgIGV4cGVjdChjYXRjaEJvZHkpLnRvTWF0Y2goL2FkZEZhaWxlZEFjdGlvbnx1c2VPZmZsaW5lUXVldWV8ZW5xdWV1ZS8pO1xuICB9KTtcbn0pO1xuXG5kZXNjcmliZShcIlJFRy1CMTExLUM6IGZpbGU6Ly8gY2FwdHVyZXMgYXJlIGNvbnZlcnRlZCBiZWZvcmUgYXR0YWNoLCBuZXZlciBzZW50IHJhd1wiLCAoKSA9PiB7XG4gIGl0KFwidGhlIGF0dGFjaCBsb29wIGNvbnZlcnRzIHRocm91Z2ggcG9kUGhvdG9Ub0RhdGFVcmwgYW5kIG5ldmVyIGF0dGFjaGVzIGEgcmF3IHVyaSBhcyBkYXRhVXJsXCIsICgpID0+IHtcbiAgICBleHBlY3QoYXR0YWNoTG9vcCkudG9NYXRjaCgvcG9kUGhvdG9Ub0RhdGFVcmxcXHMqXFwoLyk7XG4gICAgLy8gVE9EQVkgKHByZS1maXgpIHRoaXMgd291bGQgYmUgc2F0aXNmaWVkIHRyaXZpYWxseSBzaW5jZSB0aGUgcmF3IGBmaWxlOi8vYFxuICAgIC8vIGNhcHR1cmUgaXMgZmlsdGVyZWQgb3V0IGJlZm9yZSBldmVyIHJlYWNoaW5nIGEgYGRhdGFVcmw6YCBmaWVsZCDigJQgdGhpc1xuICAgIC8vIHBpbnMgdGhhdCBhIGJ5cGFzcyBvZiB0aGUgY29udmVydGVyIChhdHRhY2hpbmcgYHJhd1VybGAgZGlyZWN0bHkpIGNhbid0XG4gICAgLy8gc25lYWsgYmFjayBpbiBvbmNlIHRoZSBmaWx0ZXIgYWJvdmUgaXMgZ29uZS5cbiAgICBleHBlY3QoYXR0YWNoTG9vcCkubm90LnRvTWF0Y2goL2RhdGFVcmw6XFxzKnJhd1VybFxcYi8pO1xuICB9KTtcbn0pO1xuXG5kZXNjcmliZShcIlJFRy1CMTExLUQ6IGEgY29udmVyc2lvbiBmYWlsdXJlIGlzIHN1cmZhY2VkIGFuZCB0aGUgY2FwdHVyZSBpcyBrZXB0XCIsICgpID0+IHtcbiAgaXQoXCJ0aGUgY29udmVyc2lvbi1mYWlsdXJlIGJyYW5jaCByZWNvcmRzIHVuc2VudFVyaXMgYW5kIGEgZmFpbGVkQWN0aW9ucyBlbnRyeVwiLCAoKSA9PiB7XG4gICAgZXhwZWN0KGF0dGFjaExvb3ApLnRvTWF0Y2goL3Vuc2VudFVyaXNcXC5wdXNoXFwoLyk7XG4gICAgZXhwZWN0KGF0dGFjaExvb3ApLnRvTWF0Y2goL2FkZEZhaWxlZEFjdGlvblxccypcXCgvKTtcbiAgfSk7XG59KTtcblxuZGVzY3JpYmUoXCJSRUctQjExMS1FOiBhdHRhY2hlcyByZWNvbmNpbGUgYWdhaW5zdCB0aGUgc2VydmVyJ3MgZXhpc3RpbmcgYXJ0aWZhY3RzXCIsICgpID0+IHtcbiAgaXQoXCJ0aGUgYXR0YWNoIGxvb3AgZGVkdXBlcyBjYW5kaWRhdGVzIHRocm91Z2ggcGVuZGluZ1BvZEFydGlmYWN0cyArIGFydGlmYWN0SWRzRnJvbVBvZFBob3RvVXJsc1wiLCAoKSA9PiB7XG4gICAgZXhwZWN0KGF0dGFjaExvb3ApLnRvTWF0Y2goL3BlbmRpbmdQb2RBcnRpZmFjdHNcXHMqXFwoLyk7XG4gICAgZXhwZWN0KGF0dGFjaExvb3ApLnRvTWF0Y2goL2FydGlmYWN0SWRzRnJvbVBvZFBob3RvVXJsc1xccypcXCgvKTtcbiAgfSk7XG59KTtcblxuZGVzY3JpYmUoXCJSRUctQjExMS1GOiB0aGUgY29udmVydGVyIHJlc2l6ZXMgYW5kIGNhcHMgdGhlIGRhdGEgVVJMIHRvIHRoZSBzZXJ2ZXIncyBidWRnZXRcIiwgKCkgPT4ge1xuICBpdChcInBvZFBob3RvVG9EYXRhVXJsIHJlc2l6ZXMgdG8gREFUQV9VUkxfTUFYX1dJRFRIIGFuZCBlbmZvcmNlcyBNQVhfUE9EX0RBVEFfVVJMX0xFTkdUSFwiLCAoKSA9PiB7XG4gICAgY29uc3QgY29udmVydGVyTWF0Y2ggPSBwYXltZW50U3JjLm1hdGNoKC9jb25zdCBwb2RQaG90b1RvRGF0YVVybFtcXHNcXFNdKj8oPz1jb25zdCBwb2RQaG90b3MpLyk7XG4gICAgaWYgKCFjb252ZXJ0ZXJNYXRjaCkge1xuICAgICAgdGhyb3cgbmV3IEVycm9yKFwicGF5bWVudC50c3ggcG9kUGhvdG9Ub0RhdGFVcmwgZGVmaW5pdGlvbiBub3QgZm91bmQg4oCUIHVwZGF0ZSB0aGUgYW5jaG9yc1wiKTtcbiAgICB9XG4gICAgY29uc3QgY29udmVydGVyID0gY29udmVydGVyTWF0Y2hbMF07XG4gICAgZXhwZWN0KGNvbnZlcnRlcikudG9NYXRjaCgvcmVzaXplXFxzKjpcXHMqXFx7XFxzKndpZHRoXFxzKjpcXHMqREFUQV9VUkxfTUFYX1dJRFRILyk7XG4gICAgZXhwZWN0KGNvbnZlcnRlcikudG9NYXRjaCgvTUFYX1BPRF9EQVRBX1VSTF9MRU5HVEgvKTtcbiAgfSk7XG59KTtcblxuLy8gVGhlIHBob3RvLnRzeCBjb3VudGVycGFydCBndWFyZCAoXCJwaG90by50c3ggZG9lcyBub3QgaXRzZWxmIGRyb3AgZmlsZTovLyBVUklzXCIpXG4vLyBhc3NlcnRzIGEgcHJvcGVydHkgdGhlIGZpbGUgQUxSRUFEWSBzYXRpc2ZpZXMsIHNvIGl0IGlzIGdyZWVuIGJlZm9yZSBhbmQgYWZ0ZXJcbi8vIHRoZSBmaXg6IGl0IGxpdmVzIGluIGBzZXNzaW9uLXRlYXJkb3duLnBpbnMudGVzdC50c2Agd2l0aCB0aGlzIHBhY2thZ2UncyBvdGhlclxuLy8gcGluLCB3aGljaCB0aGUgcmVkIGdhdGUgZXhjbHVkZXMgdmlhIC0tdGVzdFBhdGhJZ25vcmVQYXR0ZXJucyBwaW5zLlxuIl0sInZlcnNpb24iOjN9

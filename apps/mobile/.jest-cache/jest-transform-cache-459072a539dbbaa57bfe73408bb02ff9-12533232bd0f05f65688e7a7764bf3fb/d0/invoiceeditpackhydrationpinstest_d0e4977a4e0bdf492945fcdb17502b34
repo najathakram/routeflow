@@ -1,0 +1,31 @@
+05a823f2e82555dfcdccdb0efcd1b9cc
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const fs_1 = require("fs");
+const path_1 = require("path");
+/**
+ * B674/SA-144 — the operator invoice EDIT screen's hydration must recover a legacy
+ * boxed line's pack from its OWN stored split (`packFromOwnSplit`), never fall back to
+ * nothing at all. Before this fix `unitsPerBox` stayed null for a line stored with
+ * `boxes` but no `unitsPerBox` snapshot, so `isSplit` (upb > 1) was false and the
+ * case/piece stepper never rendered — the operator could not see or edit the split, and
+ * saving re-priced the line as loose pieces. RN screens aren't renderable in this jest
+ * lane (pure-logic only), so the wiring is source-pinned — see
+ * invoice-unit-edit-guard-wiring.test.ts for the same pattern.
+ */
+describe("B674/SA-144: invoice edit hydration recovers a legacy line's pack from its own split", () => {
+    const src = (0, fs_1.readFileSync)((0, path_1.join)(__dirname, "..", "app/(operator)/(tabs)/invoices/[id]/edit.tsx"), "utf8");
+    it("imports packFromOwnSplit from @routeflow/pricing", () => {
+        expect(src).toMatch(/import\s*{[^}]*packFromOwnSplit[^}]*}\s*from\s*"@routeflow\/pricing"/);
+    });
+    it("the hydration's unitsPerBox falls back to packFromOwnSplit, never a bare `?? null` with no recovery", () => {
+        // master added an index param `(it, i)`; anchor on the map call either way
+        const at = src.search(/const hydratedLines = \(invoice\.items \?\? \[\]\)\.map\(\(it(?:, i)?\) => \(\{/);
+        expect(at).toBeGreaterThan(-1);
+        const block = src.slice(at, src.indexOf("}));", at) + 4);
+        expect(block).toMatch(/unitsPerBox:\s*\n?\s*it\.unitsPerBox\s*\?\?\s*\n?\s*packFromOwnSplit\(/);
+        // Never the old shape: a bare `it.unitsPerBox ?? null` with nothing else on the RHS.
+        expect(block).not.toMatch(/unitsPerBox:\s*it\.unitsPerBox\s*\?\?\s*null,/);
+    });
+});
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvX190ZXN0c19fL2ludm9pY2UtZWRpdC1wYWNrLWh5ZHJhdGlvbi5waW5zLnRlc3QudHMiLCJtYXBwaW5ncyI6Ijs7QUFBQSwyQkFBa0M7QUFDbEMsK0JBQTRCO0FBRTVCOzs7Ozs7Ozs7R0FTRztBQUNILFFBQVEsQ0FBQyxzRkFBc0YsRUFBRSxHQUFHLEVBQUU7SUFDcEcsTUFBTSxHQUFHLEdBQUcsSUFBQSxpQkFBWSxFQUN0QixJQUFBLFdBQUksRUFBQyxTQUFTLEVBQUUsSUFBSSxFQUFFLDhDQUE4QyxDQUFDLEVBQ3JFLE1BQU0sQ0FDUCxDQUFDO0lBRUYsRUFBRSxDQUFDLGtEQUFrRCxFQUFFLEdBQUcsRUFBRTtRQUMxRCxNQUFNLENBQUMsR0FBRyxDQUFDLENBQUMsT0FBTyxDQUFDLHNFQUFzRSxDQUFDLENBQUM7SUFDOUYsQ0FBQyxDQUFDLENBQUM7SUFFSCxFQUFFLENBQUMscUdBQXFHLEVBQUUsR0FBRyxFQUFFO1FBQzdHLDJFQUEyRTtRQUMzRSxNQUFNLEVBQUUsR0FBRyxHQUFHLENBQUMsTUFBTSxDQUNuQixpRkFBaUYsQ0FDbEYsQ0FBQztRQUNGLE1BQU0sQ0FBQyxFQUFFLENBQUMsQ0FBQyxlQUFlLENBQUMsQ0FBQyxDQUFDLENBQUMsQ0FBQztRQUMvQixNQUFNLEtBQUssR0FBRyxHQUFHLENBQUMsS0FBSyxDQUFDLEVBQUUsRUFBRSxHQUFHLENBQUMsT0FBTyxDQUFDLE1BQU0sRUFBRSxFQUFFLENBQUMsR0FBRyxDQUFDLENBQUMsQ0FBQztRQUN6RCxNQUFNLENBQUMsS0FBSyxDQUFDLENBQUMsT0FBTyxDQUFDLHdFQUF3RSxDQUFDLENBQUM7UUFDaEcscUZBQXFGO1FBQ3JGLE1BQU0sQ0FBQyxLQUFLLENBQUMsQ0FBQyxHQUFHLENBQUMsT0FBTyxDQUFDLCtDQUErQyxDQUFDLENBQUM7SUFDN0UsQ0FBQyxDQUFDLENBQUM7QUFDTCxDQUFDLENBQUMsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9hcHBzL21vYmlsZS9fX3Rlc3RzX18vaW52b2ljZS1lZGl0LXBhY2staHlkcmF0aW9uLnBpbnMudGVzdC50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgeyByZWFkRmlsZVN5bmMgfSBmcm9tIFwiZnNcIjtcbmltcG9ydCB7IGpvaW4gfSBmcm9tIFwicGF0aFwiO1xuXG4vKipcbiAqIEI2NzQvU0EtMTQ0IOKAlCB0aGUgb3BlcmF0b3IgaW52b2ljZSBFRElUIHNjcmVlbidzIGh5ZHJhdGlvbiBtdXN0IHJlY292ZXIgYSBsZWdhY3lcbiAqIGJveGVkIGxpbmUncyBwYWNrIGZyb20gaXRzIE9XTiBzdG9yZWQgc3BsaXQgKGBwYWNrRnJvbU93blNwbGl0YCksIG5ldmVyIGZhbGwgYmFjayB0b1xuICogbm90aGluZyBhdCBhbGwuIEJlZm9yZSB0aGlzIGZpeCBgdW5pdHNQZXJCb3hgIHN0YXllZCBudWxsIGZvciBhIGxpbmUgc3RvcmVkIHdpdGhcbiAqIGBib3hlc2AgYnV0IG5vIGB1bml0c1BlckJveGAgc25hcHNob3QsIHNvIGBpc1NwbGl0YCAodXBiID4gMSkgd2FzIGZhbHNlIGFuZCB0aGVcbiAqIGNhc2UvcGllY2Ugc3RlcHBlciBuZXZlciByZW5kZXJlZCDigJQgdGhlIG9wZXJhdG9yIGNvdWxkIG5vdCBzZWUgb3IgZWRpdCB0aGUgc3BsaXQsIGFuZFxuICogc2F2aW5nIHJlLXByaWNlZCB0aGUgbGluZSBhcyBsb29zZSBwaWVjZXMuIFJOIHNjcmVlbnMgYXJlbid0IHJlbmRlcmFibGUgaW4gdGhpcyBqZXN0XG4gKiBsYW5lIChwdXJlLWxvZ2ljIG9ubHkpLCBzbyB0aGUgd2lyaW5nIGlzIHNvdXJjZS1waW5uZWQg4oCUIHNlZVxuICogaW52b2ljZS11bml0LWVkaXQtZ3VhcmQtd2lyaW5nLnRlc3QudHMgZm9yIHRoZSBzYW1lIHBhdHRlcm4uXG4gKi9cbmRlc2NyaWJlKFwiQjY3NC9TQS0xNDQ6IGludm9pY2UgZWRpdCBoeWRyYXRpb24gcmVjb3ZlcnMgYSBsZWdhY3kgbGluZSdzIHBhY2sgZnJvbSBpdHMgb3duIHNwbGl0XCIsICgpID0+IHtcbiAgY29uc3Qgc3JjID0gcmVhZEZpbGVTeW5jKFxuICAgIGpvaW4oX19kaXJuYW1lLCBcIi4uXCIsIFwiYXBwLyhvcGVyYXRvcikvKHRhYnMpL2ludm9pY2VzL1tpZF0vZWRpdC50c3hcIiksXG4gICAgXCJ1dGY4XCIsXG4gICk7XG5cbiAgaXQoXCJpbXBvcnRzIHBhY2tGcm9tT3duU3BsaXQgZnJvbSBAcm91dGVmbG93L3ByaWNpbmdcIiwgKCkgPT4ge1xuICAgIGV4cGVjdChzcmMpLnRvTWF0Y2goL2ltcG9ydFxccyp7W159XSpwYWNrRnJvbU93blNwbGl0W159XSp9XFxzKmZyb21cXHMqXCJAcm91dGVmbG93XFwvcHJpY2luZ1wiLyk7XG4gIH0pO1xuXG4gIGl0KFwidGhlIGh5ZHJhdGlvbidzIHVuaXRzUGVyQm94IGZhbGxzIGJhY2sgdG8gcGFja0Zyb21Pd25TcGxpdCwgbmV2ZXIgYSBiYXJlIGA/PyBudWxsYCB3aXRoIG5vIHJlY292ZXJ5XCIsICgpID0+IHtcbiAgICAvLyBtYXN0ZXIgYWRkZWQgYW4gaW5kZXggcGFyYW0gYChpdCwgaSlgOyBhbmNob3Igb24gdGhlIG1hcCBjYWxsIGVpdGhlciB3YXlcbiAgICBjb25zdCBhdCA9IHNyYy5zZWFyY2goXG4gICAgICAvY29uc3QgaHlkcmF0ZWRMaW5lcyA9IFxcKGludm9pY2VcXC5pdGVtcyBcXD9cXD8gXFxbXFxdXFwpXFwubWFwXFwoXFwoaXQoPzosIGkpP1xcKSA9PiBcXChcXHsvLFxuICAgICk7XG4gICAgZXhwZWN0KGF0KS50b0JlR3JlYXRlclRoYW4oLTEpO1xuICAgIGNvbnN0IGJsb2NrID0gc3JjLnNsaWNlKGF0LCBzcmMuaW5kZXhPZihcIn0pKTtcIiwgYXQpICsgNCk7XG4gICAgZXhwZWN0KGJsb2NrKS50b01hdGNoKC91bml0c1BlckJveDpcXHMqXFxuP1xccyppdFxcLnVuaXRzUGVyQm94XFxzKlxcP1xcP1xccypcXG4/XFxzKnBhY2tGcm9tT3duU3BsaXRcXCgvKTtcbiAgICAvLyBOZXZlciB0aGUgb2xkIHNoYXBlOiBhIGJhcmUgYGl0LnVuaXRzUGVyQm94ID8/IG51bGxgIHdpdGggbm90aGluZyBlbHNlIG9uIHRoZSBSSFMuXG4gICAgZXhwZWN0KGJsb2NrKS5ub3QudG9NYXRjaCgvdW5pdHNQZXJCb3g6XFxzKml0XFwudW5pdHNQZXJCb3hcXHMqXFw/XFw/XFxzKm51bGwsLyk7XG4gIH0pO1xufSk7XG4iXSwidmVyc2lvbiI6M30=

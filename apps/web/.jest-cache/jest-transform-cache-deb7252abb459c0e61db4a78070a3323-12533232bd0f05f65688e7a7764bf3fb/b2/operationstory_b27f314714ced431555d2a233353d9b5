@@ -1,0 +1,1060 @@
+25b9d8aaf28078e6546b74bf5d85062f
+"use client";
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+Object.defineProperty(exports, "OperationStory", {
+    enumerable: true,
+    get: function() {
+        return OperationStory;
+    }
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = require("react");
+const _lucidereact = require("lucide-react");
+const _brand = require("../../../components/brand");
+const _operationmodel = require("../lib/operation-model");
+// OperationStory ("DeliveryDemo") — the interactive order-lifecycle demo
+// (ported near-verbatim from the redesign's components/operation-story.tsx;
+// spec.md R7, ux-spec.md §4, T8a). Controls are plain <button> elements
+// styled by the site's own marketing.css classes (Tailwind preflight already
+// strips default button chrome), not a shared Button component. The pure
+// arithmetic/route data lives in ../lib/operation-model (already covered by
+// its own unit tests).
+const chapters = [
+    {
+        name: "Inventory",
+        icon: _lucidereact.Warehouse,
+        title: "Know what is ready to go.",
+        detail: "Change the quantity. Follow the same items through the order."
+    },
+    {
+        name: "Order",
+        icon: _lucidereact.Package,
+        title: "Every detail travels with the order.",
+        detail: "Customer, products, pricing, and delivery notes stay in context."
+    },
+    {
+        name: "Route",
+        icon: _lucidereact.Route,
+        title: "Give the delivery a clear plan.",
+        detail: "Choose an example run and see its driver and stops change."
+    },
+    {
+        name: "Delivery",
+        icon: _lucidereact.CheckCheck,
+        title: "Keep a record of the handoff.",
+        detail: "Confirm the sample delivery to carry the story into invoicing."
+    },
+    {
+        name: "Invoice",
+        icon: _lucidereact.ReceiptText,
+        title: "The order has an account behind it.",
+        detail: "The invoice reflects the quantities you chose at the start."
+    },
+    {
+        name: "Insights",
+        icon: _lucidereact.BarChart3,
+        title: "See the result in context.",
+        detail: "Review the order value, delivery record, and open balance."
+    }
+];
+const currency = (value)=>new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: "USD",
+        maximumFractionDigits: 0
+    }).format(value);
+function RouteSurface({ selected, moving }) {
+    const gradient = (0, _react.useId)().replaceAll(":", "");
+    return /*#__PURE__*/ (0, _jsxruntime.jsxs)("svg", {
+        className: "route-surface " + (moving ? "route-moving" : ""),
+        viewBox: "0 0 460 250",
+        role: "img",
+        "aria-label": `Illustrative map for the ${_operationmodel.exampleRoutes[selected].name}`,
+        children: [
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("defs", {
+                children: /*#__PURE__*/ (0, _jsxruntime.jsxs)("linearGradient", {
+                    id: gradient,
+                    children: [
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("stop", {
+                            stopColor: "#45445c"
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("stop", {
+                            offset: "1",
+                            stopColor: "#9a80ac"
+                        })
+                    ]
+                })
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("rect", {
+                width: "460",
+                height: "250",
+                rx: "20",
+                fill: "#e9edf5"
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("path", {
+                d: "M370-20C278 47 364 138 280 281",
+                stroke: "#b8dce8",
+                strokeWidth: "46",
+                fill: "none"
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("path", {
+                d: "M32 36h103v56H32z M221 20h66v39h-66z M19 199h114v36H19z M352 181h95v47h-95z",
+                fill: "#d2e3d6"
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("path", {
+                d: "M0 124H460 M149 0v250 M332 0v250 M0 47H460 M0 208H460",
+                stroke: "#fff",
+                strokeWidth: "15"
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("path", {
+                d: "M0 124H460 M149 0v250 M332 0v250 M0 47H460 M0 208H460",
+                stroke: "#d9dfe9",
+                strokeWidth: "1",
+                strokeDasharray: "5 5"
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("path", {
+                d: _operationmodel.exampleRoutes[selected].path,
+                fill: "none",
+                stroke: "white",
+                strokeWidth: "13",
+                strokeLinecap: "round"
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("path", {
+                className: "order-route-line",
+                d: _operationmodel.exampleRoutes[selected].path,
+                pathLength: "1",
+                fill: "none",
+                stroke: `url(#${gradient})`,
+                strokeWidth: "6",
+                strokeLinecap: "round"
+            }),
+            [
+                [
+                    65,
+                    166,
+                    "W"
+                ],
+                [
+                    182,
+                    71,
+                    selected === 0 ? "1" : "2"
+                ],
+                [
+                    393,
+                    76,
+                    selected === 0 ? "2" : "1"
+                ]
+            ].map(([x, y, label])=>/*#__PURE__*/ (0, _jsxruntime.jsxs)("g", {
+                    transform: `translate(${x} ${y})`,
+                    children: [
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("circle", {
+                            r: "14",
+                            fill: "white",
+                            stroke: "#8b7a9a",
+                            strokeWidth: "2"
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsx)("text", {
+                            textAnchor: "middle",
+                            y: "4",
+                            fill: "#635071",
+                            fontSize: "12",
+                            fontWeight: "650",
+                            children: label
+                        })
+                    ]
+                }, label)),
+            /*#__PURE__*/ (0, _jsxruntime.jsxs)("g", {
+                fill: "#3e526d",
+                fontSize: "10",
+                fontWeight: "550",
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("text", {
+                        x: "24",
+                        y: "196",
+                        children: "Warehouse"
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("text", {
+                        x: "137",
+                        y: "42",
+                        children: "Parkside Market"
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("text", {
+                        x: "346",
+                        y: "108",
+                        children: "Corner Store"
+                    })
+                ]
+            })
+        ]
+    });
+}
+function OperationStory({ compact = false }) {
+    const root = (0, _react.useRef)(null);
+    const heading = (0, _react.useRef)(null);
+    const focusNextHeading = (0, _react.useRef)(false);
+    const [announcement, setAnnouncement] = (0, _react.useState)("");
+    const [chapter, setChapter] = (0, _react.useState)(0);
+    const [quantity, setQuantity] = (0, _react.useState)(4);
+    const [route, setRoute] = (0, _react.useState)(0);
+    const [delivered, setDelivered] = (0, _react.useState)(false);
+    const [paid, setPaid] = (0, _react.useState)(false);
+    const [playing, setPlaying] = (0, _react.useState)(false);
+    const [visible, setVisible] = (0, _react.useState)(true);
+    const [reducedMotion, setReducedMotion] = (0, _react.useState)(false);
+    const order = (0, _operationmodel.exampleOrder)(quantity, {
+        delivered,
+        paid
+    });
+    const current = chapters[chapter];
+    (0, _react.useEffect)(()=>{
+        if (focusNextHeading.current) {
+            heading.current?.focus({
+                preventScroll: true
+            });
+            focusNextHeading.current = false;
+        }
+    }, [
+        chapter
+    ]);
+    (0, _react.useEffect)(()=>{
+        if (!root.current) return;
+        const observer = new IntersectionObserver(([entry])=>setVisible(entry.isIntersecting), {
+            threshold: 0.1
+        });
+        observer.observe(root.current);
+        return ()=>observer.disconnect();
+    }, []);
+    // Reduced motion respected (spec.md R7, ux-spec.md §4): the automatic
+    // chapter-advance timer below never runs while the viewer's OS setting
+    // asks for less motion — the story stays fully explorable through the
+    // manual controls (chapter dots, quantity, route, confirm/pay buttons).
+    (0, _react.useEffect)(()=>{
+        const query = window.matchMedia("(prefers-reduced-motion: reduce)");
+        setReducedMotion(query.matches);
+        const onChange = ()=>setReducedMotion(query.matches);
+        query.addEventListener("change", onChange);
+        return ()=>query.removeEventListener("change", onChange);
+    }, []);
+    (0, _react.useEffect)(()=>{
+        if (!playing || !visible || reducedMotion) return;
+        const timer = window.setTimeout(()=>{
+            if (document.hidden) {
+                setPlaying(false);
+                return;
+            }
+            const next = (0, _operationmodel.nextChapter)(chapter);
+            if (next >= 4) setDelivered(true);
+            setChapter(next);
+            if (next === 5) setPlaying(false);
+        }, 3300);
+        return ()=>clearTimeout(timer);
+    }, [
+        chapter,
+        playing,
+        visible,
+        reducedMotion
+    ]);
+    const select = (i, focus = false)=>{
+        setPlaying(false);
+        focusNextHeading.current = focus;
+        setChapter(i);
+        setAnnouncement(chapters[i].name + ": " + chapters[i].title);
+    };
+    const adjust = (by)=>{
+        setPlaying(false);
+        setQuantity((q)=>Math.max(1, Math.min(12, q + by)));
+        setDelivered(false);
+        setPaid(false);
+    };
+    const assign = (i)=>{
+        setPlaying(false);
+        if (i === route) return;
+        setRoute(i);
+        setDelivered(false);
+        setPaid(false);
+        setAnnouncement("Assigned to " + _operationmodel.exampleRoutes[i].name + ". Delivery and payment reset for the new assignment.");
+    };
+    const restart = ()=>{
+        setChapter(0);
+        setQuantity(4);
+        setRoute(0);
+        setDelivered(false);
+        setPaid(false);
+        setPlaying(true);
+    };
+    const confirm = ()=>{
+        setDelivered(true);
+        setPlaying(false);
+        focusNextHeading.current = true;
+        setChapter(4);
+        setAnnouncement("Sample delivery confirmed. Invoice ready to review.");
+    };
+    return /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+        ref: root,
+        className: "operation-story " + (compact ? "story-compact" : ""),
+        children: [
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("div", {
+                className: "story-light story-light-one"
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("div", {
+                className: "story-light story-light-two"
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                className: "story-top",
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("span", {
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {}),
+                            " INTERACTIVE PRODUCT EXAMPLE"
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                        children: "One order. Every team."
+                    })
+                ]
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                className: "story-intro",
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("span", {
+                        className: "story-chapter-count",
+                        children: [
+                            "0",
+                            chapter + 1,
+                            " / 06"
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("h3", {
+                        ref: heading,
+                        tabIndex: -1,
+                        children: current.title
+                    })
+                ]
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                className: "passport-stage",
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("div", {
+                        className: "passport-shadow"
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                        className: "order-passport",
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                className: "passport-chrome",
+                                children: [
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                        className: "passport-brand",
+                                        children: /*#__PURE__*/ (0, _jsxruntime.jsx)(_brand.BrandSignature, {})
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("span", {
+                                        className: "passport-module",
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)(current.icon, {
+                                                size: 14
+                                            }),
+                                            current.name
+                                        ]
+                                    })
+                                ]
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                className: "passport-context",
+                                children: [
+                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                children: "ORDER #RF-1042"
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                                children: "Parkside Market"
+                                            })
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                        className: "passport-status " + (delivered ? "status-done" : ""),
+                                        children: paid ? "Payment recorded" : delivered ? "Delivered" : "Sample order"
+                                    })
+                                ]
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                className: "passport-content",
+                                onFocusCapture: ()=>setPlaying(false),
+                                children: [
+                                    chapter === 0 && /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                        className: "inventory-scene",
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                                className: "stock-scene-top",
+                                                children: [
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                                        children: [
+                                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                                className: "story-small-label",
+                                                                children: "SPRING WATER \xb7 24-PACK"
+                                                            }),
+                                                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("strong", {
+                                                                className: "stock-count",
+                                                                children: [
+                                                                    "148",
+                                                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                                        children: "cases on hand"
+                                                                    })
+                                                                ]
+                                                            }),
+                                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                                                children: "Plan this example order."
+                                                            })
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("img", {
+                                                        className: "stock-cutout",
+                                                        src: "/marketing/stock-cutout-v3.webp",
+                                                        alt: "Photorealistic unbranded cartons and a case of bottled water.",
+                                                        width: 640,
+                                                        height: 512,
+                                                        loading: "lazy",
+                                                        decoding: "async"
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                                className: "quantity-card",
+                                                children: [
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                                        children: [
+                                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                                                children: "Cases for this order"
+                                                            }),
+                                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                                children: "$18 per case \xb7 example price"
+                                                            })
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                                        className: "quantity-controls",
+                                                        children: [
+                                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                                                                type: "button",
+                                                                onClick: ()=>adjust(-1),
+                                                                disabled: quantity <= 1,
+                                                                "aria-label": "Remove one case",
+                                                                children: /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.Minus, {
+                                                                    size: 15
+                                                                })
+                                                            }),
+                                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("output", {
+                                                                "aria-label": "Cases in sample order",
+                                                                children: quantity
+                                                            }),
+                                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                                                                type: "button",
+                                                                onClick: ()=>adjust(1),
+                                                                disabled: quantity >= 12,
+                                                                "aria-label": "Add one case",
+                                                                children: /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.Plus, {
+                                                                    size: 15
+                                                                })
+                                                            })
+                                                        ]
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                                className: "stock-after",
+                                                children: [
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("span", {
+                                                        children: [
+                                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {}),
+                                                            "After this example order"
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("strong", {
+                                                        children: [
+                                                            order.available,
+                                                            " cases"
+                                                        ]
+                                                    })
+                                                ]
+                                            })
+                                        ]
+                                    }),
+                                    chapter === 1 && /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                        className: "order-detail-scene",
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                                className: "passport-section-label",
+                                                children: [
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.Package, {
+                                                        size: 17
+                                                    }),
+                                                    "Items & customer pricing"
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                                className: "example-item",
+                                                children: [
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.Package, {
+                                                        size: 24,
+                                                        className: "order-item-icon"
+                                                    }),
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                                        children: [
+                                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                                                children: "Spring water \xb7 24-pack"
+                                                            }),
+                                                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("span", {
+                                                                children: [
+                                                                    quantity,
+                                                                    " cases \xd7 $18"
+                                                                ]
+                                                            })
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("b", {
+                                                        children: currency(order.waterTotal)
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                                className: "example-item",
+                                                children: [
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.Package, {
+                                                        size: 24,
+                                                        className: "order-item-icon"
+                                                    }),
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                                        children: [
+                                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                                                children: "Mixed snacks \xb7 30-pack"
+                                                            }),
+                                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                                children: "2 cases \xd7 $21"
+                                                            })
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("b", {
+                                                        children: "$42"
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                                className: "order-delivery-note",
+                                                children: [
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                        children: "DELIVERY NOTE"
+                                                    }),
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                                        children: "Use the rear receiving entrance."
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                                className: "passport-total",
+                                                children: [
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                        children: "Example subtotal"
+                                                    }),
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                                        children: currency(order.total)
+                                                    })
+                                                ]
+                                            })
+                                        ]
+                                    }),
+                                    chapter === 2 && /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                        className: "route-scene",
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("fieldset", {
+                                                className: "example-runs",
+                                                "aria-label": "Assign the sample delivery run",
+                                                children: _operationmodel.exampleRoutes.map((r, i)=>/*#__PURE__*/ (0, _jsxruntime.jsxs)("button", {
+                                                        type: "button",
+                                                        "aria-pressed": route === i,
+                                                        onClick: ()=>assign(i),
+                                                        className: route === i ? "is-selected" : "",
+                                                        children: [
+                                                            r.name,
+                                                            route === i && /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.Check, {
+                                                                size: 13
+                                                            })
+                                                        ]
+                                                    }, r.name))
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)(RouteSurface, {
+                                                selected: route,
+                                                moving: playing
+                                            }, route),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                                className: "run-summary",
+                                                children: [
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("span", {
+                                                        children: [
+                                                            /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.Route, {
+                                                                size: 15
+                                                            }),
+                                                            _operationmodel.exampleRoutes[route].driver,
+                                                            " \xb7 3 example stops"
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                                        children: _operationmodel.exampleRoutes[route].name
+                                                    })
+                                                ]
+                                            })
+                                        ]
+                                    }),
+                                    chapter === 3 && /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                        className: "delivery-scene-v3",
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                className: "delivery-receipt-icon",
+                                                children: /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.CheckCheck, {
+                                                    size: 33
+                                                })
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("h4", {
+                                                children: "At the receiving door."
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("p", {
+                                                children: [
+                                                    "Parkside Market",
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("br", {}),
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("span", {
+                                                        children: [
+                                                            quantity + 2,
+                                                            " cases \xb7 ",
+                                                            _operationmodel.exampleRoutes[route].name
+                                                        ]
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                                className: "delivery-proof-row",
+                                                children: [
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.Check, {
+                                                        size: 16
+                                                    }),
+                                                    "A delivery record for the order"
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("button", {
+                                                type: "button",
+                                                className: "story-action",
+                                                onClick: confirm,
+                                                children: [
+                                                    "Confirm sample delivery ",
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.ArrowRight, {
+                                                        size: 15
+                                                    })
+                                                ]
+                                            })
+                                        ]
+                                    }),
+                                    chapter === 4 && /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                        className: "invoice-scene",
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                                className: "invoice-title",
+                                                children: [
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("span", {
+                                                        children: [
+                                                            /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.ReceiptText, {
+                                                                size: 19
+                                                            }),
+                                                            "Invoice"
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("b", {
+                                                        children: delivered ? "READY" : "DRAFT"
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                                className: "invoice-reference",
+                                                children: [
+                                                    "INV-1042 ",
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                        children: "From order RF-1042"
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                                className: "invoice-line",
+                                                children: [
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("span", {
+                                                        children: [
+                                                            "Spring water \xb7 ",
+                                                            quantity,
+                                                            " cases"
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                                        children: currency(order.waterTotal)
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                                className: "invoice-line",
+                                                children: [
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                        children: "Mixed snacks \xb7 2 cases"
+                                                    }),
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                                        children: "$42"
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                                className: "passport-total",
+                                                children: [
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                        children: "Example subtotal"
+                                                    }),
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                                        children: currency(order.total)
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                                className: "account-balance",
+                                                children: [
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.Wallet, {
+                                                        size: 16
+                                                    }),
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                        children: "Open balance"
+                                                    }),
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                                        children: currency(order.balance)
+                                                    })
+                                                ]
+                                            }),
+                                            !delivered ? /*#__PURE__*/ (0, _jsxruntime.jsxs)("button", {
+                                                type: "button",
+                                                className: "story-inline-action",
+                                                onClick: ()=>select(3, true),
+                                                children: [
+                                                    "Confirm delivery first ",
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.ArrowRight, {
+                                                        size: 14
+                                                    })
+                                                ]
+                                            }) : /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                                                type: "button",
+                                                className: "story-action",
+                                                disabled: paid,
+                                                onClick: ()=>{
+                                                    setPaid(true);
+                                                    setPlaying(false);
+                                                    setAnnouncement("Sample payment recorded. Open balance is zero.");
+                                                },
+                                                children: paid ? /*#__PURE__*/ (0, _jsxruntime.jsxs)(_jsxruntime.Fragment, {
+                                                    children: [
+                                                        /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.Check, {
+                                                            size: 15
+                                                        }),
+                                                        " Sample payment recorded"
+                                                    ]
+                                                }) : /*#__PURE__*/ (0, _jsxruntime.jsxs)(_jsxruntime.Fragment, {
+                                                    children: [
+                                                        "Record sample payment ",
+                                                        /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.ArrowRight, {
+                                                            size: 14
+                                                        })
+                                                    ]
+                                                })
+                                            })
+                                        ]
+                                    }),
+                                    chapter === 5 && /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                        className: "insights-scene",
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                                className: "passport-section-label",
+                                                children: [
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.BarChart3, {
+                                                        size: 17
+                                                    }),
+                                                    "This order, in context"
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                                className: "insights-metrics",
+                                                children: [
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                                        children: [
+                                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                                children: "Order value"
+                                                            }),
+                                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                                                children: currency(order.total)
+                                                            })
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                                        children: [
+                                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                                children: "Open balance"
+                                                            }),
+                                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                                                children: currency(order.balance)
+                                                            })
+                                                        ]
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                                className: "example-chart",
+                                                "aria-label": `Example order value: water ${currency(order.waterTotal)}, snacks 42 dollars`,
+                                                children: [
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                                        children: [
+                                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                                children: "Water"
+                                                            }),
+                                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("div", {
+                                                                children: /*#__PURE__*/ (0, _jsxruntime.jsx)("i", {
+                                                                    style: {
+                                                                        width: order.waterTotal / order.total * 100 + "%"
+                                                                    }
+                                                                })
+                                                            }),
+                                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                                                children: currency(order.waterTotal)
+                                                            })
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                                        children: [
+                                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                                children: "Snacks"
+                                                            }),
+                                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("div", {
+                                                                children: /*#__PURE__*/ (0, _jsxruntime.jsx)("i", {
+                                                                    style: {
+                                                                        width: 42 / order.total * 100 + "%"
+                                                                    }
+                                                                })
+                                                            }),
+                                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                                                children: "$42"
+                                                            })
+                                                        ]
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                                className: "insight-outcomes",
+                                                children: [
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("span", {
+                                                        children: [
+                                                            /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.Package, {
+                                                                size: 15
+                                                            }),
+                                                            quantity + 2,
+                                                            " cases"
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("span", {
+                                                        children: [
+                                                            /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.Store, {
+                                                                size: 15
+                                                            }),
+                                                            "1 customer"
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("span", {
+                                                        children: [
+                                                            /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.CheckCheck, {
+                                                                size: 15
+                                                            }),
+                                                            delivered ? "Delivered" : "Not delivered"
+                                                        ]
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                                children: "Illustrative order data. No business performance claim."
+                                            })
+                                        ]
+                                    })
+                                ]
+                            }, chapter),
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                className: "passport-bottom",
+                                children: [
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                        className: "connected-dot"
+                                    }),
+                                    " Same order. Connected context.",
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                        children: "DEMO"
+                                    })
+                                ]
+                            })
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                        className: "customer-glimpse",
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("div", {
+                                className: "phone-speaker"
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("span", {
+                                className: "customer-portal-label",
+                                children: [
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.Store, {
+                                        size: 14
+                                    }),
+                                    "Retailer portal"
+                                ]
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("strong", {
+                                children: [
+                                    "Parkside",
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("br", {}),
+                                    "Market"
+                                ]
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                className: "phone-order",
+                                children: [
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.Package, {
+                                        size: 21
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                        children: "RF-1042"
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("b", {
+                                        children: currency(order.total)
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("span", {
+                                        children: [
+                                            quantity + 2,
+                                            " cases"
+                                        ]
+                                    })
+                                ]
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("span", {
+                                className: "phone-state " + (delivered ? "complete" : ""),
+                                children: [
+                                    delivered ? /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.CheckCheck, {
+                                        size: 12
+                                    }) : /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.Package, {
+                                        size: 12
+                                    }),
+                                    " ",
+                                    delivered ? "Delivered" : "Example order"
+                                ]
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("button", {
+                                type: "button",
+                                onClick: ()=>select(1),
+                                children: [
+                                    "View order ",
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.ArrowUpRight, {
+                                        size: 13
+                                    })
+                                ]
+                            })
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                        className: "story-link-pill",
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {}),
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("span", {
+                                children: [
+                                    "Office ",
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.ArrowRight, {
+                                        size: 11
+                                    }),
+                                    " Driver ",
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.ArrowRight, {
+                                        size: 11
+                                    }),
+                                    " Customer"
+                                ]
+                            })
+                        ]
+                    })
+                ]
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                className: "story-controls",
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                        className: "story-explanation",
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                children: current.detail
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                children: [
+                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("button", {
+                                        type: "button",
+                                        className: "story-play",
+                                        "aria-label": playing ? "Pause story" : chapter === 5 ? "Replay story" : "Follow this order",
+                                        onClick: ()=>playing ? setPlaying(false) : chapter === 5 ? restart() : setPlaying(true),
+                                        children: [
+                                            playing ? /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.Pause, {
+                                                size: 14
+                                            }) : /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.Play, {
+                                                size: 14
+                                            }),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                children: playing ? "Pause" : chapter === 5 ? "Replay story" : "Follow this order"
+                                            })
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                                        type: "button",
+                                        className: "story-reset",
+                                        onClick: restart,
+                                        "aria-label": "Restart the sample order story",
+                                        children: /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.RotateCcw, {
+                                            size: 15
+                                        })
+                                    })
+                                ]
+                            })
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("fieldset", {
+                        className: "story-chapters",
+                        "aria-label": "Explore the order workflow",
+                        children: chapters.map((c, i)=>/*#__PURE__*/ (0, _jsxruntime.jsxs)("button", {
+                                type: "button",
+                                "aria-pressed": chapter === i,
+                                onClick: ()=>select(i),
+                                className: chapter === i ? "is-current" : "",
+                                children: [
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)(c.icon, {
+                                        size: 16
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                        children: c.name
+                                    })
+                                ]
+                            }, c.name))
+                    })
+                ]
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                className: "story-disclaimer",
+                children: "Interactive illustration, not a live account. Changes stay in this example."
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("output", {
+                className: "sr-only",
+                "aria-live": "polite",
+                children: announcement
+            })
+        ]
+    });
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8obWFya2V0aW5nKS9jb21wb25lbnRzL29wZXJhdGlvbi1zdG9yeS50c3giXSwic291cmNlc0NvbnRlbnQiOlsiXCJ1c2UgY2xpZW50XCI7XG5cbmltcG9ydCB7IHVzZUVmZmVjdCwgdXNlSWQsIHVzZVJlZiwgdXNlU3RhdGUgfSBmcm9tIFwicmVhY3RcIjtcbmltcG9ydCB7XG4gIFBhY2thZ2UsXG4gIFdhcmVob3VzZSxcbiAgUm91dGUsXG4gIENoZWNrQ2hlY2ssXG4gIFJlY2VpcHRUZXh0LFxuICBCYXJDaGFydDMsXG4gIFBsYXksXG4gIFBhdXNlLFxuICBSb3RhdGVDY3csXG4gIFBsdXMsXG4gIE1pbnVzLFxuICBBcnJvd1JpZ2h0LFxuICBTdG9yZSxcbiAgQ2hlY2ssXG4gIFdhbGxldCxcbiAgQXJyb3dVcFJpZ2h0LFxufSBmcm9tIFwibHVjaWRlLXJlYWN0XCI7XG5pbXBvcnQgeyBCcmFuZFNpZ25hdHVyZSB9IGZyb20gXCJAL2NvbXBvbmVudHMvYnJhbmRcIjtcbmltcG9ydCB7IGV4YW1wbGVPcmRlciwgZXhhbXBsZVJvdXRlcywgbmV4dENoYXB0ZXIgfSBmcm9tIFwiLi4vbGliL29wZXJhdGlvbi1tb2RlbFwiO1xuXG4vLyBPcGVyYXRpb25TdG9yeSAoXCJEZWxpdmVyeURlbW9cIikg4oCUIHRoZSBpbnRlcmFjdGl2ZSBvcmRlci1saWZlY3ljbGUgZGVtb1xuLy8gKHBvcnRlZCBuZWFyLXZlcmJhdGltIGZyb20gdGhlIHJlZGVzaWduJ3MgY29tcG9uZW50cy9vcGVyYXRpb24tc3RvcnkudHN4O1xuLy8gc3BlYy5tZCBSNywgdXgtc3BlYy5tZCDCpzQsIFQ4YSkuIENvbnRyb2xzIGFyZSBwbGFpbiA8YnV0dG9uPiBlbGVtZW50c1xuLy8gc3R5bGVkIGJ5IHRoZSBzaXRlJ3Mgb3duIG1hcmtldGluZy5jc3MgY2xhc3NlcyAoVGFpbHdpbmQgcHJlZmxpZ2h0IGFscmVhZHlcbi8vIHN0cmlwcyBkZWZhdWx0IGJ1dHRvbiBjaHJvbWUpLCBub3QgYSBzaGFyZWQgQnV0dG9uIGNvbXBvbmVudC4gVGhlIHB1cmVcbi8vIGFyaXRobWV0aWMvcm91dGUgZGF0YSBsaXZlcyBpbiAuLi9saWIvb3BlcmF0aW9uLW1vZGVsIChhbHJlYWR5IGNvdmVyZWQgYnlcbi8vIGl0cyBvd24gdW5pdCB0ZXN0cykuXG5jb25zdCBjaGFwdGVycyA9IFtcbiAge1xuICAgIG5hbWU6IFwiSW52ZW50b3J5XCIsXG4gICAgaWNvbjogV2FyZWhvdXNlLFxuICAgIHRpdGxlOiBcIktub3cgd2hhdCBpcyByZWFkeSB0byBnby5cIixcbiAgICBkZXRhaWw6IFwiQ2hhbmdlIHRoZSBxdWFudGl0eS4gRm9sbG93IHRoZSBzYW1lIGl0ZW1zIHRocm91Z2ggdGhlIG9yZGVyLlwiLFxuICB9LFxuICB7XG4gICAgbmFtZTogXCJPcmRlclwiLFxuICAgIGljb246IFBhY2thZ2UsXG4gICAgdGl0bGU6IFwiRXZlcnkgZGV0YWlsIHRyYXZlbHMgd2l0aCB0aGUgb3JkZXIuXCIsXG4gICAgZGV0YWlsOiBcIkN1c3RvbWVyLCBwcm9kdWN0cywgcHJpY2luZywgYW5kIGRlbGl2ZXJ5IG5vdGVzIHN0YXkgaW4gY29udGV4dC5cIixcbiAgfSxcbiAge1xuICAgIG5hbWU6IFwiUm91dGVcIixcbiAgICBpY29uOiBSb3V0ZSxcbiAgICB0aXRsZTogXCJHaXZlIHRoZSBkZWxpdmVyeSBhIGNsZWFyIHBsYW4uXCIsXG4gICAgZGV0YWlsOiBcIkNob29zZSBhbiBleGFtcGxlIHJ1biBhbmQgc2VlIGl0cyBkcml2ZXIgYW5kIHN0b3BzIGNoYW5nZS5cIixcbiAgfSxcbiAge1xuICAgIG5hbWU6IFwiRGVsaXZlcnlcIixcbiAgICBpY29uOiBDaGVja0NoZWNrLFxuICAgIHRpdGxlOiBcIktlZXAgYSByZWNvcmQgb2YgdGhlIGhhbmRvZmYuXCIsXG4gICAgZGV0YWlsOiBcIkNvbmZpcm0gdGhlIHNhbXBsZSBkZWxpdmVyeSB0byBjYXJyeSB0aGUgc3RvcnkgaW50byBpbnZvaWNpbmcuXCIsXG4gIH0sXG4gIHtcbiAgICBuYW1lOiBcIkludm9pY2VcIixcbiAgICBpY29uOiBSZWNlaXB0VGV4dCxcbiAgICB0aXRsZTogXCJUaGUgb3JkZXIgaGFzIGFuIGFjY291bnQgYmVoaW5kIGl0LlwiLFxuICAgIGRldGFpbDogXCJUaGUgaW52b2ljZSByZWZsZWN0cyB0aGUgcXVhbnRpdGllcyB5b3UgY2hvc2UgYXQgdGhlIHN0YXJ0LlwiLFxuICB9LFxuICB7XG4gICAgbmFtZTogXCJJbnNpZ2h0c1wiLFxuICAgIGljb246IEJhckNoYXJ0MyxcbiAgICB0aXRsZTogXCJTZWUgdGhlIHJlc3VsdCBpbiBjb250ZXh0LlwiLFxuICAgIGRldGFpbDogXCJSZXZpZXcgdGhlIG9yZGVyIHZhbHVlLCBkZWxpdmVyeSByZWNvcmQsIGFuZCBvcGVuIGJhbGFuY2UuXCIsXG4gIH0sXG5dO1xuXG5jb25zdCBjdXJyZW5jeSA9ICh2YWx1ZTogbnVtYmVyKSA9PlxuICBuZXcgSW50bC5OdW1iZXJGb3JtYXQoXCJlbi1VU1wiLCB7XG4gICAgc3R5bGU6IFwiY3VycmVuY3lcIixcbiAgICBjdXJyZW5jeTogXCJVU0RcIixcbiAgICBtYXhpbXVtRnJhY3Rpb25EaWdpdHM6IDAsXG4gIH0pLmZvcm1hdCh2YWx1ZSk7XG5cbmZ1bmN0aW9uIFJvdXRlU3VyZmFjZSh7IHNlbGVjdGVkLCBtb3ZpbmcgfTogeyBzZWxlY3RlZDogbnVtYmVyOyBtb3Zpbmc6IGJvb2xlYW4gfSkge1xuICBjb25zdCBncmFkaWVudCA9IHVzZUlkKCkucmVwbGFjZUFsbChcIjpcIiwgXCJcIik7XG4gIHJldHVybiAoXG4gICAgPHN2Z1xuICAgICAgY2xhc3NOYW1lPXtcInJvdXRlLXN1cmZhY2UgXCIgKyAobW92aW5nID8gXCJyb3V0ZS1tb3ZpbmdcIiA6IFwiXCIpfVxuICAgICAgdmlld0JveD1cIjAgMCA0NjAgMjUwXCJcbiAgICAgIHJvbGU9XCJpbWdcIlxuICAgICAgYXJpYS1sYWJlbD17YElsbHVzdHJhdGl2ZSBtYXAgZm9yIHRoZSAke2V4YW1wbGVSb3V0ZXNbc2VsZWN0ZWRdLm5hbWV9YH1cbiAgICA+XG4gICAgICA8ZGVmcz5cbiAgICAgICAgPGxpbmVhckdyYWRpZW50IGlkPXtncmFkaWVudH0+XG4gICAgICAgICAgPHN0b3Agc3RvcENvbG9yPVwiIzQ1NDQ1Y1wiIC8+XG4gICAgICAgICAgPHN0b3Agb2Zmc2V0PVwiMVwiIHN0b3BDb2xvcj1cIiM5YTgwYWNcIiAvPlxuICAgICAgICA8L2xpbmVhckdyYWRpZW50PlxuICAgICAgPC9kZWZzPlxuICAgICAgPHJlY3Qgd2lkdGg9XCI0NjBcIiBoZWlnaHQ9XCIyNTBcIiByeD1cIjIwXCIgZmlsbD1cIiNlOWVkZjVcIiAvPlxuICAgICAgPHBhdGggZD1cIk0zNzAtMjBDMjc4IDQ3IDM2NCAxMzggMjgwIDI4MVwiIHN0cm9rZT1cIiNiOGRjZThcIiBzdHJva2VXaWR0aD1cIjQ2XCIgZmlsbD1cIm5vbmVcIiAvPlxuICAgICAgPHBhdGhcbiAgICAgICAgZD1cIk0zMiAzNmgxMDN2NTZIMzJ6IE0yMjEgMjBoNjZ2MzloLTY2eiBNMTkgMTk5aDExNHYzNkgxOXogTTM1MiAxODFoOTV2NDdoLTk1elwiXG4gICAgICAgIGZpbGw9XCIjZDJlM2Q2XCJcbiAgICAgIC8+XG4gICAgICA8cGF0aFxuICAgICAgICBkPVwiTTAgMTI0SDQ2MCBNMTQ5IDB2MjUwIE0zMzIgMHYyNTAgTTAgNDdINDYwIE0wIDIwOEg0NjBcIlxuICAgICAgICBzdHJva2U9XCIjZmZmXCJcbiAgICAgICAgc3Ryb2tlV2lkdGg9XCIxNVwiXG4gICAgICAvPlxuICAgICAgPHBhdGhcbiAgICAgICAgZD1cIk0wIDEyNEg0NjAgTTE0OSAwdjI1MCBNMzMyIDB2MjUwIE0wIDQ3SDQ2MCBNMCAyMDhINDYwXCJcbiAgICAgICAgc3Ryb2tlPVwiI2Q5ZGZlOVwiXG4gICAgICAgIHN0cm9rZVdpZHRoPVwiMVwiXG4gICAgICAgIHN0cm9rZURhc2hhcnJheT1cIjUgNVwiXG4gICAgICAvPlxuICAgICAgPHBhdGhcbiAgICAgICAgZD17ZXhhbXBsZVJvdXRlc1tzZWxlY3RlZF0ucGF0aH1cbiAgICAgICAgZmlsbD1cIm5vbmVcIlxuICAgICAgICBzdHJva2U9XCJ3aGl0ZVwiXG4gICAgICAgIHN0cm9rZVdpZHRoPVwiMTNcIlxuICAgICAgICBzdHJva2VMaW5lY2FwPVwicm91bmRcIlxuICAgICAgLz5cbiAgICAgIDxwYXRoXG4gICAgICAgIGNsYXNzTmFtZT1cIm9yZGVyLXJvdXRlLWxpbmVcIlxuICAgICAgICBkPXtleGFtcGxlUm91dGVzW3NlbGVjdGVkXS5wYXRofVxuICAgICAgICBwYXRoTGVuZ3RoPVwiMVwiXG4gICAgICAgIGZpbGw9XCJub25lXCJcbiAgICAgICAgc3Ryb2tlPXtgdXJsKCMke2dyYWRpZW50fSlgfVxuICAgICAgICBzdHJva2VXaWR0aD1cIjZcIlxuICAgICAgICBzdHJva2VMaW5lY2FwPVwicm91bmRcIlxuICAgICAgLz5cbiAgICAgIHsoXG4gICAgICAgIFtcbiAgICAgICAgICBbNjUsIDE2NiwgXCJXXCJdLFxuICAgICAgICAgIFsxODIsIDcxLCBzZWxlY3RlZCA9PT0gMCA/IFwiMVwiIDogXCIyXCJdLFxuICAgICAgICAgIFszOTMsIDc2LCBzZWxlY3RlZCA9PT0gMCA/IFwiMlwiIDogXCIxXCJdLFxuICAgICAgICBdIGFzIGNvbnN0XG4gICAgICApLm1hcCgoW3gsIHksIGxhYmVsXSkgPT4gKFxuICAgICAgICA8ZyBrZXk9e2xhYmVsfSB0cmFuc2Zvcm09e2B0cmFuc2xhdGUoJHt4fSAke3l9KWB9PlxuICAgICAgICAgIDxjaXJjbGUgcj1cIjE0XCIgZmlsbD1cIndoaXRlXCIgc3Ryb2tlPVwiIzhiN2E5YVwiIHN0cm9rZVdpZHRoPVwiMlwiIC8+XG4gICAgICAgICAgPHRleHQgdGV4dEFuY2hvcj1cIm1pZGRsZVwiIHk9XCI0XCIgZmlsbD1cIiM2MzUwNzFcIiBmb250U2l6ZT1cIjEyXCIgZm9udFdlaWdodD1cIjY1MFwiPlxuICAgICAgICAgICAge2xhYmVsfVxuICAgICAgICAgIDwvdGV4dD5cbiAgICAgICAgPC9nPlxuICAgICAgKSl9XG4gICAgICA8ZyBmaWxsPVwiIzNlNTI2ZFwiIGZvbnRTaXplPVwiMTBcIiBmb250V2VpZ2h0PVwiNTUwXCI+XG4gICAgICAgIDx0ZXh0IHg9XCIyNFwiIHk9XCIxOTZcIj5cbiAgICAgICAgICBXYXJlaG91c2VcbiAgICAgICAgPC90ZXh0PlxuICAgICAgICA8dGV4dCB4PVwiMTM3XCIgeT1cIjQyXCI+XG4gICAgICAgICAgUGFya3NpZGUgTWFya2V0XG4gICAgICAgIDwvdGV4dD5cbiAgICAgICAgPHRleHQgeD1cIjM0NlwiIHk9XCIxMDhcIj5cbiAgICAgICAgICBDb3JuZXIgU3RvcmVcbiAgICAgICAgPC90ZXh0PlxuICAgICAgPC9nPlxuICAgIDwvc3ZnPlxuICApO1xufVxuXG5leHBvcnQgZnVuY3Rpb24gT3BlcmF0aW9uU3RvcnkoeyBjb21wYWN0ID0gZmFsc2UgfTogeyBjb21wYWN0PzogYm9vbGVhbiB9KSB7XG4gIGNvbnN0IHJvb3QgPSB1c2VSZWY8SFRNTERpdkVsZW1lbnQ+KG51bGwpO1xuICBjb25zdCBoZWFkaW5nID0gdXNlUmVmPEhUTUxIZWFkaW5nRWxlbWVudD4obnVsbCk7XG4gIGNvbnN0IGZvY3VzTmV4dEhlYWRpbmcgPSB1c2VSZWYoZmFsc2UpO1xuICBjb25zdCBbYW5ub3VuY2VtZW50LCBzZXRBbm5vdW5jZW1lbnRdID0gdXNlU3RhdGUoXCJcIik7XG4gIGNvbnN0IFtjaGFwdGVyLCBzZXRDaGFwdGVyXSA9IHVzZVN0YXRlKDApO1xuICBjb25zdCBbcXVhbnRpdHksIHNldFF1YW50aXR5XSA9IHVzZVN0YXRlKDQpO1xuICBjb25zdCBbcm91dGUsIHNldFJvdXRlXSA9IHVzZVN0YXRlKDApO1xuICBjb25zdCBbZGVsaXZlcmVkLCBzZXREZWxpdmVyZWRdID0gdXNlU3RhdGUoZmFsc2UpO1xuICBjb25zdCBbcGFpZCwgc2V0UGFpZF0gPSB1c2VTdGF0ZShmYWxzZSk7XG4gIGNvbnN0IFtwbGF5aW5nLCBzZXRQbGF5aW5nXSA9IHVzZVN0YXRlKGZhbHNlKTtcbiAgY29uc3QgW3Zpc2libGUsIHNldFZpc2libGVdID0gdXNlU3RhdGUodHJ1ZSk7XG4gIGNvbnN0IFtyZWR1Y2VkTW90aW9uLCBzZXRSZWR1Y2VkTW90aW9uXSA9IHVzZVN0YXRlKGZhbHNlKTtcbiAgY29uc3Qgb3JkZXIgPSBleGFtcGxlT3JkZXIocXVhbnRpdHksIHsgZGVsaXZlcmVkLCBwYWlkIH0pO1xuICBjb25zdCBjdXJyZW50ID0gY2hhcHRlcnNbY2hhcHRlcl07XG5cbiAgdXNlRWZmZWN0KCgpID0+IHtcbiAgICBpZiAoZm9jdXNOZXh0SGVhZGluZy5jdXJyZW50KSB7XG4gICAgICBoZWFkaW5nLmN1cnJlbnQ/LmZvY3VzKHsgcHJldmVudFNjcm9sbDogdHJ1ZSB9KTtcbiAgICAgIGZvY3VzTmV4dEhlYWRpbmcuY3VycmVudCA9IGZhbHNlO1xuICAgIH1cbiAgfSwgW2NoYXB0ZXJdKTtcblxuICB1c2VFZmZlY3QoKCkgPT4ge1xuICAgIGlmICghcm9vdC5jdXJyZW50KSByZXR1cm47XG4gICAgY29uc3Qgb2JzZXJ2ZXIgPSBuZXcgSW50ZXJzZWN0aW9uT2JzZXJ2ZXIoKFtlbnRyeV0pID0+IHNldFZpc2libGUoZW50cnkuaXNJbnRlcnNlY3RpbmcpLCB7XG4gICAgICB0aHJlc2hvbGQ6IDAuMSxcbiAgICB9KTtcbiAgICBvYnNlcnZlci5vYnNlcnZlKHJvb3QuY3VycmVudCk7XG4gICAgcmV0dXJuICgpID0+IG9ic2VydmVyLmRpc2Nvbm5lY3QoKTtcbiAgfSwgW10pO1xuXG4gIC8vIFJlZHVjZWQgbW90aW9uIHJlc3BlY3RlZCAoc3BlYy5tZCBSNywgdXgtc3BlYy5tZCDCpzQpOiB0aGUgYXV0b21hdGljXG4gIC8vIGNoYXB0ZXItYWR2YW5jZSB0aW1lciBiZWxvdyBuZXZlciBydW5zIHdoaWxlIHRoZSB2aWV3ZXIncyBPUyBzZXR0aW5nXG4gIC8vIGFza3MgZm9yIGxlc3MgbW90aW9uIOKAlCB0aGUgc3Rvcnkgc3RheXMgZnVsbHkgZXhwbG9yYWJsZSB0aHJvdWdoIHRoZVxuICAvLyBtYW51YWwgY29udHJvbHMgKGNoYXB0ZXIgZG90cywgcXVhbnRpdHksIHJvdXRlLCBjb25maXJtL3BheSBidXR0b25zKS5cbiAgdXNlRWZmZWN0KCgpID0+IHtcbiAgICBjb25zdCBxdWVyeSA9IHdpbmRvdy5tYXRjaE1lZGlhKFwiKHByZWZlcnMtcmVkdWNlZC1tb3Rpb246IHJlZHVjZSlcIik7XG4gICAgc2V0UmVkdWNlZE1vdGlvbihxdWVyeS5tYXRjaGVzKTtcbiAgICBjb25zdCBvbkNoYW5nZSA9ICgpID0+IHNldFJlZHVjZWRNb3Rpb24ocXVlcnkubWF0Y2hlcyk7XG4gICAgcXVlcnkuYWRkRXZlbnRMaXN0ZW5lcihcImNoYW5nZVwiLCBvbkNoYW5nZSk7XG4gICAgcmV0dXJuICgpID0+IHF1ZXJ5LnJlbW92ZUV2ZW50TGlzdGVuZXIoXCJjaGFuZ2VcIiwgb25DaGFuZ2UpO1xuICB9LCBbXSk7XG5cbiAgdXNlRWZmZWN0KCgpID0+IHtcbiAgICBpZiAoIXBsYXlpbmcgfHwgIXZpc2libGUgfHwgcmVkdWNlZE1vdGlvbikgcmV0dXJuO1xuICAgIGNvbnN0IHRpbWVyID0gd2luZG93LnNldFRpbWVvdXQoKCkgPT4ge1xuICAgICAgaWYgKGRvY3VtZW50LmhpZGRlbikge1xuICAgICAgICBzZXRQbGF5aW5nKGZhbHNlKTtcbiAgICAgICAgcmV0dXJuO1xuICAgICAgfVxuICAgICAgY29uc3QgbmV4dCA9IG5leHRDaGFwdGVyKGNoYXB0ZXIpO1xuICAgICAgaWYgKG5leHQgPj0gNCkgc2V0RGVsaXZlcmVkKHRydWUpO1xuICAgICAgc2V0Q2hhcHRlcihuZXh0KTtcbiAgICAgIGlmIChuZXh0ID09PSA1KSBzZXRQbGF5aW5nKGZhbHNlKTtcbiAgICB9LCAzMzAwKTtcbiAgICByZXR1cm4gKCkgPT4gY2xlYXJUaW1lb3V0KHRpbWVyKTtcbiAgfSwgW2NoYXB0ZXIsIHBsYXlpbmcsIHZpc2libGUsIHJlZHVjZWRNb3Rpb25dKTtcblxuICBjb25zdCBzZWxlY3QgPSAoaTogbnVtYmVyLCBmb2N1cyA9IGZhbHNlKSA9PiB7XG4gICAgc2V0UGxheWluZyhmYWxzZSk7XG4gICAgZm9jdXNOZXh0SGVhZGluZy5jdXJyZW50ID0gZm9jdXM7XG4gICAgc2V0Q2hhcHRlcihpKTtcbiAgICBzZXRBbm5vdW5jZW1lbnQoY2hhcHRlcnNbaV0ubmFtZSArIFwiOiBcIiArIGNoYXB0ZXJzW2ldLnRpdGxlKTtcbiAgfTtcbiAgY29uc3QgYWRqdXN0ID0gKGJ5OiBudW1iZXIpID0+IHtcbiAgICBzZXRQbGF5aW5nKGZhbHNlKTtcbiAgICBzZXRRdWFudGl0eSgocSkgPT4gTWF0aC5tYXgoMSwgTWF0aC5taW4oMTIsIHEgKyBieSkpKTtcbiAgICBzZXREZWxpdmVyZWQoZmFsc2UpO1xuICAgIHNldFBhaWQoZmFsc2UpO1xuICB9O1xuICBjb25zdCBhc3NpZ24gPSAoaTogbnVtYmVyKSA9PiB7XG4gICAgc2V0UGxheWluZyhmYWxzZSk7XG4gICAgaWYgKGkgPT09IHJvdXRlKSByZXR1cm47XG4gICAgc2V0Um91dGUoaSk7XG4gICAgc2V0RGVsaXZlcmVkKGZhbHNlKTtcbiAgICBzZXRQYWlkKGZhbHNlKTtcbiAgICBzZXRBbm5vdW5jZW1lbnQoXG4gICAgICBcIkFzc2lnbmVkIHRvIFwiICtcbiAgICAgICAgZXhhbXBsZVJvdXRlc1tpXS5uYW1lICtcbiAgICAgICAgXCIuIERlbGl2ZXJ5IGFuZCBwYXltZW50IHJlc2V0IGZvciB0aGUgbmV3IGFzc2lnbm1lbnQuXCIsXG4gICAgKTtcbiAgfTtcbiAgY29uc3QgcmVzdGFydCA9ICgpID0+IHtcbiAgICBzZXRDaGFwdGVyKDApO1xuICAgIHNldFF1YW50aXR5KDQpO1xuICAgIHNldFJvdXRlKDApO1xuICAgIHNldERlbGl2ZXJlZChmYWxzZSk7XG4gICAgc2V0UGFpZChmYWxzZSk7XG4gICAgc2V0UGxheWluZyh0cnVlKTtcbiAgfTtcbiAgY29uc3QgY29uZmlybSA9ICgpID0+IHtcbiAgICBzZXREZWxpdmVyZWQodHJ1ZSk7XG4gICAgc2V0UGxheWluZyhmYWxzZSk7XG4gICAgZm9jdXNOZXh0SGVhZGluZy5jdXJyZW50ID0gdHJ1ZTtcbiAgICBzZXRDaGFwdGVyKDQpO1xuICAgIHNldEFubm91bmNlbWVudChcIlNhbXBsZSBkZWxpdmVyeSBjb25maXJtZWQuIEludm9pY2UgcmVhZHkgdG8gcmV2aWV3LlwiKTtcbiAgfTtcblxuICByZXR1cm4gKFxuICAgIDxkaXYgcmVmPXtyb290fSBjbGFzc05hbWU9e1wib3BlcmF0aW9uLXN0b3J5IFwiICsgKGNvbXBhY3QgPyBcInN0b3J5LWNvbXBhY3RcIiA6IFwiXCIpfT5cbiAgICAgIDxkaXYgY2xhc3NOYW1lPVwic3RvcnktbGlnaHQgc3RvcnktbGlnaHQtb25lXCIgLz5cbiAgICAgIDxkaXYgY2xhc3NOYW1lPVwic3RvcnktbGlnaHQgc3RvcnktbGlnaHQtdHdvXCIgLz5cbiAgICAgIDxkaXYgY2xhc3NOYW1lPVwic3RvcnktdG9wXCI+XG4gICAgICAgIDxzcGFuPlxuICAgICAgICAgIDxzcGFuIC8+IElOVEVSQUNUSVZFIFBST0RVQ1QgRVhBTVBMRVxuICAgICAgICA8L3NwYW4+XG4gICAgICAgIDxzcGFuPk9uZSBvcmRlci4gRXZlcnkgdGVhbS48L3NwYW4+XG4gICAgICA8L2Rpdj5cbiAgICAgIDxkaXYgY2xhc3NOYW1lPVwic3RvcnktaW50cm9cIj5cbiAgICAgICAgPHNwYW4gY2xhc3NOYW1lPVwic3RvcnktY2hhcHRlci1jb3VudFwiPjB7Y2hhcHRlciArIDF9IC8gMDY8L3NwYW4+XG4gICAgICAgIDxoMyByZWY9e2hlYWRpbmd9IHRhYkluZGV4PXstMX0+XG4gICAgICAgICAge2N1cnJlbnQudGl0bGV9XG4gICAgICAgIDwvaDM+XG4gICAgICA8L2Rpdj5cbiAgICAgIDxkaXYgY2xhc3NOYW1lPVwicGFzc3BvcnQtc3RhZ2VcIj5cbiAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJwYXNzcG9ydC1zaGFkb3dcIiAvPlxuICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cIm9yZGVyLXBhc3Nwb3J0XCI+XG4gICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJwYXNzcG9ydC1jaHJvbWVcIj5cbiAgICAgICAgICAgIDxzcGFuIGNsYXNzTmFtZT1cInBhc3Nwb3J0LWJyYW5kXCI+XG4gICAgICAgICAgICAgIDxCcmFuZFNpZ25hdHVyZSAvPlxuICAgICAgICAgICAgPC9zcGFuPlxuICAgICAgICAgICAgPHNwYW4gY2xhc3NOYW1lPVwicGFzc3BvcnQtbW9kdWxlXCI+XG4gICAgICAgICAgICAgIDxjdXJyZW50Lmljb24gc2l6ZT17MTR9IC8+XG4gICAgICAgICAgICAgIHtjdXJyZW50Lm5hbWV9XG4gICAgICAgICAgICA8L3NwYW4+XG4gICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJwYXNzcG9ydC1jb250ZXh0XCI+XG4gICAgICAgICAgICA8ZGl2PlxuICAgICAgICAgICAgICA8c3Bhbj5PUkRFUiAjUkYtMTA0Mjwvc3Bhbj5cbiAgICAgICAgICAgICAgPHN0cm9uZz5QYXJrc2lkZSBNYXJrZXQ8L3N0cm9uZz5cbiAgICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgICAgPHNwYW4gY2xhc3NOYW1lPXtcInBhc3Nwb3J0LXN0YXR1cyBcIiArIChkZWxpdmVyZWQgPyBcInN0YXR1cy1kb25lXCIgOiBcIlwiKX0+XG4gICAgICAgICAgICAgIHtwYWlkID8gXCJQYXltZW50IHJlY29yZGVkXCIgOiBkZWxpdmVyZWQgPyBcIkRlbGl2ZXJlZFwiIDogXCJTYW1wbGUgb3JkZXJcIn1cbiAgICAgICAgICAgIDwvc3Bhbj5cbiAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cInBhc3Nwb3J0LWNvbnRlbnRcIiBrZXk9e2NoYXB0ZXJ9IG9uRm9jdXNDYXB0dXJlPXsoKSA9PiBzZXRQbGF5aW5nKGZhbHNlKX0+XG4gICAgICAgICAgICB7Y2hhcHRlciA9PT0gMCAmJiAoXG4gICAgICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwiaW52ZW50b3J5LXNjZW5lXCI+XG4gICAgICAgICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJzdG9jay1zY2VuZS10b3BcIj5cbiAgICAgICAgICAgICAgICAgIDxkaXY+XG4gICAgICAgICAgICAgICAgICAgIDxzcGFuIGNsYXNzTmFtZT1cInN0b3J5LXNtYWxsLWxhYmVsXCI+U1BSSU5HIFdBVEVSIMK3IDI0LVBBQ0s8L3NwYW4+XG4gICAgICAgICAgICAgICAgICAgIDxzdHJvbmcgY2xhc3NOYW1lPVwic3RvY2stY291bnRcIj5cbiAgICAgICAgICAgICAgICAgICAgICAxNDg8c3Bhbj5jYXNlcyBvbiBoYW5kPC9zcGFuPlxuICAgICAgICAgICAgICAgICAgICA8L3N0cm9uZz5cbiAgICAgICAgICAgICAgICAgICAgPHA+UGxhbiB0aGlzIGV4YW1wbGUgb3JkZXIuPC9wPlxuICAgICAgICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgICAgICAgICB7LyogUGxhaW4gPGltZz4sIG5vdCBuZXh0L2ltYWdlIChydWxpbmcgQjEpOyBiZWxvdyB0aGUgZm9sZCwgc28gbGF6eS4gKi99XG4gICAgICAgICAgICAgICAgICB7LyogZXNsaW50LWRpc2FibGUtbmV4dC1saW5lIEBuZXh0L25leHQvbm8taW1nLWVsZW1lbnQgLS0gc2VlIGFib3ZlICovfVxuICAgICAgICAgICAgICAgICAgPGltZ1xuICAgICAgICAgICAgICAgICAgICBjbGFzc05hbWU9XCJzdG9jay1jdXRvdXRcIlxuICAgICAgICAgICAgICAgICAgICBzcmM9XCIvbWFya2V0aW5nL3N0b2NrLWN1dG91dC12My53ZWJwXCJcbiAgICAgICAgICAgICAgICAgICAgYWx0PVwiUGhvdG9yZWFsaXN0aWMgdW5icmFuZGVkIGNhcnRvbnMgYW5kIGEgY2FzZSBvZiBib3R0bGVkIHdhdGVyLlwiXG4gICAgICAgICAgICAgICAgICAgIHdpZHRoPXs2NDB9XG4gICAgICAgICAgICAgICAgICAgIGhlaWdodD17NTEyfVxuICAgICAgICAgICAgICAgICAgICBsb2FkaW5nPVwibGF6eVwiXG4gICAgICAgICAgICAgICAgICAgIGRlY29kaW5nPVwiYXN5bmNcIlxuICAgICAgICAgICAgICAgICAgLz5cbiAgICAgICAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cInF1YW50aXR5LWNhcmRcIj5cbiAgICAgICAgICAgICAgICAgIDxkaXY+XG4gICAgICAgICAgICAgICAgICAgIDxzdHJvbmc+Q2FzZXMgZm9yIHRoaXMgb3JkZXI8L3N0cm9uZz5cbiAgICAgICAgICAgICAgICAgICAgPHNwYW4+JDE4IHBlciBjYXNlIMK3IGV4YW1wbGUgcHJpY2U8L3NwYW4+XG4gICAgICAgICAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwicXVhbnRpdHktY29udHJvbHNcIj5cbiAgICAgICAgICAgICAgICAgICAgPGJ1dHRvblxuICAgICAgICAgICAgICAgICAgICAgIHR5cGU9XCJidXR0b25cIlxuICAgICAgICAgICAgICAgICAgICAgIG9uQ2xpY2s9eygpID0+IGFkanVzdCgtMSl9XG4gICAgICAgICAgICAgICAgICAgICAgZGlzYWJsZWQ9e3F1YW50aXR5IDw9IDF9XG4gICAgICAgICAgICAgICAgICAgICAgYXJpYS1sYWJlbD1cIlJlbW92ZSBvbmUgY2FzZVwiXG4gICAgICAgICAgICAgICAgICAgID5cbiAgICAgICAgICAgICAgICAgICAgICA8TWludXMgc2l6ZT17MTV9IC8+XG4gICAgICAgICAgICAgICAgICAgIDwvYnV0dG9uPlxuICAgICAgICAgICAgICAgICAgICA8b3V0cHV0IGFyaWEtbGFiZWw9XCJDYXNlcyBpbiBzYW1wbGUgb3JkZXJcIj57cXVhbnRpdHl9PC9vdXRwdXQ+XG4gICAgICAgICAgICAgICAgICAgIDxidXR0b25cbiAgICAgICAgICAgICAgICAgICAgICB0eXBlPVwiYnV0dG9uXCJcbiAgICAgICAgICAgICAgICAgICAgICBvbkNsaWNrPXsoKSA9PiBhZGp1c3QoMSl9XG4gICAgICAgICAgICAgICAgICAgICAgZGlzYWJsZWQ9e3F1YW50aXR5ID49IDEyfVxuICAgICAgICAgICAgICAgICAgICAgIGFyaWEtbGFiZWw9XCJBZGQgb25lIGNhc2VcIlxuICAgICAgICAgICAgICAgICAgICA+XG4gICAgICAgICAgICAgICAgICAgICAgPFBsdXMgc2l6ZT17MTV9IC8+XG4gICAgICAgICAgICAgICAgICAgIDwvYnV0dG9uPlxuICAgICAgICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJzdG9jay1hZnRlclwiPlxuICAgICAgICAgICAgICAgICAgPHNwYW4+XG4gICAgICAgICAgICAgICAgICAgIDxzcGFuIC8+XG4gICAgICAgICAgICAgICAgICAgIEFmdGVyIHRoaXMgZXhhbXBsZSBvcmRlclxuICAgICAgICAgICAgICAgICAgPC9zcGFuPlxuICAgICAgICAgICAgICAgICAgPHN0cm9uZz57b3JkZXIuYXZhaWxhYmxlfSBjYXNlczwvc3Ryb25nPlxuICAgICAgICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgICAgICl9XG4gICAgICAgICAgICB7Y2hhcHRlciA9PT0gMSAmJiAoXG4gICAgICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwib3JkZXItZGV0YWlsLXNjZW5lXCI+XG4gICAgICAgICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJwYXNzcG9ydC1zZWN0aW9uLWxhYmVsXCI+XG4gICAgICAgICAgICAgICAgICA8UGFja2FnZSBzaXplPXsxN30gLz5cbiAgICAgICAgICAgICAgICAgIEl0ZW1zICYgY3VzdG9tZXIgcHJpY2luZ1xuICAgICAgICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwiZXhhbXBsZS1pdGVtXCI+XG4gICAgICAgICAgICAgICAgICA8UGFja2FnZSBzaXplPXsyNH0gY2xhc3NOYW1lPVwib3JkZXItaXRlbS1pY29uXCIgLz5cbiAgICAgICAgICAgICAgICAgIDxkaXY+XG4gICAgICAgICAgICAgICAgICAgIDxzdHJvbmc+U3ByaW5nIHdhdGVyIMK3IDI0LXBhY2s8L3N0cm9uZz5cbiAgICAgICAgICAgICAgICAgICAgPHNwYW4+e3F1YW50aXR5fSBjYXNlcyDDlyAkMTg8L3NwYW4+XG4gICAgICAgICAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgICAgICAgICAgIDxiPntjdXJyZW5jeShvcmRlci53YXRlclRvdGFsKX08L2I+XG4gICAgICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJleGFtcGxlLWl0ZW1cIj5cbiAgICAgICAgICAgICAgICAgIDxQYWNrYWdlIHNpemU9ezI0fSBjbGFzc05hbWU9XCJvcmRlci1pdGVtLWljb25cIiAvPlxuICAgICAgICAgICAgICAgICAgPGRpdj5cbiAgICAgICAgICAgICAgICAgICAgPHN0cm9uZz5NaXhlZCBzbmFja3MgwrcgMzAtcGFjazwvc3Ryb25nPlxuICAgICAgICAgICAgICAgICAgICA8c3Bhbj4yIGNhc2VzIMOXICQyMTwvc3Bhbj5cbiAgICAgICAgICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgICAgICAgICAgPGI+JDQyPC9iPlxuICAgICAgICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwib3JkZXItZGVsaXZlcnktbm90ZVwiPlxuICAgICAgICAgICAgICAgICAgPHNwYW4+REVMSVZFUlkgTk9URTwvc3Bhbj5cbiAgICAgICAgICAgICAgICAgIDxwPlVzZSB0aGUgcmVhciByZWNlaXZpbmcgZW50cmFuY2UuPC9wPlxuICAgICAgICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwicGFzc3BvcnQtdG90YWxcIj5cbiAgICAgICAgICAgICAgICAgIDxzcGFuPkV4YW1wbGUgc3VidG90YWw8L3NwYW4+XG4gICAgICAgICAgICAgICAgICA8c3Ryb25nPntjdXJyZW5jeShvcmRlci50b3RhbCl9PC9zdHJvbmc+XG4gICAgICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgICAgKX1cbiAgICAgICAgICAgIHtjaGFwdGVyID09PSAyICYmIChcbiAgICAgICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJyb3V0ZS1zY2VuZVwiPlxuICAgICAgICAgICAgICAgIDxmaWVsZHNldCBjbGFzc05hbWU9XCJleGFtcGxlLXJ1bnNcIiBhcmlhLWxhYmVsPVwiQXNzaWduIHRoZSBzYW1wbGUgZGVsaXZlcnkgcnVuXCI+XG4gICAgICAgICAgICAgICAgICB7ZXhhbXBsZVJvdXRlcy5tYXAoKHIsIGkpID0+IChcbiAgICAgICAgICAgICAgICAgICAgPGJ1dHRvblxuICAgICAgICAgICAgICAgICAgICAgIGtleT17ci5uYW1lfVxuICAgICAgICAgICAgICAgICAgICAgIHR5cGU9XCJidXR0b25cIlxuICAgICAgICAgICAgICAgICAgICAgIGFyaWEtcHJlc3NlZD17cm91dGUgPT09IGl9XG4gICAgICAgICAgICAgICAgICAgICAgb25DbGljaz17KCkgPT4gYXNzaWduKGkpfVxuICAgICAgICAgICAgICAgICAgICAgIGNsYXNzTmFtZT17cm91dGUgPT09IGkgPyBcImlzLXNlbGVjdGVkXCIgOiBcIlwifVxuICAgICAgICAgICAgICAgICAgICA+XG4gICAgICAgICAgICAgICAgICAgICAge3IubmFtZX1cbiAgICAgICAgICAgICAgICAgICAgICB7cm91dGUgPT09IGkgJiYgPENoZWNrIHNpemU9ezEzfSAvPn1cbiAgICAgICAgICAgICAgICAgICAgPC9idXR0b24+XG4gICAgICAgICAgICAgICAgICApKX1cbiAgICAgICAgICAgICAgICA8L2ZpZWxkc2V0PlxuICAgICAgICAgICAgICAgIDxSb3V0ZVN1cmZhY2Uga2V5PXtyb3V0ZX0gc2VsZWN0ZWQ9e3JvdXRlfSBtb3Zpbmc9e3BsYXlpbmd9IC8+XG4gICAgICAgICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJydW4tc3VtbWFyeVwiPlxuICAgICAgICAgICAgICAgICAgPHNwYW4+XG4gICAgICAgICAgICAgICAgICAgIDxSb3V0ZSBzaXplPXsxNX0gLz5cbiAgICAgICAgICAgICAgICAgICAge2V4YW1wbGVSb3V0ZXNbcm91dGVdLmRyaXZlcn0gwrcgMyBleGFtcGxlIHN0b3BzXG4gICAgICAgICAgICAgICAgICA8L3NwYW4+XG4gICAgICAgICAgICAgICAgICA8c3Ryb25nPntleGFtcGxlUm91dGVzW3JvdXRlXS5uYW1lfTwvc3Ryb25nPlxuICAgICAgICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgICAgICl9XG4gICAgICAgICAgICB7Y2hhcHRlciA9PT0gMyAmJiAoXG4gICAgICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwiZGVsaXZlcnktc2NlbmUtdjNcIj5cbiAgICAgICAgICAgICAgICA8c3BhbiBjbGFzc05hbWU9XCJkZWxpdmVyeS1yZWNlaXB0LWljb25cIj5cbiAgICAgICAgICAgICAgICAgIDxDaGVja0NoZWNrIHNpemU9ezMzfSAvPlxuICAgICAgICAgICAgICAgIDwvc3Bhbj5cbiAgICAgICAgICAgICAgICA8aDQ+QXQgdGhlIHJlY2VpdmluZyBkb29yLjwvaDQ+XG4gICAgICAgICAgICAgICAgPHA+XG4gICAgICAgICAgICAgICAgICBQYXJrc2lkZSBNYXJrZXRcbiAgICAgICAgICAgICAgICAgIDxiciAvPlxuICAgICAgICAgICAgICAgICAgPHNwYW4+XG4gICAgICAgICAgICAgICAgICAgIHtxdWFudGl0eSArIDJ9IGNhc2VzIMK3IHtleGFtcGxlUm91dGVzW3JvdXRlXS5uYW1lfVxuICAgICAgICAgICAgICAgICAgPC9zcGFuPlxuICAgICAgICAgICAgICAgIDwvcD5cbiAgICAgICAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cImRlbGl2ZXJ5LXByb29mLXJvd1wiPlxuICAgICAgICAgICAgICAgICAgPENoZWNrIHNpemU9ezE2fSAvPkEgZGVsaXZlcnkgcmVjb3JkIGZvciB0aGUgb3JkZXJcbiAgICAgICAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgICAgICAgICA8YnV0dG9uIHR5cGU9XCJidXR0b25cIiBjbGFzc05hbWU9XCJzdG9yeS1hY3Rpb25cIiBvbkNsaWNrPXtjb25maXJtfT5cbiAgICAgICAgICAgICAgICAgIENvbmZpcm0gc2FtcGxlIGRlbGl2ZXJ5IDxBcnJvd1JpZ2h0IHNpemU9ezE1fSAvPlxuICAgICAgICAgICAgICAgIDwvYnV0dG9uPlxuICAgICAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgICAgICl9XG4gICAgICAgICAgICB7Y2hhcHRlciA9PT0gNCAmJiAoXG4gICAgICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwiaW52b2ljZS1zY2VuZVwiPlxuICAgICAgICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwiaW52b2ljZS10aXRsZVwiPlxuICAgICAgICAgICAgICAgICAgPHNwYW4+XG4gICAgICAgICAgICAgICAgICAgIDxSZWNlaXB0VGV4dCBzaXplPXsxOX0gLz5cbiAgICAgICAgICAgICAgICAgICAgSW52b2ljZVxuICAgICAgICAgICAgICAgICAgPC9zcGFuPlxuICAgICAgICAgICAgICAgICAgPGI+e2RlbGl2ZXJlZCA/IFwiUkVBRFlcIiA6IFwiRFJBRlRcIn08L2I+XG4gICAgICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJpbnZvaWNlLXJlZmVyZW5jZVwiPlxuICAgICAgICAgICAgICAgICAgSU5WLTEwNDIgPHNwYW4+RnJvbSBvcmRlciBSRi0xMDQyPC9zcGFuPlxuICAgICAgICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwiaW52b2ljZS1saW5lXCI+XG4gICAgICAgICAgICAgICAgICA8c3Bhbj5TcHJpbmcgd2F0ZXIgwrcge3F1YW50aXR5fSBjYXNlczwvc3Bhbj5cbiAgICAgICAgICAgICAgICAgIDxzdHJvbmc+e2N1cnJlbmN5KG9yZGVyLndhdGVyVG90YWwpfTwvc3Ryb25nPlxuICAgICAgICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwiaW52b2ljZS1saW5lXCI+XG4gICAgICAgICAgICAgICAgICA8c3Bhbj5NaXhlZCBzbmFja3MgwrcgMiBjYXNlczwvc3Bhbj5cbiAgICAgICAgICAgICAgICAgIDxzdHJvbmc+JDQyPC9zdHJvbmc+XG4gICAgICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJwYXNzcG9ydC10b3RhbFwiPlxuICAgICAgICAgICAgICAgICAgPHNwYW4+RXhhbXBsZSBzdWJ0b3RhbDwvc3Bhbj5cbiAgICAgICAgICAgICAgICAgIDxzdHJvbmc+e2N1cnJlbmN5KG9yZGVyLnRvdGFsKX08L3N0cm9uZz5cbiAgICAgICAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cImFjY291bnQtYmFsYW5jZVwiPlxuICAgICAgICAgICAgICAgICAgPFdhbGxldCBzaXplPXsxNn0gLz5cbiAgICAgICAgICAgICAgICAgIDxzcGFuPk9wZW4gYmFsYW5jZTwvc3Bhbj5cbiAgICAgICAgICAgICAgICAgIDxzdHJvbmc+e2N1cnJlbmN5KG9yZGVyLmJhbGFuY2UpfTwvc3Ryb25nPlxuICAgICAgICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgICAgICAgIHshZGVsaXZlcmVkID8gKFxuICAgICAgICAgICAgICAgICAgPGJ1dHRvblxuICAgICAgICAgICAgICAgICAgICB0eXBlPVwiYnV0dG9uXCJcbiAgICAgICAgICAgICAgICAgICAgY2xhc3NOYW1lPVwic3RvcnktaW5saW5lLWFjdGlvblwiXG4gICAgICAgICAgICAgICAgICAgIG9uQ2xpY2s9eygpID0+IHNlbGVjdCgzLCB0cnVlKX1cbiAgICAgICAgICAgICAgICAgID5cbiAgICAgICAgICAgICAgICAgICAgQ29uZmlybSBkZWxpdmVyeSBmaXJzdCA8QXJyb3dSaWdodCBzaXplPXsxNH0gLz5cbiAgICAgICAgICAgICAgICAgIDwvYnV0dG9uPlxuICAgICAgICAgICAgICAgICkgOiAoXG4gICAgICAgICAgICAgICAgICA8YnV0dG9uXG4gICAgICAgICAgICAgICAgICAgIHR5cGU9XCJidXR0b25cIlxuICAgICAgICAgICAgICAgICAgICBjbGFzc05hbWU9XCJzdG9yeS1hY3Rpb25cIlxuICAgICAgICAgICAgICAgICAgICBkaXNhYmxlZD17cGFpZH1cbiAgICAgICAgICAgICAgICAgICAgb25DbGljaz17KCkgPT4ge1xuICAgICAgICAgICAgICAgICAgICAgIHNldFBhaWQodHJ1ZSk7XG4gICAgICAgICAgICAgICAgICAgICAgc2V0UGxheWluZyhmYWxzZSk7XG4gICAgICAgICAgICAgICAgICAgICAgc2V0QW5ub3VuY2VtZW50KFwiU2FtcGxlIHBheW1lbnQgcmVjb3JkZWQuIE9wZW4gYmFsYW5jZSBpcyB6ZXJvLlwiKTtcbiAgICAgICAgICAgICAgICAgICAgfX1cbiAgICAgICAgICAgICAgICAgID5cbiAgICAgICAgICAgICAgICAgICAge3BhaWQgPyAoXG4gICAgICAgICAgICAgICAgICAgICAgPD5cbiAgICAgICAgICAgICAgICAgICAgICAgIDxDaGVjayBzaXplPXsxNX0gLz4gU2FtcGxlIHBheW1lbnQgcmVjb3JkZWRcbiAgICAgICAgICAgICAgICAgICAgICA8Lz5cbiAgICAgICAgICAgICAgICAgICAgKSA6IChcbiAgICAgICAgICAgICAgICAgICAgICA8PlxuICAgICAgICAgICAgICAgICAgICAgICAgUmVjb3JkIHNhbXBsZSBwYXltZW50IDxBcnJvd1JpZ2h0IHNpemU9ezE0fSAvPlxuICAgICAgICAgICAgICAgICAgICAgIDwvPlxuICAgICAgICAgICAgICAgICAgICApfVxuICAgICAgICAgICAgICAgICAgPC9idXR0b24+XG4gICAgICAgICAgICAgICAgKX1cbiAgICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgICApfVxuICAgICAgICAgICAge2NoYXB0ZXIgPT09IDUgJiYgKFxuICAgICAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cImluc2lnaHRzLXNjZW5lXCI+XG4gICAgICAgICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJwYXNzcG9ydC1zZWN0aW9uLWxhYmVsXCI+XG4gICAgICAgICAgICAgICAgICA8QmFyQ2hhcnQzIHNpemU9ezE3fSAvPlxuICAgICAgICAgICAgICAgICAgVGhpcyBvcmRlciwgaW4gY29udGV4dFxuICAgICAgICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwiaW5zaWdodHMtbWV0cmljc1wiPlxuICAgICAgICAgICAgICAgICAgPGRpdj5cbiAgICAgICAgICAgICAgICAgICAgPHNwYW4+T3JkZXIgdmFsdWU8L3NwYW4+XG4gICAgICAgICAgICAgICAgICAgIDxzdHJvbmc+e2N1cnJlbmN5KG9yZGVyLnRvdGFsKX08L3N0cm9uZz5cbiAgICAgICAgICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgICAgICAgICAgPGRpdj5cbiAgICAgICAgICAgICAgICAgICAgPHNwYW4+T3BlbiBiYWxhbmNlPC9zcGFuPlxuICAgICAgICAgICAgICAgICAgICA8c3Ryb25nPntjdXJyZW5jeShvcmRlci5iYWxhbmNlKX08L3N0cm9uZz5cbiAgICAgICAgICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgICAgICAgIDxkaXZcbiAgICAgICAgICAgICAgICAgIGNsYXNzTmFtZT1cImV4YW1wbGUtY2hhcnRcIlxuICAgICAgICAgICAgICAgICAgYXJpYS1sYWJlbD17YEV4YW1wbGUgb3JkZXIgdmFsdWU6IHdhdGVyICR7Y3VycmVuY3kob3JkZXIud2F0ZXJUb3RhbCl9LCBzbmFja3MgNDIgZG9sbGFyc2B9XG4gICAgICAgICAgICAgICAgPlxuICAgICAgICAgICAgICAgICAgPGRpdj5cbiAgICAgICAgICAgICAgICAgICAgPHNwYW4+V2F0ZXI8L3NwYW4+XG4gICAgICAgICAgICAgICAgICAgIDxkaXY+XG4gICAgICAgICAgICAgICAgICAgICAgPGkgc3R5bGU9e3sgd2lkdGg6IChvcmRlci53YXRlclRvdGFsIC8gb3JkZXIudG90YWwpICogMTAwICsgXCIlXCIgfX0gLz5cbiAgICAgICAgICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgICAgICAgICAgIDxzdHJvbmc+e2N1cnJlbmN5KG9yZGVyLndhdGVyVG90YWwpfTwvc3Ryb25nPlxuICAgICAgICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgICAgICAgICA8ZGl2PlxuICAgICAgICAgICAgICAgICAgICA8c3Bhbj5TbmFja3M8L3NwYW4+XG4gICAgICAgICAgICAgICAgICAgIDxkaXY+XG4gICAgICAgICAgICAgICAgICAgICAgPGkgc3R5bGU9e3sgd2lkdGg6ICg0MiAvIG9yZGVyLnRvdGFsKSAqIDEwMCArIFwiJVwiIH19IC8+XG4gICAgICAgICAgICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgICAgICAgICAgICA8c3Ryb25nPiQ0Mjwvc3Ryb25nPlxuICAgICAgICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJpbnNpZ2h0LW91dGNvbWVzXCI+XG4gICAgICAgICAgICAgICAgICA8c3Bhbj5cbiAgICAgICAgICAgICAgICAgICAgPFBhY2thZ2Ugc2l6ZT17MTV9IC8+XG4gICAgICAgICAgICAgICAgICAgIHtxdWFudGl0eSArIDJ9IGNhc2VzXG4gICAgICAgICAgICAgICAgICA8L3NwYW4+XG4gICAgICAgICAgICAgICAgICA8c3Bhbj5cbiAgICAgICAgICAgICAgICAgICAgPFN0b3JlIHNpemU9ezE1fSAvPjEgY3VzdG9tZXJcbiAgICAgICAgICAgICAgICAgIDwvc3Bhbj5cbiAgICAgICAgICAgICAgICAgIDxzcGFuPlxuICAgICAgICAgICAgICAgICAgICA8Q2hlY2tDaGVjayBzaXplPXsxNX0gLz5cbiAgICAgICAgICAgICAgICAgICAge2RlbGl2ZXJlZCA/IFwiRGVsaXZlcmVkXCIgOiBcIk5vdCBkZWxpdmVyZWRcIn1cbiAgICAgICAgICAgICAgICAgIDwvc3Bhbj5cbiAgICAgICAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgICAgICAgICA8cD5JbGx1c3RyYXRpdmUgb3JkZXIgZGF0YS4gTm8gYnVzaW5lc3MgcGVyZm9ybWFuY2UgY2xhaW0uPC9wPlxuICAgICAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgICAgICl9XG4gICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJwYXNzcG9ydC1ib3R0b21cIj5cbiAgICAgICAgICAgIDxzcGFuIGNsYXNzTmFtZT1cImNvbm5lY3RlZC1kb3RcIiAvPiBTYW1lIG9yZGVyLiBDb25uZWN0ZWQgY29udGV4dC5cbiAgICAgICAgICAgIDxzcGFuPkRFTU88L3NwYW4+XG4gICAgICAgICAgPC9kaXY+XG4gICAgICAgIDwvZGl2PlxuICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cImN1c3RvbWVyLWdsaW1wc2VcIj5cbiAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cInBob25lLXNwZWFrZXJcIiAvPlxuICAgICAgICAgIDxzcGFuIGNsYXNzTmFtZT1cImN1c3RvbWVyLXBvcnRhbC1sYWJlbFwiPlxuICAgICAgICAgICAgPFN0b3JlIHNpemU9ezE0fSAvPlxuICAgICAgICAgICAgUmV0YWlsZXIgcG9ydGFsXG4gICAgICAgICAgPC9zcGFuPlxuICAgICAgICAgIDxzdHJvbmc+XG4gICAgICAgICAgICBQYXJrc2lkZVxuICAgICAgICAgICAgPGJyIC8+XG4gICAgICAgICAgICBNYXJrZXRcbiAgICAgICAgICA8L3N0cm9uZz5cbiAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cInBob25lLW9yZGVyXCI+XG4gICAgICAgICAgICA8UGFja2FnZSBzaXplPXsyMX0gLz5cbiAgICAgICAgICAgIDxzcGFuPlJGLTEwNDI8L3NwYW4+XG4gICAgICAgICAgICA8Yj57Y3VycmVuY3kob3JkZXIudG90YWwpfTwvYj5cbiAgICAgICAgICAgIDxzcGFuPntxdWFudGl0eSArIDJ9IGNhc2VzPC9zcGFuPlxuICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgIDxzcGFuIGNsYXNzTmFtZT17XCJwaG9uZS1zdGF0ZSBcIiArIChkZWxpdmVyZWQgPyBcImNvbXBsZXRlXCIgOiBcIlwiKX0+XG4gICAgICAgICAgICB7ZGVsaXZlcmVkID8gPENoZWNrQ2hlY2sgc2l6ZT17MTJ9IC8+IDogPFBhY2thZ2Ugc2l6ZT17MTJ9IC8+fXtcIiBcIn1cbiAgICAgICAgICAgIHtkZWxpdmVyZWQgPyBcIkRlbGl2ZXJlZFwiIDogXCJFeGFtcGxlIG9yZGVyXCJ9XG4gICAgICAgICAgPC9zcGFuPlxuICAgICAgICAgIDxidXR0b24gdHlwZT1cImJ1dHRvblwiIG9uQ2xpY2s9eygpID0+IHNlbGVjdCgxKX0+XG4gICAgICAgICAgICBWaWV3IG9yZGVyIDxBcnJvd1VwUmlnaHQgc2l6ZT17MTN9IC8+XG4gICAgICAgICAgPC9idXR0b24+XG4gICAgICAgIDwvZGl2PlxuICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cInN0b3J5LWxpbmstcGlsbFwiPlxuICAgICAgICAgIDxzcGFuIC8+XG4gICAgICAgICAgPHNwYW4+XG4gICAgICAgICAgICBPZmZpY2UgPEFycm93UmlnaHQgc2l6ZT17MTF9IC8+IERyaXZlciA8QXJyb3dSaWdodCBzaXplPXsxMX0gLz4gQ3VzdG9tZXJcbiAgICAgICAgICA8L3NwYW4+XG4gICAgICAgIDwvZGl2PlxuICAgICAgPC9kaXY+XG4gICAgICA8ZGl2IGNsYXNzTmFtZT1cInN0b3J5LWNvbnRyb2xzXCI+XG4gICAgICAgIDxkaXYgY2xhc3NOYW1lPVwic3RvcnktZXhwbGFuYXRpb25cIj5cbiAgICAgICAgICA8cD57Y3VycmVudC5kZXRhaWx9PC9wPlxuICAgICAgICAgIDxkaXY+XG4gICAgICAgICAgICA8YnV0dG9uXG4gICAgICAgICAgICAgIHR5cGU9XCJidXR0b25cIlxuICAgICAgICAgICAgICBjbGFzc05hbWU9XCJzdG9yeS1wbGF5XCJcbiAgICAgICAgICAgICAgYXJpYS1sYWJlbD17XG4gICAgICAgICAgICAgICAgcGxheWluZyA/IFwiUGF1c2Ugc3RvcnlcIiA6IGNoYXB0ZXIgPT09IDUgPyBcIlJlcGxheSBzdG9yeVwiIDogXCJGb2xsb3cgdGhpcyBvcmRlclwiXG4gICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgb25DbGljaz17KCkgPT5cbiAgICAgICAgICAgICAgICBwbGF5aW5nID8gc2V0UGxheWluZyhmYWxzZSkgOiBjaGFwdGVyID09PSA1ID8gcmVzdGFydCgpIDogc2V0UGxheWluZyh0cnVlKVxuICAgICAgICAgICAgICB9XG4gICAgICAgICAgICA+XG4gICAgICAgICAgICAgIHtwbGF5aW5nID8gPFBhdXNlIHNpemU9ezE0fSAvPiA6IDxQbGF5IHNpemU9ezE0fSAvPn1cbiAgICAgICAgICAgICAgPHNwYW4+XG4gICAgICAgICAgICAgICAge3BsYXlpbmcgPyBcIlBhdXNlXCIgOiBjaGFwdGVyID09PSA1ID8gXCJSZXBsYXkgc3RvcnlcIiA6IFwiRm9sbG93IHRoaXMgb3JkZXJcIn1cbiAgICAgICAgICAgICAgPC9zcGFuPlxuICAgICAgICAgICAgPC9idXR0b24+XG4gICAgICAgICAgICA8YnV0dG9uXG4gICAgICAgICAgICAgIHR5cGU9XCJidXR0b25cIlxuICAgICAgICAgICAgICBjbGFzc05hbWU9XCJzdG9yeS1yZXNldFwiXG4gICAgICAgICAgICAgIG9uQ2xpY2s9e3Jlc3RhcnR9XG4gICAgICAgICAgICAgIGFyaWEtbGFiZWw9XCJSZXN0YXJ0IHRoZSBzYW1wbGUgb3JkZXIgc3RvcnlcIlxuICAgICAgICAgICAgPlxuICAgICAgICAgICAgICA8Um90YXRlQ2N3IHNpemU9ezE1fSAvPlxuICAgICAgICAgICAgPC9idXR0b24+XG4gICAgICAgICAgPC9kaXY+XG4gICAgICAgIDwvZGl2PlxuICAgICAgICA8ZmllbGRzZXQgY2xhc3NOYW1lPVwic3RvcnktY2hhcHRlcnNcIiBhcmlhLWxhYmVsPVwiRXhwbG9yZSB0aGUgb3JkZXIgd29ya2Zsb3dcIj5cbiAgICAgICAgICB7Y2hhcHRlcnMubWFwKChjLCBpKSA9PiAoXG4gICAgICAgICAgICA8YnV0dG9uXG4gICAgICAgICAgICAgIGtleT17Yy5uYW1lfVxuICAgICAgICAgICAgICB0eXBlPVwiYnV0dG9uXCJcbiAgICAgICAgICAgICAgYXJpYS1wcmVzc2VkPXtjaGFwdGVyID09PSBpfVxuICAgICAgICAgICAgICBvbkNsaWNrPXsoKSA9PiBzZWxlY3QoaSl9XG4gICAgICAgICAgICAgIGNsYXNzTmFtZT17Y2hhcHRlciA9PT0gaSA/IFwiaXMtY3VycmVudFwiIDogXCJcIn1cbiAgICAgICAgICAgID5cbiAgICAgICAgICAgICAgPGMuaWNvbiBzaXplPXsxNn0gLz5cbiAgICAgICAgICAgICAgPHNwYW4+e2MubmFtZX08L3NwYW4+XG4gICAgICAgICAgICA8L2J1dHRvbj5cbiAgICAgICAgICApKX1cbiAgICAgICAgPC9maWVsZHNldD5cbiAgICAgIDwvZGl2PlxuICAgICAgPHAgY2xhc3NOYW1lPVwic3RvcnktZGlzY2xhaW1lclwiPlxuICAgICAgICBJbnRlcmFjdGl2ZSBpbGx1c3RyYXRpb24sIG5vdCBhIGxpdmUgYWNjb3VudC4gQ2hhbmdlcyBzdGF5IGluIHRoaXMgZXhhbXBsZS5cbiAgICAgIDwvcD5cbiAgICAgIDxvdXRwdXQgY2xhc3NOYW1lPVwic3Itb25seVwiIGFyaWEtbGl2ZT1cInBvbGl0ZVwiPlxuICAgICAgICB7YW5ub3VuY2VtZW50fVxuICAgICAgPC9vdXRwdXQ+XG4gICAgPC9kaXY+XG4gICk7XG59XG4iXSwibmFtZXMiOlsiT3BlcmF0aW9uU3RvcnkiLCJjaGFwdGVycyIsIm5hbWUiLCJpY29uIiwiV2FyZWhvdXNlIiwidGl0bGUiLCJkZXRhaWwiLCJQYWNrYWdlIiwiUm91dGUiLCJDaGVja0NoZWNrIiwiUmVjZWlwdFRleHQiLCJCYXJDaGFydDMiLCJjdXJyZW5jeSIsInZhbHVlIiwiSW50bCIsIk51bWJlckZvcm1hdCIsInN0eWxlIiwibWF4aW11bUZyYWN0aW9uRGlnaXRzIiwiZm9ybWF0IiwiUm91dGVTdXJmYWNlIiwic2VsZWN0ZWQiLCJtb3ZpbmciLCJncmFkaWVudCIsInVzZUlkIiwicmVwbGFjZUFsbCIsInN2ZyIsImNsYXNzTmFtZSIsInZpZXdCb3giLCJyb2xlIiwiYXJpYS1sYWJlbCIsImV4YW1wbGVSb3V0ZXMiLCJkZWZzIiwibGluZWFyR3JhZGllbnQiLCJpZCIsInN0b3AiLCJzdG9wQ29sb3IiLCJvZmZzZXQiLCJyZWN0Iiwid2lkdGgiLCJoZWlnaHQiLCJyeCIsImZpbGwiLCJwYXRoIiwiZCIsInN0cm9rZSIsInN0cm9rZVdpZHRoIiwic3Ryb2tlRGFzaGFycmF5Iiwic3Ryb2tlTGluZWNhcCIsInBhdGhMZW5ndGgiLCJtYXAiLCJ4IiwieSIsImxhYmVsIiwiZyIsInRyYW5zZm9ybSIsImNpcmNsZSIsInIiLCJ0ZXh0IiwidGV4dEFuY2hvciIsImZvbnRTaXplIiwiZm9udFdlaWdodCIsImNvbXBhY3QiLCJyb290IiwidXNlUmVmIiwiaGVhZGluZyIsImZvY3VzTmV4dEhlYWRpbmciLCJhbm5vdW5jZW1lbnQiLCJzZXRBbm5vdW5jZW1lbnQiLCJ1c2VTdGF0ZSIsImNoYXB0ZXIiLCJzZXRDaGFwdGVyIiwicXVhbnRpdHkiLCJzZXRRdWFudGl0eSIsInJvdXRlIiwic2V0Um91dGUiLCJkZWxpdmVyZWQiLCJzZXREZWxpdmVyZWQiLCJwYWlkIiwic2V0UGFpZCIsInBsYXlpbmciLCJzZXRQbGF5aW5nIiwidmlzaWJsZSIsInNldFZpc2libGUiLCJyZWR1Y2VkTW90aW9uIiwic2V0UmVkdWNlZE1vdGlvbiIsIm9yZGVyIiwiZXhhbXBsZU9yZGVyIiwiY3VycmVudCIsInVzZUVmZmVjdCIsImZvY3VzIiwicHJldmVudFNjcm9sbCIsIm9ic2VydmVyIiwiSW50ZXJzZWN0aW9uT2JzZXJ2ZXIiLCJlbnRyeSIsImlzSW50ZXJzZWN0aW5nIiwidGhyZXNob2xkIiwib2JzZXJ2ZSIsImRpc2Nvbm5lY3QiLCJxdWVyeSIsIndpbmRvdyIsIm1hdGNoTWVkaWEiLCJtYXRjaGVzIiwib25DaGFuZ2UiLCJhZGRFdmVudExpc3RlbmVyIiwicmVtb3ZlRXZlbnRMaXN0ZW5lciIsInRpbWVyIiwic2V0VGltZW91dCIsImRvY3VtZW50IiwiaGlkZGVuIiwibmV4dCIsIm5leHRDaGFwdGVyIiwiY2xlYXJUaW1lb3V0Iiwic2VsZWN0IiwiaSIsImFkanVzdCIsImJ5IiwicSIsIk1hdGgiLCJtYXgiLCJtaW4iLCJhc3NpZ24iLCJyZXN0YXJ0IiwiY29uZmlybSIsImRpdiIsInJlZiIsInNwYW4iLCJoMyIsInRhYkluZGV4IiwiQnJhbmRTaWduYXR1cmUiLCJzaXplIiwic3Ryb25nIiwib25Gb2N1c0NhcHR1cmUiLCJwIiwiaW1nIiwic3JjIiwiYWx0IiwibG9hZGluZyIsImRlY29kaW5nIiwiYnV0dG9uIiwidHlwZSIsIm9uQ2xpY2siLCJkaXNhYmxlZCIsIk1pbnVzIiwib3V0cHV0IiwiUGx1cyIsImF2YWlsYWJsZSIsImIiLCJ3YXRlclRvdGFsIiwidG90YWwiLCJmaWVsZHNldCIsImFyaWEtcHJlc3NlZCIsIkNoZWNrIiwiZHJpdmVyIiwiaDQiLCJiciIsIkFycm93UmlnaHQiLCJXYWxsZXQiLCJiYWxhbmNlIiwiU3RvcmUiLCJBcnJvd1VwUmlnaHQiLCJQYXVzZSIsIlBsYXkiLCJSb3RhdGVDY3ciLCJjIiwiYXJpYS1saXZlIl0sIm1hcHBpbmdzIjoiQUFBQTs7Ozs7K0JBMEpnQkE7OztlQUFBQTs7Ozt1QkF4Sm1DOzZCQWtCNUM7dUJBQ3dCO2dDQUMwQjtBQUV6RCx5RUFBeUU7QUFDekUsNEVBQTRFO0FBQzVFLHdFQUF3RTtBQUN4RSw2RUFBNkU7QUFDN0UseUVBQXlFO0FBQ3pFLDRFQUE0RTtBQUM1RSx1QkFBdUI7QUFDdkIsTUFBTUMsV0FBVztJQUNmO1FBQ0VDLE1BQU07UUFDTkMsTUFBTUMsc0JBQVM7UUFDZkMsT0FBTztRQUNQQyxRQUFRO0lBQ1Y7SUFDQTtRQUNFSixNQUFNO1FBQ05DLE1BQU1JLG9CQUFPO1FBQ2JGLE9BQU87UUFDUEMsUUFBUTtJQUNWO0lBQ0E7UUFDRUosTUFBTTtRQUNOQyxNQUFNSyxrQkFBSztRQUNYSCxPQUFPO1FBQ1BDLFFBQVE7SUFDVjtJQUNBO1FBQ0VKLE1BQU07UUFDTkMsTUFBTU0sdUJBQVU7UUFDaEJKLE9BQU87UUFDUEMsUUFBUTtJQUNWO0lBQ0E7UUFDRUosTUFBTTtRQUNOQyxNQUFNTyx3QkFBVztRQUNqQkwsT0FBTztRQUNQQyxRQUFRO0lBQ1Y7SUFDQTtRQUNFSixNQUFNO1FBQ05DLE1BQU1RLHNCQUFTO1FBQ2ZOLE9BQU87UUFDUEMsUUFBUTtJQUNWO0NBQ0Q7QUFFRCxNQUFNTSxXQUFXLENBQUNDLFFBQ2hCLElBQUlDLEtBQUtDLFlBQVksQ0FBQyxTQUFTO1FBQzdCQyxPQUFPO1FBQ1BKLFVBQVU7UUFDVkssdUJBQXVCO0lBQ3pCLEdBQUdDLE1BQU0sQ0FBQ0w7QUFFWixTQUFTTSxhQUFhLEVBQUVDLFFBQVEsRUFBRUMsTUFBTSxFQUF5QztJQUMvRSxNQUFNQyxXQUFXQyxJQUFBQSxZQUFLLElBQUdDLFVBQVUsQ0FBQyxLQUFLO0lBQ3pDLHFCQUNFLHNCQUFDQztRQUNDQyxXQUFXLG1CQUFvQkwsQ0FBQUEsU0FBUyxpQkFBaUIsRUFBQztRQUMxRE0sU0FBUTtRQUNSQyxNQUFLO1FBQ0xDLGNBQVksQ0FBQyx5QkFBeUIsRUFBRUMsNkJBQWEsQ0FBQ1YsU0FBUyxDQUFDbEIsSUFBSSxFQUFFOzswQkFFdEUscUJBQUM2QjswQkFDQyxjQUFBLHNCQUFDQztvQkFBZUMsSUFBSVg7O3NDQUNsQixxQkFBQ1k7NEJBQUtDLFdBQVU7O3NDQUNoQixxQkFBQ0Q7NEJBQUtFLFFBQU87NEJBQUlELFdBQVU7Ozs7OzBCQUcvQixxQkFBQ0U7Z0JBQUtDLE9BQU07Z0JBQU1DLFFBQU87Z0JBQU1DLElBQUc7Z0JBQUtDLE1BQUs7OzBCQUM1QyxxQkFBQ0M7Z0JBQUtDLEdBQUU7Z0JBQWlDQyxRQUFPO2dCQUFVQyxhQUFZO2dCQUFLSixNQUFLOzswQkFDaEYscUJBQUNDO2dCQUNDQyxHQUFFO2dCQUNGRixNQUFLOzswQkFFUCxxQkFBQ0M7Z0JBQ0NDLEdBQUU7Z0JBQ0ZDLFFBQU87Z0JBQ1BDLGFBQVk7OzBCQUVkLHFCQUFDSDtnQkFDQ0MsR0FBRTtnQkFDRkMsUUFBTztnQkFDUEMsYUFBWTtnQkFDWkMsaUJBQWdCOzswQkFFbEIscUJBQUNKO2dCQUNDQyxHQUFHYiw2QkFBYSxDQUFDVixTQUFTLENBQUNzQixJQUFJO2dCQUMvQkQsTUFBSztnQkFDTEcsUUFBTztnQkFDUEMsYUFBWTtnQkFDWkUsZUFBYzs7MEJBRWhCLHFCQUFDTDtnQkFDQ2hCLFdBQVU7Z0JBQ1ZpQixHQUFHYiw2QkFBYSxDQUFDVixTQUFTLENBQUNzQixJQUFJO2dCQUMvQk0sWUFBVztnQkFDWFAsTUFBSztnQkFDTEcsUUFBUSxDQUFDLEtBQUssRUFBRXRCLFNBQVMsQ0FBQyxDQUFDO2dCQUMzQnVCLGFBQVk7Z0JBQ1pFLGVBQWM7O1lBR2Q7Z0JBQ0U7b0JBQUM7b0JBQUk7b0JBQUs7aUJBQUk7Z0JBQ2Q7b0JBQUM7b0JBQUs7b0JBQUkzQixhQUFhLElBQUksTUFBTTtpQkFBSTtnQkFDckM7b0JBQUM7b0JBQUs7b0JBQUlBLGFBQWEsSUFBSSxNQUFNO2lCQUFJO2FBQ3RDLENBQ0Q2QixHQUFHLENBQUMsQ0FBQyxDQUFDQyxHQUFHQyxHQUFHQyxNQUFNLGlCQUNsQixzQkFBQ0M7b0JBQWNDLFdBQVcsQ0FBQyxVQUFVLEVBQUVKLEVBQUUsQ0FBQyxFQUFFQyxFQUFFLENBQUMsQ0FBQzs7c0NBQzlDLHFCQUFDSTs0QkFBT0MsR0FBRTs0QkFBS2YsTUFBSzs0QkFBUUcsUUFBTzs0QkFBVUMsYUFBWTs7c0NBQ3pELHFCQUFDWTs0QkFBS0MsWUFBVzs0QkFBU1AsR0FBRTs0QkFBSVYsTUFBSzs0QkFBVWtCLFVBQVM7NEJBQUtDLFlBQVc7c0NBQ3JFUjs7O21CQUhHQTswQkFPVixzQkFBQ0M7Z0JBQUVaLE1BQUs7Z0JBQVVrQixVQUFTO2dCQUFLQyxZQUFXOztrQ0FDekMscUJBQUNIO3dCQUFLUCxHQUFFO3dCQUFLQyxHQUFFO2tDQUFNOztrQ0FHckIscUJBQUNNO3dCQUFLUCxHQUFFO3dCQUFNQyxHQUFFO2tDQUFLOztrQ0FHckIscUJBQUNNO3dCQUFLUCxHQUFFO3dCQUFNQyxHQUFFO2tDQUFNOzs7Ozs7QUFNOUI7QUFFTyxTQUFTbkQsZUFBZSxFQUFFNkQsVUFBVSxLQUFLLEVBQXlCO0lBQ3ZFLE1BQU1DLE9BQU9DLElBQUFBLGFBQU0sRUFBaUI7SUFDcEMsTUFBTUMsVUFBVUQsSUFBQUEsYUFBTSxFQUFxQjtJQUMzQyxNQUFNRSxtQkFBbUJGLElBQUFBLGFBQU0sRUFBQztJQUNoQyxNQUFNLENBQUNHLGNBQWNDLGdCQUFnQixHQUFHQyxJQUFBQSxlQUFRLEVBQUM7SUFDakQsTUFBTSxDQUFDQyxTQUFTQyxXQUFXLEdBQUdGLElBQUFBLGVBQVEsRUFBQztJQUN2QyxNQUFNLENBQUNHLFVBQVVDLFlBQVksR0FBR0osSUFBQUEsZUFBUSxFQUFDO0lBQ3pDLE1BQU0sQ0FBQ0ssT0FBT0MsU0FBUyxHQUFHTixJQUFBQSxlQUFRLEVBQUM7SUFDbkMsTUFBTSxDQUFDTyxXQUFXQyxhQUFhLEdBQUdSLElBQUFBLGVBQVEsRUFBQztJQUMzQyxNQUFNLENBQUNTLE1BQU1DLFFBQVEsR0FBR1YsSUFBQUEsZUFBUSxFQUFDO0lBQ2pDLE1BQU0sQ0FBQ1csU0FBU0MsV0FBVyxHQUFHWixJQUFBQSxlQUFRLEVBQUM7SUFDdkMsTUFBTSxDQUFDYSxTQUFTQyxXQUFXLEdBQUdkLElBQUFBLGVBQVEsRUFBQztJQUN2QyxNQUFNLENBQUNlLGVBQWVDLGlCQUFpQixHQUFHaEIsSUFBQUEsZUFBUSxFQUFDO0lBQ25ELE1BQU1pQixRQUFRQyxJQUFBQSw0QkFBWSxFQUFDZixVQUFVO1FBQUVJO1FBQVdFO0lBQUs7SUFDdkQsTUFBTVUsVUFBVXRGLFFBQVEsQ0FBQ29FLFFBQVE7SUFFakNtQixJQUFBQSxnQkFBUyxFQUFDO1FBQ1IsSUFBSXZCLGlCQUFpQnNCLE9BQU8sRUFBRTtZQUM1QnZCLFFBQVF1QixPQUFPLEVBQUVFLE1BQU07Z0JBQUVDLGVBQWU7WUFBSztZQUM3Q3pCLGlCQUFpQnNCLE9BQU8sR0FBRztRQUM3QjtJQUNGLEdBQUc7UUFBQ2xCO0tBQVE7SUFFWm1CLElBQUFBLGdCQUFTLEVBQUM7UUFDUixJQUFJLENBQUMxQixLQUFLeUIsT0FBTyxFQUFFO1FBQ25CLE1BQU1JLFdBQVcsSUFBSUMscUJBQXFCLENBQUMsQ0FBQ0MsTUFBTSxHQUFLWCxXQUFXVyxNQUFNQyxjQUFjLEdBQUc7WUFDdkZDLFdBQVc7UUFDYjtRQUNBSixTQUFTSyxPQUFPLENBQUNsQyxLQUFLeUIsT0FBTztRQUM3QixPQUFPLElBQU1JLFNBQVNNLFVBQVU7SUFDbEMsR0FBRyxFQUFFO0lBRUwsc0VBQXNFO0lBQ3RFLHVFQUF1RTtJQUN2RSxzRUFBc0U7SUFDdEUsd0VBQXdFO0lBQ3hFVCxJQUFBQSxnQkFBUyxFQUFDO1FBQ1IsTUFBTVUsUUFBUUMsT0FBT0MsVUFBVSxDQUFDO1FBQ2hDaEIsaUJBQWlCYyxNQUFNRyxPQUFPO1FBQzlCLE1BQU1DLFdBQVcsSUFBTWxCLGlCQUFpQmMsTUFBTUcsT0FBTztRQUNyREgsTUFBTUssZ0JBQWdCLENBQUMsVUFBVUQ7UUFDakMsT0FBTyxJQUFNSixNQUFNTSxtQkFBbUIsQ0FBQyxVQUFVRjtJQUNuRCxHQUFHLEVBQUU7SUFFTGQsSUFBQUEsZ0JBQVMsRUFBQztRQUNSLElBQUksQ0FBQ1QsV0FBVyxDQUFDRSxXQUFXRSxlQUFlO1FBQzNDLE1BQU1zQixRQUFRTixPQUFPTyxVQUFVLENBQUM7WUFDOUIsSUFBSUMsU0FBU0MsTUFBTSxFQUFFO2dCQUNuQjVCLFdBQVc7Z0JBQ1g7WUFDRjtZQUNBLE1BQU02QixPQUFPQyxJQUFBQSwyQkFBVyxFQUFDekM7WUFDekIsSUFBSXdDLFFBQVEsR0FBR2pDLGFBQWE7WUFDNUJOLFdBQVd1QztZQUNYLElBQUlBLFNBQVMsR0FBRzdCLFdBQVc7UUFDN0IsR0FBRztRQUNILE9BQU8sSUFBTStCLGFBQWFOO0lBQzVCLEdBQUc7UUFBQ3BDO1FBQVNVO1FBQVNFO1FBQVNFO0tBQWM7SUFFN0MsTUFBTTZCLFNBQVMsQ0FBQ0MsR0FBV3hCLFFBQVEsS0FBSztRQUN0Q1QsV0FBVztRQUNYZixpQkFBaUJzQixPQUFPLEdBQUdFO1FBQzNCbkIsV0FBVzJDO1FBQ1g5QyxnQkFBZ0JsRSxRQUFRLENBQUNnSCxFQUFFLENBQUMvRyxJQUFJLEdBQUcsT0FBT0QsUUFBUSxDQUFDZ0gsRUFBRSxDQUFDNUcsS0FBSztJQUM3RDtJQUNBLE1BQU02RyxTQUFTLENBQUNDO1FBQ2RuQyxXQUFXO1FBQ1hSLFlBQVksQ0FBQzRDLElBQU1DLEtBQUtDLEdBQUcsQ0FBQyxHQUFHRCxLQUFLRSxHQUFHLENBQUMsSUFBSUgsSUFBSUQ7UUFDaER2QyxhQUFhO1FBQ2JFLFFBQVE7SUFDVjtJQUNBLE1BQU0wQyxTQUFTLENBQUNQO1FBQ2RqQyxXQUFXO1FBQ1gsSUFBSWlDLE1BQU14QyxPQUFPO1FBQ2pCQyxTQUFTdUM7UUFDVHJDLGFBQWE7UUFDYkUsUUFBUTtRQUNSWCxnQkFDRSxpQkFDRXJDLDZCQUFhLENBQUNtRixFQUFFLENBQUMvRyxJQUFJLEdBQ3JCO0lBRU47SUFDQSxNQUFNdUgsVUFBVTtRQUNkbkQsV0FBVztRQUNYRSxZQUFZO1FBQ1pFLFNBQVM7UUFDVEUsYUFBYTtRQUNiRSxRQUFRO1FBQ1JFLFdBQVc7SUFDYjtJQUNBLE1BQU0wQyxVQUFVO1FBQ2Q5QyxhQUFhO1FBQ2JJLFdBQVc7UUFDWGYsaUJBQWlCc0IsT0FBTyxHQUFHO1FBQzNCakIsV0FBVztRQUNYSCxnQkFBZ0I7SUFDbEI7SUFFQSxxQkFDRSxzQkFBQ3dEO1FBQUlDLEtBQUs5RDtRQUFNcEMsV0FBVyxxQkFBc0JtQyxDQUFBQSxVQUFVLGtCQUFrQixFQUFDOzswQkFDNUUscUJBQUM4RDtnQkFBSWpHLFdBQVU7OzBCQUNmLHFCQUFDaUc7Z0JBQUlqRyxXQUFVOzswQkFDZixzQkFBQ2lHO2dCQUFJakcsV0FBVTs7a0NBQ2Isc0JBQUNtRzs7MENBQ0MscUJBQUNBOzRCQUFPOzs7a0NBRVYscUJBQUNBO2tDQUFLOzs7OzBCQUVSLHNCQUFDRjtnQkFBSWpHLFdBQVU7O2tDQUNiLHNCQUFDbUc7d0JBQUtuRyxXQUFVOzs0QkFBc0I7NEJBQUUyQyxVQUFVOzRCQUFFOzs7a0NBQ3BELHFCQUFDeUQ7d0JBQUdGLEtBQUs1RDt3QkFBUytELFVBQVUsQ0FBQztrQ0FDMUJ4QyxRQUFRbEYsS0FBSzs7OzswQkFHbEIsc0JBQUNzSDtnQkFBSWpHLFdBQVU7O2tDQUNiLHFCQUFDaUc7d0JBQUlqRyxXQUFVOztrQ0FDZixzQkFBQ2lHO3dCQUFJakcsV0FBVTs7MENBQ2Isc0JBQUNpRztnQ0FBSWpHLFdBQVU7O2tEQUNiLHFCQUFDbUc7d0NBQUtuRyxXQUFVO2tEQUNkLGNBQUEscUJBQUNzRyxxQkFBYzs7a0RBRWpCLHNCQUFDSDt3Q0FBS25HLFdBQVU7OzBEQUNkLHFCQUFDNkQsUUFBUXBGLElBQUk7Z0RBQUM4SCxNQUFNOzs0Q0FDbkIxQyxRQUFRckYsSUFBSTs7Ozs7MENBR2pCLHNCQUFDeUg7Z0NBQUlqRyxXQUFVOztrREFDYixzQkFBQ2lHOzswREFDQyxxQkFBQ0U7MERBQUs7OzBEQUNOLHFCQUFDSzswREFBTzs7OztrREFFVixxQkFBQ0w7d0NBQUtuRyxXQUFXLHFCQUFzQmlELENBQUFBLFlBQVksZ0JBQWdCLEVBQUM7a0RBQ2pFRSxPQUFPLHFCQUFxQkYsWUFBWSxjQUFjOzs7OzBDQUczRCxzQkFBQ2dEO2dDQUFJakcsV0FBVTtnQ0FBaUN5RyxnQkFBZ0IsSUFBTW5ELFdBQVc7O29DQUM5RVgsWUFBWSxtQkFDWCxzQkFBQ3NEO3dDQUFJakcsV0FBVTs7MERBQ2Isc0JBQUNpRztnREFBSWpHLFdBQVU7O2tFQUNiLHNCQUFDaUc7OzBFQUNDLHFCQUFDRTtnRUFBS25HLFdBQVU7MEVBQW9COzswRUFDcEMsc0JBQUN3RztnRUFBT3hHLFdBQVU7O29FQUFjO2tGQUMzQixxQkFBQ21HO2tGQUFLOzs7OzBFQUVYLHFCQUFDTzswRUFBRTs7OztrRUFJTCxxQkFBQ0M7d0RBQ0MzRyxXQUFVO3dEQUNWNEcsS0FBSTt3REFDSkMsS0FBSTt3REFDSmpHLE9BQU87d0RBQ1BDLFFBQVE7d0RBQ1JpRyxTQUFRO3dEQUNSQyxVQUFTOzs7OzBEQUdiLHNCQUFDZDtnREFBSWpHLFdBQVU7O2tFQUNiLHNCQUFDaUc7OzBFQUNDLHFCQUFDTzswRUFBTzs7MEVBQ1IscUJBQUNMOzBFQUFLOzs7O2tFQUVSLHNCQUFDRjt3REFBSWpHLFdBQVU7OzBFQUNiLHFCQUFDZ0g7Z0VBQ0NDLE1BQUs7Z0VBQ0xDLFNBQVMsSUFBTTFCLE9BQU8sQ0FBQztnRUFDdkIyQixVQUFVdEUsWUFBWTtnRUFDdEIxQyxjQUFXOzBFQUVYLGNBQUEscUJBQUNpSCxrQkFBSztvRUFBQ2IsTUFBTTs7OzBFQUVmLHFCQUFDYztnRUFBT2xILGNBQVc7MEVBQXlCMEM7OzBFQUM1QyxxQkFBQ21FO2dFQUNDQyxNQUFLO2dFQUNMQyxTQUFTLElBQU0xQixPQUFPO2dFQUN0QjJCLFVBQVV0RSxZQUFZO2dFQUN0QjFDLGNBQVc7MEVBRVgsY0FBQSxxQkFBQ21ILGlCQUFJO29FQUFDZixNQUFNOzs7Ozs7OzBEQUlsQixzQkFBQ047Z0RBQUlqRyxXQUFVOztrRUFDYixzQkFBQ21HOzswRUFDQyxxQkFBQ0E7NERBQU87OztrRUFHVixzQkFBQ0s7OzREQUFRN0MsTUFBTTRELFNBQVM7NERBQUM7Ozs7Ozs7b0NBSTlCNUUsWUFBWSxtQkFDWCxzQkFBQ3NEO3dDQUFJakcsV0FBVTs7MERBQ2Isc0JBQUNpRztnREFBSWpHLFdBQVU7O2tFQUNiLHFCQUFDbkIsb0JBQU87d0RBQUMwSCxNQUFNOztvREFBTTs7OzBEQUd2QixzQkFBQ047Z0RBQUlqRyxXQUFVOztrRUFDYixxQkFBQ25CLG9CQUFPO3dEQUFDMEgsTUFBTTt3REFBSXZHLFdBQVU7O2tFQUM3QixzQkFBQ2lHOzswRUFDQyxxQkFBQ087MEVBQU87OzBFQUNSLHNCQUFDTDs7b0VBQU10RDtvRUFBUzs7Ozs7a0VBRWxCLHFCQUFDMkU7a0VBQUd0SSxTQUFTeUUsTUFBTThELFVBQVU7Ozs7MERBRS9CLHNCQUFDeEI7Z0RBQUlqRyxXQUFVOztrRUFDYixxQkFBQ25CLG9CQUFPO3dEQUFDMEgsTUFBTTt3REFBSXZHLFdBQVU7O2tFQUM3QixzQkFBQ2lHOzswRUFDQyxxQkFBQ087MEVBQU87OzBFQUNSLHFCQUFDTDswRUFBSzs7OztrRUFFUixxQkFBQ3FCO2tFQUFFOzs7OzBEQUVMLHNCQUFDdkI7Z0RBQUlqRyxXQUFVOztrRUFDYixxQkFBQ21HO2tFQUFLOztrRUFDTixxQkFBQ087a0VBQUU7Ozs7MERBRUwsc0JBQUNUO2dEQUFJakcsV0FBVTs7a0VBQ2IscUJBQUNtRztrRUFBSzs7a0VBQ04scUJBQUNLO2tFQUFRdEgsU0FBU3lFLE1BQU0rRCxLQUFLOzs7Ozs7b0NBSWxDL0UsWUFBWSxtQkFDWCxzQkFBQ3NEO3dDQUFJakcsV0FBVTs7MERBQ2IscUJBQUMySDtnREFBUzNILFdBQVU7Z0RBQWVHLGNBQVc7MERBQzNDQyw2QkFBYSxDQUFDbUIsR0FBRyxDQUFDLENBQUNPLEdBQUd5RCxrQkFDckIsc0JBQUN5Qjt3REFFQ0MsTUFBSzt3REFDTFcsZ0JBQWM3RSxVQUFVd0M7d0RBQ3hCMkIsU0FBUyxJQUFNcEIsT0FBT1A7d0RBQ3RCdkYsV0FBVytDLFVBQVV3QyxJQUFJLGdCQUFnQjs7NERBRXhDekQsRUFBRXRELElBQUk7NERBQ051RSxVQUFVd0MsbUJBQUsscUJBQUNzQyxrQkFBSztnRUFBQ3RCLE1BQU07Ozt1REFQeEJ6RSxFQUFFdEQsSUFBSTs7MERBV2pCLHFCQUFDaUI7Z0RBQXlCQyxVQUFVcUQ7Z0RBQU9wRCxRQUFRMEQ7K0NBQWhDTjswREFDbkIsc0JBQUNrRDtnREFBSWpHLFdBQVU7O2tFQUNiLHNCQUFDbUc7OzBFQUNDLHFCQUFDckgsa0JBQUs7Z0VBQUN5SCxNQUFNOzs0REFDWm5HLDZCQUFhLENBQUMyQyxNQUFNLENBQUMrRSxNQUFNOzREQUFDOzs7a0VBRS9CLHFCQUFDdEI7a0VBQVFwRyw2QkFBYSxDQUFDMkMsTUFBTSxDQUFDdkUsSUFBSTs7Ozs7O29DQUl2Q21FLFlBQVksbUJBQ1gsc0JBQUNzRDt3Q0FBSWpHLFdBQVU7OzBEQUNiLHFCQUFDbUc7Z0RBQUtuRyxXQUFVOzBEQUNkLGNBQUEscUJBQUNqQix1QkFBVTtvREFBQ3dILE1BQU07OzswREFFcEIscUJBQUN3QjswREFBRzs7MERBQ0osc0JBQUNyQjs7b0RBQUU7a0VBRUQscUJBQUNzQjtrRUFDRCxzQkFBQzdCOzs0REFDRXRELFdBQVc7NERBQUU7NERBQVV6Qyw2QkFBYSxDQUFDMkMsTUFBTSxDQUFDdkUsSUFBSTs7Ozs7MERBR3JELHNCQUFDeUg7Z0RBQUlqRyxXQUFVOztrRUFDYixxQkFBQzZILGtCQUFLO3dEQUFDdEIsTUFBTTs7b0RBQU07OzswREFFckIsc0JBQUNTO2dEQUFPQyxNQUFLO2dEQUFTakgsV0FBVTtnREFBZWtILFNBQVNsQjs7b0RBQVM7a0VBQ3ZDLHFCQUFDaUMsdUJBQVU7d0RBQUMxQixNQUFNOzs7Ozs7b0NBSS9DNUQsWUFBWSxtQkFDWCxzQkFBQ3NEO3dDQUFJakcsV0FBVTs7MERBQ2Isc0JBQUNpRztnREFBSWpHLFdBQVU7O2tFQUNiLHNCQUFDbUc7OzBFQUNDLHFCQUFDbkgsd0JBQVc7Z0VBQUN1SCxNQUFNOzs0REFBTTs7O2tFQUczQixxQkFBQ2lCO2tFQUFHdkUsWUFBWSxVQUFVOzs7OzBEQUU1QixzQkFBQ2dEO2dEQUFJakcsV0FBVTs7b0RBQW9CO2tFQUN4QixxQkFBQ21HO2tFQUFLOzs7OzBEQUVqQixzQkFBQ0Y7Z0RBQUlqRyxXQUFVOztrRUFDYixzQkFBQ21HOzs0REFBSzs0REFBZ0J0RDs0REFBUzs7O2tFQUMvQixxQkFBQzJEO2tFQUFRdEgsU0FBU3lFLE1BQU04RCxVQUFVOzs7OzBEQUVwQyxzQkFBQ3hCO2dEQUFJakcsV0FBVTs7a0VBQ2IscUJBQUNtRztrRUFBSzs7a0VBQ04scUJBQUNLO2tFQUFPOzs7OzBEQUVWLHNCQUFDUDtnREFBSWpHLFdBQVU7O2tFQUNiLHFCQUFDbUc7a0VBQUs7O2tFQUNOLHFCQUFDSztrRUFBUXRILFNBQVN5RSxNQUFNK0QsS0FBSzs7OzswREFFL0Isc0JBQUN6QjtnREFBSWpHLFdBQVU7O2tFQUNiLHFCQUFDa0ksbUJBQU07d0RBQUMzQixNQUFNOztrRUFDZCxxQkFBQ0o7a0VBQUs7O2tFQUNOLHFCQUFDSztrRUFBUXRILFNBQVN5RSxNQUFNd0UsT0FBTzs7Ozs0Q0FFaEMsQ0FBQ2xGLDBCQUNBLHNCQUFDK0Q7Z0RBQ0NDLE1BQUs7Z0RBQ0xqSCxXQUFVO2dEQUNWa0gsU0FBUyxJQUFNNUIsT0FBTyxHQUFHOztvREFDMUI7a0VBQ3dCLHFCQUFDMkMsdUJBQVU7d0RBQUMxQixNQUFNOzs7K0RBRzNDLHFCQUFDUztnREFDQ0MsTUFBSztnREFDTGpILFdBQVU7Z0RBQ1ZtSCxVQUFVaEU7Z0RBQ1YrRCxTQUFTO29EQUNQOUQsUUFBUTtvREFDUkUsV0FBVztvREFDWGIsZ0JBQWdCO2dEQUNsQjswREFFQ1UscUJBQ0M7O3NFQUNFLHFCQUFDMEUsa0JBQUs7NERBQUN0QixNQUFNOzt3REFBTTs7bUVBR3JCOzt3REFBRTtzRUFDc0IscUJBQUMwQix1QkFBVTs0REFBQzFCLE1BQU07Ozs7Ozs7b0NBT25ENUQsWUFBWSxtQkFDWCxzQkFBQ3NEO3dDQUFJakcsV0FBVTs7MERBQ2Isc0JBQUNpRztnREFBSWpHLFdBQVU7O2tFQUNiLHFCQUFDZixzQkFBUzt3REFBQ3NILE1BQU07O29EQUFNOzs7MERBR3pCLHNCQUFDTjtnREFBSWpHLFdBQVU7O2tFQUNiLHNCQUFDaUc7OzBFQUNDLHFCQUFDRTswRUFBSzs7MEVBQ04scUJBQUNLOzBFQUFRdEgsU0FBU3lFLE1BQU0rRCxLQUFLOzs7O2tFQUUvQixzQkFBQ3pCOzswRUFDQyxxQkFBQ0U7MEVBQUs7OzBFQUNOLHFCQUFDSzswRUFBUXRILFNBQVN5RSxNQUFNd0UsT0FBTzs7Ozs7OzBEQUduQyxzQkFBQ2xDO2dEQUNDakcsV0FBVTtnREFDVkcsY0FBWSxDQUFDLDJCQUEyQixFQUFFakIsU0FBU3lFLE1BQU04RCxVQUFVLEVBQUUsbUJBQW1CLENBQUM7O2tFQUV6RixzQkFBQ3hCOzswRUFDQyxxQkFBQ0U7MEVBQUs7OzBFQUNOLHFCQUFDRjswRUFDQyxjQUFBLHFCQUFDVjtvRUFBRWpHLE9BQU87d0VBQUVzQixPQUFPLEFBQUMrQyxNQUFNOEQsVUFBVSxHQUFHOUQsTUFBTStELEtBQUssR0FBSSxNQUFNO29FQUFJOzs7MEVBRWxFLHFCQUFDbEI7MEVBQVF0SCxTQUFTeUUsTUFBTThELFVBQVU7Ozs7a0VBRXBDLHNCQUFDeEI7OzBFQUNDLHFCQUFDRTswRUFBSzs7MEVBQ04scUJBQUNGOzBFQUNDLGNBQUEscUJBQUNWO29FQUFFakcsT0FBTzt3RUFBRXNCLE9BQU8sQUFBQyxLQUFLK0MsTUFBTStELEtBQUssR0FBSSxNQUFNO29FQUFJOzs7MEVBRXBELHFCQUFDbEI7MEVBQU87Ozs7OzswREFHWixzQkFBQ1A7Z0RBQUlqRyxXQUFVOztrRUFDYixzQkFBQ21HOzswRUFDQyxxQkFBQ3RILG9CQUFPO2dFQUFDMEgsTUFBTTs7NERBQ2QxRCxXQUFXOzREQUFFOzs7a0VBRWhCLHNCQUFDc0Q7OzBFQUNDLHFCQUFDaUMsa0JBQUs7Z0VBQUM3QixNQUFNOzs0REFBTTs7O2tFQUVyQixzQkFBQ0o7OzBFQUNDLHFCQUFDcEgsdUJBQVU7Z0VBQUN3SCxNQUFNOzs0REFDakJ0RCxZQUFZLGNBQWM7Ozs7OzBEQUcvQixxQkFBQ3lEOzBEQUFFOzs7OzsrQkFyUDhCL0Q7MENBeVB2QyxzQkFBQ3NEO2dDQUFJakcsV0FBVTs7a0RBQ2IscUJBQUNtRzt3Q0FBS25HLFdBQVU7O29DQUFrQjtrREFDbEMscUJBQUNtRztrREFBSzs7Ozs7O2tDQUdWLHNCQUFDRjt3QkFBSWpHLFdBQVU7OzBDQUNiLHFCQUFDaUc7Z0NBQUlqRyxXQUFVOzswQ0FDZixzQkFBQ21HO2dDQUFLbkcsV0FBVTs7a0RBQ2QscUJBQUNvSSxrQkFBSzt3Q0FBQzdCLE1BQU07O29DQUFNOzs7MENBR3JCLHNCQUFDQzs7b0NBQU87a0RBRU4scUJBQUN3QjtvQ0FBSzs7OzBDQUdSLHNCQUFDL0I7Z0NBQUlqRyxXQUFVOztrREFDYixxQkFBQ25CLG9CQUFPO3dDQUFDMEgsTUFBTTs7a0RBQ2YscUJBQUNKO2tEQUFLOztrREFDTixxQkFBQ3FCO2tEQUFHdEksU0FBU3lFLE1BQU0rRCxLQUFLOztrREFDeEIsc0JBQUN2Qjs7NENBQU10RCxXQUFXOzRDQUFFOzs7OzswQ0FFdEIsc0JBQUNzRDtnQ0FBS25HLFdBQVcsaUJBQWtCaUQsQ0FBQUEsWUFBWSxhQUFhLEVBQUM7O29DQUMxREEsMEJBQVkscUJBQUNsRSx1QkFBVTt3Q0FBQ3dILE1BQU07dURBQVMscUJBQUMxSCxvQkFBTzt3Q0FBQzBILE1BQU07O29DQUFRO29DQUM5RHRELFlBQVksY0FBYzs7OzBDQUU3QixzQkFBQytEO2dDQUFPQyxNQUFLO2dDQUFTQyxTQUFTLElBQU01QixPQUFPOztvQ0FBSTtrREFDbkMscUJBQUMrQyx5QkFBWTt3Q0FBQzlCLE1BQU07Ozs7OztrQ0FHbkMsc0JBQUNOO3dCQUFJakcsV0FBVTs7MENBQ2IscUJBQUNtRzswQ0FDRCxzQkFBQ0E7O29DQUFLO2tEQUNHLHFCQUFDOEIsdUJBQVU7d0NBQUMxQixNQUFNOztvQ0FBTTtrREFBUSxxQkFBQzBCLHVCQUFVO3dDQUFDMUIsTUFBTTs7b0NBQU07Ozs7Ozs7MEJBSXJFLHNCQUFDTjtnQkFBSWpHLFdBQVU7O2tDQUNiLHNCQUFDaUc7d0JBQUlqRyxXQUFVOzswQ0FDYixxQkFBQzBHOzBDQUFHN0MsUUFBUWpGLE1BQU07OzBDQUNsQixzQkFBQ3FIOztrREFDQyxzQkFBQ2U7d0NBQ0NDLE1BQUs7d0NBQ0xqSCxXQUFVO3dDQUNWRyxjQUNFa0QsVUFBVSxnQkFBZ0JWLFlBQVksSUFBSSxpQkFBaUI7d0NBRTdEdUUsU0FBUyxJQUNQN0QsVUFBVUMsV0FBVyxTQUFTWCxZQUFZLElBQUlvRCxZQUFZekMsV0FBVzs7NENBR3RFRCx3QkFBVSxxQkFBQ2lGLGtCQUFLO2dEQUFDL0IsTUFBTTsrREFBUyxxQkFBQ2dDLGlCQUFJO2dEQUFDaEMsTUFBTTs7MERBQzdDLHFCQUFDSjswREFDRTlDLFVBQVUsVUFBVVYsWUFBWSxJQUFJLGlCQUFpQjs7OztrREFHMUQscUJBQUNxRTt3Q0FDQ0MsTUFBSzt3Q0FDTGpILFdBQVU7d0NBQ1ZrSCxTQUFTbkI7d0NBQ1Q1RixjQUFXO2tEQUVYLGNBQUEscUJBQUNxSSxzQkFBUzs0Q0FBQ2pDLE1BQU07Ozs7Ozs7a0NBSXZCLHFCQUFDb0I7d0JBQVMzSCxXQUFVO3dCQUFpQkcsY0FBVztrQ0FDN0M1QixTQUFTZ0QsR0FBRyxDQUFDLENBQUNrSCxHQUFHbEQsa0JBQ2hCLHNCQUFDeUI7Z0NBRUNDLE1BQUs7Z0NBQ0xXLGdCQUFjakYsWUFBWTRDO2dDQUMxQjJCLFNBQVMsSUFBTTVCLE9BQU9DO2dDQUN0QnZGLFdBQVcyQyxZQUFZNEMsSUFBSSxlQUFlOztrREFFMUMscUJBQUNrRCxFQUFFaEssSUFBSTt3Q0FBQzhILE1BQU07O2tEQUNkLHFCQUFDSjtrREFBTXNDLEVBQUVqSyxJQUFJOzs7K0JBUFJpSyxFQUFFakssSUFBSTs7OzswQkFZbkIscUJBQUNrSTtnQkFBRTFHLFdBQVU7MEJBQW1COzswQkFHaEMscUJBQUNxSDtnQkFBT3JILFdBQVU7Z0JBQVUwSSxhQUFVOzBCQUNuQ2xHOzs7O0FBSVQifQ==

@@ -1,0 +1,275 @@
+366f70189e2e7f33d49430d2f2b363e4
+"use strict";
+jest.mock("@/lib/api/addons", ()=>({
+        useOrderUiV2: ()=>({
+                enabled: mockV2,
+                resolved: true
+            })
+    }));
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+const _react1 = require("@testing-library/react");
+const _ActionTier = require("./ActionTier");
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+/**
+ * T7 action-bar tiers. The flag-off contract is the important one: the page must render exactly as
+ * before, so `ActionTier` must add NO element and NO reordering class when `order_ui_v2` is off.
+ * Which button sits in which tier on the real page is pinned by `ActionTier.wiring.test.ts`.
+ */ let mockV2 = false;
+beforeEach(()=>{
+    mockV2 = false;
+});
+const tierEl = (c, tier)=>c.querySelector(`[data-tier="${tier}"]`);
+describe("ActionTier — flag off (must be invisible)", ()=>{
+    it("renders its children in place with no wrapper element", ()=>{
+        const { container } = (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)("div", {
+            id: "bar",
+            children: /*#__PURE__*/ (0, _jsxruntime.jsx)(_ActionTier.ActionTier, {
+                tier: "danger",
+                children: /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                    children: "Cancel Order"
+                })
+            })
+        }));
+        const bar = container.querySelector("#bar");
+        expect(bar.children).toHaveLength(1);
+        expect(bar.firstElementChild.tagName).toBe("BUTTON"); // a direct child of the bar
+        expect(container.querySelector("[data-tier]")).toBeNull();
+    });
+    it("keeps sibling order — tiers add no reordering classes when off", ()=>{
+        const { container } = (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+            children: [
+                /*#__PURE__*/ (0, _jsxruntime.jsx)(_ActionTier.ActionTier, {
+                    tier: "danger",
+                    children: /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                        children: "Delete"
+                    })
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)(_ActionTier.ActionTier, {
+                    tier: "primary",
+                    children: /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                        children: "Confirm Order"
+                    })
+                })
+            ]
+        }));
+        expect(Array.from(container.querySelectorAll("button")).map((b)=>b.textContent)).toEqual([
+            "Delete",
+            "Confirm Order"
+        ]);
+        expect(container.innerHTML).not.toMatch(/order-[123]/);
+    });
+});
+describe("ActionTier — flag on", ()=>{
+    beforeEach(()=>{
+        mockV2 = true;
+    });
+    it("wraps each tier in its own element carrying the tier name", ()=>{
+        const { container } = (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsxs)(_jsxruntime.Fragment, {
+            children: [
+                /*#__PURE__*/ (0, _jsxruntime.jsx)(_ActionTier.ActionTier, {
+                    tier: "primary",
+                    children: /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                        children: "Confirm Order"
+                    })
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)(_ActionTier.ActionTier, {
+                    tier: "secondary",
+                    children: /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                        children: "Unconfirm"
+                    })
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)(_ActionTier.ActionTier, {
+                    tier: "danger",
+                    children: /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                        children: "Cancel Order"
+                    })
+                })
+            ]
+        }));
+        for (const tier of [
+            "primary",
+            "secondary",
+            "danger"
+        ]){
+            expect(tierEl(container, tier)).not.toBeNull();
+        }
+    });
+    it("several secondary tiers can share a bar (Edit Items + a status's own) without an id clash", ()=>{
+        const { container } = (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsxs)(_jsxruntime.Fragment, {
+            children: [
+                /*#__PURE__*/ (0, _jsxruntime.jsx)(_ActionTier.ActionTier, {
+                    tier: "secondary",
+                    children: /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                        children: "Edit Items"
+                    })
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)(_ActionTier.ActionTier, {
+                    tier: "secondary",
+                    children: /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                        children: "Unconfirm"
+                    })
+                })
+            ]
+        }));
+        expect(container.querySelectorAll('[data-tier="secondary"]')).toHaveLength(2);
+        expect(container.querySelector("[id]")).toBeNull();
+    });
+    it("orders primary before secondary before danger, whatever the JSX order", ()=>{
+        const { container } = (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsxs)(_jsxruntime.Fragment, {
+            children: [
+                /*#__PURE__*/ (0, _jsxruntime.jsx)(_ActionTier.ActionTier, {
+                    tier: "danger",
+                    children: /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                        children: "Delete"
+                    })
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)(_ActionTier.ActionTier, {
+                    tier: "primary",
+                    children: /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                        children: "Confirm Order"
+                    })
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)(_ActionTier.ActionTier, {
+                    tier: "secondary",
+                    children: /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                        children: "Unconfirm"
+                    })
+                })
+            ]
+        }));
+        expect(tierEl(container, "primary")).toHaveClass("order-1");
+        expect(tierEl(container, "secondary")).toHaveClass("order-2");
+        expect(tierEl(container, "danger")).toHaveClass("order-3");
+    });
+    it("the danger tier is its own ruled-off full-width row that hides itself when empty", ()=>{
+        const { container } = (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_ActionTier.ActionTier, {
+            tier: "danger",
+            children: /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                children: "Cancel Order"
+            })
+        }));
+        expect(tierEl(container, "danger")).toHaveClass("w-full", "border-t", "empty:hidden");
+    });
+    it("an empty danger tier renders no child nodes, so `empty:hidden` can hide it", ()=>{
+        const { container } = (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_ActionTier.ActionTier, {
+            tier: "danger",
+            children: null
+        }));
+        expect(tierEl(container, "danger").childNodes).toHaveLength(0);
+    });
+    it("the primary CTA fills the row on a phone — including a button inside a wrapper", ()=>{
+        const { container } = (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_ActionTier.ActionTier, {
+            tier: "primary",
+            children: /*#__PURE__*/ (0, _jsxruntime.jsx)("div", {
+                className: "flex flex-col items-start gap-1",
+                children: /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                    children: "Out for Delivery"
+                })
+            })
+        }));
+        const primary = tierEl(container, "primary");
+        expect(primary).toHaveClass("max-sm:w-full");
+        expect(primary.className).toContain("max-sm:[&>*]:flex-1"); // stretches the wrapper...
+        expect(primary.className).toContain("max-sm:[&_button]:w-full"); // ...and the button inside it
+    });
+    it("every tier gets 44px touch targets under sm", ()=>{
+        const { container } = (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsxs)(_jsxruntime.Fragment, {
+            children: [
+                /*#__PURE__*/ (0, _jsxruntime.jsx)(_ActionTier.ActionTier, {
+                    tier: "primary",
+                    children: /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                        children: "A"
+                    })
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)(_ActionTier.ActionTier, {
+                    tier: "secondary",
+                    children: /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                        children: "B"
+                    })
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)(_ActionTier.ActionTier, {
+                    tier: "danger",
+                    children: /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                        children: "C"
+                    })
+                })
+            ]
+        }));
+        for (const tier of [
+            "primary",
+            "secondary",
+            "danger"
+        ]){
+            expect(tierEl(container, tier).className).toContain("max-sm:[&_button]:min-h-11");
+        }
+    });
+    it("adds no caption or text of its own — nothing reassuring above the cancel-impact dialog", ()=>{
+        const { container } = (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_ActionTier.ActionTier, {
+            tier: "danger",
+            children: /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                children: "Cancel Order"
+            })
+        }));
+        expect(tierEl(container, "danger").textContent).toBe("Cancel Order");
+    });
+    it("does not change what the buttons do — a click reaches the child's own handler", ()=>{
+        const onClick = jest.fn();
+        const { getByRole } = (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_ActionTier.ActionTier, {
+            tier: "primary",
+            children: /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+                onClick: onClick,
+                children: "Confirm Order"
+            })
+        }));
+        getByRole("button", {
+            name: "Confirm Order"
+        }).click();
+        expect(onClick).toHaveBeenCalledTimes(1);
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS9vcmRlcnMvW2lkXS9fY29tcG9uZW50cy9BY3Rpb25UaWVyLnRlc3QudHN4Il0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCAqIGFzIFJlYWN0IGZyb20gXCJyZWFjdFwiO1xuaW1wb3J0IHsgcmVuZGVyIH0gZnJvbSBcIkB0ZXN0aW5nLWxpYnJhcnkvcmVhY3RcIjtcbmltcG9ydCB7IEFjdGlvblRpZXIgfSBmcm9tIFwiLi9BY3Rpb25UaWVyXCI7XG5cbi8qKlxuICogVDcgYWN0aW9uLWJhciB0aWVycy4gVGhlIGZsYWctb2ZmIGNvbnRyYWN0IGlzIHRoZSBpbXBvcnRhbnQgb25lOiB0aGUgcGFnZSBtdXN0IHJlbmRlciBleGFjdGx5IGFzXG4gKiBiZWZvcmUsIHNvIGBBY3Rpb25UaWVyYCBtdXN0IGFkZCBOTyBlbGVtZW50IGFuZCBOTyByZW9yZGVyaW5nIGNsYXNzIHdoZW4gYG9yZGVyX3VpX3YyYCBpcyBvZmYuXG4gKiBXaGljaCBidXR0b24gc2l0cyBpbiB3aGljaCB0aWVyIG9uIHRoZSByZWFsIHBhZ2UgaXMgcGlubmVkIGJ5IGBBY3Rpb25UaWVyLndpcmluZy50ZXN0LnRzYC5cbiAqL1xuXG5sZXQgbW9ja1YyID0gZmFsc2U7XG5qZXN0Lm1vY2soXCJAL2xpYi9hcGkvYWRkb25zXCIsICgpID0+ICh7XG4gIHVzZU9yZGVyVWlWMjogKCkgPT4gKHsgZW5hYmxlZDogbW9ja1YyLCByZXNvbHZlZDogdHJ1ZSB9KSxcbn0pKTtcblxuYmVmb3JlRWFjaCgoKSA9PiB7XG4gIG1vY2tWMiA9IGZhbHNlO1xufSk7XG5cbmNvbnN0IHRpZXJFbCA9IChjOiBIVE1MRWxlbWVudCwgdGllcjogc3RyaW5nKSA9PlxuICBjLnF1ZXJ5U2VsZWN0b3IoYFtkYXRhLXRpZXI9XCIke3RpZXJ9XCJdYCkgYXMgSFRNTEVsZW1lbnQ7XG5cbmRlc2NyaWJlKFwiQWN0aW9uVGllciDigJQgZmxhZyBvZmYgKG11c3QgYmUgaW52aXNpYmxlKVwiLCAoKSA9PiB7XG4gIGl0KFwicmVuZGVycyBpdHMgY2hpbGRyZW4gaW4gcGxhY2Ugd2l0aCBubyB3cmFwcGVyIGVsZW1lbnRcIiwgKCkgPT4ge1xuICAgIGNvbnN0IHsgY29udGFpbmVyIH0gPSByZW5kZXIoXG4gICAgICA8ZGl2IGlkPVwiYmFyXCI+XG4gICAgICAgIDxBY3Rpb25UaWVyIHRpZXI9XCJkYW5nZXJcIj5cbiAgICAgICAgICA8YnV0dG9uPkNhbmNlbCBPcmRlcjwvYnV0dG9uPlxuICAgICAgICA8L0FjdGlvblRpZXI+XG4gICAgICA8L2Rpdj4sXG4gICAgKTtcbiAgICBjb25zdCBiYXIgPSBjb250YWluZXIucXVlcnlTZWxlY3RvcihcIiNiYXJcIikhO1xuICAgIGV4cGVjdChiYXIuY2hpbGRyZW4pLnRvSGF2ZUxlbmd0aCgxKTtcbiAgICBleHBlY3QoYmFyLmZpcnN0RWxlbWVudENoaWxkIS50YWdOYW1lKS50b0JlKFwiQlVUVE9OXCIpOyAvLyBhIGRpcmVjdCBjaGlsZCBvZiB0aGUgYmFyXG4gICAgZXhwZWN0KGNvbnRhaW5lci5xdWVyeVNlbGVjdG9yKFwiW2RhdGEtdGllcl1cIikpLnRvQmVOdWxsKCk7XG4gIH0pO1xuXG4gIGl0KFwia2VlcHMgc2libGluZyBvcmRlciDigJQgdGllcnMgYWRkIG5vIHJlb3JkZXJpbmcgY2xhc3NlcyB3aGVuIG9mZlwiLCAoKSA9PiB7XG4gICAgY29uc3QgeyBjb250YWluZXIgfSA9IHJlbmRlcihcbiAgICAgIDxkaXY+XG4gICAgICAgIDxBY3Rpb25UaWVyIHRpZXI9XCJkYW5nZXJcIj5cbiAgICAgICAgICA8YnV0dG9uPkRlbGV0ZTwvYnV0dG9uPlxuICAgICAgICA8L0FjdGlvblRpZXI+XG4gICAgICAgIDxBY3Rpb25UaWVyIHRpZXI9XCJwcmltYXJ5XCI+XG4gICAgICAgICAgPGJ1dHRvbj5Db25maXJtIE9yZGVyPC9idXR0b24+XG4gICAgICAgIDwvQWN0aW9uVGllcj5cbiAgICAgIDwvZGl2PixcbiAgICApO1xuICAgIGV4cGVjdChBcnJheS5mcm9tKGNvbnRhaW5lci5xdWVyeVNlbGVjdG9yQWxsKFwiYnV0dG9uXCIpKS5tYXAoKGIpID0+IGIudGV4dENvbnRlbnQpKS50b0VxdWFsKFtcbiAgICAgIFwiRGVsZXRlXCIsXG4gICAgICBcIkNvbmZpcm0gT3JkZXJcIixcbiAgICBdKTtcbiAgICBleHBlY3QoY29udGFpbmVyLmlubmVySFRNTCkubm90LnRvTWF0Y2goL29yZGVyLVsxMjNdLyk7XG4gIH0pO1xufSk7XG5cbmRlc2NyaWJlKFwiQWN0aW9uVGllciDigJQgZmxhZyBvblwiLCAoKSA9PiB7XG4gIGJlZm9yZUVhY2goKCkgPT4ge1xuICAgIG1vY2tWMiA9IHRydWU7XG4gIH0pO1xuXG4gIGl0KFwid3JhcHMgZWFjaCB0aWVyIGluIGl0cyBvd24gZWxlbWVudCBjYXJyeWluZyB0aGUgdGllciBuYW1lXCIsICgpID0+IHtcbiAgICBjb25zdCB7IGNvbnRhaW5lciB9ID0gcmVuZGVyKFxuICAgICAgPD5cbiAgICAgICAgPEFjdGlvblRpZXIgdGllcj1cInByaW1hcnlcIj5cbiAgICAgICAgICA8YnV0dG9uPkNvbmZpcm0gT3JkZXI8L2J1dHRvbj5cbiAgICAgICAgPC9BY3Rpb25UaWVyPlxuICAgICAgICA8QWN0aW9uVGllciB0aWVyPVwic2Vjb25kYXJ5XCI+XG4gICAgICAgICAgPGJ1dHRvbj5VbmNvbmZpcm08L2J1dHRvbj5cbiAgICAgICAgPC9BY3Rpb25UaWVyPlxuICAgICAgICA8QWN0aW9uVGllciB0aWVyPVwiZGFuZ2VyXCI+XG4gICAgICAgICAgPGJ1dHRvbj5DYW5jZWwgT3JkZXI8L2J1dHRvbj5cbiAgICAgICAgPC9BY3Rpb25UaWVyPlxuICAgICAgPC8+LFxuICAgICk7XG4gICAgZm9yIChjb25zdCB0aWVyIG9mIFtcInByaW1hcnlcIiwgXCJzZWNvbmRhcnlcIiwgXCJkYW5nZXJcIl0pIHtcbiAgICAgIGV4cGVjdCh0aWVyRWwoY29udGFpbmVyLCB0aWVyKSkubm90LnRvQmVOdWxsKCk7XG4gICAgfVxuICB9KTtcblxuICBpdChcInNldmVyYWwgc2Vjb25kYXJ5IHRpZXJzIGNhbiBzaGFyZSBhIGJhciAoRWRpdCBJdGVtcyArIGEgc3RhdHVzJ3Mgb3duKSB3aXRob3V0IGFuIGlkIGNsYXNoXCIsICgpID0+IHtcbiAgICBjb25zdCB7IGNvbnRhaW5lciB9ID0gcmVuZGVyKFxuICAgICAgPD5cbiAgICAgICAgPEFjdGlvblRpZXIgdGllcj1cInNlY29uZGFyeVwiPlxuICAgICAgICAgIDxidXR0b24+RWRpdCBJdGVtczwvYnV0dG9uPlxuICAgICAgICA8L0FjdGlvblRpZXI+XG4gICAgICAgIDxBY3Rpb25UaWVyIHRpZXI9XCJzZWNvbmRhcnlcIj5cbiAgICAgICAgICA8YnV0dG9uPlVuY29uZmlybTwvYnV0dG9uPlxuICAgICAgICA8L0FjdGlvblRpZXI+XG4gICAgICA8Lz4sXG4gICAgKTtcbiAgICBleHBlY3QoY29udGFpbmVyLnF1ZXJ5U2VsZWN0b3JBbGwoJ1tkYXRhLXRpZXI9XCJzZWNvbmRhcnlcIl0nKSkudG9IYXZlTGVuZ3RoKDIpO1xuICAgIGV4cGVjdChjb250YWluZXIucXVlcnlTZWxlY3RvcihcIltpZF1cIikpLnRvQmVOdWxsKCk7XG4gIH0pO1xuXG4gIGl0KFwib3JkZXJzIHByaW1hcnkgYmVmb3JlIHNlY29uZGFyeSBiZWZvcmUgZGFuZ2VyLCB3aGF0ZXZlciB0aGUgSlNYIG9yZGVyXCIsICgpID0+IHtcbiAgICBjb25zdCB7IGNvbnRhaW5lciB9ID0gcmVuZGVyKFxuICAgICAgPD5cbiAgICAgICAgPEFjdGlvblRpZXIgdGllcj1cImRhbmdlclwiPlxuICAgICAgICAgIDxidXR0b24+RGVsZXRlPC9idXR0b24+XG4gICAgICAgIDwvQWN0aW9uVGllcj5cbiAgICAgICAgPEFjdGlvblRpZXIgdGllcj1cInByaW1hcnlcIj5cbiAgICAgICAgICA8YnV0dG9uPkNvbmZpcm0gT3JkZXI8L2J1dHRvbj5cbiAgICAgICAgPC9BY3Rpb25UaWVyPlxuICAgICAgICA8QWN0aW9uVGllciB0aWVyPVwic2Vjb25kYXJ5XCI+XG4gICAgICAgICAgPGJ1dHRvbj5VbmNvbmZpcm08L2J1dHRvbj5cbiAgICAgICAgPC9BY3Rpb25UaWVyPlxuICAgICAgPC8+LFxuICAgICk7XG4gICAgZXhwZWN0KHRpZXJFbChjb250YWluZXIsIFwicHJpbWFyeVwiKSkudG9IYXZlQ2xhc3MoXCJvcmRlci0xXCIpO1xuICAgIGV4cGVjdCh0aWVyRWwoY29udGFpbmVyLCBcInNlY29uZGFyeVwiKSkudG9IYXZlQ2xhc3MoXCJvcmRlci0yXCIpO1xuICAgIGV4cGVjdCh0aWVyRWwoY29udGFpbmVyLCBcImRhbmdlclwiKSkudG9IYXZlQ2xhc3MoXCJvcmRlci0zXCIpO1xuICB9KTtcblxuICBpdChcInRoZSBkYW5nZXIgdGllciBpcyBpdHMgb3duIHJ1bGVkLW9mZiBmdWxsLXdpZHRoIHJvdyB0aGF0IGhpZGVzIGl0c2VsZiB3aGVuIGVtcHR5XCIsICgpID0+IHtcbiAgICBjb25zdCB7IGNvbnRhaW5lciB9ID0gcmVuZGVyKFxuICAgICAgPEFjdGlvblRpZXIgdGllcj1cImRhbmdlclwiPlxuICAgICAgICA8YnV0dG9uPkNhbmNlbCBPcmRlcjwvYnV0dG9uPlxuICAgICAgPC9BY3Rpb25UaWVyPixcbiAgICApO1xuICAgIGV4cGVjdCh0aWVyRWwoY29udGFpbmVyLCBcImRhbmdlclwiKSkudG9IYXZlQ2xhc3MoXCJ3LWZ1bGxcIiwgXCJib3JkZXItdFwiLCBcImVtcHR5OmhpZGRlblwiKTtcbiAgfSk7XG5cbiAgaXQoXCJhbiBlbXB0eSBkYW5nZXIgdGllciByZW5kZXJzIG5vIGNoaWxkIG5vZGVzLCBzbyBgZW1wdHk6aGlkZGVuYCBjYW4gaGlkZSBpdFwiLCAoKSA9PiB7XG4gICAgY29uc3QgeyBjb250YWluZXIgfSA9IHJlbmRlcig8QWN0aW9uVGllciB0aWVyPVwiZGFuZ2VyXCI+e251bGx9PC9BY3Rpb25UaWVyPik7XG4gICAgZXhwZWN0KHRpZXJFbChjb250YWluZXIsIFwiZGFuZ2VyXCIpLmNoaWxkTm9kZXMpLnRvSGF2ZUxlbmd0aCgwKTtcbiAgfSk7XG5cbiAgaXQoXCJ0aGUgcHJpbWFyeSBDVEEgZmlsbHMgdGhlIHJvdyBvbiBhIHBob25lIOKAlCBpbmNsdWRpbmcgYSBidXR0b24gaW5zaWRlIGEgd3JhcHBlclwiLCAoKSA9PiB7XG4gICAgY29uc3QgeyBjb250YWluZXIgfSA9IHJlbmRlcihcbiAgICAgIDxBY3Rpb25UaWVyIHRpZXI9XCJwcmltYXJ5XCI+XG4gICAgICAgIDxkaXYgY2xhc3NOYW1lPVwiZmxleCBmbGV4LWNvbCBpdGVtcy1zdGFydCBnYXAtMVwiPlxuICAgICAgICAgIDxidXR0b24+T3V0IGZvciBEZWxpdmVyeTwvYnV0dG9uPlxuICAgICAgICA8L2Rpdj5cbiAgICAgIDwvQWN0aW9uVGllcj4sXG4gICAgKTtcbiAgICBjb25zdCBwcmltYXJ5ID0gdGllckVsKGNvbnRhaW5lciwgXCJwcmltYXJ5XCIpO1xuICAgIGV4cGVjdChwcmltYXJ5KS50b0hhdmVDbGFzcyhcIm1heC1zbTp3LWZ1bGxcIik7XG4gICAgZXhwZWN0KHByaW1hcnkuY2xhc3NOYW1lKS50b0NvbnRhaW4oXCJtYXgtc206WyY+Kl06ZmxleC0xXCIpOyAvLyBzdHJldGNoZXMgdGhlIHdyYXBwZXIuLi5cbiAgICBleHBlY3QocHJpbWFyeS5jbGFzc05hbWUpLnRvQ29udGFpbihcIm1heC1zbTpbJl9idXR0b25dOnctZnVsbFwiKTsgLy8gLi4uYW5kIHRoZSBidXR0b24gaW5zaWRlIGl0XG4gIH0pO1xuXG4gIGl0KFwiZXZlcnkgdGllciBnZXRzIDQ0cHggdG91Y2ggdGFyZ2V0cyB1bmRlciBzbVwiLCAoKSA9PiB7XG4gICAgY29uc3QgeyBjb250YWluZXIgfSA9IHJlbmRlcihcbiAgICAgIDw+XG4gICAgICAgIDxBY3Rpb25UaWVyIHRpZXI9XCJwcmltYXJ5XCI+XG4gICAgICAgICAgPGJ1dHRvbj5BPC9idXR0b24+XG4gICAgICAgIDwvQWN0aW9uVGllcj5cbiAgICAgICAgPEFjdGlvblRpZXIgdGllcj1cInNlY29uZGFyeVwiPlxuICAgICAgICAgIDxidXR0b24+QjwvYnV0dG9uPlxuICAgICAgICA8L0FjdGlvblRpZXI+XG4gICAgICAgIDxBY3Rpb25UaWVyIHRpZXI9XCJkYW5nZXJcIj5cbiAgICAgICAgICA8YnV0dG9uPkM8L2J1dHRvbj5cbiAgICAgICAgPC9BY3Rpb25UaWVyPlxuICAgICAgPC8+LFxuICAgICk7XG4gICAgZm9yIChjb25zdCB0aWVyIG9mIFtcInByaW1hcnlcIiwgXCJzZWNvbmRhcnlcIiwgXCJkYW5nZXJcIl0pIHtcbiAgICAgIGV4cGVjdCh0aWVyRWwoY29udGFpbmVyLCB0aWVyKS5jbGFzc05hbWUpLnRvQ29udGFpbihcIm1heC1zbTpbJl9idXR0b25dOm1pbi1oLTExXCIpO1xuICAgIH1cbiAgfSk7XG5cbiAgaXQoXCJhZGRzIG5vIGNhcHRpb24gb3IgdGV4dCBvZiBpdHMgb3duIOKAlCBub3RoaW5nIHJlYXNzdXJpbmcgYWJvdmUgdGhlIGNhbmNlbC1pbXBhY3QgZGlhbG9nXCIsICgpID0+IHtcbiAgICBjb25zdCB7IGNvbnRhaW5lciB9ID0gcmVuZGVyKFxuICAgICAgPEFjdGlvblRpZXIgdGllcj1cImRhbmdlclwiPlxuICAgICAgICA8YnV0dG9uPkNhbmNlbCBPcmRlcjwvYnV0dG9uPlxuICAgICAgPC9BY3Rpb25UaWVyPixcbiAgICApO1xuICAgIGV4cGVjdCh0aWVyRWwoY29udGFpbmVyLCBcImRhbmdlclwiKS50ZXh0Q29udGVudCkudG9CZShcIkNhbmNlbCBPcmRlclwiKTtcbiAgfSk7XG5cbiAgaXQoXCJkb2VzIG5vdCBjaGFuZ2Ugd2hhdCB0aGUgYnV0dG9ucyBkbyDigJQgYSBjbGljayByZWFjaGVzIHRoZSBjaGlsZCdzIG93biBoYW5kbGVyXCIsICgpID0+IHtcbiAgICBjb25zdCBvbkNsaWNrID0gamVzdC5mbigpO1xuICAgIGNvbnN0IHsgZ2V0QnlSb2xlIH0gPSByZW5kZXIoXG4gICAgICA8QWN0aW9uVGllciB0aWVyPVwicHJpbWFyeVwiPlxuICAgICAgICA8YnV0dG9uIG9uQ2xpY2s9e29uQ2xpY2t9PkNvbmZpcm0gT3JkZXI8L2J1dHRvbj5cbiAgICAgIDwvQWN0aW9uVGllcj4sXG4gICAgKTtcbiAgICBnZXRCeVJvbGUoXCJidXR0b25cIiwgeyBuYW1lOiBcIkNvbmZpcm0gT3JkZXJcIiB9KS5jbGljaygpO1xuICAgIGV4cGVjdChvbkNsaWNrKS50b0hhdmVCZWVuQ2FsbGVkVGltZXMoMSk7XG4gIH0pO1xufSk7XG4iXSwibmFtZXMiOlsiamVzdCIsIm1vY2siLCJ1c2VPcmRlclVpVjIiLCJlbmFibGVkIiwibW9ja1YyIiwicmVzb2x2ZWQiLCJiZWZvcmVFYWNoIiwidGllckVsIiwiYyIsInRpZXIiLCJxdWVyeVNlbGVjdG9yIiwiZGVzY3JpYmUiLCJpdCIsImNvbnRhaW5lciIsInJlbmRlciIsImRpdiIsImlkIiwiQWN0aW9uVGllciIsImJ1dHRvbiIsImJhciIsImV4cGVjdCIsImNoaWxkcmVuIiwidG9IYXZlTGVuZ3RoIiwiZmlyc3RFbGVtZW50Q2hpbGQiLCJ0YWdOYW1lIiwidG9CZSIsInRvQmVOdWxsIiwiQXJyYXkiLCJmcm9tIiwicXVlcnlTZWxlY3RvckFsbCIsIm1hcCIsImIiLCJ0ZXh0Q29udGVudCIsInRvRXF1YWwiLCJpbm5lckhUTUwiLCJub3QiLCJ0b01hdGNoIiwidG9IYXZlQ2xhc3MiLCJjaGlsZE5vZGVzIiwiY2xhc3NOYW1lIiwicHJpbWFyeSIsInRvQ29udGFpbiIsIm9uQ2xpY2siLCJmbiIsImdldEJ5Um9sZSIsIm5hbWUiLCJjbGljayIsInRvSGF2ZUJlZW5DYWxsZWRUaW1lcyJdLCJtYXBwaW5ncyI6IjtBQVdBQSxLQUFLQyxJQUFJLENBQUMsb0JBQW9CLElBQU8sQ0FBQTtRQUNuQ0MsY0FBYyxJQUFPLENBQUE7Z0JBQUVDLFNBQVNDO2dCQUFRQyxVQUFVO1lBQUssQ0FBQTtJQUN6RCxDQUFBOzs7OzsrREFidUI7d0JBQ0E7NEJBQ0k7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7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

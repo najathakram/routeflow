@@ -1,0 +1,81 @@
+1ca730a9af73ccc15e4eec7c5d26a827
+// CSP construction for next.config.mjs's headers(), extracted so the policy
+// can be unit-tested directly — next.config.mjs itself only loads under
+// Next's own runtime, which pins NODE_ENV to "production" during `next build`
+// (see the comment on `isDev` at the call site).
+// apiConnectSources(apiUrl): the compiled Docker image bakes
+// NEXT_PUBLIC_API_URL in at build time. When that origin is `http:` (e.g. the
+// local Docker Compose stack's `http://localhost:3000`), connect-src's
+// `https: wss:` blanket alone blocks every API call and the socket.io
+// upgrade from a browser served over http — this returns the concrete
+// http/ws origin pair to splice in. Anything else (a normal https prod API,
+// or an unset/invalid value) returns "" and connect-src is unchanged.
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, {
+        enumerable: true,
+        get: Object.getOwnPropertyDescriptor(all, name).get
+    });
+}
+_export(exports, {
+    get apiConnectSources () {
+        return apiConnectSources;
+    },
+    get buildContentSecurityPolicy () {
+        return buildContentSecurityPolicy;
+    }
+});
+function apiConnectSources(apiUrl) {
+    let url;
+    try {
+        url = new URL(apiUrl);
+    } catch  {
+        return "";
+    }
+    if (url.protocol !== "http:") {
+        return "";
+    }
+    const origin = url.origin;
+    return ` ${origin} ${origin.replace(/^http:/, "ws:")}`;
+}
+function buildContentSecurityPolicy({ isDev, apiUrl }) {
+    return [
+        "default-src 'self'",
+        // Google Maps: @vis.gl/react-google-maps injects the Maps JS API script
+        // tag; without these two hosts EVERY dashboard map (trip builder, route
+        // create/detail) loads a permanently blank <Map> — the CSP added in
+        // 8aacd2d7 post-dated the Maps integration and silently broke them all.
+        `script-src 'self' 'unsafe-inline' https://maps.googleapis.com https://maps.gstatic.com${isDev ? " 'unsafe-eval'" : ""}`,
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+        "font-src 'self' https://fonts.gstatic.com data:",
+        "img-src 'self' data: blob: https:",
+        // Dev (`next dev`): the local API/socket run on plain http/ws
+        // (localhost:3000), which `https: wss:` alone blocks — every API call
+        // fails CSP. A built image (isDev always false, per the call-site
+        // comment) gets the same relaxation only when NEXT_PUBLIC_API_URL itself
+        // is an http: origin, via apiConnectSources; a normal https prod build
+        // is byte-identical to before this file existed.
+        `connect-src 'self' https: wss:${isDev ? " http://localhost:* ws://localhost:*" : ""}${apiConnectSources(apiUrl)}`,
+        // PDF previews render in an <iframe> from a blob: URL (invoice scanning,
+        // the invoice builder) or from a signed API/storage URL (customer
+        // documents). Without an explicit frame-src these fall back to
+        // default-src 'self' and render blank — images were unaffected because
+        // img-src already allows blob:, which is why PNGs previewed but PDFs did
+        // not. `data:` is deliberately excluded: data: URIs in frames are an XSS
+        // vector, and nothing here needs them.
+        "frame-src 'self' blob: https:",
+        // Google's vector-map renderer (Advanced Markers use a mapId) can spin
+        // up a blob: worker; without this it falls back to default-src 'self'
+        // and marker pins never render even once the script loads.
+        "worker-src 'self' blob:",
+        "frame-ancestors 'none'",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "form-action 'self'"
+    ].join("; ");
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2NzcC5tanMiXSwic291cmNlc0NvbnRlbnQiOlsiLy8gQ1NQIGNvbnN0cnVjdGlvbiBmb3IgbmV4dC5jb25maWcubWpzJ3MgaGVhZGVycygpLCBleHRyYWN0ZWQgc28gdGhlIHBvbGljeVxuLy8gY2FuIGJlIHVuaXQtdGVzdGVkIGRpcmVjdGx5IOKAlCBuZXh0LmNvbmZpZy5tanMgaXRzZWxmIG9ubHkgbG9hZHMgdW5kZXJcbi8vIE5leHQncyBvd24gcnVudGltZSwgd2hpY2ggcGlucyBOT0RFX0VOViB0byBcInByb2R1Y3Rpb25cIiBkdXJpbmcgYG5leHQgYnVpbGRgXG4vLyAoc2VlIHRoZSBjb21tZW50IG9uIGBpc0RldmAgYXQgdGhlIGNhbGwgc2l0ZSkuXG5cbi8vIGFwaUNvbm5lY3RTb3VyY2VzKGFwaVVybCk6IHRoZSBjb21waWxlZCBEb2NrZXIgaW1hZ2UgYmFrZXNcbi8vIE5FWFRfUFVCTElDX0FQSV9VUkwgaW4gYXQgYnVpbGQgdGltZS4gV2hlbiB0aGF0IG9yaWdpbiBpcyBgaHR0cDpgIChlLmcuIHRoZVxuLy8gbG9jYWwgRG9ja2VyIENvbXBvc2Ugc3RhY2sncyBgaHR0cDovL2xvY2FsaG9zdDozMDAwYCksIGNvbm5lY3Qtc3JjJ3Ncbi8vIGBodHRwczogd3NzOmAgYmxhbmtldCBhbG9uZSBibG9ja3MgZXZlcnkgQVBJIGNhbGwgYW5kIHRoZSBzb2NrZXQuaW9cbi8vIHVwZ3JhZGUgZnJvbSBhIGJyb3dzZXIgc2VydmVkIG92ZXIgaHR0cCDigJQgdGhpcyByZXR1cm5zIHRoZSBjb25jcmV0ZVxuLy8gaHR0cC93cyBvcmlnaW4gcGFpciB0byBzcGxpY2UgaW4uIEFueXRoaW5nIGVsc2UgKGEgbm9ybWFsIGh0dHBzIHByb2QgQVBJLFxuLy8gb3IgYW4gdW5zZXQvaW52YWxpZCB2YWx1ZSkgcmV0dXJucyBcIlwiIGFuZCBjb25uZWN0LXNyYyBpcyB1bmNoYW5nZWQuXG5leHBvcnQgZnVuY3Rpb24gYXBpQ29ubmVjdFNvdXJjZXMoYXBpVXJsKSB7XG4gIGxldCB1cmw7XG4gIHRyeSB7XG4gICAgdXJsID0gbmV3IFVSTChhcGlVcmwpO1xuICB9IGNhdGNoIHtcbiAgICByZXR1cm4gXCJcIjtcbiAgfVxuICBpZiAodXJsLnByb3RvY29sICE9PSBcImh0dHA6XCIpIHtcbiAgICByZXR1cm4gXCJcIjtcbiAgfVxuICBjb25zdCBvcmlnaW4gPSB1cmwub3JpZ2luO1xuICByZXR1cm4gYCAke29yaWdpbn0gJHtvcmlnaW4ucmVwbGFjZSgvXmh0dHA6LywgXCJ3czpcIil9YDtcbn1cblxuLy8gYnVpbGRDb250ZW50U2VjdXJpdHlQb2xpY3koeyBpc0RldiwgYXBpVXJsIH0pOiB0aGUgZnVsbCBDU1AgZGlyZWN0aXZlIGxpc3Rcbi8vIG5leHQuY29uZmlnLm1qcydzIGhlYWRlcnMoKSBzZW5kcyBvbiBldmVyeSByb3V0ZS4gYGlzRGV2YCBvbmx5IGV2ZXIgYWRkc1xuLy8gdGhlIGBuZXh0IGRldmAgd2lsZGNhcmQgbG9jYWxob3N0IHNvdXJjZXMgKG5ldmVyIHByZXNlbnQgaW4gYSBidWlsdFxuLy8gaW1hZ2UpOyBgYXBpVXJsYCAoTkVYVF9QVUJMSUNfQVBJX1VSTCkgaXMgd2hhdCBhY3R1YWxseSBsZXRzIGEgYnVpbHQgaW1hZ2Vcbi8vIHJlYWNoIGEgbm9uLWh0dHBzIEFQSSDigJQgc2VlIGFwaUNvbm5lY3RTb3VyY2VzIGFib3ZlLlxuZXhwb3J0IGZ1bmN0aW9uIGJ1aWxkQ29udGVudFNlY3VyaXR5UG9saWN5KHsgaXNEZXYsIGFwaVVybCB9KSB7XG4gIHJldHVybiBbXG4gICAgXCJkZWZhdWx0LXNyYyAnc2VsZidcIixcbiAgICAvLyBHb29nbGUgTWFwczogQHZpcy5nbC9yZWFjdC1nb29nbGUtbWFwcyBpbmplY3RzIHRoZSBNYXBzIEpTIEFQSSBzY3JpcHRcbiAgICAvLyB0YWc7IHdpdGhvdXQgdGhlc2UgdHdvIGhvc3RzIEVWRVJZIGRhc2hib2FyZCBtYXAgKHRyaXAgYnVpbGRlciwgcm91dGVcbiAgICAvLyBjcmVhdGUvZGV0YWlsKSBsb2FkcyBhIHBlcm1hbmVudGx5IGJsYW5rIDxNYXA+IOKAlCB0aGUgQ1NQIGFkZGVkIGluXG4gICAgLy8gOGFhY2QyZDcgcG9zdC1kYXRlZCB0aGUgTWFwcyBpbnRlZ3JhdGlvbiBhbmQgc2lsZW50bHkgYnJva2UgdGhlbSBhbGwuXG4gICAgYHNjcmlwdC1zcmMgJ3NlbGYnICd1bnNhZmUtaW5saW5lJyBodHRwczovL21hcHMuZ29vZ2xlYXBpcy5jb20gaHR0cHM6Ly9tYXBzLmdzdGF0aWMuY29tJHtpc0RldiA/IFwiICd1bnNhZmUtZXZhbCdcIiA6IFwiXCJ9YCxcbiAgICBcInN0eWxlLXNyYyAnc2VsZicgJ3Vuc2FmZS1pbmxpbmUnIGh0dHBzOi8vZm9udHMuZ29vZ2xlYXBpcy5jb21cIixcbiAgICBcImZvbnQtc3JjICdzZWxmJyBodHRwczovL2ZvbnRzLmdzdGF0aWMuY29tIGRhdGE6XCIsXG4gICAgXCJpbWctc3JjICdzZWxmJyBkYXRhOiBibG9iOiBodHRwczpcIixcbiAgICAvLyBEZXYgKGBuZXh0IGRldmApOiB0aGUgbG9jYWwgQVBJL3NvY2tldCBydW4gb24gcGxhaW4gaHR0cC93c1xuICAgIC8vIChsb2NhbGhvc3Q6MzAwMCksIHdoaWNoIGBodHRwczogd3NzOmAgYWxvbmUgYmxvY2tzIOKAlCBldmVyeSBBUEkgY2FsbFxuICAgIC8vIGZhaWxzIENTUC4gQSBidWlsdCBpbWFnZSAoaXNEZXYgYWx3YXlzIGZhbHNlLCBwZXIgdGhlIGNhbGwtc2l0ZVxuICAgIC8vIGNvbW1lbnQpIGdldHMgdGhlIHNhbWUgcmVsYXhhdGlvbiBvbmx5IHdoZW4gTkVYVF9QVUJMSUNfQVBJX1VSTCBpdHNlbGZcbiAgICAvLyBpcyBhbiBodHRwOiBvcmlnaW4sIHZpYSBhcGlDb25uZWN0U291cmNlczsgYSBub3JtYWwgaHR0cHMgcHJvZCBidWlsZFxuICAgIC8vIGlzIGJ5dGUtaWRlbnRpY2FsIHRvIGJlZm9yZSB0aGlzIGZpbGUgZXhpc3RlZC5cbiAgICBgY29ubmVjdC1zcmMgJ3NlbGYnIGh0dHBzOiB3c3M6JHtpc0RldiA/IFwiIGh0dHA6Ly9sb2NhbGhvc3Q6KiB3czovL2xvY2FsaG9zdDoqXCIgOiBcIlwifSR7YXBpQ29ubmVjdFNvdXJjZXMoYXBpVXJsKX1gLFxuICAgIC8vIFBERiBwcmV2aWV3cyByZW5kZXIgaW4gYW4gPGlmcmFtZT4gZnJvbSBhIGJsb2I6IFVSTCAoaW52b2ljZSBzY2FubmluZyxcbiAgICAvLyB0aGUgaW52b2ljZSBidWlsZGVyKSBvciBmcm9tIGEgc2lnbmVkIEFQSS9zdG9yYWdlIFVSTCAoY3VzdG9tZXJcbiAgICAvLyBkb2N1bWVudHMpLiBXaXRob3V0IGFuIGV4cGxpY2l0IGZyYW1lLXNyYyB0aGVzZSBmYWxsIGJhY2sgdG9cbiAgICAvLyBkZWZhdWx0LXNyYyAnc2VsZicgYW5kIHJlbmRlciBibGFuayDigJQgaW1hZ2VzIHdlcmUgdW5hZmZlY3RlZCBiZWNhdXNlXG4gICAgLy8gaW1nLXNyYyBhbHJlYWR5IGFsbG93cyBibG9iOiwgd2hpY2ggaXMgd2h5IFBOR3MgcHJldmlld2VkIGJ1dCBQREZzIGRpZFxuICAgIC8vIG5vdC4gYGRhdGE6YCBpcyBkZWxpYmVyYXRlbHkgZXhjbHVkZWQ6IGRhdGE6IFVSSXMgaW4gZnJhbWVzIGFyZSBhbiBYU1NcbiAgICAvLyB2ZWN0b3IsIGFuZCBub3RoaW5nIGhlcmUgbmVlZHMgdGhlbS5cbiAgICBcImZyYW1lLXNyYyAnc2VsZicgYmxvYjogaHR0cHM6XCIsXG4gICAgLy8gR29vZ2xlJ3MgdmVjdG9yLW1hcCByZW5kZXJlciAoQWR2YW5jZWQgTWFya2VycyB1c2UgYSBtYXBJZCkgY2FuIHNwaW5cbiAgICAvLyB1cCBhIGJsb2I6IHdvcmtlcjsgd2l0aG91dCB0aGlzIGl0IGZhbGxzIGJhY2sgdG8gZGVmYXVsdC1zcmMgJ3NlbGYnXG4gICAgLy8gYW5kIG1hcmtlciBwaW5zIG5ldmVyIHJlbmRlciBldmVuIG9uY2UgdGhlIHNjcmlwdCBsb2Fkcy5cbiAgICBcIndvcmtlci1zcmMgJ3NlbGYnIGJsb2I6XCIsXG4gICAgXCJmcmFtZS1hbmNlc3RvcnMgJ25vbmUnXCIsXG4gICAgXCJvYmplY3Qtc3JjICdub25lJ1wiLFxuICAgIFwiYmFzZS11cmkgJ3NlbGYnXCIsXG4gICAgXCJmb3JtLWFjdGlvbiAnc2VsZidcIixcbiAgXS5qb2luKFwiOyBcIik7XG59XG4iXSwibmFtZXMiOlsiYXBpQ29ubmVjdFNvdXJjZXMiLCJidWlsZENvbnRlbnRTZWN1cml0eVBvbGljeSIsImFwaVVybCIsInVybCIsIlVSTCIsInByb3RvY29sIiwib3JpZ2luIiwicmVwbGFjZSIsImlzRGV2Iiwiam9pbiJdLCJtYXBwaW5ncyI6IkFBQUEsNEVBQTRFO0FBQzVFLHdFQUF3RTtBQUN4RSw4RUFBOEU7QUFDOUUsaURBQWlEO0FBRWpELDZEQUE2RDtBQUM3RCw4RUFBOEU7QUFDOUUsdUVBQXVFO0FBQ3ZFLHNFQUFzRTtBQUN0RSxzRUFBc0U7QUFDdEUsNEVBQTRFO0FBQzVFLHNFQUFzRTs7Ozs7Ozs7Ozs7O1FBQ3REQTtlQUFBQTs7UUFtQkFDO2VBQUFBOzs7QUFuQlQsU0FBU0Qsa0JBQWtCRSxNQUFNO0lBQ3RDLElBQUlDO0lBQ0osSUFBSTtRQUNGQSxNQUFNLElBQUlDLElBQUlGO0lBQ2hCLEVBQUUsT0FBTTtRQUNOLE9BQU87SUFDVDtJQUNBLElBQUlDLElBQUlFLFFBQVEsS0FBSyxTQUFTO1FBQzVCLE9BQU87SUFDVDtJQUNBLE1BQU1DLFNBQVNILElBQUlHLE1BQU07SUFDekIsT0FBTyxDQUFDLENBQUMsRUFBRUEsT0FBTyxDQUFDLEVBQUVBLE9BQU9DLE9BQU8sQ0FBQyxVQUFVLFFBQVE7QUFDeEQ7QUFPTyxTQUFTTiwyQkFBMkIsRUFBRU8sS0FBSyxFQUFFTixNQUFNLEVBQUU7SUFDMUQsT0FBTztRQUNMO1FBQ0Esd0VBQXdFO1FBQ3hFLHdFQUF3RTtRQUN4RSxvRUFBb0U7UUFDcEUsd0VBQXdFO1FBQ3hFLENBQUMsc0ZBQXNGLEVBQUVNLFFBQVEsbUJBQW1CLElBQUk7UUFDeEg7UUFDQTtRQUNBO1FBQ0EsOERBQThEO1FBQzlELHNFQUFzRTtRQUN0RSxrRUFBa0U7UUFDbEUseUVBQXlFO1FBQ3pFLHVFQUF1RTtRQUN2RSxpREFBaUQ7UUFDakQsQ0FBQyw4QkFBOEIsRUFBRUEsUUFBUSx5Q0FBeUMsS0FBS1Isa0JBQWtCRSxTQUFTO1FBQ2xILHlFQUF5RTtRQUN6RSxrRUFBa0U7UUFDbEUsK0RBQStEO1FBQy9ELHVFQUF1RTtRQUN2RSx5RUFBeUU7UUFDekUseUVBQXlFO1FBQ3pFLHVDQUF1QztRQUN2QztRQUNBLHVFQUF1RTtRQUN2RSxzRUFBc0U7UUFDdEUsMkRBQTJEO1FBQzNEO1FBQ0E7UUFDQTtRQUNBO1FBQ0E7S0FDRCxDQUFDTyxJQUFJLENBQUM7QUFDVCJ9

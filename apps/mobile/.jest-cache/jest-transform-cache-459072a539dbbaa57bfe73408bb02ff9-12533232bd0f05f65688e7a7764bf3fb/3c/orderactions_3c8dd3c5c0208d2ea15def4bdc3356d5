@@ -1,0 +1,183 @@
+e76fb12f8723bed3e3072f3fb1b29401
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.statusActions = statusActions;
+/** The ROUTE-fulfillment action set — byte-identical to the pre-extraction switch. */
+function routeStatusActions(current) {
+    switch (current) {
+        case "DRAFT":
+            return [
+                {
+                    label: "Submit for review",
+                    toStatus: "PENDING",
+                    style: "primary",
+                    icon: "arrow-forward-circle-outline",
+                },
+            ];
+        case "PENDING":
+            return [
+                {
+                    label: "Confirm order",
+                    toStatus: "CONFIRMED",
+                    style: "primary",
+                    icon: "checkmark-circle-outline",
+                },
+                {
+                    label: "Cancel order",
+                    toStatus: "CANCELLED",
+                    style: "danger",
+                    icon: "close-circle-outline",
+                    confirmMessage: "Cancel this order? It cannot be undone easily.",
+                },
+            ];
+        case "CONFIRMED":
+            return [
+                {
+                    // PR-4: this is the van-sale two-tap flow — DELIVERED already chains
+                    // openSendForOrder() → SendInvoiceSheet below, so promoting it to
+                    // primary makes "deliver, then send" the default path.
+                    label: "Deliver & send invoice",
+                    toStatus: "DELIVERED",
+                    style: "primary",
+                    icon: "flash-outline",
+                    confirmMessage: "Mark as delivered without going through dispatch?",
+                },
+                {
+                    label: "Send for delivery",
+                    toStatus: "OUT_FOR_DELIVERY",
+                    style: "secondary",
+                    icon: "car-outline",
+                },
+                {
+                    label: "Back to pending",
+                    toStatus: "PENDING",
+                    style: "warning",
+                    icon: "arrow-back-circle-outline",
+                    confirmMessage: "Revert order back to Pending?",
+                },
+                {
+                    label: "Cancel order",
+                    toStatus: "CANCELLED",
+                    style: "danger",
+                    icon: "close-circle-outline",
+                    confirmMessage: "Cancel this order?",
+                },
+            ];
+        case "OUT_FOR_DELIVERY":
+            return [
+                {
+                    label: "Mark delivered",
+                    toStatus: "DELIVERED",
+                    style: "primary",
+                    icon: "checkmark-done-circle-outline",
+                },
+                {
+                    label: "Partial delivery",
+                    toStatus: "PARTIALLY_DELIVERED",
+                    style: "secondary",
+                    icon: "git-branch-outline",
+                },
+                {
+                    label: "Back to confirmed",
+                    toStatus: "CONFIRMED",
+                    style: "warning",
+                    icon: "arrow-back-circle-outline",
+                    confirmMessage: "Revert order back to Confirmed?",
+                },
+                {
+                    label: "Cancel order",
+                    toStatus: "CANCELLED",
+                    style: "danger",
+                    icon: "close-circle-outline",
+                    confirmMessage: "Cancel this order?",
+                },
+            ];
+        case "PARTIALLY_DELIVERED":
+            return [
+                {
+                    label: "Mark fully delivered",
+                    toStatus: "DELIVERED",
+                    style: "primary",
+                    icon: "checkmark-done-circle-outline",
+                },
+                {
+                    label: "Back out for delivery",
+                    toStatus: "OUT_FOR_DELIVERY",
+                    style: "warning",
+                    icon: "arrow-back-circle-outline",
+                    confirmMessage: "Revert back to Out for delivery?",
+                },
+                {
+                    label: "Cancel order",
+                    toStatus: "CANCELLED",
+                    style: "danger",
+                    icon: "close-circle-outline",
+                    confirmMessage: "Cancel this order?",
+                },
+            ];
+        case "DELIVERED":
+            // BUG-ORD-01 reversed by owner 2026-08-25: DELIVERED→CONFIRMED is now a
+            // legal staff-only reasoned demotion server-side (`orders.service.ts`
+            // changeStatus), not the always-400 dead end it used to be. The server
+            // additionally 409s when the order was delivered on a route stop that's
+            // already COMPLETED — reopen that stop from its run instead; the
+            // screen surfaces that as a toast. `demotionRequiresReason`
+            // (lib/order-status-flow.ts) already covers this pair, so the detail
+            // screen routes it through the ReasonSheet before PATCH /status fires.
+            return [
+                {
+                    label: "Reopen order",
+                    toStatus: "CONFIRMED",
+                    style: "warning",
+                    icon: "refresh-outline",
+                    confirmMessage: "Reopen this delivered order back to Confirmed? Its delivered date is cleared.",
+                },
+            ];
+        // CANCELLED reopens through the dedicated /reopen endpoint below
+        // (reopenCancelled), not PATCH /status like DELIVERED's reopen above.
+        case "CANCELLED":
+            // POST /orders/:id/reopen → PENDING (OPERATOR-only; server 400s if a
+            // paid/partial/written-off invoice exists).
+            return [
+                {
+                    label: "Reopen order",
+                    toStatus: "PENDING",
+                    style: "primary",
+                    icon: "refresh-outline",
+                    confirmMessage: "Reopen this cancelled order back to Pending?",
+                    reopenCancelled: true,
+                },
+            ];
+        default:
+            return [];
+    }
+}
+/**
+ * Available status actions for the order-detail action bar.
+ *
+ * `fulfillPath === "ROUTE"` (the default) is byte-identical to the
+ * pre-extraction behavior. `"SHIP"` (supplier/carrier-shipped orders, never
+ * routed) relabels the shipping-shaped actions IN PLACE — every action keeps
+ * its original `toStatus`, so each one still passes `canTransitionOrder`
+ * (`lib/order-status-flow.ts`) exactly as before — and drops "Partial
+ * delivery" entirely: a dead end for a carrier shipment, since the shipment
+ * either arrived or it didn't.
+ */
+function statusActions(status, fulfillPath = "ROUTE") {
+    const actions = routeStatusActions(status);
+    if (fulfillPath !== "SHIP")
+        return actions;
+    return actions
+        .filter((a) => a.toStatus !== "PARTIALLY_DELIVERED")
+        .map((a) => {
+        if (a.toStatus === "OUT_FOR_DELIVERY")
+            return { ...a, label: "Mark shipped" };
+        if (a.toStatus === "DELIVERED")
+            return { ...a, label: "Mark delivered" };
+        if (status === "OUT_FOR_DELIVERY" && a.toStatus === "CONFIRMED") {
+            return { ...a, label: "Unmark shipped" };
+        }
+        return a;
+    });
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL29yZGVyLWFjdGlvbnMudHMiLCJtYXBwaW5ncyI6Ijs7QUF3TEEsc0NBZ0JDO0FBbkxELHNGQUFzRjtBQUN0RixTQUFTLGtCQUFrQixDQUFDLE9BQW9CO0lBQzlDLFFBQVEsT0FBTyxFQUFFLENBQUM7UUFDaEIsS0FBSyxPQUFPO1lBQ1YsT0FBTztnQkFDTDtvQkFDRSxLQUFLLEVBQUUsbUJBQW1CO29CQUMxQixRQUFRLEVBQUUsU0FBUztvQkFDbkIsS0FBSyxFQUFFLFNBQVM7b0JBQ2hCLElBQUksRUFBRSw4QkFBOEI7aUJBQ3JDO2FBQ0YsQ0FBQztRQUNKLEtBQUssU0FBUztZQUNaLE9BQU87Z0JBQ0w7b0JBQ0UsS0FBSyxFQUFFLGVBQWU7b0JBQ3RCLFFBQVEsRUFBRSxXQUFXO29CQUNyQixLQUFLLEVBQUUsU0FBUztvQkFDaEIsSUFBSSxFQUFFLDBCQUEwQjtpQkFDakM7Z0JBQ0Q7b0JBQ0UsS0FBSyxFQUFFLGNBQWM7b0JBQ3JCLFFBQVEsRUFBRSxXQUFXO29CQUNyQixLQUFLLEVBQUUsUUFBUTtvQkFDZixJQUFJLEVBQUUsc0JBQXNCO29CQUM1QixjQUFjLEVBQUUsZ0RBQWdEO2lCQUNqRTthQUNGLENBQUM7UUFDSixLQUFLLFdBQVc7WUFDZCxPQUFPO2dCQUNMO29CQUNFLHFFQUFxRTtvQkFDckUsa0VBQWtFO29CQUNsRSx1REFBdUQ7b0JBQ3ZELEtBQUssRUFBRSx3QkFBd0I7b0JBQy9CLFFBQVEsRUFBRSxXQUFXO29CQUNyQixLQUFLLEVBQUUsU0FBUztvQkFDaEIsSUFBSSxFQUFFLGVBQWU7b0JBQ3JCLGNBQWMsRUFBRSxtREFBbUQ7aUJBQ3BFO2dCQUNEO29CQUNFLEtBQUssRUFBRSxtQkFBbUI7b0JBQzFCLFFBQVEsRUFBRSxrQkFBa0I7b0JBQzVCLEtBQUssRUFBRSxXQUFXO29CQUNsQixJQUFJLEVBQUUsYUFBYTtpQkFDcEI7Z0JBQ0Q7b0JBQ0UsS0FBSyxFQUFFLGlC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SUFBSSxXQUFXLEtBQUssTUFBTTtRQUFFLE9BQU8sT0FBTyxDQUFDO0lBQzNDLE9BQU8sT0FBTztTQUNYLE1BQU0sQ0FBQyxDQUFDLENBQUMsRUFBRSxFQUFFLENBQUMsQ0FBQyxDQUFDLFFBQVEsS0FBSyxxQkFBcUIsQ0FBQztTQUNuRCxHQUFHLENBQUMsQ0FBQyxDQUFDLEVBQUUsRUFBRTtRQUNULElBQUksQ0FBQyxDQUFDLFFBQVEsS0FBSyxrQkFBa0I7WUFBRSxPQUFPLEVBQUUsR0FBRyxDQUFDLEVBQUUsS0FBSyxFQUFFLGNBQWMsRUFBRSxDQUFDO1FBQzlFLElBQUksQ0FBQyxDQUFDLFFBQVEsS0FBSyxXQUFXO1lBQUUsT0FBTyxFQUFFLEdBQUcsQ0FBQyxFQUFFLEtBQUssRUFBRSxnQkFBZ0IsRUFBRSxDQUFDO1FBQ3pFLElBQUksTUFBTSxLQUFLLGtCQUFrQixJQUFJLENBQUMsQ0FBQyxRQUFRLEtBQUssV0FBVyxFQUFFLENBQUM7WUFDaEUsT0FBTyxFQUFFLEdBQUcsQ0FBQyxFQUFFLEtBQUssRUFBRSxnQkFBZ0IsRUFBRSxDQUFDO1FBQzNDLENBQUM7UUFDRCxPQUFPLENBQUMsQ0FBQztJQUNYLENBQUMsQ0FBQyxDQUFDO0FBQ1AsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9hcHBzL21vYmlsZS9saWIvb3JkZXItYWN0aW9ucy50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqIE9yZGVyLWRldGFpbCBzdGF0dXMgYWN0aW9ucyAobm8gYXBpLWNsaWVudC9yZWFjdC1xdWVyeSBpbXBvcnRzIHNvIHRoZXkgc3RheVxuICogdW5pdC10ZXN0YWJsZSBpbiB0aGUgbm9kZSBKZXN0IGVudikuIEV4dHJhY3RlZCBmcm9tXG4gKiBgKG9wZXJhdG9yKS8odGFicykvb3JkZXJzL1tpZF0udHN4YCdzIHByaXZhdGUgYHN0YXR1c0FjdGlvbnMoY3VycmVudClgIHNvXG4gKiBmdWxmaWxsbWVudC1hd2FyZSByZWxhYmVsaW5nIChwbGFuIMKnV1AxMSkgY2FuIGJlIHBpbm5lZCBhZ2FpbnN0XG4gKiBgY2FuVHJhbnNpdGlvbk9yZGVyYCAoYGxpYi9vcmRlci1zdGF0dXMtZmxvdy50c2ApIHdpdGhvdXQgbW91bnRpbmcgdGhlIHNjcmVlbi5cbiAqL1xuaW1wb3J0IHR5cGUgeyBPcmRlclN0YXR1cyB9IGZyb20gXCIuL2FwaS9vcmRlcnNcIjtcblxuZXhwb3J0IGludGVyZmFjZSBTdGF0dXNBY3Rpb24ge1xuICBsYWJlbDogc3RyaW5nO1xuICB0b1N0YXR1czogT3JkZXJTdGF0dXM7XG4gIHN0eWxlOiBcInByaW1hcnlcIiB8IFwic2Vjb25kYXJ5XCIgfCBcIndhcm5pbmdcIiB8IFwiZGFuZ2VyXCI7XG4gIGljb246IHN0cmluZztcbiAgY29uZmlybU1lc3NhZ2U/OiBzdHJpbmc7XG4gIC8qKiBQYXNzZWQgdG8gUEFUQ0ggL3N0YXR1cyAoZS5nLiB0aGUgZGVtb3RlLXRvLUNPTkZJUk1FRCByZWFzb24pLiAqL1xuICByZWFzb24/OiBzdHJpbmc7XG4gIC8qKiBSb3V0ZSB0aHJvdWdoIFBPU1QgL29yZGVycy86aWQvcmVvcGVuIChDQU5DRUxMRUQg4oaSIFBFTkRJTkcpIGluc3RlYWQgb2YgL3N0YXR1cy4gKi9cbiAgcmVvcGVuQ2FuY2VsbGVkPzogYm9vbGVhbjtcbn1cblxuLyoqIFRoZSBST1VURS1mdWxmaWxsbWVudCBhY3Rpb24gc2V0IOKAlCBieXRlLWlkZW50aWNhbCB0byB0aGUgcHJlLWV4dHJhY3Rpb24gc3dpdGNoLiAqL1xuZnVuY3Rpb24gcm91dGVTdGF0dXNBY3Rpb25zKGN1cnJlbnQ6IE9yZGVyU3RhdHVzKTogU3RhdHVzQWN0aW9uW10ge1xuICBzd2l0Y2ggKGN1cnJlbnQpIHtcbiAgICBjYXNlIFwiRFJBRlRcIjpcbiAgICAgIHJldHVybiBbXG4gICAgICAgIHtcbiAgICAgICAgICBsYWJlbDogXCJTdWJtaXQgZm9yIHJldmlld1wiLFxuICAgICAgICAgIHRvU3RhdHVzOiBcIlBFTkRJTkdcIixcbiAgICAgICAgICBzdHlsZTogXCJwcmltYXJ5XCIsXG4gICAgICAgICAgaWNvbjogXCJhcnJvdy1mb3J3YXJkLWNpcmNsZS1vdXRsaW5lXCIsXG4gICAgICAgIH0sXG4gICAgICBdO1xuICAgIGNhc2UgXCJQRU5ESU5HXCI6XG4gICAgICByZXR1cm4gW1xuICAgICAgICB7XG4gICAgICAgICAgbGFiZWw6IFwiQ29uZmlybSBvcmRlclwiLFxuICAgICAgICAgIHRvU3RhdHVzOiBcIkNPTkZJUk1FRFwiLFxuICAgICAgICAgIHN0eWxlOiBcInByaW1hcnlcIixcbiAgICAgICAgICBpY29uOiBcImNoZWNrbWFyay1jaXJjbGUtb3V0bGluZVwiLFxuICAgICAgICB9LFxuICAgICAgICB7XG4gICAgICAgICAgbGFiZWw6IFwiQ2FuY2VsIG9yZGVyXCIsXG4gICAgICAgICAgdG9TdGF0dXM6IFwiQ0FOQ0VMTEVEXCIsXG4gICAgICAgICAgc3R5bGU6IFwiZGFuZ2VyXCIsXG4gICAgICAgICAgaWNvbjogXCJjbG9zZS1jaXJjbGUtb3V0bGluZVwiLFxuICAgICAgICAgIGNvbmZpcm1NZXNzYWdlOiBcIkNhbmNlbCB0aGlzIG9yZGVyPyBJdCBjYW5ub3QgYmUgdW5kb25lIGVhc2lseS5cIixcbiAgICAgICAgfSxcbiAgICAgIF07XG4gICAgY2FzZSBcIkNPTkZJUk1FRFwiOlxuICAgICAgcmV0dXJuIFtcbiAgICAgICAge1xuICAgICAgICAgIC8vIFBSLTQ6IHRoaXMgaXMgdGhlIHZhbi1zYWxlIHR3by10YXAgZmxvdyDigJQgREVMSVZFUkVEIGFscmVhZHkgY2hhaW5zXG4gICAgICAgICAgLy8gb3BlblNlbmRGb3JPcmRlcigpIOKGkiBTZW5kSW52b2ljZVNoZWV0IGJlbG93LCBzbyBwcm9tb3RpbmcgaXQgdG9cbiAgICAgICAgICAvLyBwcmltYXJ5IG1ha2VzIFwiZGVsaXZlciwgdGhlbiBzZW5kXCIgdGhlIGRlZmF1bHQgcGF0aC5cbiAgICAgICAgICBsYWJlbDogXCJEZWxpdmVyICYgc2VuZCBpbnZvaWNlXCIsXG4gICAgICAgICAgdG9TdGF0dXM6IFwiREVMSVZFUkVEXCIsXG4gICAgICAgICAgc3R5bGU6IFwicHJpbWFyeVwiLFxuICAgICAgICAgIGljb246IFwiZmxhc2gtb3V0bGluZVwiLFxuICAgICAgICAgIGNvbmZpcm1NZXNzYWdlOiBcIk1hcmsgYXMgZGVsaXZlcmVkIHdpdGhvdXQgZ29pbmcgdGhyb3VnaCBkaXNwYXRjaD9cIixcbiAgICAgICAgfSxcbiAgICAgICAge1xuICAgICAgICAgIGxhYmVsOiBcIlNlbmQgZm9yIGRlbGl2ZXJ5XCIsXG4gICAgICAgICAgdG9TdGF0dXM6IFwiT1VUX0ZPUl9ERUxJVkVSWVwiLFxuICAgICAgICAgIHN0eWxlOiBcInNlY29uZGFyeVwiLFxuICAgICAgICAgIGljb246IFwiY2FyLW91dGxpbmVcIixcbiAgICAgICAgfSxcbiAgICAgICAge1xuICAgICAgICAgIGxhYmVsOiBcIkJhY2sgdG8gcGVuZGluZ1wiLFxuICAgICAgICAgIHRvU3RhdHVzOiBcIlBFTkRJTkdcIixcbiAgICAgICAgICBzdHlsZTogXCJ3YXJuaW5nXCIsXG4gICAgICAgICAgaWNvbjogXCJhcnJvdy1iYWNrLWNpcmNsZS1vdXRsaW5lXCIsXG4gICAgICAgICAgY29uZmlybU1lc3NhZ2U6IFwiUmV2ZXJ0IG9yZGVyIGJhY2sgdG8gUGVuZGluZz9cIixcbiAgICAgICAgfSxcbiAgICAgICAge1xuICAgICAgICAgIGxhYmVsOiBcIkNhbmNlbCBvcmRlclwiLFxuICAgICAgICAgIHRvU3RhdHVzOiBcIkNBTkNFTExFRFwiLFxuICAgICAgICAgIHN0eWxlOiBcImRhbmdlclwiLFxuICAgICAgICAgIGljb246IFwiY2xvc2UtY2lyY2xlLW91dGxpbmVcIixcbiAgICAgICAgICBjb25maXJtTWVzc2FnZTogXCJDYW5jZWwgdGhpcyBvcmRlcj9cIixcbiAgICAgICAgfSxcbiAgICAgIF07XG4gICAgY2FzZSBcIk9VVF9GT1JfREVMSVZFUllcIjpcbiAgICAgIHJldHVybiBbXG4gICAgICAgIHtcbiAgICAgICAgICBsYWJlbDogXCJNYXJrIGRlbGl2ZXJlZFwiLFxuICAgICAgICAgIHRvU3RhdHVzOiBcIkRFTElWRVJFRFwiLFxuICAgICAgICAgIHN0eWxlOiBcInByaW1hcnlcIixcbiAgICAgICAgICBpY29uOiBcImNoZWNrbWFyay1kb25lLWNpcmNsZS1vdXRsaW5lXCIsXG4gICAgICAgIH0sXG4gICAgICAgIHtcbiAgICAgICAgICBsYWJlbDogXCJQYXJ0aWFsIGRlbGl2ZXJ5XCIsXG4gICAgICAgICAgdG9TdGF0dXM6IFwiUEFSVElBTExZX0RFTElWRVJFRFwiLFxuICAgICAgICAgIHN0eWxlOiBcInNlY29uZGFyeVwiLFxuICAgICAgICAgIGljb246IFwiZ2l0LWJyYW5jaC1vdXRsaW5lXCIsXG4gICAgICAgIH0sXG4gICAgICAgIHtcbiAgICAgICAgICBsYWJlbDogXCJCYWNrIHRvIGNvbmZpcm1lZFwiLFxuICAgICAgICAgIHRvU3RhdHVzOiBcIkNPTkZJUk1FRFwiLFxuICAgICAgICAgIHN0eWxlOiBcIndhcm5pbmdcIixcbiAgICAgICAgICBpY29uOiBcImFycm93LWJhY2stY2lyY2xlLW91dGxpbmVcIixcbiAgICAgICAgICBjb25maXJtTWVzc2FnZTogXCJSZXZlcnQgb3JkZXIgYmFjayB0byBDb25maXJtZWQ/XCIsXG4gICAgICAgIH0sXG4gICAgICAgIHtcbiAgICAgICAgICBsYWJlbDogXCJDYW5jZWwgb3JkZXJcIixcbiAgICAgICAgICB0b1N0YXR1czogXCJDQU5DRUxMRURcIixcbiAgICAgICAgICBzdHlsZTogXCJkYW5nZXJcIixcbiAgICAgICAgICBpY29uOiBcImNsb3NlLWNpcmNsZS1vdXRsaW5lXCIsXG4gICAgICAgICAgY29uZmlybU1lc3NhZ2U6IFwiQ2FuY2VsIHRoaXMgb3JkZXI/XCIsXG4gICAgICAgIH0sXG4gICAgICBdO1xuICAgIGNhc2UgXCJQQVJUSUFMTFlfREVMSVZFUkVEXCI6XG4gICAgICByZXR1cm4gW1xuICAgICAgICB7XG4gICAgICAgICAgbGFiZWw6IFwiTWFyayBmdWxseSBkZWxpdmVyZWRcIixcbiAgICAgICAgICB0b1N0YXR1czogXCJERUxJVkVSRURcIixcbiAgICAgICAgICBzdHlsZTogXCJwcmltYXJ5XCIsXG4gICAgICAgICAgaWNvbjogXCJjaGVja21hcmstZG9uZS1jaXJjbGUtb3V0bGluZVwiLFxuICAgICAgICB9LFxuICAgICAgICB7XG4gICAgICAgICAgbGFiZWw6IFwiQmFjayBvdXQgZm9yIGRlbGl2ZXJ5XCIsXG4gICAgICAgICAgdG9TdGF0dXM6IFwiT1VUX0ZPUl9ERUxJVkVSWVwiLFxuICAgICAgICAgIHN0eWxlOiBcIndhcm5pbmdcIixcbiAgICAgICAgICBpY29uOiBcImFycm93LWJhY2stY2lyY2xlLW91dGxpbmVcIixcbiAgICAgICAgICBjb25maXJtTWVzc2FnZTogXCJSZXZlcnQgYmFjayB0byBPdXQgZm9yIGRlbGl2ZXJ5P1wiLFxuICAgICAgICB9LFxuICAgICAgICB7XG4gICAgICAgICAgbGFiZWw6IFwiQ2FuY2VsIG9yZGVyXCIsXG4gICAgICAgICAgdG9TdGF0dXM6IFwiQ0FOQ0VMTEVEXCIsXG4gICAgICAgICAgc3R5bGU6IFwiZGFuZ2VyXCIsXG4gICAgICAgICAgaWNvbjogXCJjbG9zZS1jaXJjbGUtb3V0bGluZVwiLFxuICAgICAgICAgIGNvbmZpcm1NZXNzYWdlOiBcIkNhbmNlbCB0aGlzIG9yZGVyP1wiLFxuICAgICAgICB9LFxuICAgICAgXTtcbiAgICBjYXNlIFwiREVMSVZFUkVEXCI6XG4gICAgICAvLyBCVUctT1JELTAxIHJldmVyc2VkIGJ5IG93bmVyIDIwMjYtMDgtMjU6IERFTElWRVJFROKGkkNPTkZJUk1FRCBpcyBub3cgYVxuICAgICAgLy8gbGVnYWwgc3RhZmYtb25seSByZWFzb25lZCBkZW1vdGlvbiBzZXJ2ZXItc2lkZSAoYG9yZGVycy5zZXJ2aWNlLnRzYFxuICAgICAgLy8gY2hhbmdlU3RhdHVzKSwgbm90IHRoZSBhbHdheXMtNDAwIGRlYWQgZW5kIGl0IHVzZWQgdG8gYmUuIFRoZSBzZXJ2ZXJcbiAgICAgIC8vIGFkZGl0aW9uYWxseSA0MDlzIHdoZW4gdGhlIG9yZGVyIHdhcyBkZWxpdmVyZWQgb24gYSByb3V0ZSBzdG9wIHRoYXQnc1xuICAgICAgLy8gYWxyZWFkeSBDT01QTEVURUQg4oCUIHJlb3BlbiB0aGF0IHN0b3AgZnJvbSBpdHMgcnVuIGluc3RlYWQ7IHRoZVxuICAgICAgLy8gc2NyZWVuIHN1cmZhY2VzIHRoYXQgYXMgYSB0b2FzdC4gYGRlbW90aW9uUmVxdWlyZXNSZWFzb25gXG4gICAgICAvLyAobGliL29yZGVyLXN0YXR1cy1mbG93LnRzKSBhbHJlYWR5IGNvdmVycyB0aGlzIHBhaXIsIHNvIHRoZSBkZXRhaWxcbiAgICAgIC8vIHNjcmVlbiByb3V0ZXMgaXQgdGhyb3VnaCB0aGUgUmVhc29uU2hlZXQgYmVmb3JlIFBBVENIIC9zdGF0dXMgZmlyZXMuXG4gICAgICByZXR1cm4gW1xuICAgICAgICB7XG4gICAgICAgICAgbGFiZWw6IFwiUmVvcGVuIG9yZGVyXCIsXG4gICAgICAgICAgdG9TdGF0dXM6IFwiQ09ORklSTUVEXCIsXG4gICAgICAgICAgc3R5bGU6IFwid2FybmluZ1wiLFxuICAgICAgICAgIGljb246IFwicmVmcmVzaC1vdXRsaW5lXCIsXG4gICAgICAgICAgY29uZmlybU1lc3NhZ2U6XG4gICAgICAgICAgICBcIlJlb3BlbiB0aGlzIGRlbGl2ZXJlZCBvcmRlciBiYWNrIHRvIENvbmZpcm1lZD8gSXRzIGRlbGl2ZXJlZCBkYXRlIGlzIGNsZWFyZWQuXCIsXG4gICAgICAgIH0sXG4gICAgICBdO1xuICAgIC8vIENBTkNFTExFRCByZW9wZW5zIHRocm91Z2ggdGhlIGRlZGljYXRlZCAvcmVvcGVuIGVuZHBvaW50IGJlbG93XG4gICAgLy8gKHJlb3BlbkNhbmNlbGxlZCksIG5vdCBQQVRDSCAvc3RhdHVzIGxpa2UgREVMSVZFUkVEJ3MgcmVvcGVuIGFib3ZlLlxuICAgIGNhc2UgXCJDQU5DRUxMRURcIjpcbiAgICAgIC8vIFBPU1QgL29yZGVycy86aWQvcmVvcGVuIOKGkiBQRU5ESU5HIChPUEVSQVRPUi1vbmx5OyBzZXJ2ZXIgNDAwcyBpZiBhXG4gICAgICAvLyBwYWlkL3BhcnRpYWwvd3JpdHRlbi1vZmYgaW52b2ljZSBleGlzdHMpLlxuICAgICAgcmV0dXJuIFtcbiAgICAgICAge1xuICAgICAgICAgIGxhYmVsOiBcIlJlb3BlbiBvcmRlclwiLFxuICAgICAgICAgIHRvU3RhdHVzOiBcIlBFTkRJTkdcIixcbiAgICAgICAgICBzdHlsZTogXCJwcmltYXJ5XCIsXG4gICAgICAgICAgaWNvbjogXCJyZWZyZXNoLW91dGxpbmVcIixcbiAgICAgICAgICBjb25maXJtTWVzc2FnZTogXCJSZW9wZW4gdGhpcyBjYW5jZWxsZWQgb3JkZXIgYmFjayB0byBQZW5kaW5nP1wiLFxuICAgICAgICAgIHJlb3BlbkNhbmNlbGxlZDogdHJ1ZSxcbiAgICAgICAgfSxcbiAgICAgIF07XG4gICAgZGVmYXVsdDpcbiAgICAgIHJldHVybiBbXTtcbiAgfVxufVxuXG4vKipcbiAqIEF2YWlsYWJsZSBzdGF0dXMgYWN0aW9ucyBmb3IgdGhlIG9yZGVyLWRldGFpbCBhY3Rpb24gYmFyLlxuICpcbiAqIGBmdWxmaWxsUGF0aCA9PT0gXCJST1VURVwiYCAodGhlIGRlZmF1bHQpIGlzIGJ5dGUtaWRlbnRpY2FsIHRvIHRoZVxuICogcHJlLWV4dHJhY3Rpb24gYmVoYXZpb3IuIGBcIlNISVBcImAgKHN1cHBsaWVyL2NhcnJpZXItc2hpcHBlZCBvcmRlcnMsIG5ldmVyXG4gKiByb3V0ZWQpIHJlbGFiZWxzIHRoZSBzaGlwcGluZy1zaGFwZWQgYWN0aW9ucyBJTiBQTEFDRSDigJQgZXZlcnkgYWN0aW9uIGtlZXBzXG4gKiBpdHMgb3JpZ2luYWwgYHRvU3RhdHVzYCwgc28gZWFjaCBvbmUgc3RpbGwgcGFzc2VzIGBjYW5UcmFuc2l0aW9uT3JkZXJgXG4gKiAoYGxpYi9vcmRlci1zdGF0dXMtZmxvdy50c2ApIGV4YWN0bHkgYXMgYmVmb3JlIOKAlCBhbmQgZHJvcHMgXCJQYXJ0aWFsXG4gKiBkZWxpdmVyeVwiIGVudGlyZWx5OiBhIGRlYWQgZW5kIGZvciBhIGNhcnJpZXIgc2hpcG1lbnQsIHNpbmNlIHRoZSBzaGlwbWVudFxuICogZWl0aGVyIGFycml2ZWQgb3IgaXQgZGlkbid0LlxuICovXG5leHBvcnQgZnVuY3Rpb24gc3RhdHVzQWN0aW9ucyhcbiAgc3RhdHVzOiBPcmRlclN0YXR1cyxcbiAgZnVsZmlsbFBhdGg6IFwiUk9VVEVcIiB8IFwiU0hJUFwiID0gXCJST1VURVwiLFxuKTogU3RhdHVzQWN0aW9uW10ge1xuICBjb25zdCBhY3Rpb25zID0gcm91dGVTdGF0dXNBY3Rpb25zKHN0YXR1cyk7XG4gIGlmIChmdWxmaWxsUGF0aCAhPT0gXCJTSElQXCIpIHJldHVybiBhY3Rpb25zO1xuICByZXR1cm4gYWN0aW9uc1xuICAgIC5maWx0ZXIoKGEpID0+IGEudG9TdGF0dXMgIT09IFwiUEFSVElBTExZX0RFTElWRVJFRFwiKVxuICAgIC5tYXAoKGEpID0+IHtcbiAgICAgIGlmIChhLnRvU3RhdHVzID09PSBcIk9VVF9GT1JfREVMSVZFUllcIikgcmV0dXJuIHsgLi4uYSwgbGFiZWw6IFwiTWFyayBzaGlwcGVkXCIgfTtcbiAgICAgIGlmIChhLnRvU3RhdHVzID09PSBcIkRFTElWRVJFRFwiKSByZXR1cm4geyAuLi5hLCBsYWJlbDogXCJNYXJrIGRlbGl2ZXJlZFwiIH07XG4gICAgICBpZiAoc3RhdHVzID09PSBcIk9VVF9GT1JfREVMSVZFUllcIiAmJiBhLnRvU3RhdHVzID09PSBcIkNPTkZJUk1FRFwiKSB7XG4gICAgICAgIHJldHVybiB7IC4uLmEsIGxhYmVsOiBcIlVubWFyayBzaGlwcGVkXCIgfTtcbiAgICAgIH1cbiAgICAgIHJldHVybiBhO1xuICAgIH0pO1xufVxuIl0sInZlcnNpb24iOjN9

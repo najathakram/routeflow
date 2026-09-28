@@ -1,0 +1,20 @@
+b95ac2f68a993e49e057d5888dcb7eed
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.isInternalEmail = isInternalEmail;
+/**
+ * True for the internal, non-routable email sentinels minted when a customer has
+ * no real address: `no-email+<uuid>@placeholder.local` (User.email is required +
+ * unique per tenant) and `<username>@imported.local` (CSV import). Never email
+ * one of these and never render one to a user — treat it like "no email on file".
+ *
+ * Triple mirror — api `common/internal-email.ts` (canonical) + web
+ * `lib/formatting.ts#isInternalEmail` + this file. Keep in sync.
+ */
+function isInternalEmail(email) {
+    if (!email)
+        return false;
+    const e = email.toLowerCase();
+    return e.endsWith("@placeholder.local") || e.endsWith("@imported.local");
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL2ludGVybmFsLWVtYWlsLnRzIiwibWFwcGluZ3MiOiI7O0FBU0EsMENBSUM7QUFiRDs7Ozs7Ozs7R0FRRztBQUNILFNBQWdCLGVBQWUsQ0FBQyxLQUFxQjtJQUNuRCxJQUFJLENBQUMsS0FBSztRQUFFLE9BQU8sS0FBSyxDQUFDO0lBQ3pCLE1BQU0sQ0FBQyxHQUFHLEtBQUssQ0FBQyxXQUFXLEVBQUUsQ0FBQztJQUM5QixPQUFPLENBQUMsQ0FBQyxRQUFRLENBQUMsb0JBQW9CLENBQUMsSUFBSSxDQUFDLENBQUMsUUFBUSxDQUFDLGlCQUFpQixDQUFDLENBQUM7QUFDM0UsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9hcHBzL21vYmlsZS9saWIvaW50ZXJuYWwtZW1haWwudHMiXSwic291cmNlc0NvbnRlbnQiOlsiLyoqXG4gKiBUcnVlIGZvciB0aGUgaW50ZXJuYWwsIG5vbi1yb3V0YWJsZSBlbWFpbCBzZW50aW5lbHMgbWludGVkIHdoZW4gYSBjdXN0b21lciBoYXNcbiAqIG5vIHJlYWwgYWRkcmVzczogYG5vLWVtYWlsKzx1dWlkPkBwbGFjZWhvbGRlci5sb2NhbGAgKFVzZXIuZW1haWwgaXMgcmVxdWlyZWQgK1xuICogdW5pcXVlIHBlciB0ZW5hbnQpIGFuZCBgPHVzZXJuYW1lPkBpbXBvcnRlZC5sb2NhbGAgKENTViBpbXBvcnQpLiBOZXZlciBlbWFpbFxuICogb25lIG9mIHRoZXNlIGFuZCBuZXZlciByZW5kZXIgb25lIHRvIGEgdXNlciDigJQgdHJlYXQgaXQgbGlrZSBcIm5vIGVtYWlsIG9uIGZpbGVcIi5cbiAqXG4gKiBUcmlwbGUgbWlycm9yIOKAlCBhcGkgYGNvbW1vbi9pbnRlcm5hbC1lbWFpbC50c2AgKGNhbm9uaWNhbCkgKyB3ZWJcbiAqIGBsaWIvZm9ybWF0dGluZy50cyNpc0ludGVybmFsRW1haWxgICsgdGhpcyBmaWxlLiBLZWVwIGluIHN5bmMuXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiBpc0ludGVybmFsRW1haWwoZW1haWw/OiBzdHJpbmcgfCBudWxsKTogYm9vbGVhbiB7XG4gIGlmICghZW1haWwpIHJldHVybiBmYWxzZTtcbiAgY29uc3QgZSA9IGVtYWlsLnRvTG93ZXJDYXNlKCk7XG4gIHJldHVybiBlLmVuZHNXaXRoKFwiQHBsYWNlaG9sZGVyLmxvY2FsXCIpIHx8IGUuZW5kc1dpdGgoXCJAaW1wb3J0ZWQubG9jYWxcIik7XG59XG4iXSwidmVyc2lvbiI6M30=

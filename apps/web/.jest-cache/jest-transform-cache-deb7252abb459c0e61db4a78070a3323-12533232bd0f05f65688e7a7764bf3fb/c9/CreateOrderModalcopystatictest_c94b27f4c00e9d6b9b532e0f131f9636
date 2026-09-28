@@ -1,0 +1,54 @@
+7ddd4701735e9582dc3efe7cf8c46d60
+/**
+ * WP5 / T3 (R5.5) — source-text pin for the web `CreateOrderModal` per-line
+ * note copy relabel, matching R5.1's mobile relabel. Copy-only, no
+ * behaviour change — mirrors the convention of `print-surfaces.static.test.ts`.
+ *
+ * Ruling WP5 gives the exact relabel: both line-item note-input placeholders
+ * (catalog line + custom/unlisted line) become "Flavor or note for this item
+ * (prints on invoice)". The toggle *label* has a single shared render site on
+ * web (one `<button title="Add flavor / note">` serves both the catalog and
+ * custom/unlisted line branches — unlike mobile's two separate
+ * CartRow/UnlistedCartRow components), so it relabels to "Add flavor / note"
+ * exactly once, not twice; see commit fc581139 for why the ternary that used
+ * to make this count 2 was dead code. D-A5 (spec §10) confirms no existing
+ * test currently pins the old "Add note" copy, so this is a clean new pin.
+ *
+ * PR #933 extracted the line-item JSX carrying this copy out of
+ * `CreateOrderModal.tsx` into the shared `apps/web/components/LineItemRow.tsx`
+ * component (both placeholder occurrences + the toggle label moved there
+ * intact; verified by reading both files, not just re-counting to make this
+ * pass). Per lesson L-205 (assertions pinned to raw source text break on
+ * refactors and pass on behavioural regressions), this pin now sums
+ * occurrences across a candidate-file SET instead of one hard-coded path, so
+ * a future move of this JSX between these files won't need this test edited
+ * again, and the guard still catches the copy actually vanishing.
+ */ "use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _fs = require("fs");
+const _path = require("path");
+const CANDIDATE_PATHS = [
+    (0, _path.join)(__dirname, "CreateOrderModal.tsx"),
+    (0, _path.join)(__dirname, "..", "..", "..", "..", "components", "LineItemRow.tsx")
+];
+function countOccurrencesAcrossCandidates(needle) {
+    return CANDIDATE_PATHS.reduce((total, path)=>{
+        const source = (0, _fs.readFileSync)(path, "utf8");
+        return total + (source.split(needle).length - 1);
+    }, 0);
+}
+describe("pin: CreateOrderModal/LineItemRow line-note copy (R5.5)", ()=>{
+    it('shows the new placeholder "Flavor or note for this item (prints on invoice)" for both the catalog and custom line inputs', ()=>{
+        expect(countOccurrencesAcrossCandidates('placeholder="Flavor or note for this item (prints on invoice)"')).toBe(2);
+    });
+    it('shows the new toggle label "Add flavor / note" at the single shared noteOpen toggle site', ()=>{
+        expect(countOccurrencesAcrossCandidates("Add flavor / note")).toBe(1);
+    });
+    it('no longer shows the old placeholder copy "Note for this line"', ()=>{
+        expect(countOccurrencesAcrossCandidates("Note for this line")).toBe(0);
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS9vcmRlcnMvX2NvbXBvbmVudHMvQ3JlYXRlT3JkZXJNb2RhbC5jb3B5LnN0YXRpYy50ZXN0LnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogV1A1IC8gVDMgKFI1LjUpIOKAlCBzb3VyY2UtdGV4dCBwaW4gZm9yIHRoZSB3ZWIgYENyZWF0ZU9yZGVyTW9kYWxgIHBlci1saW5lXG4gKiBub3RlIGNvcHkgcmVsYWJlbCwgbWF0Y2hpbmcgUjUuMSdzIG1vYmlsZSByZWxhYmVsLiBDb3B5LW9ubHksIG5vXG4gKiBiZWhhdmlvdXIgY2hhbmdlIOKAlCBtaXJyb3JzIHRoZSBjb252ZW50aW9uIG9mIGBwcmludC1zdXJmYWNlcy5zdGF0aWMudGVzdC50c2AuXG4gKlxuICogUnVsaW5nIFdQNSBnaXZlcyB0aGUgZXhhY3QgcmVsYWJlbDogYm90aCBsaW5lLWl0ZW0gbm90ZS1pbnB1dCBwbGFjZWhvbGRlcnNcbiAqIChjYXRhbG9nIGxpbmUgKyBjdXN0b20vdW5saXN0ZWQgbGluZSkgYmVjb21lIFwiRmxhdm9yIG9yIG5vdGUgZm9yIHRoaXMgaXRlbVxuICogKHByaW50cyBvbiBpbnZvaWNlKVwiLiBUaGUgdG9nZ2xlICpsYWJlbCogaGFzIGEgc2luZ2xlIHNoYXJlZCByZW5kZXIgc2l0ZSBvblxuICogd2ViIChvbmUgYDxidXR0b24gdGl0bGU9XCJBZGQgZmxhdm9yIC8gbm90ZVwiPmAgc2VydmVzIGJvdGggdGhlIGNhdGFsb2cgYW5kXG4gKiBjdXN0b20vdW5saXN0ZWQgbGluZSBicmFuY2hlcyDigJQgdW5saWtlIG1vYmlsZSdzIHR3byBzZXBhcmF0ZVxuICogQ2FydFJvdy9Vbmxpc3RlZENhcnRSb3cgY29tcG9uZW50cyksIHNvIGl0IHJlbGFiZWxzIHRvIFwiQWRkIGZsYXZvciAvIG5vdGVcIlxuICogZXhhY3RseSBvbmNlLCBub3QgdHdpY2U7IHNlZSBjb21taXQgZmM1ODExMzkgZm9yIHdoeSB0aGUgdGVybmFyeSB0aGF0IHVzZWRcbiAqIHRvIG1ha2UgdGhpcyBjb3VudCAyIHdhcyBkZWFkIGNvZGUuIEQtQTUgKHNwZWMgwqcxMCkgY29uZmlybXMgbm8gZXhpc3RpbmdcbiAqIHRlc3QgY3VycmVudGx5IHBpbnMgdGhlIG9sZCBcIkFkZCBub3RlXCIgY29weSwgc28gdGhpcyBpcyBhIGNsZWFuIG5ldyBwaW4uXG4gKlxuICogUFIgIzkzMyBleHRyYWN0ZWQgdGhlIGxpbmUtaXRlbSBKU1ggY2FycnlpbmcgdGhpcyBjb3B5IG91dCBvZlxuICogYENyZWF0ZU9yZGVyTW9kYWwudHN4YCBpbnRvIHRoZSBzaGFyZWQgYGFwcHMvd2ViL2NvbXBvbmVudHMvTGluZUl0ZW1Sb3cudHN4YFxuICogY29tcG9uZW50IChib3RoIHBsYWNlaG9sZGVyIG9jY3VycmVuY2VzICsgdGhlIHRvZ2dsZSBsYWJlbCBtb3ZlZCB0aGVyZVxuICogaW50YWN0OyB2ZXJpZmllZCBieSByZWFkaW5nIGJvdGggZmlsZXMsIG5vdCBqdXN0IHJlLWNvdW50aW5nIHRvIG1ha2UgdGhpc1xuICogcGFzcykuIFBlciBsZXNzb24gTC0yMDUgKGFzc2VydGlvbnMgcGlubmVkIHRvIHJhdyBzb3VyY2UgdGV4dCBicmVhayBvblxuICogcmVmYWN0b3JzIGFuZCBwYXNzIG9uIGJlaGF2aW91cmFsIHJlZ3Jlc3Npb25zKSwgdGhpcyBwaW4gbm93IHN1bXNcbiAqIG9jY3VycmVuY2VzIGFjcm9zcyBhIGNhbmRpZGF0ZS1maWxlIFNFVCBpbnN0ZWFkIG9mIG9uZSBoYXJkLWNvZGVkIHBhdGgsIHNvXG4gKiBhIGZ1dHVyZSBtb3ZlIG9mIHRoaXMgSlNYIGJldHdlZW4gdGhlc2UgZmlsZXMgd29uJ3QgbmVlZCB0aGlzIHRlc3QgZWRpdGVkXG4gKiBhZ2FpbiwgYW5kIHRoZSBndWFyZCBzdGlsbCBjYXRjaGVzIHRoZSBjb3B5IGFjdHVhbGx5IHZhbmlzaGluZy5cbiAqL1xuaW1wb3J0IHsgcmVhZEZpbGVTeW5jIH0gZnJvbSBcImZzXCI7XG5pbXBvcnQgeyBqb2luIH0gZnJvbSBcInBhdGhcIjtcblxuY29uc3QgQ0FORElEQVRFX1BBVEhTID0gW1xuICBqb2luKF9fZGlybmFtZSwgXCJDcmVhdGVPcmRlck1vZGFsLnRzeFwiKSxcbiAgam9pbihfX2Rpcm5hbWUsIFwiLi5cIiwgXCIuLlwiLCBcIi4uXCIsIFwiLi5cIiwgXCJjb21wb25lbnRzXCIsIFwiTGluZUl0ZW1Sb3cudHN4XCIpLFxuXTtcblxuZnVuY3Rpb24gY291bnRPY2N1cnJlbmNlc0Fjcm9zc0NhbmRpZGF0ZXMobmVlZGxlOiBzdHJpbmcpOiBudW1iZXIge1xuICByZXR1cm4gQ0FORElEQVRFX1BBVEhTLnJlZHVjZSgodG90YWwsIHBhdGgpID0+IHtcbiAgICBjb25zdCBzb3VyY2UgPSByZWFkRmlsZVN5bmMocGF0aCwgXCJ1dGY4XCIpO1xuICAgIHJldHVybiB0b3RhbCArIChzb3VyY2Uuc3BsaXQobmVlZGxlKS5sZW5ndGggLSAxKTtcbiAgfSwgMCk7XG59XG5cbmRlc2NyaWJlKFwicGluOiBDcmVhdGVPcmRlck1vZGFsL0xpbmVJdGVtUm93IGxpbmUtbm90ZSBjb3B5IChSNS41KVwiLCAoKSA9PiB7XG4gIGl0KCdzaG93cyB0aGUgbmV3IHBsYWNlaG9sZGVyIFwiRmxhdm9yIG9yIG5vdGUgZm9yIHRoaXMgaXRlbSAocHJpbnRzIG9uIGludm9pY2UpXCIgZm9yIGJvdGggdGhlIGNhdGFsb2cgYW5kIGN1c3RvbSBsaW5lIGlucHV0cycsICgpID0+IHtcbiAgICBleHBlY3QoXG4gICAgICBjb3VudE9jY3VycmVuY2VzQWNyb3NzQ2FuZGlkYXRlcyhcbiAgICAgICAgJ3BsYWNlaG9sZGVyPVwiRmxhdm9yIG9yIG5vdGUgZm9yIHRoaXMgaXRlbSAocHJpbnRzIG9uIGludm9pY2UpXCInLFxuICAgICAgKSxcbiAgICApLnRvQmUoMik7XG4gIH0pO1xuXG4gIGl0KCdzaG93cyB0aGUgbmV3IHRvZ2dsZSBsYWJlbCBcIkFkZCBmbGF2b3IgLyBub3RlXCIgYXQgdGhlIHNpbmdsZSBzaGFyZWQgbm90ZU9wZW4gdG9nZ2xlIHNpdGUnLCAoKSA9PiB7XG4gICAgZXhwZWN0KGNvdW50T2NjdXJyZW5jZXNBY3Jvc3NDYW5kaWRhdGVzKFwiQWRkIGZsYXZvciAvIG5vdGVcIikpLnRvQmUoMSk7XG4gIH0pO1xuXG4gIGl0KCdubyBsb25nZXIgc2hvd3MgdGhlIG9sZCBwbGFjZWhvbGRlciBjb3B5IFwiTm90ZSBmb3IgdGhpcyBsaW5lXCInLCAoKSA9PiB7XG4gICAgZXhwZWN0KGNvdW50T2NjdXJyZW5jZXNBY3Jvc3NDYW5kaWRhdGVzKFwiTm90ZSBmb3IgdGhpcyBsaW5lXCIpKS50b0JlKDApO1xuICB9KTtcbn0pO1xuIl0sIm5hbWVzIjpbIkNBTkRJREFURV9QQVRIUyIsImpvaW4iLCJfX2Rpcm5hbWUiLCJjb3VudE9jY3VycmVuY2VzQWNyb3NzQ2FuZGlkYXRlcyIsIm5lZWRsZSIsInJlZHVjZSIsInRvdGFsIiwicGF0aCIsInNvdXJjZSIsInJlYWRGaWxlU3luYyIsInNwbGl0IiwibGVuZ3RoIiwiZGVzY3JpYmUiLCJpdCIsImV4cGVjdCIsInRvQmUiXSwibWFwcGluZ3MiOiJBQUFBOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Q0F3QkM7Ozs7b0JBQzRCO3NCQUNSO0FBRXJCLE1BQU1BLGtCQUFrQjtJQUN0QkMsSUFBQUEsVUFBSSxFQUFDQyxXQUFXO0lBQ2hCRCxJQUFBQSxVQUFJLEVBQUNDLFdBQVcsTUFBTSxNQUFNLE1BQU0sTUFBTSxjQUFjO0NBQ3ZEO0FBRUQsU0FBU0MsaUNBQWlDQyxNQUFjO0lBQ3RELE9BQU9KLGdCQUFnQkssTUFBTSxDQUFDLENBQUNDLE9BQU9DO1FBQ3BDLE1BQU1DLFNBQVNDLElBQUFBLGdCQUFZLEVBQUNGLE1BQU07UUFDbEMsT0FBT0QsUUFBU0UsQ0FBQUEsT0FBT0UsS0FBSyxDQUFDTixRQUFRTyxNQUFNLEdBQUcsQ0FBQTtJQUNoRCxHQUFHO0FBQ0w7QUFFQUMsU0FBUywyREFBMkQ7SUFDbEVDLEdBQUcsNEhBQTRIO1FBQzdIQyxPQUNFWCxpQ0FDRSxtRUFFRlksSUFBSSxDQUFDO0lBQ1Q7SUFFQUYsR0FBRyw0RkFBNEY7UUFDN0ZDLE9BQU9YLGlDQUFpQyxzQkFBc0JZLElBQUksQ0FBQztJQUNyRTtJQUVBRixHQUFHLGlFQUFpRTtRQUNsRUMsT0FBT1gsaUNBQWlDLHVCQUF1QlksSUFBSSxDQUFDO0lBQ3RFO0FBQ0YifQ==

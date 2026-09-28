@@ -1,0 +1,50 @@
+78e83893e364e86d2ccb4895beb6e197
+"use strict";
+/**
+ * F30 / REG-B151.
+ *
+ * `lib/toast.ts`'s iOS branch used to be a bare fallthrough (no Alert
+ * fallback, no in-screen feedback — every wedge-path miss/failure sink was
+ * invisible on iOS). `InlineToast.tsx` (`useInlineToast` + `<InlineToast>`)
+ * exists precisely to fill this gap, but `showToast` has no way to reach a
+ * screen's locally-mounted instance on its own.
+ *
+ * This registry is the seam: `useInlineToast` (components/InlineToast.tsx)
+ * registers its `show` on mount and releases it on unmount — every screen that
+ * owns an `<InlineToast>` goes through that hook, so the wiring cannot be
+ * forgotten by a new screen (mirrors the `registerStaffSessionExpiredHandler`
+ * pattern in lib/api-client.ts). `showToast`'s iOS branch calls
+ * `getToastHost()` — routing there when a host is mounted, falling back to
+ * `Alert.alert` when it isn't.
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.registerToastHost = registerToastHost;
+exports.releaseToastHost = releaseToastHost;
+exports.getToastHost = getToastHost;
+/**
+ * A stack, not a single slot: pushing a screen (operator `/new-order` over an
+ * already-mounted `invoices/new`) leaves the one beneath it MOUNTED, so
+ * clearing a lone slot on unmount would orphan the host underneath and demote
+ * that still-visible screen back to blocking `Alert`s. The top of the stack is
+ * the screen the operator is actually looking at.
+ */
+let hosts = [];
+/** Register a screen's host (last one mounted wins). `null` clears the stack. */
+function registerToastHost(host) {
+    if (!host) {
+        hosts = [];
+        return;
+    }
+    hosts = [...hosts.filter((h) => h !== host), host];
+}
+/**
+ * Drop one screen's host on unmount. Identity-scoped — a screen that has since
+ * been superseded can never unregister the host that replaced it.
+ */
+function releaseToastHost(host) {
+    hosts = hosts.filter((h) => h !== host);
+}
+function getToastHost() {
+    return hosts[hosts.length - 1] ?? null;
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3RvYXN0LWhvc3QudHMiLCJtYXBwaW5ncyI6IjtBQUFBOzs7Ozs7Ozs7Ozs7Ozs7O0dBZ0JHOztBQWNILDhDQU1DO0FBTUQsNENBRUM7QUFFRCxvQ0FFQztBQTVCRDs7Ozs7O0dBTUc7QUFDSCxJQUFJLEtBQUssR0FBZ0IsRUFBRSxDQUFDO0FBRTVCLGlGQUFpRjtBQUNqRixTQUFnQixpQkFBaUIsQ0FBQyxJQUFzQjtJQUN0RCxJQUFJLENBQUMsSUFBSSxFQUFFLENBQUM7UUFDVixLQUFLLEdBQUcsRUFBRSxDQUFDO1FBQ1gsT0FBTztJQUNULENBQUM7SUFDRCxLQUFLLEdBQUcsQ0FBQyxHQUFHLEtBQUssQ0FBQyxNQUFNLENBQUMsQ0FBQyxDQUFDLEVBQUUsRUFBRSxDQUFDLENBQUMsS0FBSyxJQUFJLENBQUMsRUFBRSxJQUFJLENBQUMsQ0FBQztBQUNyRCxDQUFDO0FBRUQ7OztHQUdHO0FBQ0gsU0FBZ0IsZ0JBQWdCLENBQUMsSUFBZTtJQUM5QyxLQUFLLEdBQUcsS0FBSyxDQUFDLE1BQU0sQ0FBQyxDQUFDLENBQUMsRUFBRSxFQUFFLENBQUMsQ0FBQyxLQUFLLElBQUksQ0FBQyxDQUFDO0FBQzFDLENBQUM7QUFFRCxTQUFnQixZQUFZO0lBQzFCLE9BQU8sS0FBSyxDQUFDLEtBQUssQ0FBQyxNQUFNLEdBQUcsQ0FBQyxDQUFDLElBQUksSUFBSSxDQUFDO0FBQ3pDLENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3RvYXN0LWhvc3QudHMiXSwic291cmNlc0NvbnRlbnQiOlsiLyoqXG4gKiBGMzAgLyBSRUctQjE1MS5cbiAqXG4gKiBgbGliL3RvYXN0LnRzYCdzIGlPUyBicmFuY2ggdXNlZCB0byBiZSBhIGJhcmUgZmFsbHRocm91Z2ggKG5vIEFsZXJ0XG4gKiBmYWxsYmFjaywgbm8gaW4tc2NyZWVuIGZlZWRiYWNrIOKAlCBldmVyeSB3ZWRnZS1wYXRoIG1pc3MvZmFpbHVyZSBzaW5rIHdhc1xuICogaW52aXNpYmxlIG9uIGlPUykuIGBJbmxpbmVUb2FzdC50c3hgIChgdXNlSW5saW5lVG9hc3RgICsgYDxJbmxpbmVUb2FzdD5gKVxuICogZXhpc3RzIHByZWNpc2VseSB0byBmaWxsIHRoaXMgZ2FwLCBidXQgYHNob3dUb2FzdGAgaGFzIG5vIHdheSB0byByZWFjaCBhXG4gKiBzY3JlZW4ncyBsb2NhbGx5LW1vdW50ZWQgaW5zdGFuY2Ugb24gaXRzIG93bi5cbiAqXG4gKiBUaGlzIHJlZ2lzdHJ5IGlzIHRoZSBzZWFtOiBgdXNlSW5saW5lVG9hc3RgIChjb21wb25lbnRzL0lubGluZVRvYXN0LnRzeClcbiAqIHJlZ2lzdGVycyBpdHMgYHNob3dgIG9uIG1vdW50IGFuZCByZWxlYXNlcyBpdCBvbiB1bm1vdW50IOKAlCBldmVyeSBzY3JlZW4gdGhhdFxuICogb3ducyBhbiBgPElubGluZVRvYXN0PmAgZ29lcyB0aHJvdWdoIHRoYXQgaG9vaywgc28gdGhlIHdpcmluZyBjYW5ub3QgYmVcbiAqIGZvcmdvdHRlbiBieSBhIG5ldyBzY3JlZW4gKG1pcnJvcnMgdGhlIGByZWdpc3RlclN0YWZmU2Vzc2lvbkV4cGlyZWRIYW5kbGVyYFxuICogcGF0dGVybiBpbiBsaWIvYXBpLWNsaWVudC50cykuIGBzaG93VG9hc3RgJ3MgaU9TIGJyYW5jaCBjYWxsc1xuICogYGdldFRvYXN0SG9zdCgpYCDigJQgcm91dGluZyB0aGVyZSB3aGVuIGEgaG9zdCBpcyBtb3VudGVkLCBmYWxsaW5nIGJhY2sgdG9cbiAqIGBBbGVydC5hbGVydGAgd2hlbiBpdCBpc24ndC5cbiAqL1xuXG5leHBvcnQgdHlwZSBUb2FzdEhvc3QgPSAobWVzc2FnZTogc3RyaW5nKSA9PiB2b2lkO1xuXG4vKipcbiAqIEEgc3RhY2ssIG5vdCBhIHNpbmdsZSBzbG90OiBwdXNoaW5nIGEgc2NyZWVuIChvcGVyYXRvciBgL25ldy1vcmRlcmAgb3ZlciBhblxuICogYWxyZWFkeS1tb3VudGVkIGBpbnZvaWNlcy9uZXdgKSBsZWF2ZXMgdGhlIG9uZSBiZW5lYXRoIGl0IE1PVU5URUQsIHNvXG4gKiBjbGVhcmluZyBhIGxvbmUgc2xvdCBvbiB1bm1vdW50IHdvdWxkIG9ycGhhbiB0aGUgaG9zdCB1bmRlcm5lYXRoIGFuZCBkZW1vdGVcbiAqIHRoYXQgc3RpbGwtdmlzaWJsZSBzY3JlZW4gYmFjayB0byBibG9ja2luZyBgQWxlcnRgcy4gVGhlIHRvcCBvZiB0aGUgc3RhY2sgaXNcbiAqIHRoZSBzY3JlZW4gdGhlIG9wZXJhdG9yIGlzIGFjdHVhbGx5IGxvb2tpbmcgYXQuXG4gKi9cbmxldCBob3N0czogVG9hc3RIb3N0W10gPSBbXTtcblxuLyoqIFJlZ2lzdGVyIGEgc2NyZWVuJ3MgaG9zdCAobGFzdCBvbmUgbW91bnRlZCB3aW5zKS4gYG51bGxgIGNsZWFycyB0aGUgc3RhY2suICovXG5leHBvcnQgZnVuY3Rpb24gcmVnaXN0ZXJUb2FzdEhvc3QoaG9zdDogVG9hc3RIb3N0IHwgbnVsbCk6IHZvaWQge1xuICBpZiAoIWhvc3QpIHtcbiAgICBob3N0cyA9IFtdO1xuICAgIHJldHVybjtcbiAgfVxuICBob3N0cyA9IFsuLi5ob3N0cy5maWx0ZXIoKGgpID0+IGggIT09IGhvc3QpLCBob3N0XTtcbn1cblxuLyoqXG4gKiBEcm9wIG9uZSBzY3JlZW4ncyBob3N0IG9uIHVubW91bnQuIElkZW50aXR5LXNjb3BlZCDigJQgYSBzY3JlZW4gdGhhdCBoYXMgc2luY2VcbiAqIGJlZW4gc3VwZXJzZWRlZCBjYW4gbmV2ZXIgdW5yZWdpc3RlciB0aGUgaG9zdCB0aGF0IHJlcGxhY2VkIGl0LlxuICovXG5leHBvcnQgZnVuY3Rpb24gcmVsZWFzZVRvYXN0SG9zdChob3N0OiBUb2FzdEhvc3QpOiB2b2lkIHtcbiAgaG9zdHMgPSBob3N0cy5maWx0ZXIoKGgpID0+IGggIT09IGhvc3QpO1xufVxuXG5leHBvcnQgZnVuY3Rpb24gZ2V0VG9hc3RIb3N0KCk6IFRvYXN0SG9zdCB8IG51bGwge1xuICByZXR1cm4gaG9zdHNbaG9zdHMubGVuZ3RoIC0gMV0gPz8gbnVsbDtcbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

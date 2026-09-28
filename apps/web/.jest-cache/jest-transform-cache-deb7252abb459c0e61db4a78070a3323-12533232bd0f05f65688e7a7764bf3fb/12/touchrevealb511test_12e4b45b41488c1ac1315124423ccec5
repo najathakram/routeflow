@@ -1,0 +1,123 @@
+ca40c71ab7e844a2859f1168c180f483
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _fs = /*#__PURE__*/ _interop_require_default(require("fs"));
+const _path = /*#__PURE__*/ _interop_require_default(require("path"));
+function _interop_require_default(obj) {
+    return obj && obj.__esModule ? obj : {
+        default: obj
+    };
+}
+/**
+ * B511 (C2 390px audit): four row/overlay actions were gated purely on
+ * `opacity-0 group-hover:opacity-100`, which never reveals on touch since
+ * `:hover` doesn't fire there — the control read as absent. jsdom can't
+ * evaluate `@media (hover: none)` (no layout/media-query engine), so this
+ * pins the source-level facts a browser check can't regress silently: the
+ * shared `.touch-reveal` utility exists, is declared outside any `@layer`
+ * (so it always wins the cascade over the layered Tailwind utilities
+ * regardless of generation order), and every hover-reveal call site now
+ * carries it.
+ *
+ * B535 note: the per-call-site assertions below used to pin the FULL
+ * `className` source string. B535 (44x44 tap-target work, additive) wraps
+ * each of these in `cn(TAP_TARGET, "...")` and, in one case, drops a now-
+ * redundant explicit `p-1.5` in favor of TAP_TARGET's own min-h/min-w
+ * sizing — neither of which touches touch-reveal's fix. A full-string match
+ * breaks on any such additive className change, so these now extract each
+ * button's whole opening JSX tag (anchored on its unique, non-styling
+ * `title` attribute, independent of attribute order) and assert that the
+ * specific tokens the B511 fix depends on are present in it.
+ */ function read(relPath) {
+    return _fs.default.readFileSync(_path.default.join(__dirname, relPath), "utf8");
+}
+/** Returns the substring inside the first balanced-brace block opening at `startIndex`. */ function braceBlockBody(css, startIndex) {
+    const openIndex = css.indexOf("{", startIndex);
+    let depth = 0;
+    for(let i = openIndex; i < css.length; i++){
+        if (css[i] === "{") depth++;
+        else if (css[i] === "}") {
+            depth--;
+            if (depth === 0) return css.slice(openIndex + 1, i);
+        }
+    }
+    throw new Error("unbalanced braces");
+}
+/**
+ * Index of the `>` that closes a JSX opening tag, scanning forward from
+ * `fromIndex`. Skips `=>` (arrow functions inside prop expressions) so it
+ * doesn't stop early on an onClick/onChange handler.
+ */ function closingAngleIndex(src, fromIndex) {
+    let i = fromIndex;
+    while(i < src.length){
+        const idx = src.indexOf(">", i);
+        if (idx === -1) throw new Error("no closing '>' found");
+        if (src[idx - 1] !== "=") return idx;
+        i = idx + 1;
+    }
+    throw new Error("no closing '>' found");
+}
+/**
+ * Extracts a `<button ...>` element's full opening tag text, located by a
+ * unique marker string inside it (e.g. `title="Edit payment"`). Anchoring on
+ * the tag boundaries rather than a full className string means the
+ * assertion survives attribute reordering or additive wrapper calls
+ * (`cn(TAP_TARGET, ...)`) — it only cares what ends up in the rendered tag.
+ */ function extractButtonOpenTag(src, marker) {
+    const markerIndex = src.indexOf(marker);
+    if (markerIndex === -1) throw new Error(`marker not found: ${marker}`);
+    const tagStart = src.lastIndexOf("<button", markerIndex);
+    if (tagStart === -1) throw new Error(`no <button before marker: ${marker}`);
+    const tagEnd = closingAngleIndex(src, markerIndex + marker.length);
+    return src.slice(tagStart, tagEnd + 1);
+}
+describe("B511 — hover-reveal row actions stay visible on touch", ()=>{
+    it("globals.css declares .touch-reveal unlayered, forcing opacity 1 under (hover: none)", ()=>{
+        const css = read("../globals.css");
+        const layerStart = css.indexOf("@layer utilities");
+        expect(layerStart).toBeGreaterThan(-1);
+        const layerBody = braceBlockBody(css, layerStart);
+        expect(layerBody).not.toContain(".touch-reveal");
+        const match = css.match(/@media \(hover: none\) \{\s*\.touch-reveal \{\s*opacity: 1;/);
+        expect(match).not.toBeNull();
+        // and it must actually sit outside the utilities layer body found above
+        expect(css.indexOf(match[0])).toBeGreaterThan(layerStart + layerBody.length);
+    });
+    it("invoices payment-history Edit/Delete carry touch-reveal", ()=>{
+        const src = read("invoices/[id]/page.tsx");
+        const editTag = extractButtonOpenTag(src, 'title="Edit payment"');
+        const deleteTag = extractButtonOpenTag(src, 'title="Delete payment"');
+        for (const tag of [
+            editTag,
+            deleteTag
+        ]){
+            // touch-reveal is the fix itself; opacity-0 + group-hover:opacity-100
+            // is the hover-reveal pattern touch-reveal exists to override on touch
+            // devices — asserting all three together confirms this is genuinely a
+            // hover-reveal control that has opted into the fix, not an unrelated
+            // element that merely happens to carry the class name.
+            expect(tag).toMatch(/\btouch-reveal\b/);
+            expect(tag).toMatch(/\bopacity-0\b/);
+            expect(tag).toMatch(/\bgroup-hover:opacity-100\b/);
+        }
+    });
+    it("customers document delete, tax-doc overlay, and tag-remove carry touch-reveal", ()=>{
+        const src = read("customers/[id]/page.tsx");
+        const deleteDocTag = extractButtonOpenTag(src, 'title="Delete document"');
+        expect(deleteDocTag).toMatch(/\btouch-reveal\b/);
+        expect(deleteDocTag).toMatch(/\bopacity-0\b/);
+        expect(deleteDocTag).toMatch(/\bgroup-hover:opacity-100\b/);
+        // The tax-doc overlay wrapper is a plain <div>, not a tap target, so
+        // B535 never touches it — it is still an exact, unbroken literal match
+        // and is left as one.
+        expect(src).toContain('className="touch-reveal absolute inset-0 flex items-center justify-center gap-1.5 bg-black/50 opacity-0 transition-opacity group-hover:opacity-100"');
+        const tagRemoveTag = extractButtonOpenTag(src, 'title={`Remove tag "${tag.name}"`}');
+        expect(tagRemoveTag).toMatch(/\btouch-reveal\b/);
+        expect(tagRemoveTag).toMatch(/\bopacity-0\b/);
+        expect(tagRemoveTag).toMatch(/\bgroup-hover:opacity-100\b/);
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS90b3VjaC1yZXZlYWwtYjUxMS50ZXN0LnRzIl0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCBmcyBmcm9tIFwiZnNcIjtcbmltcG9ydCBwYXRoIGZyb20gXCJwYXRoXCI7XG5cbi8qKlxuICogQjUxMSAoQzIgMzkwcHggYXVkaXQpOiBmb3VyIHJvdy9vdmVybGF5IGFjdGlvbnMgd2VyZSBnYXRlZCBwdXJlbHkgb25cbiAqIGBvcGFjaXR5LTAgZ3JvdXAtaG92ZXI6b3BhY2l0eS0xMDBgLCB3aGljaCBuZXZlciByZXZlYWxzIG9uIHRvdWNoIHNpbmNlXG4gKiBgOmhvdmVyYCBkb2Vzbid0IGZpcmUgdGhlcmUg4oCUIHRoZSBjb250cm9sIHJlYWQgYXMgYWJzZW50LiBqc2RvbSBjYW4ndFxuICogZXZhbHVhdGUgYEBtZWRpYSAoaG92ZXI6IG5vbmUpYCAobm8gbGF5b3V0L21lZGlhLXF1ZXJ5IGVuZ2luZSksIHNvIHRoaXNcbiAqIHBpbnMgdGhlIHNvdXJjZS1sZXZlbCBmYWN0cyBhIGJyb3dzZXIgY2hlY2sgY2FuJ3QgcmVncmVzcyBzaWxlbnRseTogdGhlXG4gKiBzaGFyZWQgYC50b3VjaC1yZXZlYWxgIHV0aWxpdHkgZXhpc3RzLCBpcyBkZWNsYXJlZCBvdXRzaWRlIGFueSBgQGxheWVyYFxuICogKHNvIGl0IGFsd2F5cyB3aW5zIHRoZSBjYXNjYWRlIG92ZXIgdGhlIGxheWVyZWQgVGFpbHdpbmQgdXRpbGl0aWVzXG4gKiByZWdhcmRsZXNzIG9mIGdlbmVyYXRpb24gb3JkZXIpLCBhbmQgZXZlcnkgaG92ZXItcmV2ZWFsIGNhbGwgc2l0ZSBub3dcbiAqIGNhcnJpZXMgaXQuXG4gKlxuICogQjUzNSBub3RlOiB0aGUgcGVyLWNhbGwtc2l0ZSBhc3NlcnRpb25zIGJlbG93IHVzZWQgdG8gcGluIHRoZSBGVUxMXG4gKiBgY2xhc3NOYW1lYCBzb3VyY2Ugc3RyaW5nLiBCNTM1ICg0NHg0NCB0YXAtdGFyZ2V0IHdvcmssIGFkZGl0aXZlKSB3cmFwc1xuICogZWFjaCBvZiB0aGVzZSBpbiBgY24oVEFQX1RBUkdFVCwgXCIuLi5cIilgIGFuZCwgaW4gb25lIGNhc2UsIGRyb3BzIGEgbm93LVxuICogcmVkdW5kYW50IGV4cGxpY2l0IGBwLTEuNWAgaW4gZmF2b3Igb2YgVEFQX1RBUkdFVCdzIG93biBtaW4taC9taW4td1xuICogc2l6aW5nIOKAlCBuZWl0aGVyIG9mIHdoaWNoIHRvdWNoZXMgdG91Y2gtcmV2ZWFsJ3MgZml4LiBBIGZ1bGwtc3RyaW5nIG1hdGNoXG4gKiBicmVha3Mgb24gYW55IHN1Y2ggYWRkaXRpdmUgY2xhc3NOYW1lIGNoYW5nZSwgc28gdGhlc2Ugbm93IGV4dHJhY3QgZWFjaFxuICogYnV0dG9uJ3Mgd2hvbGUgb3BlbmluZyBKU1ggdGFnIChhbmNob3JlZCBvbiBpdHMgdW5pcXVlLCBub24tc3R5bGluZ1xuICogYHRpdGxlYCBhdHRyaWJ1dGUsIGluZGVwZW5kZW50IG9mIGF0dHJpYnV0ZSBvcmRlcikgYW5kIGFzc2VydCB0aGF0IHRoZVxuICogc3BlY2lmaWMgdG9rZW5zIHRoZSBCNTExIGZpeCBkZXBlbmRzIG9uIGFyZSBwcmVzZW50IGluIGl0LlxuICovXG5mdW5jdGlvbiByZWFkKHJlbFBhdGg6IHN0cmluZyk6IHN0cmluZyB7XG4gIHJldHVybiBmcy5yZWFkRmlsZVN5bmMocGF0aC5qb2luKF9fZGlybmFtZSwgcmVsUGF0aCksIFwidXRmOFwiKTtcbn1cblxuLyoqIFJldHVybnMgdGhlIHN1YnN0cmluZyBpbnNpZGUgdGhlIGZpcnN0IGJhbGFuY2VkLWJyYWNlIGJsb2NrIG9wZW5pbmcgYXQgYHN0YXJ0SW5kZXhgLiAqL1xuZnVuY3Rpb24gYnJhY2VCbG9ja0JvZHkoY3NzOiBzdHJpbmcsIHN0YXJ0SW5kZXg6IG51bWJlcik6IHN0cmluZyB7XG4gIGNvbnN0IG9wZW5JbmRleCA9IGNzcy5pbmRleE9mKFwie1wiLCBzdGFydEluZGV4KTtcbiAgbGV0IGRlcHRoID0gMDtcbiAgZm9yIChsZXQgaSA9IG9wZW5JbmRleDsgaSA8IGNzcy5sZW5ndGg7IGkrKykge1xuICAgIGlmIChjc3NbaV0gPT09IFwie1wiKSBkZXB0aCsrO1xuICAgIGVsc2UgaWYgKGNzc1tpXSA9PT0gXCJ9XCIpIHtcbiAgICAgIGRlcHRoLS07XG4gICAgICBpZiAoZGVwdGggPT09IDApIHJldHVybiBjc3Muc2xpY2Uob3BlbkluZGV4ICsgMSwgaSk7XG4gICAgfVxuICB9XG4gIHRocm93IG5ldyBFcnJvcihcInVuYmFsYW5jZWQgYnJhY2VzXCIpO1xufVxuXG4vKipcbiAqIEluZGV4IG9mIHRoZSBgPmAgdGhhdCBjbG9zZXMgYSBKU1ggb3BlbmluZyB0YWcsIHNjYW5uaW5nIGZvcndhcmQgZnJvbVxuICogYGZyb21JbmRleGAuIFNraXBzIGA9PmAgKGFycm93IGZ1bmN0aW9ucyBpbnNpZGUgcHJvcCBleHByZXNzaW9ucykgc28gaXRcbiAqIGRvZXNuJ3Qgc3RvcCBlYXJseSBvbiBhbiBvbkNsaWNrL29uQ2hhbmdlIGhhbmRsZXIuXG4gKi9cbmZ1bmN0aW9uIGNsb3NpbmdBbmdsZUluZGV4KHNyYzogc3RyaW5nLCBmcm9tSW5kZXg6IG51bWJlcik6IG51bWJlciB7XG4gIGxldCBpID0gZnJvbUluZGV4O1xuICB3aGlsZSAoaSA8IHNyYy5sZW5ndGgpIHtcbiAgICBjb25zdCBpZHggPSBzcmMuaW5kZXhPZihcIj5cIiwgaSk7XG4gICAgaWYgKGlkeCA9PT0gLTEpIHRocm93IG5ldyBFcnJvcihcIm5vIGNsb3NpbmcgJz4nIGZvdW5kXCIpO1xuICAgIGlmIChzcmNbaWR4IC0gMV0gIT09IFwiPVwiKSByZXR1cm4gaWR4O1xuICAgIGkgPSBpZHggKyAxO1xuICB9XG4gIHRocm93IG5ldyBFcnJvcihcIm5vIGNsb3NpbmcgJz4nIGZvdW5kXCIpO1xufVxuXG4vKipcbiAqIEV4dHJhY3RzIGEgYDxidXR0b24gLi4uPmAgZWxlbWVudCdzIGZ1bGwgb3BlbmluZyB0YWcgdGV4dCwgbG9jYXRlZCBieSBhXG4gKiB1bmlxdWUgbWFya2VyIHN0cmluZyBpbnNpZGUgaXQgKGUuZy4gYHRpdGxlPVwiRWRpdCBwYXltZW50XCJgKS4gQW5jaG9yaW5nIG9uXG4gKiB0aGUgdGFnIGJvdW5kYXJpZXMgcmF0aGVyIHRoYW4gYSBmdWxsIGNsYXNzTmFtZSBzdHJpbmcgbWVhbnMgdGhlXG4gKiBhc3NlcnRpb24gc3Vydml2ZXMgYXR0cmlidXRlIHJlb3JkZXJpbmcgb3IgYWRkaXRpdmUgd3JhcHBlciBjYWxsc1xuICogKGBjbihUQVBfVEFSR0VULCAuLi4pYCkg4oCUIGl0IG9ubHkgY2FyZXMgd2hhdCBlbmRzIHVwIGluIHRoZSByZW5kZXJlZCB0YWcuXG4gKi9cbmZ1bmN0aW9uIGV4dHJhY3RCdXR0b25PcGVuVGFnKHNyYzogc3RyaW5nLCBtYXJrZXI6IHN0cmluZyk6IHN0cmluZyB7XG4gIGNvbnN0IG1hcmtlckluZGV4ID0gc3JjLmluZGV4T2YobWFya2VyKTtcbiAgaWYgKG1hcmtlckluZGV4ID09PSAtMSkgdGhyb3cgbmV3IEVycm9yKGBtYXJrZXIgbm90IGZvdW5kOiAke21hcmtlcn1gKTtcbiAgY29uc3QgdGFnU3RhcnQgPSBzcmMubGFzdEluZGV4T2YoXCI8YnV0dG9uXCIsIG1hcmtlckluZGV4KTtcbiAgaWYgKHRhZ1N0YXJ0ID09PSAtMSkgdGhyb3cgbmV3IEVycm9yKGBubyA8YnV0dG9uIGJlZm9yZSBtYXJrZXI6ICR7bWFya2VyfWApO1xuICBjb25zdCB0YWdFbmQgPSBjbG9zaW5nQW5nbGVJbmRleChzcmMsIG1hcmtlckluZGV4ICsgbWFya2VyLmxlbmd0aCk7XG4gIHJldHVybiBzcmMuc2xpY2UodGFnU3RhcnQsIHRhZ0VuZCArIDEpO1xufVxuXG5kZXNjcmliZShcIkI1MTEg4oCUIGhvdmVyLXJldmVhbCByb3cgYWN0aW9ucyBzdGF5IHZpc2libGUgb24gdG91Y2hcIiwgKCkgPT4ge1xuICBpdChcImdsb2JhbHMuY3NzIGRlY2xhcmVzIC50b3VjaC1yZXZlYWwgdW5sYXllcmVkLCBmb3JjaW5nIG9wYWNpdHkgMSB1bmRlciAoaG92ZXI6IG5vbmUpXCIsICgpID0+IHtcbiAgICBjb25zdCBjc3MgPSByZWFkKFwiLi4vZ2xvYmFscy5jc3NcIik7XG4gICAgY29uc3QgbGF5ZXJTdGFydCA9IGNzcy5pbmRleE9mKFwiQGxheWVyIHV0aWxpdGllc1wiKTtcbiAgICBleHBlY3QobGF5ZXJTdGFydCkudG9CZUdyZWF0ZXJUaGFuKC0xKTtcbiAgICBjb25zdCBsYXllckJvZHkgPSBicmFjZUJsb2NrQm9keShjc3MsIGxheWVyU3RhcnQpO1xuICAgIGV4cGVjdChsYXllckJvZHkpLm5vdC50b0NvbnRhaW4oXCIudG91Y2gtcmV2ZWFsXCIpO1xuXG4gICAgY29uc3QgbWF0Y2ggPSBjc3MubWF0Y2goL0BtZWRpYSBcXChob3Zlcjogbm9uZVxcKSBcXHtcXHMqXFwudG91Y2gtcmV2ZWFsIFxce1xccypvcGFjaXR5OiAxOy8pO1xuICAgIGV4cGVjdChtYXRjaCkubm90LnRvQmVOdWxsKCk7XG4gICAgLy8gYW5kIGl0IG11c3QgYWN0dWFsbHkgc2l0IG91dHNpZGUgdGhlIHV0aWxpdGllcyBsYXllciBib2R5IGZvdW5kIGFib3ZlXG4gICAgZXhwZWN0KGNzcy5pbmRleE9mKG1hdGNoIVswXSkpLnRvQmVHcmVhdGVyVGhhbihsYXllclN0YXJ0ICsgbGF5ZXJCb2R5Lmxlbmd0aCk7XG4gIH0pO1xuXG4gIGl0KFwiaW52b2ljZXMgcGF5bWVudC1oaXN0b3J5IEVkaXQvRGVsZXRlIGNhcnJ5IHRvdWNoLXJldmVhbFwiLCAoKSA9PiB7XG4gICAgY29uc3Qgc3JjID0gcmVhZChcImludm9pY2VzL1tpZF0vcGFnZS50c3hcIik7XG4gICAgY29uc3QgZWRpdFRhZyA9IGV4dHJhY3RCdXR0b25PcGVuVGFnKHNyYywgJ3RpdGxlPVwiRWRpdCBwYXltZW50XCInKTtcbiAgICBjb25zdCBkZWxldGVUYWcgPSBleHRyYWN0QnV0dG9uT3BlblRhZyhzcmMsICd0aXRsZT1cIkRlbGV0ZSBwYXltZW50XCInKTtcbiAgICBmb3IgKGNvbnN0IHRhZyBvZiBbZWRpdFRhZywgZGVsZXRlVGFnXSkge1xuICAgICAgLy8gdG91Y2gtcmV2ZWFsIGlzIHRoZSBmaXggaXRzZWxmOyBvcGFjaXR5LTAgKyBncm91cC1ob3ZlcjpvcGFjaXR5LTEwMFxuICAgICAgLy8gaXMgdGhlIGhvdmVyLXJldmVhbCBwYXR0ZXJuIHRvdWNoLXJldmVhbCBleGlzdHMgdG8gb3ZlcnJpZGUgb24gdG91Y2hcbiAgICAgIC8vIGRldmljZXMg4oCUIGFzc2VydGluZyBhbGwgdGhyZWUgdG9nZXRoZXIgY29uZmlybXMgdGhpcyBpcyBnZW51aW5lbHkgYVxuICAgICAgLy8gaG92ZXItcmV2ZWFsIGNvbnRyb2wgdGhhdCBoYXMgb3B0ZWQgaW50byB0aGUgZml4LCBub3QgYW4gdW5yZWxhdGVkXG4gICAgICAvLyBlbGVtZW50IHRoYXQgbWVyZWx5IGhhcHBlbnMgdG8gY2FycnkgdGhlIGNsYXNzIG5hbWUuXG4gICAgICBleHBlY3QodGFnKS50b01hdGNoKC9cXGJ0b3VjaC1yZXZlYWxcXGIvKTtcbiAgICAgIGV4cGVjdCh0YWcpLnRvTWF0Y2goL1xcYm9wYWNpdHktMFxcYi8pO1xuICAgICAgZXhwZWN0KHRhZykudG9NYXRjaCgvXFxiZ3JvdXAtaG92ZXI6b3BhY2l0eS0xMDBcXGIvKTtcbiAgICB9XG4gIH0pO1xuXG4gIGl0KFwiY3VzdG9tZXJzIGRvY3VtZW50IGRlbGV0ZSwgdGF4LWRvYyBvdmVybGF5LCBhbmQgdGFnLXJlbW92ZSBjYXJyeSB0b3VjaC1yZXZlYWxcIiwgKCkgPT4ge1xuICAgIGNvbnN0IHNyYyA9IHJlYWQoXCJjdXN0b21lcnMvW2lkXS9wYWdlLnRzeFwiKTtcblxuICAgIGNvbnN0IGRlbGV0ZURvY1RhZyA9IGV4dHJhY3RCdXR0b25PcGVuVGFnKHNyYywgJ3RpdGxlPVwiRGVsZXRlIGRvY3VtZW50XCInKTtcbiAgICBleHBlY3QoZGVsZXRlRG9jVGFnKS50b01hdGNoKC9cXGJ0b3VjaC1yZXZlYWxcXGIvKTtcbiAgICBleHBlY3QoZGVsZXRlRG9jVGFnKS50b01hdGNoKC9cXGJvcGFjaXR5LTBcXGIvKTtcbiAgICBleHBlY3QoZGVsZXRlRG9jVGFnKS50b01hdGNoKC9cXGJncm91cC1ob3ZlcjpvcGFjaXR5LTEwMFxcYi8pO1xuXG4gICAgLy8gVGhlIHRheC1kb2Mgb3ZlcmxheSB3cmFwcGVyIGlzIGEgcGxhaW4gPGRpdj4sIG5vdCBhIHRhcCB0YXJnZXQsIHNvXG4gICAgLy8gQjUzNSBuZXZlciB0b3VjaGVzIGl0IOKAlCBpdCBpcyBzdGlsbCBhbiBleGFjdCwgdW5icm9rZW4gbGl0ZXJhbCBtYXRjaFxuICAgIC8vIGFuZCBpcyBsZWZ0IGFzIG9uZS5cbiAgICBleHBlY3Qoc3JjKS50b0NvbnRhaW4oXG4gICAgICAnY2xhc3NOYW1lPVwidG91Y2gtcmV2ZWFsIGFic29sdXRlIGluc2V0LTAgZmxleCBpdGVtcy1jZW50ZXIganVzdGlmeS1jZW50ZXIgZ2FwLTEuNSBiZy1ibGFjay81MCBvcGFjaXR5LTAgdHJhbnNpdGlvbi1vcGFjaXR5IGdyb3VwLWhvdmVyOm9wYWNpdHktMTAwXCInLFxuICAgICk7XG5cbiAgICBjb25zdCB0YWdSZW1vdmVUYWcgPSBleHRyYWN0QnV0dG9uT3BlblRhZyhzcmMsICd0aXRsZT17YFJlbW92ZSB0YWcgXCIke3RhZy5uYW1lfVwiYH0nKTtcbiAgICBleHBlY3QodGFnUmVtb3ZlVGFnKS50b01hdGNoKC9cXGJ0b3VjaC1yZXZlYWxcXGIvKTtcbiAgICBleHBlY3QodGFnUmVtb3ZlVGFnKS50b01hdGNoKC9cXGJvcGFjaXR5LTBcXGIvKTtcbiAgICBleHBlY3QodGFnUmVtb3ZlVGFnKS50b01hdGNoKC9cXGJncm91cC1ob3ZlcjpvcGFjaXR5LTEwMFxcYi8pO1xuICB9KTtcbn0pO1xuIl0sIm5hbWVzIjpbInJlYWQiLCJyZWxQYXRoIiwiZnMiLCJyZWFkRmlsZVN5bmMiLCJwYXRoIiwiam9pbiIsIl9fZGlybmFtZSIsImJyYWNlQmxvY2tCb2R5IiwiY3NzIiwic3RhcnRJbmRleCIsIm9wZW5JbmRleCIsImluZGV4T2YiLCJkZXB0aCIsImkiLCJsZW5ndGgiLCJzbGljZSIsIkVycm9yIiwiY2xvc2luZ0FuZ2xlSW5kZXgiLCJzcmMiLCJmcm9tSW5kZXgiLCJpZHgiLCJleHRyYWN0QnV0dG9uT3BlblRhZyIsIm1hcmtlciIsIm1hcmtlckluZGV4IiwidGFnU3RhcnQiLCJsYXN0SW5kZXhPZiIsInRhZ0VuZCIsImRlc2NyaWJlIiwiaXQiLCJsYXllclN0YXJ0IiwiZXhwZWN0IiwidG9CZUdyZWF0ZXJUaGFuIiwibGF5ZXJCb2R5Iiwibm90IiwidG9Db250YWluIiwibWF0Y2giLCJ0b0JlTnVsbCIsImVkaXRUYWciLCJkZWxldGVUYWciLCJ0YWciLCJ0b01hdGNoIiwiZGVsZXRlRG9jVGFnIiwidGFnUmVtb3ZlVGFnIl0sIm1hcHBpbmdzIjoiOzs7OzJEQUFlOzZEQUNFOzs7Ozs7QUFFakI7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7O0NBb0JDLEdBQ0QsU0FBU0EsS0FBS0MsT0FBZTtJQUMzQixPQUFPQyxXQUFFLENBQUNDLFlBQVksQ0FBQ0MsYUFBSSxDQUFDQyxJQUFJLENBQUNDLFdBQVdMLFVBQVU7QUFDeEQ7QUFFQSx5RkFBeUYsR0FDekYsU0FBU00sZUFBZUMsR0FBVyxFQUFFQyxVQUFrQjtJQUNyRCxNQUFNQyxZQUFZRixJQUFJRyxPQUFPLENBQUMsS0FBS0Y7SUFDbkMsSUFBSUcsUUFBUTtJQUNaLElBQUssSUFBSUMsSUFBSUgsV0FBV0csSUFBSUwsSUFBSU0sTUFBTSxFQUFFRCxJQUFLO1FBQzNDLElBQUlMLEdBQUcsQ0FBQ0ssRUFBRSxLQUFLLEtBQUtEO2FBQ2YsSUFBSUosR0FBRyxDQUFDSyxFQUFFLEtBQUssS0FBSztZQUN2QkQ7WUFDQSxJQUFJQSxVQUFVLEdBQUcsT0FBT0osSUFBSU8sS0FBSyxDQUFDTCxZQUFZLEdBQUdHO1FBQ25EO0lBQ0Y7SUFDQSxNQUFNLElBQUlHLE1BQU07QUFDbEI7QUFFQTs7OztDQUlDLEdBQ0QsU0FBU0Msa0JBQWtCQyxHQUFXLEVBQUVDLFNBQWlCO0lBQ3ZE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

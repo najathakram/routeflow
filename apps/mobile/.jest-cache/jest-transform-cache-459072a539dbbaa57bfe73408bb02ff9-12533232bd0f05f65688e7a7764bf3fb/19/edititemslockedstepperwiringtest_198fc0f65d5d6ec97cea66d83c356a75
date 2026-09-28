@@ -1,0 +1,33 @@
+eeb2824bc300abba0fc6352c6990527b
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const fs_1 = require("fs");
+const path_1 = require("path");
+const edit_items_source_1 = require("./support/edit-items-source");
+/**
+ * #2232 (SA-388a UX follow-up): a LOCKED unit line — a stored line whose count can't be derived
+ * (`needsRepair`, see lib/edit-items-draft.ts `unitLineCount`) — is refused at save. Its stepper must
+ * also be visibly disabled, so the operator never edits a count that can't be saved.
+ *
+ * Mobile tests are pure-logic (no render harness), so this pins the WIRING: the screen passes the
+ * line's `needsRepair` to its Qty StepperRow, and StepperRow disables both buttons and the input.
+ */
+// #2340: the Qty StepperRow lives in the DraftItemCard module now — read the edit-items surface.
+const screen = (0, edit_items_source_1.readEditItemsSurface)();
+const stepper = (0, fs_1.readFileSync)((0, path_1.join)(__dirname, "..", "components", "EditItemsStepperRow.tsx"), "utf8");
+describe("#2232 — a LOCKED unit line's stepper is disabled", () => {
+    it("the unit line's Qty StepperRow receives disabled={item.needsRepair}", () => {
+        // A unit line never takes the boxed branch (isBoxed requires !item.unitLabel), so its count is
+        // edited through the single Qty StepperRow — the one labelled with item.unitLabel.
+        const qtyRow = screen.match(/<StepperRow\s+label=\{`Qty\$\{item\.unitLabel[\s\S]*?\/>/);
+        expect(qtyRow).not.toBeNull();
+        expect(qtyRow[0]).toMatch(/disabled=\{!!item\.needsRepair\}/);
+    });
+    it("StepperRow takes a disabled prop and applies it to both buttons and the input", () => {
+        expect(stepper).toMatch(/disabled\?: boolean;/);
+        expect(stepper.match(/<Pressable[^>]*disabled=\{disabled\}/g) ?? []).toHaveLength(2);
+        expect(stepper).toMatch(/editable=\{!disabled\}/);
+        expect(stepper).toMatch(/accessibilityState=\{\{ disabled \}\}/);
+    });
+});
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvX190ZXN0c19fL2VkaXQtaXRlbXMtbG9ja2VkLXN0ZXBwZXItd2lyaW5nLnRlc3QudHMiLCJtYXBwaW5ncyI6Ijs7QUFBQSwyQkFBa0M7QUFDbEMsK0JBQTRCO0FBQzVCLG1FQUFtRTtBQUVuRTs7Ozs7OztHQU9HO0FBQ0gsaUdBQWlHO0FBQ2pHLE1BQU0sTUFBTSxHQUFHLElBQUEsd0NBQW9CLEdBQUUsQ0FBQztBQUN0QyxNQUFNLE9BQU8sR0FBRyxJQUFBLGlCQUFZLEVBQzFCLElBQUEsV0FBSSxFQUFDLFNBQVMsRUFBRSxJQUFJLEVBQUUsWUFBWSxFQUFFLHlCQUF5QixDQUFDLEVBQzlELE1BQU0sQ0FDUCxDQUFDO0FBRUYsUUFBUSxDQUFDLGtEQUFrRCxFQUFFLEdBQUcsRUFBRTtJQUNoRSxFQUFFLENBQUMscUVBQXFFLEVBQUUsR0FBRyxFQUFFO1FBQzdFLCtGQUErRjtRQUMvRixtRkFBbUY7UUFDbkYsTUFBTSxNQUFNLEdBQUcsTUFBTSxDQUFDLEtBQUssQ0FBQywwREFBMEQsQ0FBQyxDQUFDO1FBQ3hGLE1BQU0sQ0FBQyxNQUFNLENBQUMsQ0FBQyxHQUFHLENBQUMsUUFBUSxFQUFFLENBQUM7UUFDOUIsTUFBTSxDQUFDLE1BQU8sQ0FBQyxDQUFDLENBQUMsQ0FBQyxDQUFDLE9BQU8sQ0FBQyxrQ0FBa0MsQ0FBQyxDQUFDO0lBQ2pFLENBQUMsQ0FBQyxDQUFDO0lBRUgsRUFBRSxDQUFDLCtFQUErRSxFQUFFLEdBQUcsRUFBRTtRQUN2RixNQUFNLENBQUMsT0FBTyxDQUFDLENBQUMsT0FBTyxDQUFDLHNCQUFzQixDQUFDLENBQUM7UUFDaEQsTUFBTSxDQUFDLE9BQU8sQ0FBQyxLQUFLLENBQUMsdUNBQXVDLENBQUMsSUFBSSxFQUFFLENBQUMsQ0FBQyxZQUFZLENBQUMsQ0FBQyxDQUFDLENBQUM7UUFDckYsTUFBTSxDQUFDLE9BQU8sQ0FBQyxDQUFDLE9BQU8sQ0FBQyx3QkFBd0IsQ0FBQyxDQUFDO1FBQ2xELE1BQU0sQ0FBQyxPQUFPLENBQUMsQ0FBQyxPQUFPLENBQUMsdUNBQXVDLENBQUMsQ0FBQztJQUNuRSxDQUFDLENBQUMsQ0FBQztBQUNMLENBQUMsQ0FBQyxDQUFDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvbW9iaWxlL19fdGVzdHNfXy9lZGl0LWl0ZW1zLWxvY2tlZC1zdGVwcGVyLXdpcmluZy50ZXN0LnRzIl0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCB7IHJlYWRGaWxlU3luYyB9IGZyb20gXCJmc1wiO1xuaW1wb3J0IHsgam9pbiB9IGZyb20gXCJwYXRoXCI7XG5pbXBvcnQgeyByZWFkRWRpdEl0ZW1zU3VyZmFjZSB9IGZyb20gXCIuL3N1cHBvcnQvZWRpdC1pdGVtcy1zb3VyY2VcIjtcblxuLyoqXG4gKiAjMjIzMiAoU0EtMzg4YSBVWCBmb2xsb3ctdXApOiBhIExPQ0tFRCB1bml0IGxpbmUg4oCUIGEgc3RvcmVkIGxpbmUgd2hvc2UgY291bnQgY2FuJ3QgYmUgZGVyaXZlZFxuICogKGBuZWVkc1JlcGFpcmAsIHNlZSBsaWIvZWRpdC1pdGVtcy1kcmFmdC50cyBgdW5pdExpbmVDb3VudGApIOKAlCBpcyByZWZ1c2VkIGF0IHNhdmUuIEl0cyBzdGVwcGVyIG11c3RcbiAqIGFsc28gYmUgdmlzaWJseSBkaXNhYmxlZCwgc28gdGhlIG9wZXJhdG9yIG5ldmVyIGVkaXRzIGEgY291bnQgdGhhdCBjYW4ndCBiZSBzYXZlZC5cbiAqXG4gKiBNb2JpbGUgdGVzdHMgYXJlIHB1cmUtbG9naWMgKG5vIHJlbmRlciBoYXJuZXNzKSwgc28gdGhpcyBwaW5zIHRoZSBXSVJJTkc6IHRoZSBzY3JlZW4gcGFzc2VzIHRoZVxuICogbGluZSdzIGBuZWVkc1JlcGFpcmAgdG8gaXRzIFF0eSBTdGVwcGVyUm93LCBhbmQgU3RlcHBlclJvdyBkaXNhYmxlcyBib3RoIGJ1dHRvbnMgYW5kIHRoZSBpbnB1dC5cbiAqL1xuLy8gIzIzNDA6IHRoZSBRdHkgU3RlcHBlclJvdyBsaXZlcyBpbiB0aGUgRHJhZnRJdGVtQ2FyZCBtb2R1bGUgbm93IOKAlCByZWFkIHRoZSBlZGl0LWl0ZW1zIHN1cmZhY2UuXG5jb25zdCBzY3JlZW4gPSByZWFkRWRpdEl0ZW1zU3VyZmFjZSgpO1xuY29uc3Qgc3RlcHBlciA9IHJlYWRGaWxlU3luYyhcbiAgam9pbihfX2Rpcm5hbWUsIFwiLi5cIiwgXCJjb21wb25lbnRzXCIsIFwiRWRpdEl0ZW1zU3RlcHBlclJvdy50c3hcIiksXG4gIFwidXRmOFwiLFxuKTtcblxuZGVzY3JpYmUoXCIjMjIzMiDigJQgYSBMT0NLRUQgdW5pdCBsaW5lJ3Mgc3RlcHBlciBpcyBkaXNhYmxlZFwiLCAoKSA9PiB7XG4gIGl0KFwidGhlIHVuaXQgbGluZSdzIFF0eSBTdGVwcGVyUm93IHJlY2VpdmVzIGRpc2FibGVkPXtpdGVtLm5lZWRzUmVwYWlyfVwiLCAoKSA9PiB7XG4gICAgLy8gQSB1bml0IGxpbmUgbmV2ZXIgdGFrZXMgdGhlIGJveGVkIGJyYW5jaCAoaXNCb3hlZCByZXF1aXJlcyAhaXRlbS51bml0TGFiZWwpLCBzbyBpdHMgY291bnQgaXNcbiAgICAvLyBlZGl0ZWQgdGhyb3VnaCB0aGUgc2luZ2xlIFF0eSBTdGVwcGVyUm93IOKAlCB0aGUgb25lIGxhYmVsbGVkIHdpdGggaXRlbS51bml0TGFiZWwuXG4gICAgY29uc3QgcXR5Um93ID0gc2NyZWVuLm1hdGNoKC88U3RlcHBlclJvd1xccytsYWJlbD1cXHtgUXR5XFwkXFx7aXRlbVxcLnVuaXRMYWJlbFtcXHNcXFNdKj9cXC8+Lyk7XG4gICAgZXhwZWN0KHF0eVJvdykubm90LnRvQmVOdWxsKCk7XG4gICAgZXhwZWN0KHF0eVJvdyFbMF0pLnRvTWF0Y2goL2Rpc2FibGVkPVxceyEhaXRlbVxcLm5lZWRzUmVwYWlyXFx9Lyk7XG4gIH0pO1xuXG4gIGl0KFwiU3RlcHBlclJvdyB0YWtlcyBhIGRpc2FibGVkIHByb3AgYW5kIGFwcGxpZXMgaXQgdG8gYm90aCBidXR0b25zIGFuZCB0aGUgaW5wdXRcIiwgKCkgPT4ge1xuICAgIGV4cGVjdChzdGVwcGVyKS50b01hdGNoKC9kaXNhYmxlZFxcPzogYm9vbGVhbjsvKTtcbiAgICBleHBlY3Qoc3RlcHBlci5tYXRjaCgvPFByZXNzYWJsZVtePl0qZGlzYWJsZWQ9XFx7ZGlzYWJsZWRcXH0vZykgPz8gW10pLnRvSGF2ZUxlbmd0aCgyKTtcbiAgICBleHBlY3Qoc3RlcHBlcikudG9NYXRjaCgvZWRpdGFibGU9XFx7IWRpc2FibGVkXFx9Lyk7XG4gICAgZXhwZWN0KHN0ZXBwZXIpLnRvTWF0Y2goL2FjY2Vzc2liaWxpdHlTdGF0ZT1cXHtcXHsgZGlzYWJsZWQgXFx9XFx9Lyk7XG4gIH0pO1xufSk7XG4iXSwidmVyc2lvbiI6M30=

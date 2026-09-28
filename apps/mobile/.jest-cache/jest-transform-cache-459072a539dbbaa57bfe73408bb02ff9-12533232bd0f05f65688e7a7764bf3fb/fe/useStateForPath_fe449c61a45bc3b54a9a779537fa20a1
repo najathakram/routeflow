@@ -1,0 +1,50 @@
+bc9b9e1f9577b776a394f2ef37f6bbbf
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.useStateForPath = useStateForPath;
+const React = __importStar(require("react"));
+const NavigationFocusedRouteStateContext_js_1 = require("./NavigationFocusedRouteStateContext.js");
+/**
+ * Hook to get a minimal state representation for the current route.
+ * The returned state can be used with `getPathFromState` to build a path.
+ *
+ * @returns Minimal state to build a path for the current route.
+ */
+function useStateForPath() {
+    const state = React.useContext(NavigationFocusedRouteStateContext_js_1.NavigationFocusedRouteStateContext);
+    return state;
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0Mzcvbm9kZV9tb2R1bGVzL0ByZWFjdC1uYXZpZ2F0aW9uL2NvcmUvbGliL21vZHVsZS91c2VTdGF0ZUZvclBhdGguanMiLCJtYXBwaW5ncyI6IkFBQUEsWUFBWSxDQUFDOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7OztBQVdiLDBDQUdDO0FBWkQsNkNBQStCO0FBQy9CLG1HQUE2RjtBQUU3Rjs7Ozs7R0FLRztBQUNILFNBQWdCLGVBQWU7SUFDN0IsTUFBTSxLQUFLLEdBQUcsS0FBSyxDQUFDLFVBQVUsQ0FBQywwRUFBa0MsQ0FBQyxDQUFDO0lBQ25FLE9BQU8sS0FBSyxDQUFDO0FBQ2YsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9ub2RlX21vZHVsZXMvQHJlYWN0LW5hdmlnYXRpb24vY29yZS9saWIvbW9kdWxlL3VzZVN0YXRlRm9yUGF0aC5qcyJdLCJzb3VyY2VzQ29udGVudCI6WyJcInVzZSBzdHJpY3RcIjtcblxuaW1wb3J0ICogYXMgUmVhY3QgZnJvbSAncmVhY3QnO1xuaW1wb3J0IHsgTmF2aWdhdGlvbkZvY3VzZWRSb3V0ZVN0YXRlQ29udGV4dCB9IGZyb20gXCIuL05hdmlnYXRpb25Gb2N1c2VkUm91dGVTdGF0ZUNvbnRleHQuanNcIjtcblxuLyoqXG4gKiBIb29rIHRvIGdldCBhIG1pbmltYWwgc3RhdGUgcmVwcmVzZW50YXRpb24gZm9yIHRoZSBjdXJyZW50IHJvdXRlLlxuICogVGhlIHJldHVybmVkIHN0YXRlIGNhbiBiZSB1c2VkIHdpdGggYGdldFBhdGhGcm9tU3RhdGVgIHRvIGJ1aWxkIGEgcGF0aC5cbiAqXG4gKiBAcmV0dXJucyBNaW5pbWFsIHN0YXRlIHRvIGJ1aWxkIGEgcGF0aCBmb3IgdGhlIGN1cnJlbnQgcm91dGUuXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiB1c2VTdGF0ZUZvclBhdGgoKSB7XG4gIGNvbnN0IHN0YXRlID0gUmVhY3QudXNlQ29udGV4dChOYXZpZ2F0aW9uRm9jdXNlZFJvdXRlU3RhdGVDb250ZXh0KTtcbiAgcmV0dXJuIHN0YXRlO1xufVxuLy8jIHNvdXJjZU1hcHBpbmdVUkw9dXNlU3RhdGVGb3JQYXRoLmpzLm1hcCJdLCJ2ZXJzaW9uIjozfQ==

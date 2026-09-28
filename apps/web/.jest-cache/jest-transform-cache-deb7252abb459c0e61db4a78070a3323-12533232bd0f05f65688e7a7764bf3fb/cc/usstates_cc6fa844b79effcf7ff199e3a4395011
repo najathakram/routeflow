@@ -1,0 +1,264 @@
+bfd4a85f10b0d376db1dca1017aba42b
+// US state/territory reference + normalizer (2026-09-19, selling restrictions R2).
+// Pure, no imports — used by both the API's normalize-address-states.mjs write
+// boundary and the web rule editor's state picker.
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, {
+        enumerable: true,
+        get: Object.getOwnPropertyDescriptor(all, name).get
+    });
+}
+_export(exports, {
+    get US_STATES () {
+        return US_STATES;
+    },
+    get normalizeUsState () {
+        return normalizeUsState;
+    }
+});
+const US_STATES = [
+    {
+        code: "AL",
+        name: "Alabama"
+    },
+    {
+        code: "AK",
+        name: "Alaska"
+    },
+    {
+        code: "AZ",
+        name: "Arizona"
+    },
+    {
+        code: "AR",
+        name: "Arkansas"
+    },
+    {
+        code: "CA",
+        name: "California"
+    },
+    {
+        code: "CO",
+        name: "Colorado"
+    },
+    {
+        code: "CT",
+        name: "Connecticut"
+    },
+    {
+        code: "DE",
+        name: "Delaware"
+    },
+    {
+        code: "FL",
+        name: "Florida"
+    },
+    {
+        code: "GA",
+        name: "Georgia"
+    },
+    {
+        code: "HI",
+        name: "Hawaii"
+    },
+    {
+        code: "ID",
+        name: "Idaho"
+    },
+    {
+        code: "IL",
+        name: "Illinois"
+    },
+    {
+        code: "IN",
+        name: "Indiana"
+    },
+    {
+        code: "IA",
+        name: "Iowa"
+    },
+    {
+        code: "KS",
+        name: "Kansas"
+    },
+    {
+        code: "KY",
+        name: "Kentucky"
+    },
+    {
+        code: "LA",
+        name: "Louisiana"
+    },
+    {
+        code: "ME",
+        name: "Maine"
+    },
+    {
+        code: "MD",
+        name: "Maryland"
+    },
+    {
+        code: "MA",
+        name: "Massachusetts"
+    },
+    {
+        code: "MI",
+        name: "Michigan"
+    },
+    {
+        code: "MN",
+        name: "Minnesota"
+    },
+    {
+        code: "MS",
+        name: "Mississippi"
+    },
+    {
+        code: "MO",
+        name: "Missouri"
+    },
+    {
+        code: "MT",
+        name: "Montana"
+    },
+    {
+        code: "NE",
+        name: "Nebraska"
+    },
+    {
+        code: "NV",
+        name: "Nevada"
+    },
+    {
+        code: "NH",
+        name: "New Hampshire"
+    },
+    {
+        code: "NJ",
+        name: "New Jersey"
+    },
+    {
+        code: "NM",
+        name: "New Mexico"
+    },
+    {
+        code: "NY",
+        name: "New York"
+    },
+    {
+        code: "NC",
+        name: "North Carolina"
+    },
+    {
+        code: "ND",
+        name: "North Dakota"
+    },
+    {
+        code: "OH",
+        name: "Ohio"
+    },
+    {
+        code: "OK",
+        name: "Oklahoma"
+    },
+    {
+        code: "OR",
+        name: "Oregon"
+    },
+    {
+        code: "PA",
+        name: "Pennsylvania"
+    },
+    {
+        code: "RI",
+        name: "Rhode Island"
+    },
+    {
+        code: "SC",
+        name: "South Carolina"
+    },
+    {
+        code: "SD",
+        name: "South Dakota"
+    },
+    {
+        code: "TN",
+        name: "Tennessee"
+    },
+    {
+        code: "TX",
+        name: "Texas"
+    },
+    {
+        code: "UT",
+        name: "Utah"
+    },
+    {
+        code: "VT",
+        name: "Vermont"
+    },
+    {
+        code: "VA",
+        name: "Virginia"
+    },
+    {
+        code: "WA",
+        name: "Washington"
+    },
+    {
+        code: "WV",
+        name: "West Virginia"
+    },
+    {
+        code: "WI",
+        name: "Wisconsin"
+    },
+    {
+        code: "WY",
+        name: "Wyoming"
+    },
+    {
+        code: "DC",
+        name: "District of Columbia"
+    },
+    {
+        code: "PR",
+        name: "Puerto Rico"
+    },
+    {
+        code: "GU",
+        name: "Guam"
+    },
+    {
+        code: "VI",
+        name: "U.S. Virgin Islands"
+    },
+    {
+        code: "AS",
+        name: "American Samoa"
+    },
+    {
+        code: "MP",
+        name: "Northern Mariana Islands"
+    }
+];
+const CODE_SET = new Set(US_STATES.map((s)=>s.code));
+const NAME_TO_CODE = new Map(US_STATES.map((s)=>[
+        s.name.toLowerCase(),
+        s.code
+    ]));
+function normalizeUsState(input) {
+    if (input == null) return null;
+    const trimmed = input.trim();
+    if (trimmed === "") return null;
+    const upper = trimmed.toUpperCase();
+    if (upper.length === 2 && CODE_SET.has(upper)) return upper;
+    const byName = NAME_TO_CODE.get(trimmed.toLowerCase());
+    return byName ?? null;
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L3BhY2thZ2VzL3R5cGVzL2FwaS91cy1zdGF0ZXMudHMiXSwic291cmNlc0NvbnRlbnQiOlsiLy8gVVMgc3RhdGUvdGVycml0b3J5IHJlZmVyZW5jZSArIG5vcm1hbGl6ZXIgKDIwMjYtMDktMTksIHNlbGxpbmcgcmVzdHJpY3Rpb25zIFIyKS5cbi8vIFB1cmUsIG5vIGltcG9ydHMg4oCUIHVzZWQgYnkgYm90aCB0aGUgQVBJJ3Mgbm9ybWFsaXplLWFkZHJlc3Mtc3RhdGVzLm1qcyB3cml0ZVxuLy8gYm91bmRhcnkgYW5kIHRoZSB3ZWIgcnVsZSBlZGl0b3IncyBzdGF0ZSBwaWNrZXIuXG5cbmV4cG9ydCBjb25zdCBVU19TVEFURVM6IFJlYWRvbmx5QXJyYXk8eyBjb2RlOiBzdHJpbmc7IG5hbWU6IHN0cmluZyB9PiA9IFtcbiAgeyBjb2RlOiBcIkFMXCIsIG5hbWU6IFwiQWxhYmFtYVwiIH0sXG4gIHsgY29kZTogXCJBS1wiLCBuYW1lOiBcIkFsYXNrYVwiIH0sXG4gIHsgY29kZTogXCJBWlwiLCBuYW1lOiBcIkFyaXpvbmFcIiB9LFxuICB7IGNvZGU6IFwiQVJcIiwgbmFtZTogXCJBcmthbnNhc1wiIH0sXG4gIHsgY29kZTogXCJDQVwiLCBuYW1lOiBcIkNhbGlmb3JuaWFcIiB9LFxuICB7IGNvZGU6IFwiQ09cIiwgbmFtZTogXCJDb2xvcmFkb1wiIH0sXG4gIHsgY29kZTogXCJDVFwiLCBuYW1lOiBcIkNvbm5lY3RpY3V0XCIgfSxcbiAgeyBjb2RlOiBcIkRFXCIsIG5hbWU6IFwiRGVsYXdhcmVcIiB9LFxuICB7IGNvZGU6IFwiRkxcIiwgbmFtZTogXCJGbG9yaWRhXCIgfSxcbiAgeyBjb2RlOiBcIkdBXCIsIG5hbWU6IFwiR2VvcmdpYVwiIH0sXG4gIHsgY29kZTogXCJISVwiLCBuYW1lOiBcIkhhd2FpaVwiIH0sXG4gIHsgY29kZTogXCJJRFwiLCBuYW1lOiBcIklkYWhvXCIgfSxcbiAgeyBjb2RlOiBcIklMXCIsIG5hbWU6IFwiSWxsaW5vaXNcIiB9LFxuICB7IGNvZGU6IFwiSU5cIiwgbmFtZTogXCJJbmRpYW5hXCIgfSxcbiAgeyBjb2RlOiBcIklBXCIsIG5hbWU6IFwiSW93YVwiIH0sXG4gIHsgY29kZTogXCJLU1wiLCBuYW1lOiBcIkthbnNhc1wiIH0sXG4gIHsgY29kZTogXCJLWVwiLCBuYW1lOiBcIktlbnR1Y2t5XCIgfSxcbiAgeyBjb2RlOiBcIkxBXCIsIG5hbWU6IFwiTG91aXNpYW5hXCIgfSxcbiAgeyBjb2RlOiBcIk1FXCIsIG5hbWU6IFwiTWFpbmVcIiB9LFxuICB7IGNvZGU6IFwiTURcIiwgbmFtZTogXCJNYXJ5bGFuZFwiIH0sXG4gIHsgY29kZTogXCJNQVwiLCBuYW1lOiBcIk1hc3NhY2h1c2V0dHNcIiB9LFxuICB7IGNvZGU6IFwiTUlcIiwgbmFtZTogXCJNaWNoaWdhblwiIH0sXG4gIHsgY29kZTogXCJNTlwiLCBuYW1lOiBcIk1pbm5lc290YVwiIH0sXG4gIHsgY29kZTogXCJNU1wiLCBuYW1lOiBcIk1pc3Npc3NpcHBpXCIgfSxcbiAgeyBjb2RlOiBcIk1PXCIsIG5hbWU6IFwiTWlzc291cmlcIiB9LFxuICB7IGNvZGU6IFwiTVRcIiwgbmFtZTogXCJNb250YW5hXCIgfSxcbiAgeyBjb2RlOiBcIk5FXCIsIG5hbWU6IFwiTmVicmFza2FcIiB9LFxuICB7IGNvZGU6IFwiTlZcIiwgbmFtZTogXCJOZXZhZGFcIiB9LFxuICB7IGNvZGU6IFwiTkhcIiwgbmFtZTogXCJOZXcgSGFtcHNoaXJlXCIgfSxcbiAgeyBjb2RlOiBcIk5KXCIsIG5hbWU6IFwiTmV3IEplcnNleVwiIH0sXG4gIHsgY29kZTogXCJOTVwiLCBuYW1lOiBcIk5ldyBNZXhpY29cIiB9LFxuICB7IGNvZGU6IFwiTllcIiwgbmFtZTogXCJOZXcgWW9ya1wiIH0sXG4gIHsgY29kZTogXCJOQ1wiLCBuYW1lOiBcIk5vcnRoIENhcm9saW5hXCIgfSxcbiAgeyBjb2RlOiBcIk5EXCIsIG5hbWU6IFwiTm9ydGggRGFrb3RhXCIgfSxcbiAgeyBjb2RlOiBcIk9IXCIsIG5hbWU6IFwiT2hpb1wiIH0sXG4gIHsgY29kZTogXCJPS1wiLCBuYW1lOiBcIk9rbGFob21hXCIgfSxcbiAgeyBjb2RlOiBcIk9SXCIsIG5hbWU6IFwiT3JlZ29uXCIgfSxcbiAgeyBjb2RlOiBcIlBBXCIsIG5hbWU6IFwiUGVubnN5bHZhbmlhXCIgfSxcbiAgeyBjb2RlOiBcIlJJXCIsIG5hbWU6IFwiUmhvZGUgSXNsYW5kXCIgfSxcbiAgeyBjb2RlOiBcIlNDXCIsIG5hbWU6IFwiU291dGggQ2Fyb2xpbmFcIiB9LFxuICB7IGNvZGU6IFwiU0RcIiwgbmFtZTogXCJTb3V0aCBEYWtvdGFcIiB9LFxuICB7IGNvZGU6IFwiVE5cIiwgbmFtZTogXCJUZW5uZXNzZWVcIiB9LFxuICB7IGNvZGU6IFwiVFhcIiwgbmFtZTogXCJUZXhhc1wiIH0sXG4gIHsgY29kZTogXCJVVFwiLCBuYW1lOiBcIlV0YWhcIiB9LFxuICB7IGNvZGU6IFwiVlRcIiwgbmFtZTogXCJWZXJtb250XCIgfSxcbiAgeyBjb2RlOiBcIlZBXCIsIG5hbWU6IFwiVmlyZ2luaWFcIiB9LFxuICB7IGNvZGU6IFwiV0FcIiwgbmFtZTogXCJXYXNoaW5ndG9uXCIgfSxcbiAgeyBjb2RlOiBcIldWXCIsIG5hbWU6IFwiV2VzdCBWaXJnaW5pYVwiIH0sXG4gIHsgY29kZTogXCJXSVwiLCBuYW1lOiBcIldpc2NvbnNpblwiIH0sXG4gIHsgY29kZTogXCJXWVwiLCBuYW1lOiBcIld5b21pbmdcIiB9LFxuICB7IGNvZGU6IFwiRENcIiwgbmFtZTogXCJEaXN0cmljdCBvZiBDb2x1bWJpYVwiIH0sXG4gIHsgY29kZTogXCJQUlwiLCBuYW1lOiBcIlB1ZXJ0byBSaWNvXCIgfSxcbiAgeyBjb2RlOiBcIkdVXCIsIG5hbWU6IFwiR3VhbVwiIH0sXG4gIHsgY29kZTogXCJWSVwiLCBuYW1lOiBcIlUuUy4gVmlyZ2luIElzbGFuZHNcIiB9LFxuICB7IGNvZGU6IFwiQVNcIiwgbmFtZTogXCJBbWVyaWNhbiBTYW1vYVwiIH0sXG4gIHsgY29kZTogXCJNUFwiLCBuYW1lOiBcIk5vcnRoZXJuIE1hcmlhbmEgSXNsYW5kc1wiIH0sXG5dO1xuXG5jb25zdCBDT0RFX1NFVCA9IG5ldyBTZXQoVVNfU1RBVEVTLm1hcCgocykgPT4gcy5jb2RlKSk7XG5jb25zdCBOQU1FX1RPX0NPREUgPSBuZXcgTWFwKFVTX1NUQVRFUy5tYXAoKHMpID0+IFtzLm5hbWUudG9Mb3dlckNhc2UoKSwgcy5jb2RlXSkpO1xuXG4vKipcbiAqIE5vcm1hbGl6ZXMgYSBmcmVlLXRleHQgc3RhdGUgdmFsdWUgdG8gYSAyLWxldHRlciBVU1BTIGNvZGUsIG9yIGBudWxsYCB3aGVuIGl0XG4gKiBjYW5ub3QgYmUgcmVzb2x2ZWQgdW5hbWJpZ3VvdXNseSAoc2VsbGluZy1yZXN0cmljdGlvbnMgcGxhbiDCpzIuNTogdW5yZXNvbHZlZFxuICog4oeSIHRoZSBjYWxsZXIgdHJlYXRzIGl0IGFzIElOREVURVJNSU5BVEUsIG5ldmVyIGEgc2lsZW50bHktYXNzdW1lZCBzdGF0ZSkuXG4gKiBUcmltcyArIGNhc2UtZm9sZHM7IG1hdGNoZXMgYSBiYXJlIGNvZGUgKFwidHhcIiwgXCIgVFggXCIpIG9yIGEgZnVsbCBuYW1lXG4gKiAoXCJUZXhhc1wiLCBcIlRFWEFTXCIpLiBgXCJcImAsIGBcIlVua25vd25cImAsIGFuZCBhbnl0aGluZyBlbHNlIChlLmcuIFwiVGVqYXNcIikg4oeSIG51bGwuXG4gKlxuICogT1VUIE9GIFNDT1BFIEJZIERFU0lHTiAoZGVjaXNpb24gMjAyNi0wOS0xOSk6IHRoZSBtaWxpdGFyeSBwb3N0YWwgY29kZXMgQUEgLyBBRSAvIEFQIGFuZCB0aGVcbiAqIEZNIC8gTUggLyBQVyAvIFVNIGNvZGVzIGFyZSBkZWxpYmVyYXRlbHkgTk9UIGluIGBVU19TVEFURVNgLCBzbyBhbiBBUE8vRlBPIChvciBNaWNyb25lc2lhLFxuICogTWFyc2hhbGwgSXNsYW5kcywgUGFsYXUsIFUuUy4gbWlub3Igb3V0bHlpbmcgaXNsYW5kcykgYWRkcmVzcyBub3JtYWxpemVzIHRvIGBudWxsYCBhbmQgaXRzXG4gKiBnb3Zlcm5pbmcgc3RhdGUgc3RheXMgVU5SRVNPTFZFRCDih5IgSU5ERVRFUk1JTkFURS4gVGhhdCBpcyBmYWlsLWNsb3NlZCBvbiBwdXJwb3NlOiB0aGUgYWRkcmVzcyBpc1xuICogbGlzdGVkIGZvciByZXZpZXcsIG5ldmVyIHNpbGVudGx5IGFzc2lnbmVkIGEgc3RhdGUuIERvIG5vdCBhZGQgdGhlc2UgY29kZXMgd2l0aG91dCBhIHJ1bGluZyBvblxuICogd2hpY2gganVyaXNkaWN0aW9uJ3MgYmFuIGdvdmVybnMgdGhlbTsgYHVzLXN0YXRlcy5wYXJpdHkuc3BlYy50c2AgcGlucyB0aGUgY3VycmVudCBiZWhhdmlvdXIuXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiBub3JtYWxpemVVc1N0YXRlKGlucHV0OiBzdHJpbmcgfCBudWxsIHwgdW5kZWZpbmVkKTogc3RyaW5nIHwgbnVsbCB7XG4gIGlmIChpbnB1dCA9PSBudWxsKSByZXR1cm4gbnVsbDtcbiAgY29uc3QgdHJpbW1lZCA9IGlucHV0LnRyaW0oKTtcbiAgaWYgKHRyaW1tZWQgPT09IFwiXCIpIHJldHVybiBudWxsO1xuICBjb25zdCB1cHBlciA9IHRyaW1tZWQudG9VcHBlckNhc2UoKTtcbiAgaWYgKHVwcGVyLmxlbmd0aCA9PT0gMiAmJiBDT0RFX1NFVC5oYXModXBwZXIpKSByZXR1cm4gdXBwZXI7XG4gIGNvbnN0IGJ5TmFtZSA9IE5BTUVfVE9fQ09ERS5nZXQodHJpbW1lZC50b0xvd2VyQ2FzZSgpKTtcbiAgcmV0dXJuIGJ5TmFtZSA/PyBudWxsO1xufVxuIl0sIm5hbWVzIjpbIlVTX1NUQVRFUyIsIm5vcm1hbGl6ZVVzU3RhdGUiLCJjb2RlIiwibmFtZSIsIkNPREVfU0VUIiwiU2V0IiwibWFwIiwicyIsIk5BTUVfVE9fQ09ERSIsIk1hcCIsInRvTG93ZXJDYXNlIiwiaW5wdXQiLCJ0cmltbWVkIiwidHJpbSIsInVwcGVyIiwidG9VcHBlckNhc2UiLCJsZW5n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

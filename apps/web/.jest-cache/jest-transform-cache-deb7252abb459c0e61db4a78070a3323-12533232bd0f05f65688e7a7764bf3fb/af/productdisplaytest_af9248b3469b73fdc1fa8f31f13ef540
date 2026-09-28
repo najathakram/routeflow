@@ -1,0 +1,56 @@
+1b72b6e7b7e16dd76442b74c4c55a5f7
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _productdisplay = require("./product-display");
+describe("orderLineName — the composed name survives the read round-trip (order-ui spec §2, T5)", ()=>{
+    it("a catalog variant reads as '<Parent> - <Variant>', not the bare flavor", ()=>{
+        // What GET /orders/:id returns for a variant line once the select carries parent + variantName.
+        const line = {
+            product: {
+                name: "Strawberry Banana",
+                variantName: "Strawberry Banana",
+                parentProductId: "p-parent",
+                parent: {
+                    name: "Sample Pod"
+                }
+            },
+            name: null
+        };
+        expect((0, _productdisplay.orderLineName)(line)).toBe("Sample Pod - Strawberry Banana");
+        // …and it is exactly what the create flow showed while the order was being built.
+        expect((0, _productdisplay.orderLineName)(line)).toBe((0, _productdisplay.displayProductName)(line.product));
+    });
+    it("a variant whose parent was not loaded degrades to the bare variant name (old behaviour)", ()=>{
+        expect((0, _productdisplay.orderLineName)({
+            product: {
+                name: "Strawberry Banana",
+                variantName: "Strawberry Banana",
+                parentProductId: "p"
+            }
+        })).toBe("Strawberry Banana");
+    });
+    it("a standalone product returns its own name unchanged", ()=>{
+        expect((0, _productdisplay.orderLineName)({
+            product: {
+                name: "Sample Chips 1oz"
+            }
+        })).toBe("Sample Chips 1oz");
+    });
+    it("an ad-hoc line (no product) returns its free-text label", ()=>{
+        expect((0, _productdisplay.orderLineName)({
+            product: undefined,
+            name: "Delivery surcharge"
+        })).toBe("Delivery surcharge");
+    });
+    it("returns null when there is neither, so each caller keeps its own fallback", ()=>{
+        expect((0, _productdisplay.orderLineName)({})).toBeNull();
+        expect((0, _productdisplay.orderLineName)({
+            product: null,
+            name: null
+        })).toBeNull();
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2xpYi9wcm9kdWN0LWRpc3BsYXkudGVzdC50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgeyBkaXNwbGF5UHJvZHVjdE5hbWUsIG9yZGVyTGluZU5hbWUgfSBmcm9tIFwiLi9wcm9kdWN0LWRpc3BsYXlcIjtcblxuZGVzY3JpYmUoXCJvcmRlckxpbmVOYW1lIOKAlCB0aGUgY29tcG9zZWQgbmFtZSBzdXJ2aXZlcyB0aGUgcmVhZCByb3VuZC10cmlwIChvcmRlci11aSBzcGVjIMKnMiwgVDUpXCIsICgpID0+IHtcbiAgaXQoXCJhIGNhdGFsb2cgdmFyaWFudCByZWFkcyBhcyAnPFBhcmVudD4gLSA8VmFyaWFudD4nLCBub3QgdGhlIGJhcmUgZmxhdm9yXCIsICgpID0+IHtcbiAgICAvLyBXaGF0IEdFVCAvb3JkZXJzLzppZCByZXR1cm5zIGZvciBhIHZhcmlhbnQgbGluZSBvbmNlIHRoZSBzZWxlY3QgY2FycmllcyBwYXJlbnQgKyB2YXJpYW50TmFtZS5cbiAgICBjb25zdCBsaW5lID0ge1xuICAgICAgcHJvZHVjdDoge1xuICAgICAgICBuYW1lOiBcIlN0cmF3YmVycnkgQmFuYW5hXCIsXG4gICAgICAgIHZhcmlhbnROYW1lOiBcIlN0cmF3YmVycnkgQmFuYW5hXCIsXG4gICAgICAgIHBhcmVudFByb2R1Y3RJZDogXCJwLXBhcmVudFwiLFxuICAgICAgICBwYXJlbnQ6IHsgbmFtZTogXCJTYW1wbGUgUG9kXCIgfSxcbiAgICAgIH0sXG4gICAgICBuYW1lOiBudWxsLFxuICAgIH07XG4gICAgZXhwZWN0KG9yZGVyTGluZU5hbWUobGluZSkpLnRvQmUoXCJTYW1wbGUgUG9kIC0gU3RyYXdiZXJyeSBCYW5hbmFcIik7XG4gICAgLy8g4oCmYW5kIGl0IGlzIGV4YWN0bHkgd2hhdCB0aGUgY3JlYXRlIGZsb3cgc2hvd2VkIHdoaWxlIHRoZSBvcmRlciB3YXMgYmVpbmcgYnVpbHQuXG4gICAgZXhwZWN0KG9yZGVyTGluZU5hbWUobGluZSkpLnRvQmUoZGlzcGxheVByb2R1Y3ROYW1lKGxpbmUucHJvZHVjdCkpO1xuICB9KTtcblxuICBpdChcImEgdmFyaWFudCB3aG9zZSBwYXJlbnQgd2FzIG5vdCBsb2FkZWQgZGVncmFkZXMgdG8gdGhlIGJhcmUgdmFyaWFudCBuYW1lIChvbGQgYmVoYXZpb3VyKVwiLCAoKSA9PiB7XG4gICAgZXhwZWN0KFxuICAgICAgb3JkZXJMaW5lTmFtZSh7XG4gICAgICAgIHByb2R1Y3Q6IHtcbiAgICAgICAgICBuYW1lOiBcIlN0cmF3YmVycnkgQmFuYW5hXCIsXG4gICAgICAgICAgdmFyaWFudE5hbWU6IFwiU3RyYXdiZXJyeSBCYW5hbmFcIixcbiAgICAgICAgICBwYXJlbnRQcm9kdWN0SWQ6IFwicFwiLFxuICAgICAgICB9LFxuICAgICAgfSksXG4gICAgKS50b0JlKFwiU3RyYXdiZXJyeSBCYW5hbmFcIik7XG4gIH0pO1xuXG4gIGl0KFwiYSBzdGFuZGFsb25lIHByb2R1Y3QgcmV0dXJucyBpdHMgb3duIG5hbWUgdW5jaGFuZ2VkXCIsICgpID0+IHtcbiAgICBleHBlY3Qob3JkZXJMaW5lTmFtZSh7IHByb2R1Y3Q6IHsgbmFtZTogXCJTYW1wbGUgQ2hpcHMgMW96XCIgfSB9KSkudG9CZShcIlNhbXBsZSBDaGlwcyAxb3pcIik7XG4gIH0pO1xuXG4gIGl0KFwiYW4gYWQtaG9jIGxpbmUgKG5vIHByb2R1Y3QpIHJldHVybnMgaXRzIGZyZWUtdGV4dCBsYWJlbFwiLCAoKSA9PiB7XG4gICAgZXhwZWN0KG9yZGVyTGluZU5hbWUoeyBwcm9kdWN0OiB1bmRlZmluZWQsIG5hbWU6IFwiRGVsaXZlcnkgc3VyY2hhcmdlXCIgfSkpLnRvQmUoXG4gICAgICBcIkRlbGl2ZXJ5IHN1cmNoYXJnZVwiLFxuICAgICk7XG4gIH0pO1xuXG4gIGl0KFwicmV0dXJucyBudWxsIHdoZW4gdGhlcmUgaXMgbmVpdGhlciwgc28gZWFjaCBjYWxsZXIga2VlcHMgaXRzIG93biBmYWxsYmFja1wiLCAoKSA9PiB7XG4gICAgZXhwZWN0KG9yZGVyTGluZU5hbWUoe30pKS50b0JlTnVsbCgpO1xuICAgIGV4cGVjdChvcmRlckxpbmVOYW1lKHsgcHJvZHVjdDogbnVsbCwgbmFtZTogbnVsbCB9KSkudG9CZU51bGwoKTtcbiAgfSk7XG59KTtcbiJdLCJuYW1lcyI6WyJkZXNjcmliZSIsIml0IiwibGluZSIsInByb2R1Y3QiLCJuYW1lIiwidmFyaWFudE5hbWUiLCJwYXJlbnRQcm9kdWN0SWQiLCJwYXJlbnQiLCJleHBlY3QiLCJvcmRlckxpbmVOYW1lIiwidG9CZSIsImRpc3BsYXlQcm9kdWN0TmFtZSIsInVuZGVmaW5lZCIsInRvQmVOdWxsIl0sIm1hcHBpbmdzIjoiOzs7O2dDQUFrRDtBQUVsREEsU0FBUyx5RkFBeUY7SUFDaEdDLEdBQUcsMEVBQTBFO1FBQzNFLGdHQUFnRztRQUNoRyxNQUFNQyxPQUFPO1lBQ1hDLFNBQVM7Z0JBQ1BDLE1BQU07Z0JBQ05DLGFBQWE7Z0JBQ2JDLGlCQUFpQjtnQkFDakJDLFFBQVE7b0JBQUVILE1BQU07Z0JBQWE7WUFDL0I7WUFDQUEsTUFBTTtRQUNSO1FBQ0FJLE9BQU9DLElBQUFBLDZCQUFhLEVBQUNQLE9BQU9RLElBQUksQ0FBQztRQUNqQyxrRkFBa0Y7UUFDbEZGLE9BQU9DLElBQUFBLDZCQUFhLEVBQUNQLE9BQU9RLElBQUksQ0FBQ0MsSUFBQUEsa0NBQWtCLEVBQUNULEtBQUtDLE9BQU87SUFDbEU7SUFFQUYsR0FBRywyRkFBMkY7UUFDNUZPLE9BQ0VDLElBQUFBLDZCQUFhLEVBQUM7WUFDWk4sU0FBUztnQkFDUEMsTUFBTTtnQkFDTkMsYUFBYTtnQkFDYkMsaUJBQWlCO1lBQ25CO1FBQ0YsSUFDQUksSUFBSSxDQUFDO0lBQ1Q7SUFFQVQsR0FBRyx1REFBdUQ7UUFDeERPLE9BQU9DLElBQUFBLDZCQUFhLEVBQUM7WUFBRU4sU0FBUztnQkFBRUMsTUFBTTtZQUFtQjtRQUFFLElBQUlNLElBQUksQ0FBQztJQUN4RTtJQUVBVCxHQUFHLDJEQUEyRDtRQUM1RE8sT0FBT0MsSUFBQUEsNkJBQWEsRUFBQztZQUFFTixTQUFTUztZQUFXUixNQUFNO1FBQXFCLElBQUlNLElBQUksQ0FDNUU7SUFFSjtJQUVBVCxHQUFHLDZFQUE2RTtRQUM5RU8sT0FBT0MsSUFBQUEsNkJBQWEsRUFBQyxDQUFDLElBQUlJLFFBQVE7UUFDbENMLE9BQU9DLElBQUFBLDZCQUFhLEVBQUM7WUFBRU4sU0FBUztZQUFNQyxNQUFNO1FBQUssSUFBSVMsUUFBUTtJQUMvRDtBQUNGIn0=

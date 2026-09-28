@@ -1,0 +1,21 @@
+a3d55b31a4a4a89e3c002b334e8a8914
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+/**
+ * B4: `canRecordPayment` allow-list, mirroring web's gate exactly
+ * (invoices/[id]/page.tsx). The server only rejects VOID, so a bare
+ * "not paid, not void" gate used to offer "Record payment" on DRAFT and
+ * WRITTEN_OFF too — the POST succeeds, but `recomputeStatus` treats DRAFT as
+ * terminal, so a fully-paid invoice stays DRAFT and drops out of AR/aging.
+ * See `invoice-actions.test.ts` for the rest of this module's gates.
+ */
+const invoices_logic_1 = require("../lib/invoices-logic");
+describe("canRecordPayment", () => {
+    it.each(["DRAFT", "WRITTEN_OFF", "VOID", "PAID"])("%s → false", (status) => {
+        expect((0, invoices_logic_1.canRecordPayment)(status)).toBe(false);
+    });
+    it.each(["SENT", "VIEWED", "PARTIAL", "OVERDUE"])("%s → true", (status) => {
+        expect((0, invoices_logic_1.canRecordPayment)(status)).toBe(true);
+    });
+});
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvX190ZXN0c19fL2ludm9pY2VzLWxvZ2ljLnRlc3QudHMiLCJtYXBwaW5ncyI6Ijs7QUFBQTs7Ozs7OztHQU9HO0FBQ0gsMERBQXlEO0FBRXpELFFBQVEsQ0FBQyxrQkFBa0IsRUFBRSxHQUFHLEVBQUU7SUFDaEMsRUFBRSxDQUFDLElBQUksQ0FBQyxDQUFDLE9BQU8sRUFBRSxhQUFhLEVBQUUsTUFBTSxFQUFFLE1BQU0sQ0FBQyxDQUFDLENBQUMsWUFBWSxFQUFFLENBQUMsTUFBTSxFQUFFLEVBQUU7UUFDekUsTUFBTSxDQUFDLElBQUEsaUNBQWdCLEVBQUMsTUFBTSxDQUFDLENBQUMsQ0FBQyxJQUFJLENBQUMsS0FBSyxDQUFDLENBQUM7SUFDL0MsQ0FBQyxDQUFDLENBQUM7SUFFSCxFQUFFLENBQUMsSUFBSSxDQUFDLENBQUMsTUFBTSxFQUFFLFFBQVEsRUFBRSxTQUFTLEVBQUUsU0FBUyxDQUFDLENBQUMsQ0FBQyxXQUFXLEVBQUUsQ0FBQyxNQUFNLEVBQUUsRUFBRTtRQUN4RSxNQUFNLENBQUMsSUFBQSxpQ0FBZ0IsRUFBQyxNQUFNLENBQUMsQ0FBQyxDQUFDLElBQUksQ0FBQyxJQUFJLENBQUMsQ0FBQztJQUM5QyxDQUFDLENBQUMsQ0FBQztBQUNMLENBQUMsQ0FBQyxDQUFDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvbW9iaWxlL19fdGVzdHNfXy9pbnZvaWNlcy1sb2dpYy50ZXN0LnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogQjQ6IGBjYW5SZWNvcmRQYXltZW50YCBhbGxvdy1saXN0LCBtaXJyb3Jpbmcgd2ViJ3MgZ2F0ZSBleGFjdGx5XG4gKiAoaW52b2ljZXMvW2lkXS9wYWdlLnRzeCkuIFRoZSBzZXJ2ZXIgb25seSByZWplY3RzIFZPSUQsIHNvIGEgYmFyZVxuICogXCJub3QgcGFpZCwgbm90IHZvaWRcIiBnYXRlIHVzZWQgdG8gb2ZmZXIgXCJSZWNvcmQgcGF5bWVudFwiIG9uIERSQUZUIGFuZFxuICogV1JJVFRFTl9PRkYgdG9vIOKAlCB0aGUgUE9TVCBzdWNjZWVkcywgYnV0IGByZWNvbXB1dGVTdGF0dXNgIHRyZWF0cyBEUkFGVCBhc1xuICogdGVybWluYWwsIHNvIGEgZnVsbHktcGFpZCBpbnZvaWNlIHN0YXlzIERSQUZUIGFuZCBkcm9wcyBvdXQgb2YgQVIvYWdpbmcuXG4gKiBTZWUgYGludm9pY2UtYWN0aW9ucy50ZXN0LnRzYCBmb3IgdGhlIHJlc3Qgb2YgdGhpcyBtb2R1bGUncyBnYXRlcy5cbiAqL1xuaW1wb3J0IHsgY2FuUmVjb3JkUGF5bWVudCB9IGZyb20gXCIuLi9saWIvaW52b2ljZXMtbG9naWNcIjtcblxuZGVzY3JpYmUoXCJjYW5SZWNvcmRQYXltZW50XCIsICgpID0+IHtcbiAgaXQuZWFjaChbXCJEUkFGVFwiLCBcIldSSVRURU5fT0ZGXCIsIFwiVk9JRFwiLCBcIlBBSURcIl0pKFwiJXMg4oaSIGZhbHNlXCIsIChzdGF0dXMpID0+IHtcbiAgICBleHBlY3QoY2FuUmVjb3JkUGF5bWVudChzdGF0dXMpKS50b0JlKGZhbHNlKTtcbiAgfSk7XG5cbiAgaXQuZWFjaChbXCJTRU5UXCIsIFwiVklFV0VEXCIsIFwiUEFSVElBTFwiLCBcIk9WRVJEVUVcIl0pKFwiJXMg4oaSIHRydWVcIiwgKHN0YXR1cykgPT4ge1xuICAgIGV4cGVjdChjYW5SZWNvcmRQYXltZW50KHN0YXR1cykpLnRvQmUodHJ1ZSk7XG4gIH0pO1xufSk7XG4iXSwidmVyc2lvbiI6M30=

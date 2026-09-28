@@ -1,0 +1,18 @@
+61d7e08a4ee488b798a679bfe646e8c1
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.isArrayEqual = isArrayEqual;
+/**
+ * Compare two arrays with primitive values as the content.
+ * We need to make sure that both values and order match.
+ */
+function isArrayEqual(a, b) {
+    if (a === b) {
+        return true;
+    }
+    if (a.length !== b.length) {
+        return false;
+    }
+    return a.every((it, index) => Object.is(it, b[index]));
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0Mzcvbm9kZV9tb2R1bGVzL0ByZWFjdC1uYXZpZ2F0aW9uL2NvcmUvbGliL21vZHVsZS9pc0FycmF5RXF1YWwuanMiLCJtYXBwaW5ncyI6IkFBQUEsWUFBWSxDQUFDOztBQU1iLG9DQVFDO0FBWkQ7OztHQUdHO0FBQ0gsU0FBZ0IsWUFBWSxDQUFDLENBQUMsRUFBRSxDQUFDO0lBQy9CLElBQUksQ0FBQyxLQUFLLENBQUMsRUFBRSxDQUFDO1FBQ1osT0FBTyxJQUFJLENBQUM7SUFDZCxDQUFDO0lBQ0QsSUFBSSxDQUFDLENBQUMsTUFBTSxLQUFLLENBQUMsQ0FBQyxNQUFNLEVBQUUsQ0FBQztRQUMxQixPQUFPLEtBQUssQ0FBQztJQUNmLENBQUM7SUFDRCxPQUFPLENBQUMsQ0FBQyxLQUFLLENBQUMsQ0FBQyxFQUFFLEVBQUUsS0FBSyxFQUFFLEVBQUUsQ0FBQyxNQUFNLENBQUMsRUFBRSxDQUFDLEVBQUUsRUFBRSxDQUFDLENBQUMsS0FBSyxDQUFDLENBQUMsQ0FBQyxDQUFDO0FBQ3pELENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0Mzcvbm9kZV9tb2R1bGVzL0ByZWFjdC1uYXZpZ2F0aW9uL2NvcmUvbGliL21vZHVsZS9pc0FycmF5RXF1YWwuanMiXSwic291cmNlc0NvbnRlbnQiOlsiXCJ1c2Ugc3RyaWN0XCI7XG5cbi8qKlxuICogQ29tcGFyZSB0d28gYXJyYXlzIHdpdGggcHJpbWl0aXZlIHZhbHVlcyBhcyB0aGUgY29udGVudC5cbiAqIFdlIG5lZWQgdG8gbWFrZSBzdXJlIHRoYXQgYm90aCB2YWx1ZXMgYW5kIG9yZGVyIG1hdGNoLlxuICovXG5leHBvcnQgZnVuY3Rpb24gaXNBcnJheUVxdWFsKGEsIGIpIHtcbiAgaWYgKGEgPT09IGIpIHtcbiAgICByZXR1cm4gdHJ1ZTtcbiAgfVxuICBpZiAoYS5sZW5ndGggIT09IGIubGVuZ3RoKSB7XG4gICAgcmV0dXJuIGZhbHNlO1xuICB9XG4gIHJldHVybiBhLmV2ZXJ5KChpdCwgaW5kZXgpID0+IE9iamVjdC5pcyhpdCwgYltpbmRleF0pKTtcbn1cbi8vIyBzb3VyY2VNYXBwaW5nVVJMPWlzQXJyYXlFcXVhbC5qcy5tYXAiXSwidmVyc2lvbiI6M30=

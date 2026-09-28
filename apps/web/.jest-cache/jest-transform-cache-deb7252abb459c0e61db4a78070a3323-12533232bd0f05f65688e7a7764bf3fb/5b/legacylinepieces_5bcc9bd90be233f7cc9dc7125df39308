@@ -1,0 +1,135 @@
+f62934f17deec292a8a6b9e582ae1a14
+"use strict";
+/**
+ * The classifier for a STORED line whose own split may be missing (the box-unaware convention
+ * this design retires — #938, 2026-09-21). Ruled once by the Senior Architect, with a HOLD round
+ * fixing the ruling itself (non-boxed lines flooding `unknown`, a partial matching a source's
+ * `boxes` by coincidence, a loose-pieces source, `Decimal` inputs). Signature and evidence order
+ * are canonical — any caller (B661's write refusal, B646's read path, the history report)
+ * imports THIS, never re-derives a piece count itself. `apps/api`'s
+ * `no-second-legacy-line-pieces.spec.ts` fails the build if a second implementation appears.
+ *
+ * NEVER multiplies a qty by a product's `unitsPerBox` — a product's pack size can change after
+ * the sale, so that would silently misclassify an old row with today's size. `productPackNow` is
+ * consulted as a GATE only (is the product boxed AT ALL today, so a bare qty is plausibly already
+ * pieces), never as a multiplier. `unknown` is a first-class result: a caller REFUSES or FLAGS on
+ * it, never defaults to a guessed number.
+ *
+ * Every numeric field is compared through `Number()` with a finite check — a Prisma `Decimal`
+ * compared with `===` against a plain `number` is always `false`, which used to fail safe (every
+ * row became `unknown`) but silently, for every caller. Callers should still pass plain numbers;
+ * this only guards against one that forgets.
+ *
+ * Evidence, in order:
+ *   (a) the line itself carries a split (`boxes` or `pieces` given) — its `qty` is already
+ *       pieces. basis `"split"`.
+ *   (b) `sourceLine` is given, is for the SAME PRODUCT and the SAME RECORD as `line` (verifying
+ *       that is the CALLER's job — `opts.relation` states which; this function trusts whichever
+ *       `sourceLine` it's given) and carries a split:
+ *       - `opts.relation === "full"` (a line against the ONE line it was copied from whole — an
+ *         order line against its own InvoiceItem, an estimate line against its own invoice line;
+ *         SIBLING lines are never a source):
+ *           - `line.qty === sourceLine.boxes`, `!== sourceLine.qty`, AND the source has NO loose
+ *             pieces (`sourceLine.pieces` null or 0) — the line's `qty` was a BOX count copied
+ *             from the source. `pieces = sourceLine.qty`. basis `"source-boxes"`. A source WITH
+ *             loose pieces is excluded: a box-count copy of "2 boxes + 3 loose" losing the split
+ *             would have lost the 3 loose pieces too, so a coincidental `qty === boxes` there is
+ *             NOT evidence of a copy — it's just as likely a genuine, unrelated 2-piece sale.
+ *           - `line.qty === sourceLine.qty` — the line's `qty` was already a piece count, copied
+ *             straight through. `pieces = line.qty`. basis `"source-pieces"`. (A tie between the
+ *             two conditions above resolves HERE, never `"source-boxes"`.)
+ *       - `opts.relation` omitted or `"partial"` (the SAFE default — a partial invoice/return
+ *         against a bigger order line, where `qty` coincidentally matching the source's `boxes`
+ *         is a real, observed false-positive shape [B660]): ONLY `line.qty === sourceLine.qty`
+ *         may fire (basis `"source-pieces"`) — the box-count inference is disabled entirely,
+ *         because a partial's `qty` has no reason to equal the FULL source's box count except
+ *         coincidence.
+ *       - neither condition holds — `unknown`.
+ *   (c) NO usable source (missing, or itself has no split) — falls back to `opts.productPackNow`:
+ *       if given and NOT boxed now (`<= 1` / a product that exists but has no box size),
+ *       `pieces = line.qty`, basis `"non-boxed-now"` (weaker evidence than the others — an
+ *       ordinary never-boxed product's line has no split and usually no usable source either,
+ *       and defaulting those to `unknown` would flood every consumer with false negatives). If
+ *       `productPackNow` is boxed now, or wasn't given at all, this fallback does not apply —
+ *       `unknown`. Gated on the source having NO split (not merely "didn't match"): a source WITH
+ *       a split proves the product WAS boxed when it sold, so a non-boxed pack size today means
+ *       the pack changed after the sale — exactly the case the live product must not decide.
+ *       That stays `unknown`, never `"non-boxed-now"`, even with a matching `productPackNow`.
+ */ Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+exports.legacyLinePieces = legacyLinePieces;
+/** `Number()` with a finite check — `null` for anything that isn't a real, usable number
+ * (including a `Decimal`/string that doesn't parse, `null`, `undefined`, `NaN`, `Infinity`). */ function finiteNumber(v) {
+    if (v == null) return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+}
+function legacyLinePieces(line, sourceLine, opts) {
+    const lineQty = finiteNumber(line.qty);
+    if (lineQty == null) {
+        return {
+            unknown: true,
+            reason: `line qty (${line.qty}) is not a usable number`
+        };
+    }
+    if (line.boxes != null || line.pieces != null) {
+        return {
+            pieces: lineQty,
+            basis: "split"
+        };
+    }
+    const relation = opts?.relation ?? "partial";
+    const sourceHasSplit = sourceLine != null && (sourceLine.boxes != null || sourceLine.pieces != null);
+    if (sourceHasSplit) {
+        const srcQty = finiteNumber(sourceLine.qty);
+        const srcBoxes = finiteNumber(sourceLine.boxes);
+        const srcPieces = finiteNumber(sourceLine.pieces);
+        if (srcQty != null) {
+            if (relation === "full" && srcBoxes != null && lineQty === srcBoxes && lineQty !== srcQty && (srcPieces == null || srcPieces === 0)) {
+                return {
+                    pieces: srcQty,
+                    basis: "source-boxes"
+                };
+            }
+            if (lineQty === srcQty) {
+                return {
+                    pieces: lineQty,
+                    basis: "source-pieces"
+                };
+            }
+        }
+    }
+    // Opt-in only: an OMITTED productPackNow means the caller didn't check (or the product wasn't
+    // found), so this must not silently apply — only an explicitly supplied value counts as
+    // evidence. Gated on the SOURCE having no split: a source WITH a split proves the product was
+    // boxed when it sold, so a non-boxed pack size today is a pack change, not proof the line was
+    // always sold loose — the live product must not override that.
+    if (opts?.productPackNow !== undefined && !sourceHasSplit) {
+        const packNow = finiteNumber(opts.productPackNow);
+        if (!(packNow != null && packNow > 1)) {
+            return {
+                pieces: lineQty,
+                basis: "non-boxed-now"
+            };
+        }
+    }
+    if (sourceLine == null) {
+        return {
+            unknown: true,
+            reason: "no split on the line and no source line to check against"
+        };
+    }
+    if (!sourceHasSplit) {
+        return {
+            unknown: true,
+            reason: "no split on the line, and the source line has no split either"
+        };
+    }
+    return {
+        unknown: true,
+        reason: relation === "partial" ? `line qty (${line.qty}) does not match the source's qty (${sourceLine.qty}) — a partial can only match by qty, never by boxes` : `line qty (${line.qty}) matches neither the source's boxes (${sourceLine.boxes}) nor its qty (${sourceLine.qty})`
+    };
+} //# sourceMappingURL=legacy-line-pieces.js.map
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoibGVnYWN5LWxpbmUtcGllY2VzLmpzIiwic291cmNlcyI6WyIuLi9zcmMvbGVnYWN5LWxpbmUtcGllY2VzLnRzIl0sInNvdXJjZVJvb3QiOiIiLCJuYW1lcyI6W10sIm1hcHBpbmdzIjoiO0FBQUE7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7R0F1REc7OztBQTBDSCxRQUFBLGdCQUFBLEdBQUEsaUJBbUVDO0FBM0VEO2dHQUNnRyxDQUNoRyxTQUFTLFlBQVksQ0FBQyxDQUFVO0lBQzlCLElBQUksQ0FBQyxJQUFJLElBQUksRUFBRSxPQUFPLElBQUksQ0FBQztJQUMzQixNQUFNLENBQUMsR0FBRyxNQUFNLENBQUMsQ0FBQyxDQUFDLENBQUM7SUFDcEIsT0FBTyxNQUFNLENBQUMsUUFBUSxDQUFDLENBQUMsQ0FBQyxDQUFDLENBQUMsQ0FBQyxDQUFDLENBQUMsQ0FBQyxDQUFDLElBQUksQ0FBQztBQUN2QyxDQUFDO0FBRUQsU0FBZ0IsZ0JBQWdCLENBQzlCLElBQWdCLEVBQ2hCLFVBQThCLEVBQzlCLElBQThCO0lBRTlCLE1BQU0sT0FBTyxHQUFHLFlBQVksQ0FBQyxJQUFJLENBQUMsR0FBRyxDQUFDLENBQUM7SUFDdkMsSUFBSSxPQUFPLElBQUksSUFBSSxFQUFFLENBQUM7UUFDcEIsT0FBTztZQUFFLE9BQU8sRUFBRSxJQUFJO1lBQUUsTUFBTSxFQUFFLENBQUEsVUFBQSxFQUFhLElBQUksQ0FBQyxHQUFHLENBQUEsd0JBQUEsQ0FBMEI7UUFBQSxDQUFFLENBQUM7SUFDcEYsQ0FBQztJQUVELElBQUksSUFBSSxDQUFDLEtBQUssSUFBSSxJQUFJLElBQUksSUFBSSxDQUFDLE1BQU0sSUFBSSxJQUFJLEVBQUUsQ0FBQztRQUM5QyxPQUFPO1lBQUUsTUFBTSxFQUFFLE9BQU87WUFBRSxLQUFLLEVBQUUsT0FBTztRQUFBLENBQUUsQ0FBQztJQUM3QyxDQUFDO0lBRUQsTUFBTSxRQUFRLEdBQUcsSUFBSSxFQUFFLFFB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

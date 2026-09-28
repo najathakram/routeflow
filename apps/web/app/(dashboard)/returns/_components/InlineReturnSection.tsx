@@ -17,6 +17,7 @@ import { useScanCodeHandler } from "../../orders/_components/scan/useScanCodeHan
 import { useOrder } from "@/lib/api/orders";
 import { useProducts } from "@/lib/api/products";
 import { useInlineReturnQuote } from "@/lib/api/inline-returns";
+import { useOptionalAuth } from "@/lib/auth-context";
 import type {
   InlineReturnQuoteChunk,
   InlineReturnQuoteResponse,
@@ -26,7 +27,11 @@ import {
   applyCoveredPiecesToLines,
   applyReturnScan,
   buildQuoteRequest,
+  canOverrideReturnCredit,
   canReturnOnlyPurchased,
+  CREDIT_OVERRIDE_REASON_MAX,
+  creditOverrideNote,
+  creditOverrideProblem,
   DEFAULT_EXCESS_OPTION,
   dropExcessAndRequote,
   extractRefusalMessage,
@@ -117,6 +122,8 @@ export function InlineReturnSection({
   const [productSearch, setProductSearch] = React.useState("");
 
   const quoteMutation = useInlineReturnQuote();
+  // #2695 (SA-557): staff only — the server refuses the fields from anyone else with a 400.
+  const canOverrideCredit = canOverrideReturnCredit(useOptionalAuth()?.user?.role);
 
   const { data: productResults } = useProducts(
     { search: productSearch, limit: 10 },
@@ -250,7 +257,7 @@ export function InlineReturnSection({
     const previousOption = excessOption;
     setExcessOption(option);
     if (option !== "RETURN_ONLY_PURCHASED" || !quote) return;
-    quoteMutation.mutate(dropExcessAndRequote(customerId, quote), {
+    quoteMutation.mutate(dropExcessAndRequote(customerId, quote, undefined, lines), {
       onSuccess: (data) => {
         setQuote(data);
         // Cast is safe: applyCoveredPiecesToLines spreads each input line into its output, so a
@@ -275,7 +282,8 @@ export function InlineReturnSection({
   const excessTotals = sumChunkTotals(excess);
   const onlyBoughtPossible = quote ? canReturnOnlyPurchased(quote) : false;
   const notBoughtBefore = quote && onlyBoughtPossible ? notBoughtBeforeNames(quote, lines) : [];
-  const canGetQuote = hasAnyQtyEntered(lines) && getQuoteEnabled;
+  const overrideProblem = creditOverrideProblem(lines);
+  const canGetQuote = hasAnyQtyEntered(lines) && getQuoteEnabled && overrideProblem === null;
 
   if (hidden) return null;
 
@@ -359,6 +367,30 @@ export function InlineReturnSection({
                         onChange={(e) => updateLine(line.lineKey, { note: e.target.value })}
                       />
                     </div>
+                    {canOverrideCredit && (
+                      <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[10rem_1fr]">
+                        <Input
+                          label={
+                            boxed ? "Credit price per box (optional)" : "Credit price (optional)"
+                          }
+                          type="text"
+                          inputMode="decimal"
+                          placeholder="Quoted price"
+                          value={line.creditUnitPrice ?? ""}
+                          onChange={(e) =>
+                            updateLine(line.lineKey, { creditUnitPrice: e.target.value })
+                          }
+                        />
+                        <Input
+                          label="Why the lower price"
+                          maxLength={CREDIT_OVERRIDE_REASON_MAX}
+                          value={line.overrideReason ?? ""}
+                          onChange={(e) =>
+                            updateLine(line.lineKey, { overrideReason: e.target.value })
+                          }
+                        />
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -432,6 +464,7 @@ export function InlineReturnSection({
             options={[{ value: "", label: "Select a reason…" }, ...REASON_OPTIONS]}
           />
 
+          {overrideProblem && <p className="text-sm text-danger">{overrideProblem}</p>}
           {quoteError && <p className="text-sm text-danger">{quoteError}</p>}
 
           <div className="flex justify-end gap-2">
@@ -472,6 +505,9 @@ export function InlineReturnSection({
                 {excess.reduce((s, c) => s + c.pieces, 0)} piece(s) priced at the customer&apos;s
                 current price.
               </p>
+              {excess.map((c, i) => (
+                <CreditOverrideNote key={`excess-override-${i}`} chunk={c} />
+              ))}
               <div className="mt-2 space-y-1 text-sm text-navy">
                 <div className="flex justify-between">
                   <span>Net</span>
@@ -585,6 +621,13 @@ function CoveredChunkRow({ chunk }: { chunk: InlineReturnQuoteChunk }) {
         <span>Tax {money(chunk.taxAmount)}</span>
         {chunk.categoryTax > 0 && <span>Levy {money(chunk.categoryTax)}</span>}
       </div>
+      <CreditOverrideNote chunk={chunk} />
     </div>
   );
+}
+
+/** #2695: a lowered credit, shown as the server priced it — the default it replaced, and why. */
+function CreditOverrideNote({ chunk }: { chunk: InlineReturnQuoteChunk }) {
+  const note = creditOverrideNote(chunk, money);
+  return note ? <p className="mt-1 text-xs text-navy/70">{note}</p> : null;
 }

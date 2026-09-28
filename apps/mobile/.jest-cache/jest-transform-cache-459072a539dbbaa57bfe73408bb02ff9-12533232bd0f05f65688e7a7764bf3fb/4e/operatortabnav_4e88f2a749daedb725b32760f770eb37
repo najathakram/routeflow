@@ -1,0 +1,46 @@
+48524ea550fbef4e592386ed4cd915ef
+"use strict";
+/**
+ * Navigation-state walk backing the bottom nav's pop-to-root behaviour.
+ *
+ * Pressing a tab has always returned that tab to its root rather than restoring
+ * the sub-screen you were last on ("when I go to home and press orders again,
+ * still goes to where it was before"). That used to be a `tabPress` listener in
+ * `(tabs)/_layout.tsx`, but `tabPress` is only emitted by the tab bar itself —
+ * and the bar now lives outside the navigator. So the bar has to find the tab's
+ * nested stack and pop it directly.
+ *
+ * Pure so it can be tested; mobile Jest is node-only with no renderer.
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.findDeepTabStackKey = findDeepTabStackKey;
+function findTabRoute(node, tab) {
+    const n = node;
+    if (!n?.routes)
+        return null;
+    if (n.type === "tab") {
+        const hit = n.routes.find((r) => r.name === tab);
+        if (hit)
+            return hit;
+    }
+    for (const r of n.routes) {
+        const deeper = findTabRoute(r.state, tab);
+        if (deeper)
+            return deeper;
+    }
+    return null;
+}
+/**
+ * Key of `tab`'s nested stack, but only when it is deeper than its root — so the
+ * caller can dispatch a targeted `popToTop` at it. Returns null when the tab is
+ * already at its root, is a leaf with no nested navigator, or has never been
+ * visited (tab screens are lazy, so unvisited routes carry no `state`).
+ */
+function findDeepTabStackKey(rootState, tab) {
+    const found = findTabRoute(rootState, tab);
+    const inner = found?.state;
+    if (!inner?.key)
+        return null;
+    return (inner.index ?? 0) > 0 ? inner.key : null;
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL29wZXJhdG9yLXRhYi1uYXYudHMiLCJtYXBwaW5ncyI6IjtBQUFBOzs7Ozs7Ozs7OztHQVdHOztBQTZCSCxrREFLQztBQXpCRCxTQUFTLFlBQVksQ0FBQyxJQUFhLEVBQUUsR0FBVztJQUM5QyxNQUFNLENBQUMsR0FBRyxJQUFrQyxDQUFDO0lBQzdDLElBQUksQ0FBQyxDQUFDLEVBQUUsTUFBTTtRQUFFLE9BQU8sSUFBSSxDQUFDO0lBQzVCLElBQUksQ0FBQyxDQUFDLElBQUksS0FBSyxLQUFLLEVBQUUsQ0FBQztRQUNyQixNQUFNLEdBQUcsR0FBRyxDQUFDLENBQUMsTUFBTSxDQUFDLElBQUksQ0FBQyxDQUFDLENBQUMsRUFBRSxFQUFFLENBQUMsQ0FBQyxDQUFDLElBQUksS0FBSyxHQUFHLENBQUMsQ0FBQztRQUNqRCxJQUFJLEdBQUc7WUFBRSxPQUFPLEdBQUcsQ0FBQztJQUN0QixDQUFDO0lBQ0QsS0FBSyxNQUFNLENBQUMsSUFBSSxDQUFDLENBQUMsTUFBTSxFQUFFLENBQUM7UUFDekIsTUFBTSxNQUFNLEdBQUcsWUFBWSxDQUFDLENBQUMsQ0FBQyxLQUFLLEVBQUUsR0FBRyxDQUFDLENBQUM7UUFDMUMsSUFBSSxNQUFNO1lBQUUsT0FBTyxNQUFNLENBQUM7SUFDNUIsQ0FBQztJQUNELE9BQU8sSUFBSSxDQUFDO0FBQ2QsQ0FBQztBQUVEOzs7OztHQUtHO0FBQ0gsU0FBZ0IsbUJBQW1CLENBQUMsU0FBa0IsRUFBRSxHQUFXO0lBQ2pFLE1BQU0sS0FBSyxHQUFHLFlBQVksQ0FBQyxTQUFTLEVBQUUsR0FBRyxDQUFDLENBQUM7SUFDM0MsTUFBTSxLQUFLLEdBQUcsS0FBSyxFQUFFLEtBQTRCLENBQUM7SUFDbEQsSUFBSSxDQUFDLEtBQUssRUFBRSxHQUFHO1FBQUUsT0FBTyxJQUFJLENBQUM7SUFDN0IsT0FBTyxDQUFDLEtBQUssQ0FBQyxLQUFLLElBQUksQ0FBQyxDQUFDLEdBQUcsQ0FBQyxDQUFDLENBQUMsQ0FBQyxLQUFLLENBQUMsR0FBRyxDQUFDLENBQUMsQ0FBQyxJQUFJLENBQUM7QUFDbkQsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9hcHBzL21vYmlsZS9saWIvb3BlcmF0b3ItdGFiLW5hdi50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqIE5hdmlnYXRpb24tc3RhdGUgd2FsayBiYWNraW5nIHRoZSBib3R0b20gbmF2J3MgcG9wLXRvLXJvb3QgYmVoYXZpb3VyLlxuICpcbiAqIFByZXNzaW5nIGEgdGFiIGhhcyBhbHdheXMgcmV0dXJuZWQgdGhhdCB0YWIgdG8gaXRzIHJvb3QgcmF0aGVyIHRoYW4gcmVzdG9yaW5nXG4gKiB0aGUgc3ViLXNjcmVlbiB5b3Ugd2VyZSBsYXN0IG9uIChcIndoZW4gSSBnbyB0byBob21lIGFuZCBwcmVzcyBvcmRlcnMgYWdhaW4sXG4gKiBzdGlsbCBnb2VzIHRvIHdoZXJlIGl0IHdhcyBiZWZvcmVcIikuIFRoYXQgdXNlZCB0byBiZSBhIGB0YWJQcmVzc2AgbGlzdGVuZXIgaW5cbiAqIGAodGFicykvX2xheW91dC50c3hgLCBidXQgYHRhYlByZXNzYCBpcyBvbmx5IGVtaXR0ZWQgYnkgdGhlIHRhYiBiYXIgaXRzZWxmIOKAlFxuICogYW5kIHRoZSBiYXIgbm93IGxpdmVzIG91dHNpZGUgdGhlIG5hdmlnYXRvci4gU28gdGhlIGJhciBoYXMgdG8gZmluZCB0aGUgdGFiJ3NcbiAqIG5lc3RlZCBzdGFjayBhbmQgcG9wIGl0IGRpcmVjdGx5LlxuICpcbiAqIFB1cmUgc28gaXQgY2FuIGJlIHRlc3RlZDsgbW9iaWxlIEplc3QgaXMgbm9kZS1vbmx5IHdpdGggbm8gcmVuZGVyZXIuXG4gKi9cblxuaW50ZXJmYWNlIE5hdk5vZGUge1xuICB0eXBlPzogc3RyaW5nO1xuICBpbmRleD86IG51bWJlcjtcbiAga2V5Pzogc3RyaW5nO1xuICByb3V0ZXM/OiBSZWFkb25seUFycmF5PHsgbmFtZT86IHN0cmluZzsgc3RhdGU/OiB1bmtub3duIH0+O1xufVxuXG5mdW5jdGlvbiBmaW5kVGFiUm91dGUobm9kZTogdW5rbm93biwgdGFiOiBzdHJpbmcpOiB7IHN0YXRlPzogdW5rbm93biB9IHwgbnVsbCB7XG4gIGNvbnN0IG4gPSBub2RlIGFzIE5hdk5vZGUgfCBudWxsIHwgdW5kZWZpbmVkO1xuICBpZiAoIW4/LnJvdXRlcykgcmV0dXJuIG51bGw7XG4gIGlmIChuLnR5cGUgPT09IFwidGFiXCIpIHtcbiAgICBjb25zdCBoaXQgPSBuLnJvdXRlcy5maW5kKChyKSA9PiByLm5hbWUgPT09IHRhYik7XG4gICAgaWYgKGhpdCkgcmV0dXJuIGhpdDtcbiAgfVxuICBmb3IgKGNvbnN0IHIgb2Ygbi5yb3V0ZXMpIHtcbiAgICBjb25zdCBkZWVwZXIgPSBmaW5kVGFiUm91dGUoci5zdGF0ZSwgdGFiKTtcbiAgICBpZiAoZGVlcGVyKSByZXR1cm4gZGVlcGVyO1xuICB9XG4gIHJldHVybiBudWxsO1xufVxuXG4vKipcbiAqIEtleSBvZiBgdGFiYCdzIG5lc3RlZCBzdGFjaywgYnV0IG9ubHkgd2hlbiBpdCBpcyBkZWVwZXIgdGhhbiBpdHMgcm9vdCDigJQgc28gdGhlXG4gKiBjYWxsZXIgY2FuIGRpc3BhdGNoIGEgdGFyZ2V0ZWQgYHBvcFRvVG9wYCBhdCBpdC4gUmV0dXJucyBudWxsIHdoZW4gdGhlIHRhYiBpc1xuICogYWxyZWFkeSBhdCBpdHMgcm9vdCwgaXMgYSBsZWFmIHdpdGggbm8gbmVzdGVkIG5hdmlnYXRvciwgb3IgaGFzIG5ldmVyIGJlZW5cbiAqIHZpc2l0ZWQgKHRhYiBzY3JlZW5zIGFyZSBsYXp5LCBzbyB1bnZpc2l0ZWQgcm91dGVzIGNhcnJ5IG5vIGBzdGF0ZWApLlxuICovXG5leHBvcnQgZnVuY3Rpb24gZmluZERlZXBUYWJTdGFja0tleShyb290U3RhdGU6IHVua25vd24sIHRhYjogc3RyaW5nKTogc3RyaW5nIHwgbnVsbCB7XG4gIGNvbnN0IGZvdW5kID0gZmluZFRhYlJvdXRlKHJvb3RTdGF0ZSwgdGFiKTtcbiAgY29uc3QgaW5uZXIgPSBmb3VuZD8uc3RhdGUgYXMgTmF2Tm9kZSB8IHVuZGVmaW5lZDtcbiAgaWYgKCFpbm5lcj8ua2V5KSByZXR1cm4gbnVsbDtcbiAgcmV0dXJuIChpbm5lci5pbmRleCA/PyAwKSA+IDAgPyBpbm5lci5rZXkgOiBudWxsO1xufVxuIl0sInZlcnNpb24iOjN9

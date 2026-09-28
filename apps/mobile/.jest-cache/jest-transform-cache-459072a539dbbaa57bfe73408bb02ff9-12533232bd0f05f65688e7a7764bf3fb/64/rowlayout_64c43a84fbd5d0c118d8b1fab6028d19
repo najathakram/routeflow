@@ -1,0 +1,113 @@
+b242f359a2e94526ee1cd7f94466aa57
+"use strict";
+/**
+ * Bounded widths for the qty/price inputs that live inside a horizontal row,
+ * plus the arithmetic that proves a row still has a usable text column.
+ *
+ * WHY THIS FILE EXISTS
+ * --------------------
+ * react-native-web renders `<TextInput>` as a real `<input>`. RNW's base style
+ * (`exports/TextInput/index.js`) declares no `width`, so the element carries the
+ * UA `size=20` intrinsic width — roughly 177px at these font sizes — and
+ * `min-width: auto`. Neither exists on native, where Yoga sizes a TextInput to
+ * its text.
+ *
+ * The stepper pill wrapping such an input is a `View`, and RNW's base `View`
+ * style sets `flexShrink: 0`. So the pill contributes ~245px of max-content to
+ * its row and refuses to give any of it back. The sibling `{flex: 1}` name
+ * column collapses to ~31px, and at that width RNW's `word-wrap: break-word` on
+ * `<Text>` renders one character per line — the reported "item name and
+ * quantity appear vertically" defect.
+ *
+ * Two things do NOT fix it, and both look like they should:
+ *   - `minWidth: 0` on the input — RNW's `View` base already sets `minWidth: 0`,
+ *     and on the input itself a floor cannot cap an inflated base size.
+ *   - `flexShrink: 1` on the input — the pill is `flexShrink: 0`, so no space
+ *     deficit ever reaches the input to distribute.
+ *
+ * Only a DEFINITE `width` collapses the pill's max-content contribution. Each
+ * value below is the width its input already reaches at `maxLength={5}` on
+ * native, so no native row grows — the pill merely stops resizing while typing.
+ *
+ * Keep these in sync with the style objects that consume them; the invariants in
+ * `__tests__/row-layout.test.ts` assert over this module, so reverting a call
+ * site to `minWidth`-only leaves nothing registered here and fails the suite.
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.BAND_EDIT_CHIP_WIDTH = exports.BAND_GAP = exports.MIN_TEXT_COLUMN_NARROW = exports.MIN_TEXT_COLUMN = exports.COMMON_VIEWPORT = exports.MIN_SUPPORTED_VIEWPORT = exports.MAX_ROW_CONTROL_WIDTH = exports.MONEY_INPUT_MAX_WIDTH = exports.QTY_INPUT_WIDTH = void 0;
+exports.bandInnerWidth = bandInnerWidth;
+exports.stepperPillWidth = stepperPillWidth;
+exports.textColumnWidth = textColumnWidth;
+/** Definite widths for every qty TextInput that sits in a flex row. */
+exports.QTY_INPUT_WIDTH = {
+    /** QtyStepper `md` — catalog rows, scan tray. 16px font, 2px h-padding. */
+    md: 52,
+    /** QtyStepper `mini` — boxed case/loose band, scan tray rows. 14px font. */
+    mini: 46,
+    /** NewOrderScreen / invoices-new `CartStepperRow`. 16px font, 6px h-padding. */
+    cart: 60,
+    /** edit-items' hand-rolled stepper duplicate. 16px font, 4px h-padding. */
+    edit: 56,
+};
+/**
+ * Money inputs take `maxWidth`, not `width`: their content is variable-length
+ * and uncapped (`$99999.99`), so native content-hugging is desirable. 96px never
+ * binds on native (8 chars at 15px ≈ 84px incl. padding) — it exists purely to
+ * clamp the web intrinsic width.
+ */
+exports.MONEY_INPUT_MAX_WIDTH = 96;
+/** Widest a bounded control may be before it starves the row's text column. */
+exports.MAX_ROW_CONTROL_WIDTH = 130;
+/** Narrowest phone-web viewport we support (iPhone SE 1st gen, 2016). */
+exports.MIN_SUPPORTED_VIEWPORT = 320;
+/** What the field actually carries — iPhone 13/14/15 and most modern Androids. */
+exports.COMMON_VIEWPORT = 390;
+/**
+ * A row's text column at {@link COMMON_VIEWPORT} must stay at least this wide.
+ * ~100px shows a dozen characters of a product name before the ellipsis.
+ */
+exports.MIN_TEXT_COLUMN = 100;
+/**
+ * The floor at {@link MIN_SUPPORTED_VIEWPORT}. A 320px row carrying a 48px
+ * thumbnail AND a qty stepper genuinely cannot spare 100px, so the invariant
+ * there is weaker: enough for a truncated-but-legible name (~9 characters),
+ * never the collapse-to-one-character-per-line the fix exists to prevent.
+ */
+exports.MIN_TEXT_COLUMN_NARROW = 72;
+/** Gap between children of ProductRow's boxed band (its `band` style). */
+exports.BAND_GAP = 10;
+/**
+ * Visual width of the band's "Edit" chip: 12px padding ×2 + "Edit" at 13px
+ * semibold ≈ 29px. Conservative bound used by the geometry tests.
+ */
+exports.BAND_EDIT_CHIP_WIDTH = 53;
+/**
+ * Inner width of a ProductRow boxed band: viewport − 16px list margin ×2 −
+ * 10px row padding ×2. The band is full-width (rowStacked column), no thumb
+ * indent.
+ */
+function bandInnerWidth(viewport) {
+    return viewport - 16 * 2 - 10 * 2;
+}
+/**
+ * Total width of a −/input/+ stepper pill. Mirrors the `pill` style: two square
+ * buttons, the input, symmetric padding, and a hairline border on each side.
+ */
+function stepperPillWidth(spec) {
+    const border = spec.border ?? 1;
+    return spec.btn * 2 + spec.inputWidth + spec.padding * 2 + border * 2;
+}
+/**
+ * Width left for the flexible text column of a row, given everything fixed
+ * beside it. `gaps` is the total of every gap in the row, `leading` the width of
+ * any fixed element before the text (a thumbnail, say).
+ */
+function textColumnWidth(spec) {
+    return (spec.viewport -
+        spec.listPadding * 2 -
+        spec.rowPadding * 2 -
+        spec.leading -
+        spec.gaps -
+        spec.controlWidth);
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3Jvdy1sYXlvdXQudHMiLCJtYXBwaW5ncyI6IjtBQUFBOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7OztHQWdDRzs7O0FBMkRILHdDQUVDO0FBTUQsNENBUUM7QUFPRCwwQ0FnQkM7QUFoR0QsdUVBQXVFO0FBQzFELFFBQUEsZUFBZSxHQUFHO0lBQzdCLDJFQUEyRTtJQUMzRSxFQUFFLEVBQUUsRUFBRTtJQUNOLDRFQUE0RTtJQUM1RSxJQUFJLEVBQUUsRUFBRTtJQUNSLGdGQUFnRjtJQUNoRixJQUFJLEVBQUUsRUFBRTtJQUNSLDJFQUEyRTtJQUMzRSxJQUFJLEVBQUUsRUFBRTtDQUNBLENBQUM7QUFFWDs7Ozs7R0FLRztBQUNVLFFBQUEscUJBQXFCLEdBQUcsRUFBRSxDQUFDO0FBRXhDLCtFQUErRTtBQUNsRSxRQUFBLHFCQUFxQixHQUFHLEdBQUcsQ0FBQztBQUV6Qyx5RUFBeUU7QUFDNUQsUUFBQSxzQkFBc0IsR0FBRyxHQUFHLENBQUM7QUFFMUMsa0ZBQWtGO0FBQ3JFLFFBQUEsZUFBZSxHQUFHLEdBQUcsQ0FBQztBQUVuQzs7O0dBR0c7QUFDVSxRQUFBLGVBQWUsR0FBRyxHQUFHLENBQUM7QUFFbkM7Ozs7O0dBS0c7QUFDVSxRQUFBLHNCQUFzQixHQUFHLEVBQUUsQ0FBQztBQUV6QywwRUFBMEU7QUFDN0QsUUFBQSxRQUFRLEdBQUcsRUFBRSxDQUFDO0FBRTNCOzs7R0FHRztBQUNVLFFBQUEsb0JBQW9CLEdBQUcsRUFBRSxDQUFDO0FBRXZDOzs7O0dBSUc7QUFDSCxTQUFnQixjQUFjLENBQUMsUUFBZ0I7SUFDN0MsT0FBTyxRQUFRLEdBQUcsRUFBRSxHQUFHLENBQUMsR0FBRyxFQUFFLEdBQUcsQ0FBQyxDQUFDO0FBQ3BDLENBQUM7QUFFRDs7O0dBR0c7QUFDSCxTQUFnQixnQkFBZ0IsQ0FBQyxJQUtoQztJQUNDLE1BQU0sTUFBTSxHQUFHLElBQUksQ0FBQyxNQUFNLElBQUksQ0FBQyxDQUFDO0lBQ2hDLE9BQU8sSUFBSSxDQUFDLEdBQUcsR0FBRyxDQUFDLEdBQUcsSUFBSSxDQUFDLFVBQVUsR0FBRyxJQUFJLENBQUMsT0FBTyxHQUFHLENBQUMsR0FBRyxNQUFNLEdBQUcsQ0FBQyxDQUFDO0FBQ3hFLENBQUM7QUFFRDs7OztHQUlHO0FBQ0gsU0FBZ0IsZUFBZSxDQUFDLElBTy9CO0lBQ0MsT0FBTyxDQUNMLElBQUksQ0FBQyxRQUFRO1FBQ2IsSUFBSSxDQUFDLFdBQVcsR0FBRyxDQUFDO1FBQ3BCLElBQUksQ0FBQyxVQUFVLEdBQUcsQ0FBQztRQUNuQixJQUFJLENBQUMsT0FBTztRQUNaLElBQUksQ0FBQyxJQUFJO1FBQ1QsSUFBSSxDQUFDLFlBQVksQ0FDbEIsQ0FBQztBQUNKLENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3Jvdy1sYXlvdXQudHMiXSwic291cmNlc0NvbnRlbnQiOlsiLyoqXG4gKiBCb3VuZGVkIHdpZHRocyBmb3IgdGhlIHF0eS9wcmljZSBpbnB1dHMgdGhhdCBsaXZlIGluc2lkZSBhIGhvcml6b250YWwgcm93LFxuICogcGx1cyB0aGUgYXJpdGhtZXRpYyB0aGF0IHByb3ZlcyBhIHJvdyBzdGlsbCBoYXMgYSB1c2FibGUgdGV4dCBjb2x1bW4uXG4gKlxuICogV0hZIFRISVMgRklMRSBFWElTVFNcbiAqIC0tLS0tLS0tLS0tLS0tLS0tLS0tXG4gKiByZWFjdC1uYXRpdmUtd2ViIHJlbmRlcnMgYDxUZXh0SW5wdXQ+YCBhcyBhIHJlYWwgYDxpbnB1dD5gLiBSTlcncyBiYXNlIHN0eWxlXG4gKiAoYGV4cG9ydHMvVGV4dElucHV0L2luZGV4LmpzYCkgZGVjbGFyZXMgbm8gYHdpZHRoYCwgc28gdGhlIGVsZW1lbnQgY2FycmllcyB0aGVcbiAqIFVBIGBzaXplPTIwYCBpbnRyaW5zaWMgd2lkdGgg4oCUIHJvdWdobHkgMTc3cHggYXQgdGhlc2UgZm9udCBzaXplcyDigJQgYW5kXG4gKiBgbWluLXdpZHRoOiBhdXRvYC4gTmVpdGhlciBleGlzdHMgb24gbmF0aXZlLCB3aGVyZSBZb2dhIHNpemVzIGEgVGV4dElucHV0IHRvXG4gKiBpdHMgdGV4dC5cbiAqXG4gKiBUaGUgc3RlcHBlciBwaWxsIHdyYXBwaW5nIHN1Y2ggYW4gaW5wdXQgaXMgYSBgVmlld2AsIGFuZCBSTlcncyBiYXNlIGBWaWV3YFxuICogc3R5bGUgc2V0cyBgZmxleFNocmluazogMGAuIFNvIHRoZSBwaWxsIGNvbnRyaWJ1dGVzIH4yNDVweCBvZiBtYXgtY29udGVudCB0b1xuICogaXRzIHJvdyBhbmQgcmVmdXNlcyB0byBnaXZlIGFueSBvZiBpdCBiYWNrLiBUaGUgc2libGluZyBge2ZsZXg6IDF9YCBuYW1lXG4gKiBjb2x1bW4gY29sbGFwc2VzIHRvIH4zMXB4LCBhbmQgYXQgdGhhdCB3aWR0aCBSTlcncyBgd29yZC13cmFwOiBicmVhay13b3JkYCBvblxuICogYDxUZXh0PmAgcmVuZGVycyBvbmUgY2hhcmFjdGVyIHBlciBsaW5lIOKAlCB0aGUgcmVwb3J0ZWQgXCJpdGVtIG5hbWUgYW5kXG4gKiBxdWFudGl0eSBhcHBlYXIgdmVydGljYWxseVwiIGRlZmVjdC5cbiAqXG4gKiBUd28gdGhpbmdzIGRvIE5PVCBmaXggaXQsIGFuZCBib3RoIGxvb2sgbGlrZSB0aGV5IHNob3VsZDpcbiAqICAgLSBgbWluV2lkdGg6IDBgIG9uIHRoZSBpbnB1dCDigJQgUk5XJ3MgYFZpZXdgIGJhc2UgYWxyZWFkeSBzZXRzIGBtaW5XaWR0aDogMGAsXG4gKiAgICAgYW5kIG9uIHRoZSBpbnB1dCBpdHNlbGYgYSBmbG9vciBjYW5ub3QgY2FwIGFuIGluZmxhdGVkIGJhc2Ugc2l6ZS5cbiAqICAgLSBgZmxleFNocmluazogMWAgb24gdGhlIGlucHV0IOKAlCB0aGUgcGlsbCBpcyBgZmxleFNocmluazogMGAsIHNvIG5vIHNwYWNlXG4gKiAgICAgZGVmaWNpdCBldmVyIHJlYWNoZXMgdGhlIGlucHV0IHRvIGRpc3RyaWJ1dGUuXG4gKlxuICogT25seSBhIERFRklOSVRFIGB3aWR0aGAgY29sbGFwc2VzIHRoZSBwaWxsJ3MgbWF4LWNvbnRlbnQgY29udHJpYnV0aW9uLiBFYWNoXG4gKiB2YWx1ZSBiZWxvdyBpcyB0aGUgd2lkdGggaXRzIGlucHV0IGFscmVhZHkgcmVhY2hlcyBhdCBgbWF4TGVuZ3RoPXs1fWAgb25cbiAqIG5hdGl2ZSwgc28gbm8gbmF0aXZlIHJvdyBncm93cyDigJQgdGhlIHBpbGwgbWVyZWx5IHN0b3BzIHJlc2l6aW5nIHdoaWxlIHR5cGluZy5cbiAqXG4gKiBLZWVwIHRoZXNlIGluIHN5bmMgd2l0aCB0aGUgc3R5bGUgb2JqZWN0cyB0aGF0IGNvbnN1bWUgdGhlbTsgdGhlIGludmFyaWFudHMgaW5cbiAqIGBfX3Rlc3RzX18vcm93LWxheW91dC50ZXN0LnRzYCBhc3NlcnQgb3ZlciB0aGlzIG1vZHVsZSwgc28gcmV2ZXJ0aW5nIGEgY2FsbFxuICogc2l0ZSB0byBgbWluV2lkdGhgLW9ubHkgbGVhdmVzIG5vdGhpbmcgcmVnaXN0ZXJlZCBoZXJlIGFuZCBmYWlscyB0aGUgc3VpdGUuXG4gKi9cblxuLyoqIERlZmluaXRlIHdpZHRocyBmb3IgZXZlcnkgcXR5IFRleHRJbnB1dCB0aGF0IHNpdHMgaW4gYSBmbGV4IHJvdy4gKi9cbmV4cG9ydCBjb25zdCBRVFlfSU5QVVRfV0lEVEggPSB7XG4gIC8qKiBRdHlTdGVwcGVyIGBtZGAg4oCUIGNhdGFsb2cgcm93cywgc2NhbiB0cmF5LiAxNnB4IGZvbnQsIDJweCBoLXBhZGRpbmcuICovXG4gIG1kOiA1MixcbiAgLyoqIFF0eVN0ZXBwZXIgYG1pbmlgIOKAlCBib3hlZCBjYXNlL2xvb3NlIGJhbmQsIHNjYW4gdHJheSByb3dzLiAxNHB4IGZvbnQuICovXG4gIG1pbmk6IDQ2LFxuICAvKiogTmV3T3JkZXJTY3JlZW4gLyBpbnZvaWNlcy1uZXcgYENhcnRTdGVwcGVyUm93YC4gMTZweCBmb250LCA2cHggaC1wYWRkaW5nLiAqL1xuICBjYXJ0OiA2MCxcbiAgLyoqIGVkaXQtaXRlbXMnIGhhbmQtcm9sbGVkIHN0ZXBwZXIgZHVwbGljYXRlLiAxNnB4IGZvbnQsIDRweCBoLXBhZGRpbmcuICovXG4gIGVkaXQ6IDU2LFxufSBhcyBjb25zdDtcblxuLyoqXG4gKiBNb25leSBpbnB1dHMgdGFrZSBgbWF4V2lkdGhgLCBub3QgYHdpZHRoYDogdGhlaXIgY29udGVudCBpcyB2YXJpYWJsZS1sZW5ndGhcbiAqIGFuZCB1bmNhcHBlZCAoYCQ5OTk5OS45OWApLCBzbyBuYXRpdmUgY29udGVudC1odWdnaW5nIGlzIGRlc2lyYWJsZS4gOTZweCBuZXZlclxuICogYmluZHMgb24gbmF0aXZlICg4IGNoYXJzIGF0IDE1cHgg4omIIDg0cHggaW5jbC4gcGFkZGluZykg4oCUIGl0IGV4aXN0cyBwdXJlbHkgdG9cbiAqIGNsYW1wIHRoZSB3ZWIgaW50cmluc2ljIHdpZHRoLlxuICovXG5leHBvcnQgY29uc3QgTU9ORVlfSU5QVVRfTUFYX1dJRFRIID0gOTY7XG5cbi8qKiBXaWRlc3QgYSBib3VuZGVkIGNvbnRyb2wgbWF5IGJlIGJlZm9yZSBpdCBzdGFydmVzIHRoZSByb3cncyB0ZXh0IGNvbHVtbi4gKi9cbmV4cG9ydCBjb25zdCBNQVhfUk9XX0NPTlRST0xfV0lEVEggPSAxMzA7XG5cbi8qKiBOYXJyb3dlc3QgcGhvbmUtd2ViIHZpZXdwb3J0IHdlIHN1cHBvcnQgKGlQaG9uZSBTRSAxc3QgZ2VuLCAyMDE2KS4gKi9cbmV4cG9ydCBjb25zdCBNSU5fU1VQUE9SVEVEX1ZJRVdQT1JUID0gMzIwO1xuXG4vKiogV2hhdCB0aGUgZmllbGQgYWN0dWFsbHkgY2FycmllcyDigJQgaVBob25lIDEzLzE0LzE1IGFuZCBtb3N0IG1vZGVybiBBbmRyb2lkcy4gKi9cbmV4cG9ydCBjb25zdCBDT01NT05fVklFV1BPUlQgPSAzOTA7XG5cbi8qKlxuICogQSByb3cncyB0ZXh0IGNvbHVtbiBhdCB7QGxpbmsgQ09NTU9OX1ZJRVdQT1JUfSBtdXN0IHN0YXkgYXQgbGVhc3QgdGhpcyB3aWRlLlxuICogfjEwMHB4IHNob3dzIGEgZG96ZW4gY2hhcmFjdGVycyBvZiBhIHByb2R1Y3QgbmFtZSBiZWZvcmUgdGhlIGVsbGlwc2lzLlxuICovXG5leHBvcnQgY29uc3QgTUlOX1RFWFRfQ09MVU1OID0gMTAwO1xuXG4vKipcbiAqIFRoZSBmbG9vciBhdCB7QGxpbmsgTUlOX1NVUFBPUlRFRF9WSUVXUE9SVH0uIEEgMzIwcHggcm93IGNhcnJ5aW5nIGEgNDhweFxuICogdGh1bWJuYWlsIEFORCBhIHF0eSBzdGVwcGVyIGdlbnVpbmVseSBjYW5ub3Qgc3BhcmUgMTAwcHgsIHNvIHRoZSBpbnZhcmlhbnRcbiAqIHRoZXJlIGlzIHdlYWtlcjogZW5vdWdoIGZvciBhIHRydW5jYXRlZC1idXQtbGVnaWJsZSBuYW1lICh+OSBjaGFyYWN0ZXJzKSxcbiAqIG5ldmVyIHRoZSBjb2xsYXBzZS10by1vbmUtY2hhcmFjdGVyLXBlci1saW5lIHRoZSBmaXggZXhpc3RzIHRvIHByZXZlbnQuXG4gKi9cbmV4cG9ydCBjb25zdCBNSU5fVEVYVF9DT0xVTU5fTkFSUk9XID0gNzI7XG5cbi8qKiBHYXAgYmV0d2VlbiBjaGlsZHJlbiBvZiBQcm9kdWN0Um93J3MgYm94ZWQgYmFuZCAoaXRzIGBiYW5kYCBzdHlsZSkuICovXG5leHBvcnQgY29uc3QgQkFORF9HQVAgPSAxMDtcblxuLyoqXG4gKiBWaXN1YWwgd2lkdGggb2YgdGhlIGJhbmQncyBcIkVkaXRcIiBjaGlwOiAxMnB4IHBhZGRpbmcgw5cyICsgXCJFZGl0XCIgYXQgMTNweFxuICogc2VtaWJvbGQg4omIIDI5cHguIENvbnNlcnZhdGl2ZSBib3VuZCB1c2VkIGJ5IHRoZSBnZW9tZXRyeSB0ZXN0cy5cbiAqL1xuZXhwb3J0IGNvbnN0IEJBTkRfRURJVF9DSElQX1dJRFRIID0gNTM7XG5cbi8qKlxuICogSW5uZXIgd2lkdGggb2YgYSBQcm9kdWN0Um93IGJveGVkIGJhbmQ6IHZpZXdwb3J0IOKIkiAxNnB4IGxpc3QgbWFyZ2luIMOXMiDiiJJcbiAqIDEwcHggcm93IHBhZGRpbmcgw5cyLiBUaGUgYmFuZCBpcyBmdWxsLXdpZHRoIChyb3dTdGFja2VkIGNvbHVtbiksIG5vIHRodW1iXG4gKiBpbmRlbnQuXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiBiYW5kSW5uZXJXaWR0aCh2aWV3cG9ydDogbnVtYmVyKTogbnVtYmVyIHtcbiAgcmV0dXJuIHZpZXdwb3J0IC0gMTYgKiAyIC0gMTAgKiAyO1xufVxuXG4vKipcbiAqIFRvdGFsIHdpZHRoIG9mIGEg4oiSL2lucHV0Lysgc3RlcHBlciBwaWxsLiBNaXJyb3JzIHRoZSBgcGlsbGAgc3R5bGU6IHR3byBzcXVhcmVcbiAqIGJ1dHRvbnMsIHRoZSBpbnB1dCwgc3ltbWV0cmljIHBhZGRpbmcsIGFuZCBhIGhhaXJsaW5lIGJvcmRlciBvbiBlYWNoIHNpZGUuXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiBzdGVwcGVyUGlsbFdpZHRoKHNwZWM6IHtcbiAgYnRuOiBudW1iZXI7XG4gIGlucHV0V2lkdGg6IG51bWJlcjtcbiAgcGFkZGluZzogbnVtYmVyO1xuICBib3JkZXI/OiBudW1iZXI7XG59KTogbnVtYmVyIHtcbiAgY29uc3QgYm9yZGVyID0gc3BlYy5ib3JkZXIgPz8gMTtcbiAgcmV0dXJuIHNwZWMuYnRuICogMiArIHNwZWMuaW5wdXRXaWR0aCArIHNwZWMucGFkZGluZyAqIDIgKyBib3JkZXIgKiAyO1xufVxuXG4vKipcbiAqIFdpZHRoIGxlZnQgZm9yIHRoZSBmbGV4aWJsZSB0ZXh0IGNvbHVtbiBvZiBhIHJvdywgZ2l2ZW4gZXZlcnl0aGluZyBmaXhlZFxuICogYmVzaWRlIGl0LiBgZ2Fwc2AgaXMgdGhlIHRvdGFsIG9mIGV2ZXJ5IGdhcCBpbiB0aGUgcm93LCBgbGVhZGluZ2AgdGhlIHdpZHRoIG9mXG4gKiBhbnkgZml4ZWQgZWxlbWVudCBiZWZvcmUgdGhlIHRleHQgKGEgdGh1bWJuYWlsLCBzYXkpLlxuICovXG5leHBvcnQgZnVuY3Rpb24gdGV4dENvbHVtbldpZHRoKHNwZWM6IHtcbiAgdmlld3BvcnQ6IG51bWJlcjtcbiAgbGlzdFBhZGRpbmc6IG51bWJlcjtcbiAgcm93UGFkZGluZzogbnVtYmVyO1xuICBsZWFkaW5nOiBudW1iZXI7XG4gIGdhcHM6IG51bWJlcjtcbiAgY29udHJvbFdpZHRoOiBudW1iZXI7XG59KTogbnVtYmVyIHtcbiAgcmV0dXJuIChcbiAgICBzcGVjLnZpZXdwb3J0IC1cbiAgICBzcGVjLmxpc3RQYWRkaW5nICogMiAtXG4gICAgc3BlYy5yb3dQYWRkaW5nICogMiAtXG4gICAgc3BlYy5sZWFkaW5nIC1cbiAgICBzcGVjLmdhcHMgLVxuICAgIHNwZWMuY29udHJvbFdpZHRoXG4gICk7XG59XG4iXSwidmVyc2lvbiI6M30=

@@ -1,0 +1,25 @@
+a3dd9925b8c90a89ba94cfe54b13d6bb
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.poLineSubtotal = poLineSubtotal;
+/**
+ * The money of a STORED purchase-order line, for display (B698 — the mobile twin of web's
+ * `resolveStoredPOLineAmounts`).
+ *
+ * A boxed line's stored `unitCost` is the per-piece cost at 4 dp, for costing only; re-multiplying it
+ * by the piece count is the exact drift B677 (#1199) fixed on the store side: 1,000 cases of 12 at
+ * $11.00 is stored as $11,000.00 and `12000 x 0.9167` reads $11,000.40. The server stores and returns
+ * the exact `totalCost`, so it is the document figure; the multiply is ONLY the fallback for a row
+ * that carries no stored total. The ORDER total is `poDisplayTotal` in `po-list-logic.ts`, whose line
+ * fallback sums THIS helper — one derivation, so the list row, the detail header and the detail rows
+ * can never disagree. Spec: __tests__/po-line-subtotal.test.ts.
+ */
+const pricing_1 = require("@routeflow/pricing");
+/** Stored exact total when the row has one, else roundMoney(qtyOrdered x unitCost). */
+function poLineSubtotal(item) {
+    const stored = item.totalCost != null ? Number(item.totalCost) : NaN;
+    if (Number.isFinite(stored) && stored >= 0)
+        return (0, pricing_1.roundMoney)(stored);
+    return (0, pricing_1.roundMoney)((Number(item.qtyOrdered) || 0) * (Number(item.unitCost) || 0));
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3BvLWxpbmUtc3VidG90YWwudHMiLCJtYXBwaW5ncyI6Ijs7QUFxQkEsd0NBSUM7QUF6QkQ7Ozs7Ozs7Ozs7O0dBV0c7QUFDSCxnREFBZ0Q7QUFRaEQsdUZBQXVGO0FBQ3ZGLFNBQWdCLGNBQWMsQ0FBQyxJQUFrQjtJQUMvQyxNQUFNLE1BQU0sR0FBRyxJQUFJLENBQUMsU0FBUyxJQUFJLElBQUksQ0FBQyxDQUFDLENBQUMsTUFBTSxDQUFDLElBQUksQ0FBQyxTQUFTLENBQUMsQ0FBQyxDQUFDLENBQUMsR0FBRyxDQUFDO0lBQ3JFLElBQUksTUFBTSxDQUFDLFFBQVEsQ0FBQyxNQUFNLENBQUMsSUFBSSxNQUFNLElBQUksQ0FBQztRQUFFLE9BQU8sSUFBQSxvQkFBVSxFQUFDLE1BQU0sQ0FBQyxDQUFDO0lBQ3RFLE9BQU8sSUFBQSxvQkFBVSxFQUFDLENBQUMsTUFBTSxDQUFDLElBQUksQ0FBQyxVQUFVLENBQUMsSUFBSSxDQUFDLENBQUMsR0FBRyxDQUFDLE1BQU0sQ0FBQyxJQUFJLENBQUMsUUFBUSxDQUFDLElBQUksQ0FBQyxDQUFDLENBQUMsQ0FBQztBQUNuRixDQUFDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvbW9iaWxlL2xpYi9wby1saW5lLXN1YnRvdGFsLnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogVGhlIG1vbmV5IG9mIGEgU1RPUkVEIHB1cmNoYXNlLW9yZGVyIGxpbmUsIGZvciBkaXNwbGF5IChCNjk4IOKAlCB0aGUgbW9iaWxlIHR3aW4gb2Ygd2ViJ3NcbiAqIGByZXNvbHZlU3RvcmVkUE9MaW5lQW1vdW50c2ApLlxuICpcbiAqIEEgYm94ZWQgbGluZSdzIHN0b3JlZCBgdW5pdENvc3RgIGlzIHRoZSBwZXItcGllY2UgY29zdCBhdCA0IGRwLCBmb3IgY29zdGluZyBvbmx5OyByZS1tdWx0aXBseWluZyBpdFxuICogYnkgdGhlIHBpZWNlIGNvdW50IGlzIHRoZSBleGFjdCBkcmlmdCBCNjc3ICgjMTE5OSkgZml4ZWQgb24gdGhlIHN0b3JlIHNpZGU6IDEsMDAwIGNhc2VzIG9mIDEyIGF0XG4gKiAkMTEuMDAgaXMgc3RvcmVkIGFzICQxMSwwMDAuMDAgYW5kIGAxMjAwMCB4IDAuOTE2N2AgcmVhZHMgJDExLDAwMC40MC4gVGhlIHNlcnZlciBzdG9yZXMgYW5kIHJldHVybnNcbiAqIHRoZSBleGFjdCBgdG90YWxDb3N0YCwgc28gaXQgaXMgdGhlIGRvY3VtZW50IGZpZ3VyZTsgdGhlIG11bHRpcGx5IGlzIE9OTFkgdGhlIGZhbGxiYWNrIGZvciBhIHJvd1xuICogdGhhdCBjYXJyaWVzIG5vIHN0b3JlZCB0b3RhbC4gVGhlIE9SREVSIHRvdGFsIGlzIGBwb0Rpc3BsYXlUb3RhbGAgaW4gYHBvLWxpc3QtbG9naWMudHNgLCB3aG9zZSBsaW5lXG4gKiBmYWxsYmFjayBzdW1zIFRISVMgaGVscGVyIOKAlCBvbmUgZGVyaXZhdGlvbiwgc28gdGhlIGxpc3Qgcm93LCB0aGUgZGV0YWlsIGhlYWRlciBhbmQgdGhlIGRldGFpbCByb3dzXG4gKiBjYW4gbmV2ZXIgZGlzYWdyZWUuIFNwZWM6IF9fdGVzdHNfXy9wby1saW5lLXN1YnRvdGFsLnRlc3QudHMuXG4gKi9cbmltcG9ydCB7IHJvdW5kTW9uZXkgfSBmcm9tIFwiQHJvdXRlZmxvdy9wcmljaW5nXCI7XG5cbmV4cG9ydCBpbnRlcmZhY2UgU3RvcmVkUE9MaW5lIHtcbiAgcXR5T3JkZXJlZDogbnVtYmVyIHwgc3RyaW5nO1xuICB1bml0Q29zdDogbnVtYmVyIHwgc3RyaW5nO1xuICB0b3RhbENvc3Q/OiBudW1iZXIgfCBzdHJpbmcgfCBudWxsO1xufVxuXG4vKiogU3RvcmVkIGV4YWN0IHRvdGFsIHdoZW4gdGhlIHJvdyBoYXMgb25lLCBlbHNlIHJvdW5kTW9uZXkocXR5T3JkZXJlZCB4IHVuaXRDb3N0KS4gKi9cbmV4cG9ydCBmdW5jdGlvbiBwb0xpbmVTdWJ0b3RhbChpdGVtOiBTdG9yZWRQT0xpbmUpOiBudW1iZXIge1xuICBjb25zdCBzdG9yZWQgPSBpdGVtLnRvdGFsQ29zdCAhPSBudWxsID8gTnVtYmVyKGl0ZW0udG90YWxDb3N0KSA6IE5hTjtcbiAgaWYgKE51bWJlci5pc0Zpbml0ZShzdG9yZWQpICYmIHN0b3JlZCA+PSAwKSByZXR1cm4gcm91bmRNb25leShzdG9yZWQpO1xuICByZXR1cm4gcm91bmRNb25leSgoTnVtYmVyKGl0ZW0ucXR5T3JkZXJlZCkgfHwgMCkgKiAoTnVtYmVyKGl0ZW0udW5pdENvc3QpIHx8IDApKTtcbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

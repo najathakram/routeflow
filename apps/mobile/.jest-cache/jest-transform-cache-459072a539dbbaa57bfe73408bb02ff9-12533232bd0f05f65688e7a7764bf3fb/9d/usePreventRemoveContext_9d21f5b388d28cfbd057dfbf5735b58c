@@ -1,0 +1,47 @@
+e69733e7da1ef4351fd90e27823f587c
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.usePreventRemoveContext = usePreventRemoveContext;
+const React = __importStar(require("react"));
+const PreventRemoveContext_js_1 = require("./PreventRemoveContext.js");
+function usePreventRemoveContext() {
+    const value = React.useContext(PreventRemoveContext_js_1.PreventRemoveContext);
+    if (value == null) {
+        throw new Error("Couldn't find the prevent remove context. This is likely a bug in the navigator.\n\nIf you're using a custom navigator, make sure that the navigator content is wrapped by the 'render' function returned by 'useNavigationBuilder'.");
+    }
+    return value;
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0Mzcvbm9kZV9tb2R1bGVzL0ByZWFjdC1uYXZpZ2F0aW9uL2NvcmUvbGliL21vZHVsZS91c2VQcmV2ZW50UmVtb3ZlQ29udGV4dC5qcyIsIm1hcHBpbmdzIjoiQUFBQSxZQUFZLENBQUM7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7O0FBSWIsMERBTUM7QUFSRCw2Q0FBK0I7QUFDL0IsdUVBQWlFO0FBQ2pFLFNBQWdCLHVCQUF1QjtJQUNyQyxNQUFNLEtBQUssR0FBRyxLQUFLLENBQUMsVUFBVSxDQUFDLDhDQUFvQixDQUFDLENBQUM7SUFDckQsSUFBSSxLQUFLLElBQUksSUFBSSxFQUFFLENBQUM7UUFDbEIsTUFBTSxJQUFJLEtBQUssQ0FBQyxzT0FBc08sQ0FBQyxDQUFDO0lBQzFQLENBQUM7SUFDRCxPQUFPLEtBQUssQ0FBQztBQUNmLENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0Mzcvbm9kZV9tb2R1bGVzL0ByZWFjdC1uYXZpZ2F0aW9uL2NvcmUvbGliL21vZHVsZS91c2VQcmV2ZW50UmVtb3ZlQ29udGV4dC5qcyJdLCJzb3VyY2VzQ29udGVudCI6WyJcInVzZSBzdHJpY3RcIjtcblxuaW1wb3J0ICogYXMgUmVhY3QgZnJvbSAncmVhY3QnO1xuaW1wb3J0IHsgUHJldmVudFJlbW92ZUNvbnRleHQgfSBmcm9tIFwiLi9QcmV2ZW50UmVtb3ZlQ29udGV4dC5qc1wiO1xuZXhwb3J0IGZ1bmN0aW9uIHVzZVByZXZlbnRSZW1vdmVDb250ZXh0KCkge1xuICBjb25zdCB2YWx1ZSA9IFJlYWN0LnVzZUNvbnRleHQoUHJldmVudFJlbW92ZUNvbnRleHQpO1xuICBpZiAodmFsdWUgPT0gbnVsbCkge1xuICAgIHRocm93IG5ldyBFcnJvcihcIkNvdWxkbid0IGZpbmQgdGhlIHByZXZlbnQgcmVtb3ZlIGNvbnRleHQuIFRoaXMgaXMgbGlrZWx5IGEgYnVnIGluIHRoZSBuYXZpZ2F0b3IuXFxuXFxuSWYgeW91J3JlIHVzaW5nIGEgY3VzdG9tIG5hdmlnYXRvciwgbWFrZSBzdXJlIHRoYXQgdGhlIG5hdmlnYXRvciBjb250ZW50IGlzIHdyYXBwZWQgYnkgdGhlICdyZW5kZXInIGZ1bmN0aW9uIHJldHVybmVkIGJ5ICd1c2VOYXZpZ2F0aW9uQnVpbGRlcicuXCIpO1xuICB9XG4gIHJldHVybiB2YWx1ZTtcbn1cbi8vIyBzb3VyY2VNYXBwaW5nVVJMPXVzZVByZXZlbnRSZW1vdmVDb250ZXh0LmpzLm1hcCJdLCJ2ZXJzaW9uIjozfQ==

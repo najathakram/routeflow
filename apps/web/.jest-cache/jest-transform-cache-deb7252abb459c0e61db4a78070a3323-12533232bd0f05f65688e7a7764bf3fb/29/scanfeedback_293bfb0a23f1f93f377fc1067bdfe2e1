@@ -1,0 +1,44 @@
+81927a09dfb6ff1d802c760fcc7b7ddc
+/**
+ * Pure decision: given the outcome a scan resolved to, which accept/reject
+ * cue (if any) should play. Deliberately kept OUT of `scan-cue(.web).ts`,
+ * for two reasons:
+ *
+ *  1. Testability — this is the only "should we cue, and which way" logic
+ *     that matters, and it has zero DOM/AudioContext/`Date.now()`
+ *     dependencies, so it unit-tests in plain node Jest exactly the way
+ *     `scan-engine.ts` does. The actual web player can't be exercised in
+ *     that same suite (no AudioContext in node) — keeping the DECISION
+ *     separate is the only way this behavior gets pinned by a real test.
+ *  2. Isolation — the cue is pure ergonomics (F30 / REG-B202 PR1 commit 2:
+ *     an operator scanning fast shouldn't have to watch the screen to know
+ *     a scan landed). It must never be able to influence what actually
+ *     happened to the scan. Splitting "what happened" (this file, a
+ *     read-only view over an ALREADY-resolved `ScanOutcome`) from "make
+ *     noise about it" (`scan-cue(.web).ts`, all side effect, provably total)
+ *     means a broken speaker or a thrown AudioContext exception can't so
+ *     much as delay, let alone corrupt, `ScanCamera.web.tsx`'s resolve chain.
+ */ "use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+Object.defineProperty(exports, "cueForOutcome", {
+    enumerable: true,
+    get: function() {
+        return cueForOutcome;
+    }
+});
+function cueForOutcome(outcome) {
+    const feedback = outcome?.feedback;
+    if (!feedback) return "none";
+    switch(feedback.kind){
+        case "added":
+            return "accepted";
+        case "error":
+            return "rejected";
+        default:
+            return "none";
+    }
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L3BhY2thZ2VzL3NjYW5uaW5nL3NyYy9zY2FuLWZlZWRiYWNrLnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogUHVyZSBkZWNpc2lvbjogZ2l2ZW4gdGhlIG91dGNvbWUgYSBzY2FuIHJlc29sdmVkIHRvLCB3aGljaCBhY2NlcHQvcmVqZWN0XG4gKiBjdWUgKGlmIGFueSkgc2hvdWxkIHBsYXkuIERlbGliZXJhdGVseSBrZXB0IE9VVCBvZiBgc2Nhbi1jdWUoLndlYikudHNgLFxuICogZm9yIHR3byByZWFzb25zOlxuICpcbiAqICAxLiBUZXN0YWJpbGl0eSDigJQgdGhpcyBpcyB0aGUgb25seSBcInNob3VsZCB3ZSBjdWUsIGFuZCB3aGljaCB3YXlcIiBsb2dpY1xuICogICAgIHRoYXQgbWF0dGVycywgYW5kIGl0IGhhcyB6ZXJvIERPTS9BdWRpb0NvbnRleHQvYERhdGUubm93KClgXG4gKiAgICAgZGVwZW5kZW5jaWVzLCBzbyBpdCB1bml0LXRlc3RzIGluIHBsYWluIG5vZGUgSmVzdCBleGFjdGx5IHRoZSB3YXlcbiAqICAgICBgc2Nhbi1lbmdpbmUudHNgIGRvZXMuIFRoZSBhY3R1YWwgd2ViIHBsYXllciBjYW4ndCBiZSBleGVyY2lzZWQgaW5cbiAqICAgICB0aGF0IHNhbWUgc3VpdGUgKG5vIEF1ZGlvQ29udGV4dCBpbiBub2RlKSDigJQga2VlcGluZyB0aGUgREVDSVNJT05cbiAqICAgICBzZXBhcmF0ZSBpcyB0aGUgb25seSB3YXkgdGhpcyBiZWhhdmlvciBnZXRzIHBpbm5lZCBieSBhIHJlYWwgdGVzdC5cbiAqICAyLiBJc29sYXRpb24g4oCUIHRoZSBjdWUgaXMgcHVyZSBlcmdvbm9taWNzIChGMzAgLyBSRUctQjIwMiBQUjEgY29tbWl0IDI6XG4gKiAgICAgYW4gb3BlcmF0b3Igc2Nhbm5pbmcgZmFzdCBzaG91bGRuJ3QgaGF2ZSB0byB3YXRjaCB0aGUgc2NyZWVuIHRvIGtub3dcbiAqICAgICBhIHNjYW4gbGFuZGVkKS4gSXQgbXVzdCBuZXZlciBiZSBhYmxlIHRvIGluZmx1ZW5jZSB3aGF0IGFjdHVhbGx5XG4gKiAgICAgaGFwcGVuZWQgdG8gdGhlIHNjYW4uIFNwbGl0dGluZyBcIndoYXQgaGFwcGVuZWRcIiAodGhpcyBmaWxlLCBhXG4gKiAgICAgcmVhZC1vbmx5IHZpZXcgb3ZlciBhbiBBTFJFQURZLXJlc29sdmVkIGBTY2FuT3V0Y29tZWApIGZyb20gXCJtYWtlXG4gKiAgICAgbm9pc2UgYWJvdXQgaXRcIiAoYHNjYW4tY3VlKC53ZWIpLnRzYCwgYWxsIHNpZGUgZWZmZWN0LCBwcm92YWJseSB0b3RhbClcbiAqICAgICBtZWFucyBhIGJyb2tlbiBzcGVha2VyIG9yIGEgdGhyb3duIEF1ZGlvQ29udGV4dCBleGNlcHRpb24gY2FuJ3Qgc29cbiAqICAgICBtdWNoIGFzIGRlbGF5LCBsZXQgYWxvbmUgY29ycnVwdCwgYFNjYW5DYW1lcmEud2ViLnRzeGAncyByZXNvbHZlIGNoYWluLlxuICovXG5pbXBvcnQgdHlwZSB7IFNjYW5PdXRjb21lIH0gZnJvbSBcIi4vc2Nhbi1sb29wXCI7XG5cbi8qKiBXaGF0IHRoZSBvcGVyYXRvciBzaG91bGQgaGVhci9mZWVsIGFmdGVyIGEgc2NhbiByZXNvbHZlcy4gKi9cbmV4cG9ydCB0eXBlIFNjYW5DdWUgPSBcImFjY2VwdGVkXCIgfCBcInJlamVjdGVkXCIgfCBcIm5vbmVcIjtcblxuLyoqXG4gKiBgZmVlZGJhY2sua2luZCA9PT0gXCJhZGRlZFwiYCBjdWVzIFwiYWNjZXB0ZWRcIjsgYFwiZXJyb3JcImAgY3VlcyBcInJlamVjdGVkXCIuXG4gKiBFdmVyeXRoaW5nIGVsc2UgY3VlcyBcIm5vbmVcIiDigJQgbm90aGluZyBvYnNlcnZhYmxlIGhhcHBlbmVkIGZvciB0aGVcbiAqIG9wZXJhdG9yIHRvIGJlIHRvbGQgYWJvdXQ6IGEgYHZvaWRgL2B1bmRlZmluZWRgIG91dGNvbWUgKHN0aWxsIHNjYW5uaW5nLFxuICogbm8gYmFubmVyIHNob3duKSwgYSBge2Nsb3NlfWAtb25seSBvdXRjb21lIChhIGhhbmQtb2ZmLCBub3QgYW5cbiAqIGFjY2VwdC9yZWplY3QpLCBvciBhIGB7fWAgb3V0Y29tZSBjYXJyeWluZyBuZWl0aGVyIGZpZWxkLiBgU2NhbkZlZWRiYWNrYFxuICogaGFzIGV4YWN0bHkgdHdvIGBraW5kYHMgdG9kYXk7IHRoZSBgZGVmYXVsdGAgYnJhbmNoIGlzIGEgdG90YWwgZmFsbGJhY2ssXG4gKiBub3QgZXZpZGVuY2UgYSB0aGlyZCBraW5kIGV4aXN0cy5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIGN1ZUZvck91dGNvbWUob3V0Y29tZTogU2Nhbk91dGNvbWUpOiBTY2FuQ3VlIHtcbiAgY29uc3QgZmVlZGJhY2sgPSBvdXRjb21lPy5mZWVkYmFjaztcbiAgaWYgKCFmZWVkYmFjaykgcmV0dXJuIFwibm9uZVwiO1xuICBzd2l0Y2ggKGZlZWRiYWNrLmtpbmQpIHtcbiAgICBjYXNlIFwiYWRkZWRcIjpcbiAgICAgIHJldHVybiBcImFjY2VwdGVkXCI7XG4gICAgY2FzZSBcImVycm9yXCI6XG4gICAgICByZXR1cm4gXCJyZWplY3RlZFwiO1xuICAgIGRlZmF1bHQ6XG4gICAgICByZXR1cm4gXCJub25lXCI7XG4gIH1cbn1cbiJdLCJuYW1lcyI6WyJjdWVGb3JPdXRjb21lIiwib3V0Y29tZSIsImZlZWRiYWNrIiwia2luZCJdLCJtYXBwaW5ncyI6IkFBQUE7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Q0FtQkM7Ozs7K0JBZWVBOzs7ZUFBQUE7OztBQUFULFNBQVNBLGNBQWNDLE9BQW9CO0lBQ2hELE1BQU1DLFdBQVdELFNBQVNDO0lBQzFCLElBQUksQ0FBQ0EsVUFBVSxPQUFPO0lBQ3RCLE9BQVFBLFNBQVNDLElBQUk7UUFDbkIsS0FBSztZQUNILE9BQU87UUFDVCxLQUFLO1lBQ0gsT0FBTztRQUNUO1lBQ0UsT0FBTztJQUNYO0FBQ0YifQ==

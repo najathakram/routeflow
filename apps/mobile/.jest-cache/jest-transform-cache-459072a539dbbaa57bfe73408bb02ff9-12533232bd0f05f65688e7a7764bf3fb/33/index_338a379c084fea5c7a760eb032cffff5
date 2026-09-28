@@ -1,0 +1,32 @@
+e01c4d5e37dc639be8761e36392d2639
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __exportStar = (this && this.__exportStar) || function(m, exports) {
+    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+/**
+ * @routeflow/scanning — the continuous-scan engine shared by apps/mobile and apps/web.
+ *
+ * - `scan-loop`: the dedupe gate (per-code cooldown + absence clocks, multi-slot LRU) and the
+ *   `ScanOutcome`/`ScanFeedback` types every scan handler returns.
+ * - `scan-pending-buffer`: bounded FIFO so a detection arriving mid-resolve is queued, not lost.
+ * - `scan-engine`: sequences gate then buffer per camera frame / manual entry / settle.
+ * - `scan-feedback`: `cueForOutcome` — which accept/reject cue an outcome earns. The sound and
+ *   vibration themselves are per-platform side effects and stay in each app's `scan-cue`.
+ */
+__exportStar(require("./scan-loop"), exports);
+__exportStar(require("./scan-pending-buffer"), exports);
+__exportStar(require("./scan-engine"), exports);
+__exportStar(require("./scan-feedback"), exports);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvcGFja2FnZXMvc2Nhbm5pbmcvc3JjL2luZGV4LnRzIiwibWFwcGluZ3MiOiI7Ozs7Ozs7Ozs7Ozs7Ozs7QUFBQTs7Ozs7Ozs7O0dBU0c7QUFDSCw4Q0FBNEI7QUFDNUIsd0RBQXNDO0FBQ3RDLGdEQUE4QjtBQUM5QixrREFBZ0MiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvcGFja2FnZXMvc2Nhbm5pbmcvc3JjL2luZGV4LnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogQHJvdXRlZmxvdy9zY2FubmluZyDigJQgdGhlIGNvbnRpbnVvdXMtc2NhbiBlbmdpbmUgc2hhcmVkIGJ5IGFwcHMvbW9iaWxlIGFuZCBhcHBzL3dlYi5cbiAqXG4gKiAtIGBzY2FuLWxvb3BgOiB0aGUgZGVkdXBlIGdhdGUgKHBlci1jb2RlIGNvb2xkb3duICsgYWJzZW5jZSBjbG9ja3MsIG11bHRpLXNsb3QgTFJVKSBhbmQgdGhlXG4gKiAgIGBTY2FuT3V0Y29tZWAvYFNjYW5GZWVkYmFja2AgdHlwZXMgZXZlcnkgc2NhbiBoYW5kbGVyIHJldHVybnMuXG4gKiAtIGBzY2FuLXBlbmRpbmctYnVmZmVyYDogYm91bmRlZCBGSUZPIHNvIGEgZGV0ZWN0aW9uIGFycml2aW5nIG1pZC1yZXNvbHZlIGlzIHF1ZXVlZCwgbm90IGxvc3QuXG4gKiAtIGBzY2FuLWVuZ2luZWA6IHNlcXVlbmNlcyBnYXRlIHRoZW4gYnVmZmVyIHBlciBjYW1lcmEgZnJhbWUgLyBtYW51YWwgZW50cnkgLyBzZXR0bGUuXG4gKiAtIGBzY2FuLWZlZWRiYWNrYDogYGN1ZUZvck91dGNvbWVgIOKAlCB3aGljaCBhY2NlcHQvcmVqZWN0IGN1ZSBhbiBvdXRjb21lIGVhcm5zLiBUaGUgc291bmQgYW5kXG4gKiAgIHZpYnJhdGlvbiB0aGVtc2VsdmVzIGFyZSBwZXItcGxhdGZvcm0gc2lkZSBlZmZlY3RzIGFuZCBzdGF5IGluIGVhY2ggYXBwJ3MgYHNjYW4tY3VlYC5cbiAqL1xuZXhwb3J0ICogZnJvbSBcIi4vc2Nhbi1sb29wXCI7XG5leHBvcnQgKiBmcm9tIFwiLi9zY2FuLXBlbmRpbmctYnVmZmVyXCI7XG5leHBvcnQgKiBmcm9tIFwiLi9zY2FuLWVuZ2luZVwiO1xuZXhwb3J0ICogZnJvbSBcIi4vc2Nhbi1mZWVkYmFja1wiO1xuIl0sInZlcnNpb24iOjN9

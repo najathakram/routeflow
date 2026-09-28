@@ -1,0 +1,29 @@
+626ba21a6e185b944a28cc25f2edde76
+"use strict";
+/**
+ * Last-username prefill storage — remembers the last signed-in staff username
+ * so the login screen can prefill it after a session expiry.
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+jest.mock("react-native", () => ({ Platform: { OS: "ios" } }));
+const last_username_1 = require("../lib/last-username");
+describe("last-username storage", () => {
+    it("returns null before anything was stored", async () => {
+        expect(await (0, last_username_1.getLastUsername)()).toBeNull();
+    });
+    it("round-trips a stored username", async () => {
+        await (0, last_username_1.setLastUsername)("jordan.m");
+        expect(await (0, last_username_1.getLastUsername)()).toBe("jordan.m");
+    });
+    it("ignores empty usernames (keeps the previous value)", async () => {
+        await (0, last_username_1.setLastUsername)("jordan.m");
+        await (0, last_username_1.setLastUsername)("");
+        expect(await (0, last_username_1.getLastUsername)()).toBe("jordan.m");
+    });
+    it("overwrites with the most recent sign-in", async () => {
+        await (0, last_username_1.setLastUsername)("jordan.m");
+        await (0, last_username_1.setLastUsername)("alex.k");
+        expect(await (0, last_username_1.getLastUsername)()).toBe("alex.k");
+    });
+});
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvX190ZXN0c19fL2xhc3QtdXNlcm5hbWUudGVzdC50cyIsIm1hcHBpbmdzIjoiO0FBQUE7OztHQUdHOztBQUVILElBQUksQ0FBQyxJQUFJLENBQUMsY0FBYyxFQUFFLEdBQUcsRUFBRSxDQUFDLENBQUMsRUFBRSxRQUFRLEVBQUUsRUFBRSxFQUFFLEVBQUUsS0FBSyxFQUFFLEVBQUUsQ0FBQyxDQUFDLENBQUM7QUFFL0Qsd0RBQXdFO0FBRXhFLFFBQVEsQ0FBQyx1QkFBdUIsRUFBRSxHQUFHLEVBQUU7SUFDckMsRUFBRSxDQUFDLHlDQUF5QyxFQUFFLEtBQUssSUFBSSxFQUFFO1FBQ3ZELE1BQU0sQ0FBQyxNQUFNLElBQUEsK0JBQWUsR0FBRSxDQUFDLENBQUMsUUFBUSxFQUFFLENBQUM7SUFDN0MsQ0FBQyxDQUFDLENBQUM7SUFFSCxFQUFFLENBQUMsK0JBQStCLEVBQUUsS0FBSyxJQUFJLEVBQUU7UUFDN0MsTUFBTSxJQUFBLCtCQUFlLEVBQUMsVUFBVSxDQUFDLENBQUM7UUFDbEMsTUFBTSxDQUFDLE1BQU0sSUFBQSwrQkFBZSxHQUFFLENBQUMsQ0FBQyxJQUFJLENBQUMsVUFBVSxDQUFDLENBQUM7SUFDbkQsQ0FBQyxDQUFDLENBQUM7SUFFSCxFQUFFLENBQUMsb0RBQW9ELEVBQUUsS0FBSyxJQUFJLEVBQUU7UUFDbEUsTUFBTSxJQUFBLCtCQUFlLEVBQUMsVUFBVSxDQUFDLENBQUM7UUFDbEMsTUFBTSxJQUFBLCtCQUFlLEVBQUMsRUFBRSxDQUFDLENBQUM7UUFDMUIsTUFBTSxDQUFDLE1BQU0sSUFBQSwrQkFBZSxHQUFFLENBQUMsQ0FBQyxJQUFJLENBQUMsVUFBVSxDQUFDLENBQUM7SUFDbkQsQ0FBQyxDQUFDLENBQUM7SUFFSCxFQUFFLENBQUMseUNBQXlDLEVBQUUsS0FBSyxJQUFJLEVBQUU7UUFDdkQsTUFBTSxJQUFBLCtCQUFlLEVBQUMsVUFBVSxDQUFDLENBQUM7UUFDbEMsTUFBTSxJQUFBLCtCQUFlLEVBQUMsUUFBUSxDQUFDLENBQUM7UUFDaEMsTUFBTSxDQUFDLE1BQU0sSUFBQSwrQkFBZSxHQUFFLENBQUMsQ0FBQyxJQUFJLENBQUMsUUFBUSxDQUFDLENBQUM7SUFDakQsQ0FBQyxDQUFDLENBQUM7QUFDTCxDQUFDLENBQUMsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9hcHBzL21vYmlsZS9fX3Rlc3RzX18vbGFzdC11c2VybmFtZS50ZXN0LnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogTGFzdC11c2VybmFtZSBwcmVmaWxsIHN0b3JhZ2Ug4oCUIHJlbWVtYmVycyB0aGUgbGFzdCBzaWduZWQtaW4gc3RhZmYgdXNlcm5hbWVcbiAqIHNvIHRoZSBsb2dpbiBzY3JlZW4gY2FuIHByZWZpbGwgaXQgYWZ0ZXIgYSBzZXNzaW9uIGV4cGlyeS5cbiAqL1xuXG5qZXN0Lm1vY2soXCJyZWFjdC1uYXRpdmVcIiwgKCkgPT4gKHsgUGxhdGZvcm06IHsgT1M6IFwiaW9zXCIgfSB9KSk7XG5cbmltcG9ydCB7IGdldExhc3RVc2VybmFtZSwgc2V0TGFzdFVzZXJuYW1lIH0gZnJvbSBcIi4uL2xpYi9sYXN0LXVzZXJuYW1lXCI7XG5cbmRlc2NyaWJlKFwibGFzdC11c2VybmFtZSBzdG9yYWdlXCIsICgpID0+IHtcbiAgaXQoXCJyZXR1cm5zIG51bGwgYmVmb3JlIGFueXRoaW5nIHdhcyBzdG9yZWRcIiwgYXN5bmMgKCkgPT4ge1xuICAgIGV4cGVjdChhd2FpdCBnZXRMYXN0VXNlcm5hbWUoKSkudG9CZU51bGwoKTtcbiAgfSk7XG5cbiAgaXQoXCJyb3VuZC10cmlwcyBhIHN0b3JlZCB1c2VybmFtZVwiLCBhc3luYyAoKSA9PiB7XG4gICAgYXdhaXQgc2V0TGFzdFVzZXJuYW1lKFwiam9yZGFuLm1cIik7XG4gICAgZXhwZWN0KGF3YWl0IGdldExhc3RVc2VybmFtZSgpKS50b0JlKFwiam9yZGFuLm1cIik7XG4gIH0pO1xuXG4gIGl0KFwiaWdub3JlcyBlbXB0eSB1c2VybmFtZXMgKGtlZXBzIHRoZSBwcmV2aW91cyB2YWx1ZSlcIiwgYXN5bmMgKCkgPT4ge1xuICAgIGF3YWl0IHNldExhc3RVc2VybmFtZShcImpvcmRhbi5tXCIpO1xuICAgIGF3YWl0IHNldExhc3RVc2VybmFtZShcIlwiKTtcbiAgICBleHBlY3QoYXdhaXQgZ2V0TGFzdFVzZXJuYW1lKCkpLnRvQmUoXCJqb3JkYW4ubVwiKTtcbiAgfSk7XG5cbiAgaXQoXCJvdmVyd3JpdGVzIHdpdGggdGhlIG1vc3QgcmVjZW50IHNpZ24taW5cIiwgYXN5bmMgKCkgPT4ge1xuICAgIGF3YWl0IHNldExhc3RVc2VybmFtZShcImpvcmRhbi5tXCIpO1xuICAgIGF3YWl0IHNldExhc3RVc2VybmFtZShcImFsZXgua1wiKTtcbiAgICBleHBlY3QoYXdhaXQgZ2V0TGFzdFVzZXJuYW1lKCkpLnRvQmUoXCJhbGV4LmtcIik7XG4gIH0pO1xufSk7XG4iXSwidmVyc2lvbiI6M30=

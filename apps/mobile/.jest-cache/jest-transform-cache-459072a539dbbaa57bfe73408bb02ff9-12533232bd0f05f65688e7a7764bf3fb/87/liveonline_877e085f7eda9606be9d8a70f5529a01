@@ -1,0 +1,30 @@
+93cbba69a4d2a3addfaff3f888f924bd
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.DRIVER_CRITICAL_NETWORK_MODE = void 0;
+exports.isLiveOnline = isLiveOnline;
+/**
+ * #2265: the driver's offline decisions read connectivity LIVE, at the moment they decide —
+ * never a value captured in a render closure (stale by the time an awaited request returns).
+ *
+ * Two independent signals, and EITHER one saying "offline" wins:
+ *  - `browserOnline`: TanStack's `onlineManager.isOnline()` — on the Expo web export it follows
+ *    the window's online/offline events; on native it stays true (no window events).
+ *  - `netInfoOnline`: the offline queue store's `isOnline`, written only by useNetworkSync's
+ *    NetInfo listener. It defaults to true and is a POSITIVE offline signal only — so `undefined`
+ *    (never written) counts as online, exactly like the api-client interceptor reads it.
+ *
+ * Pure so the decision is pinned in jest without a network stack.
+ */
+function isLiveOnline(signals) {
+    return signals.browserOnline && signals.netInfoOnline !== false;
+}
+/**
+ * TanStack's default `networkMode: "online"` PAUSES a query/mutation while its onlineManager
+ * says offline, so a paused call never rejects and the caller's offline branch (the api-client
+ * interceptor's queue for a mutation, the invoice-later fallback for a fetch) never runs until
+ * reconnect. Driver-critical calls opt out: they always hit the network and FAIL fast offline,
+ * which is exactly what their catch paths are written for (#2265).
+ */
+exports.DRIVER_CRITICAL_NETWORK_MODE = "always";
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL2xpdmUtb25saW5lLnRzIiwibWFwcGluZ3MiOiI7OztBQWFBLG9DQUtDO0FBbEJEOzs7Ozs7Ozs7Ozs7R0FZRztBQUNILFNBQWdCLFlBQVksQ0FBQyxPQUc1QjtJQUNDLE9BQU8sT0FBTyxDQUFDLGFBQWEsSUFBSSxPQUFPLENBQUMsYUFBYSxLQUFLLEtBQUssQ0FBQztBQUNsRSxDQUFDO0FBRUQ7Ozs7OztHQU1HO0FBQ1UsUUFBQSw0QkFBNEIsR0FBRyxRQUFpQixDQUFDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvbW9iaWxlL2xpYi9saXZlLW9ubGluZS50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqICMyMjY1OiB0aGUgZHJpdmVyJ3Mgb2ZmbGluZSBkZWNpc2lvbnMgcmVhZCBjb25uZWN0aXZpdHkgTElWRSwgYXQgdGhlIG1vbWVudCB0aGV5IGRlY2lkZSDigJRcbiAqIG5ldmVyIGEgdmFsdWUgY2FwdHVyZWQgaW4gYSByZW5kZXIgY2xvc3VyZSAoc3RhbGUgYnkgdGhlIHRpbWUgYW4gYXdhaXRlZCByZXF1ZXN0IHJldHVybnMpLlxuICpcbiAqIFR3byBpbmRlcGVuZGVudCBzaWduYWxzLCBhbmQgRUlUSEVSIG9uZSBzYXlpbmcgXCJvZmZsaW5lXCIgd2luczpcbiAqICAtIGBicm93c2VyT25saW5lYDogVGFuU3RhY2sncyBgb25saW5lTWFuYWdlci5pc09ubGluZSgpYCDigJQgb24gdGhlIEV4cG8gd2ViIGV4cG9ydCBpdCBmb2xsb3dzXG4gKiAgICB0aGUgd2luZG93J3Mgb25saW5lL29mZmxpbmUgZXZlbnRzOyBvbiBuYXRpdmUgaXQgc3RheXMgdHJ1ZSAobm8gd2luZG93IGV2ZW50cykuXG4gKiAgLSBgbmV0SW5mb09ubGluZWA6IHRoZSBvZmZsaW5lIHF1ZXVlIHN0b3JlJ3MgYGlzT25saW5lYCwgd3JpdHRlbiBvbmx5IGJ5IHVzZU5ldHdvcmtTeW5jJ3NcbiAqICAgIE5ldEluZm8gbGlzdGVuZXIuIEl0IGRlZmF1bHRzIHRvIHRydWUgYW5kIGlzIGEgUE9TSVRJVkUgb2ZmbGluZSBzaWduYWwgb25seSDigJQgc28gYHVuZGVmaW5lZGBcbiAqICAgIChuZXZlciB3cml0dGVuKSBjb3VudHMgYXMgb25saW5lLCBleGFjdGx5IGxpa2UgdGhlIGFwaS1jbGllbnQgaW50ZXJjZXB0b3IgcmVhZHMgaXQuXG4gKlxuICogUHVyZSBzbyB0aGUgZGVjaXNpb24gaXMgcGlubmVkIGluIGplc3Qgd2l0aG91dCBhIG5ldHdvcmsgc3RhY2suXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiBpc0xpdmVPbmxpbmUoc2lnbmFsczoge1xuICBicm93c2VyT25saW5lOiBib29sZWFuO1xuICBuZXRJbmZvT25saW5lOiBib29sZWFuIHwgdW5kZWZpbmVkO1xufSk6IGJvb2xlYW4ge1xuICByZXR1cm4gc2lnbmFscy5icm93c2VyT25saW5lICYmIHNpZ25hbHMubmV0SW5mb09ubGluZSAhPT0gZmFsc2U7XG59XG5cbi8qKlxuICogVGFuU3RhY2sncyBkZWZhdWx0IGBuZXR3b3JrTW9kZTogXCJvbmxpbmVcImAgUEFVU0VTIGEgcXVlcnkvbXV0YXRpb24gd2hpbGUgaXRzIG9ubGluZU1hbmFnZXJcbiAqIHNheXMgb2ZmbGluZSwgc28gYSBwYXVzZWQgY2FsbCBuZXZlciByZWplY3RzIGFuZCB0aGUgY2FsbGVyJ3Mgb2ZmbGluZSBicmFuY2ggKHRoZSBhcGktY2xpZW50XG4gKiBpbnRlcmNlcHRvcidzIHF1ZXVlIGZvciBhIG11dGF0aW9uLCB0aGUgaW52b2ljZS1sYXRlciBmYWxsYmFjayBmb3IgYSBmZXRjaCkgbmV2ZXIgcnVucyB1bnRpbFxuICogcmVjb25uZWN0LiBEcml2ZXItY3JpdGljYWwgY2FsbHMgb3B0IG91dDogdGhleSBhbHdheXMgaGl0IHRoZSBuZXR3b3JrIGFuZCBGQUlMIGZhc3Qgb2ZmbGluZSxcbiAqIHdoaWNoIGlzIGV4YWN0bHkgd2hhdCB0aGVpciBjYXRjaCBwYXRocyBhcmUgd3JpdHRlbiBmb3IgKCMyMjY1KS5cbiAqL1xuZXhwb3J0IGNvbnN0IERSSVZFUl9DUklUSUNBTF9ORVRXT1JLX01PREUgPSBcImFsd2F5c1wiIGFzIGNvbnN0O1xuIl0sInZlcnNpb24iOjN9

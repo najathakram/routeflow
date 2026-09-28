@@ -1,0 +1,322 @@
+e2a253421250ba35638b006cda127f5f
+"use client";
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+Object.defineProperty(exports, "WorkflowTour", {
+    enumerable: true,
+    get: function() {
+        return WorkflowTour;
+    }
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _link = /*#__PURE__*/ _interop_require_default(require("next/link"));
+const _reacttabs = /*#__PURE__*/ _interop_require_wildcard(require("@radix-ui/react-tabs"));
+const _lucidereact = require("lucide-react");
+function _interop_require_default(obj) {
+    return obj && obj.__esModule ? obj : {
+        default: obj
+    };
+}
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+// Copy verbatim from the redesign's components/workflow-tour.tsx (M1 §2b);
+// re-implemented on `@radix-ui/react-tabs` instead of shadcn's `Tabs`
+// wrapper — same `data-state` attributes drive marketing.css's `.tour-tabs`
+// selectors.
+const steps = [
+    {
+        id: "orders",
+        label: "Take the order",
+        icon: _lucidereact.Package,
+        title: "Know what needs to go, and who it’s for.",
+        text: "Keep the customer, items, and order status together. Give the office and warehouse the same starting point.",
+        points: [
+            "Customer-specific product pricing",
+            "An order history your team can find"
+        ],
+        caption: "ORDER DETAILS",
+        sampleTitle: "Parkside Market",
+        status: "Ready to dispatch",
+        rows: [
+            [
+                "Spring water · 24-pack",
+                "4 cases"
+            ],
+            [
+                "Sparkling water · 12-pack",
+                "2 cases"
+            ],
+            [
+                "Mixed snacks · 30-pack",
+                "1 case"
+            ]
+        ],
+        foot: [
+            "Delivery notes",
+            "Use the rear receiving entrance."
+        ]
+    },
+    {
+        id: "routes",
+        label: "Plan the route",
+        icon: _lucidereact.Route,
+        title: "Send drivers out with a clear next stop.",
+        text: "Group orders into a delivery run, assign a driver, and keep the stop details connected to each customer.",
+        points: [
+            "Orders and stops in one route view",
+            "Driver assignments and delivery notes"
+        ],
+        caption: "DELIVERY RUN",
+        sampleTitle: "North route",
+        status: "On the road",
+        rows: [
+            [
+                "01 · Warehouse",
+                "Departed"
+            ],
+            [
+                "02 · Parkside Market",
+                "Complete"
+            ],
+            [
+                "03 · Corner Wholesale",
+                "Next stop"
+            ]
+        ],
+        foot: [
+            "Driver",
+            "Alex · 6 stops on this run"
+        ]
+    },
+    {
+        id: "delivery",
+        label: "Confirm delivery",
+        icon: _lucidereact.CheckCheck,
+        title: "Keep a record of the handoff.",
+        text: "Follow delivery status and refer back to proof of delivery when your customer or team needs an answer.",
+        points: [
+            "Delivery status tied to the order",
+            "Proof of delivery for the customer record"
+        ],
+        caption: "DELIVERY RECORD",
+        sampleTitle: "Order #RF-1024",
+        status: "Delivered",
+        rows: [
+            [
+                "Customer",
+                "Parkside Market"
+            ],
+            [
+                "Delivery run",
+                "North route"
+            ],
+            [
+                "Proof of delivery",
+                "Attached"
+            ]
+        ],
+        foot: [
+            "Delivery note",
+            "Received at the rear entrance."
+        ]
+    },
+    {
+        id: "accounts",
+        label: "Follow the account",
+        icon: _lucidereact.ReceiptText,
+        title: "Pick up the conversation with context.",
+        text: "Look up invoices, recorded payments, and order history from the customer account without starting from scratch.",
+        points: [
+            "Invoices and recorded payments",
+            "Customer-level order history"
+        ],
+        caption: "CUSTOMER ACCOUNT",
+        sampleTitle: "Parkside Market",
+        status: "Account overview",
+        rows: [
+            [
+                "Order #RF-1024",
+                "Delivered"
+            ],
+            [
+                "Invoice #INV-024",
+                "$168.00"
+            ],
+            [
+                "Payment record",
+                "Recorded"
+            ]
+        ],
+        foot: [
+            "Your next conversation",
+            "Keep the supporting records close at hand."
+        ]
+    }
+];
+function WorkflowTour() {
+    return /*#__PURE__*/ (0, _jsxruntime.jsxs)(_reacttabs.Root, {
+        defaultValue: "orders",
+        className: "workflow-tour",
+        children: [
+            /*#__PURE__*/ (0, _jsxruntime.jsx)(_reacttabs.List, {
+                className: "tour-tabs",
+                "aria-label": "Explore the wholesale workflow",
+                children: steps.map((step, i)=>/*#__PURE__*/ (0, _jsxruntime.jsxs)(_reacttabs.Trigger, {
+                        value: step.id,
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("span", {
+                                className: "tab-number",
+                                children: [
+                                    "0",
+                                    i + 1
+                                ]
+                            }),
+                            step.label
+                        ]
+                    }, step.id))
+            }),
+            steps.map((step)=>/*#__PURE__*/ (0, _jsxruntime.jsxs)(_reacttabs.Content, {
+                    value: step.id,
+                    className: "tour-panel",
+                    children: [
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                            className: "tour-copy",
+                            children: [
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)(step.icon, {
+                                    className: "feature-icon",
+                                    size: 28
+                                }),
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("h3", {
+                                    children: step.title
+                                }),
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                    children: step.text
+                                }),
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("ul", {
+                                    className: "check-list",
+                                    children: step.points.map((point)=>/*#__PURE__*/ (0, _jsxruntime.jsxs)("li", {
+                                            children: [
+                                                /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.Check, {
+                                                    size: 18
+                                                }),
+                                                point
+                                            ]
+                                        }, point))
+                                }),
+                                /*#__PURE__*/ (0, _jsxruntime.jsxs)(_link.default, {
+                                    className: "text-link",
+                                    href: "/book-a-demo",
+                                    children: [
+                                        "See it in a demo ",
+                                        /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.ArrowUpRight, {
+                                            size: 17
+                                        })
+                                    ]
+                                })
+                            ]
+                        }),
+                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                            className: "tour-preview",
+                            children: [
+                                /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                    className: "tour-example-label",
+                                    children: "ILLUSTRATIVE PRODUCT VIEW"
+                                }),
+                                /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                    className: "record-card",
+                                    children: [
+                                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                            className: "record-caption",
+                                            children: [
+                                                step.caption,
+                                                /*#__PURE__*/ (0, _jsxruntime.jsx)(step.icon, {
+                                                    size: 20
+                                                })
+                                            ]
+                                        }),
+                                        /*#__PURE__*/ (0, _jsxruntime.jsx)("h4", {
+                                            children: step.sampleTitle
+                                        }),
+                                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("span", {
+                                            className: "record-status",
+                                            children: [
+                                                /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {}),
+                                                step.status
+                                            ]
+                                        }),
+                                        /*#__PURE__*/ (0, _jsxruntime.jsx)("div", {
+                                            className: "record-rows",
+                                            children: step.rows.map(([key, val])=>/*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                                    children: [
+                                                        /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                            children: key
+                                                        }),
+                                                        /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                                            children: val
+                                                        })
+                                                    ]
+                                                }, key))
+                                        }),
+                                        /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                            className: "record-note",
+                                            children: [
+                                                /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                                    children: step.foot[0]
+                                                }),
+                                                /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                                    children: step.foot[1]
+                                                })
+                                            ]
+                                        })
+                                    ]
+                                })
+                            ]
+                        })
+                    ]
+                }, step.id))
+        ]
+    });
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8obWFya2V0aW5nKS9jb21wb25lbnRzL3dvcmtmbG93LXRvdXIudHN4Il0sInNvdXJjZXNDb250ZW50IjpbIlwidXNlIGNsaWVudFwiO1xuXG5pbXBvcnQgTGluayBmcm9tIFwibmV4dC9saW5rXCI7XG5pbXBvcnQgKiBhcyBUYWJzIGZyb20gXCJAcmFkaXgtdWkvcmVhY3QtdGFic1wiO1xuaW1wb3J0IHsgUGFja2FnZSwgUm91dGUsIENoZWNrQ2hlY2ssIFJlY2VpcHRUZXh0LCBDaGVjaywgQXJyb3dVcFJpZ2h0IH0gZnJvbSBcImx1Y2lkZS1yZWFjdFwiO1xuXG4vLyBDb3B5IHZlcmJhdGltIGZyb20gdGhlIHJlZGVzaWduJ3MgY29tcG9uZW50cy93b3JrZmxvdy10b3VyLnRzeCAoTTEgwqcyYik7XG4vLyByZS1pbXBsZW1lbnRlZCBvbiBgQHJhZGl4LXVpL3JlYWN0LXRhYnNgIGluc3RlYWQgb2Ygc2hhZGNuJ3MgYFRhYnNgXG4vLyB3cmFwcGVyIOKAlCBzYW1lIGBkYXRhLXN0YXRlYCBhdHRyaWJ1dGVzIGRyaXZlIG1hcmtldGluZy5jc3MncyBgLnRvdXItdGFic2Bcbi8vIHNlbGVjdG9ycy5cblxuY29uc3Qgc3RlcHMgPSBbXG4gIHtcbiAgICBpZDogXCJvcmRlcnNcIixcbiAgICBsYWJlbDogXCJUYWtlIHRoZSBvcmRlclwiLFxuICAgIGljb246IFBhY2thZ2UsXG4gICAgdGl0bGU6IFwiS25vdyB3aGF0IG5lZWRzIHRvIGdvLCBhbmQgd2hvIGl04oCZcyBmb3IuXCIsXG4gICAgdGV4dDogXCJLZWVwIHRoZSBjdXN0b21lciwgaXRlbXMsIGFuZCBvcmRlciBzdGF0dXMgdG9nZXRoZXIuIEdpdmUgdGhlIG9mZmljZSBhbmQgd2FyZWhvdXNlIHRoZSBzYW1lIHN0YXJ0aW5nIHBvaW50LlwiLFxuICAgIHBvaW50czogW1wiQ3VzdG9tZXItc3BlY2lmaWMgcHJvZHVjdCBwcmljaW5nXCIsIFwiQW4gb3JkZXIgaGlzdG9yeSB5b3VyIHRlYW0gY2FuIGZpbmRcIl0sXG4gICAgY2FwdGlvbjogXCJPUkRFUiBERVRBSUxTXCIsXG4gICAgc2FtcGxlVGl0bGU6IFwiUGFya3NpZGUgTWFya2V0XCIsXG4gICAgc3RhdHVzOiBcIlJlYWR5IHRvIGRpc3BhdGNoXCIsXG4gICAgcm93czogW1xuICAgICAgW1wiU3ByaW5nIHdhdGVyIMK3IDI0LXBhY2tcIiwgXCI0IGNhc2VzXCJdLFxuICAgICAgW1wiU3BhcmtsaW5nIHdhdGVyIMK3IDEyLXBhY2tcIiwgXCIyIGNhc2VzXCJdLFxuICAgICAgW1wiTWl4ZWQgc25hY2tzIMK3IDMwLXBhY2tcIiwgXCIxIGNhc2VcIl0sXG4gICAgXSxcbiAgICBmb290OiBbXCJEZWxpdmVyeSBub3Rlc1wiLCBcIlVzZSB0aGUgcmVhciByZWNlaXZpbmcgZW50cmFuY2UuXCJdLFxuICB9LFxuICB7XG4gICAgaWQ6IFwicm91dGVzXCIsXG4gICAgbGFiZWw6IFwiUGxhbiB0aGUgcm91dGVcIixcbiAgICBpY29uOiBSb3V0ZSxcbiAgICB0aXRsZTogXCJTZW5kIGRyaXZlcnMgb3V0IHdpdGggYSBjbGVhciBuZXh0IHN0b3AuXCIsXG4gICAgdGV4dDogXCJHcm91cCBvcmRlcnMgaW50byBhIGRlbGl2ZXJ5IHJ1biwgYXNzaWduIGEgZHJpdmVyLCBhbmQga2VlcCB0aGUgc3RvcCBkZXRhaWxzIGNvbm5lY3RlZCB0byBlYWNoIGN1c3RvbWVyLlwiLFxuICAgIHBvaW50czogW1wiT3JkZXJzIGFuZCBzdG9wcyBpbiBvbmUgcm91dGUgdmlld1wiLCBcIkRyaXZlciBhc3NpZ25tZW50cyBhbmQgZGVsaXZlcnkgbm90ZXNcIl0sXG4gICAgY2FwdGlvbjogXCJERUxJVkVSWSBSVU5cIixcbiAgICBzYW1wbGVUaXRsZTogXCJOb3J0aCByb3V0ZVwiLFxuICAgIHN0YXR1czogXCJPbiB0aGUgcm9hZFwiLFxuICAgIHJvd3M6IFtcbiAgICAgIFtcIjAxIMK3IFdhcmVob3VzZVwiLCBcIkRlcGFydGVkXCJdLFxuICAgICAgW1wiMDIgwrcgUGFya3NpZGUgTWFya2V0XCIsIFwiQ29tcGxldGVcIl0sXG4gICAgICBbXCIwMyDCtyBDb3JuZXIgV2hvbGVzYWxlXCIsIFwiTmV4dCBzdG9wXCJdLFxuICAgIF0sXG4gICAgZm9vdDogW1wiRHJpdmVyXCIsIFwiQWxleCDCtyA2IHN0b3BzIG9uIHRoaXMgcnVuXCJdLFxuICB9LFxuICB7XG4gICAgaWQ6IFwiZGVsaXZlcnlcIixcbiAgICBsYWJlbDogXCJDb25maXJtIGRlbGl2ZXJ5XCIsXG4gICAgaWNvbjogQ2hlY2tDaGVjayxcbiAgICB0aXRsZTogXCJLZWVwIGEgcmVjb3JkIG9mIHRoZSBoYW5kb2ZmLlwiLFxuICAgIHRleHQ6IFwiRm9sbG93IGRlbGl2ZXJ5IHN0YXR1cyBhbmQgcmVmZXIgYmFjayB0byBwcm9vZiBvZiBkZWxpdmVyeSB3aGVuIHlvdXIgY3VzdG9tZXIgb3IgdGVhbSBuZWVkcyBhbiBhbnN3ZXIuXCIsXG4gICAgcG9pbnRzOiBbXCJEZWxpdmVyeSBzdGF0dXMgdGllZCB0byB0aGUgb3JkZXJcIiwgXCJQcm9vZiBvZiBkZWxpdmVyeSBmb3IgdGhlIGN1c3RvbWVyIHJlY29yZFwiXSxcbiAgICBjYXB0aW9uOiBcIkRFTElWRVJZIFJFQ09SRFwiLFxuICAgIHNhbXBsZVRpdGxlOiBcIk9yZGVyICNSRi0xMDI0XCIsXG4gICAgc3RhdHVzOiBcIkRlbGl2ZXJlZFwiLFxuICAgIHJvd3M6IFtcbiAgICAgIFtcIkN1c3RvbWVyXCIsIFwiUGFya3NpZGUgTWFya2V0XCJdLFxuICAgICAgW1wiRGVsaXZlcnkgcnVuXCIsIFwiTm9ydGggcm91dGVcIl0sXG4gICAgICBbXCJQcm9vZiBvZiBkZWxpdmVyeVwiLCBcIkF0dGFjaGVkXCJdLFxuICAgIF0sXG4gICAgZm9vdDogW1wiRGVsaXZlcnkgbm90ZVwiLCBcIlJlY2VpdmVkIGF0IHRoZSByZWFyIGVudHJhbmNlLlwiXSxcbiAgfSxcbiAge1xuICAgIGlkOiBcImFjY291bnRzXCIsXG4gICAgbGFiZWw6IFwiRm9sbG93IHRoZSBhY2NvdW50XCIsXG4gICAgaWNvbjogUmVjZWlwdFRleHQsXG4gICAgdGl0bGU6IFwiUGljayB1cCB0aGUgY29udmVyc2F0aW9uIHdpdGggY29udGV4dC5cIixcbiAgICB0ZXh0OiBcIkxvb2sgdXAgaW52b2ljZXMsIHJlY29yZGVkIHBheW1lbnRzLCBhbmQgb3JkZXIgaGlzdG9yeSBmcm9tIHRoZSBjdXN0b21lciBhY2NvdW50IHdpdGhvdXQgc3RhcnRpbmcgZnJvbSBzY3JhdGNoLlwiLFxuICAgIHBvaW50czogW1wiSW52b2ljZXMgYW5kIHJlY29yZGVkIHBheW1lbnRzXCIsIFwiQ3VzdG9tZXItbGV2ZWwgb3JkZXIgaGlzdG9yeVwiXSxcbiAgICBjYXB0aW9uOiBcIkNVU1RPTUVSIEFDQ09VTlRcIixcbiAgICBzYW1wbGVUaXRsZTogXCJQYXJrc2lkZSBNYXJrZXRcIixcbiAgICBzdGF0dXM6IFwiQWNjb3VudCBvdmVydmlld1wiLFxuICAgIHJvd3M6IFtcbiAgICAgIFtcIk9yZGVyICNSRi0xMDI0XCIsIFwiRGVsaXZlcmVkXCJdLFxuICAgICAgW1wiSW52b2ljZSAjSU5WLTAyNFwiLCBcIiQxNjguMDBcIl0sXG4gICAgICBbXCJQYXltZW50IHJlY29yZFwiLCBcIlJlY29yZGVkXCJdLFxuICAgIF0sXG4gICAgZm9vdDogW1wiWW91ciBuZXh0IGNvbnZlcnNhdGlvblwiLCBcIktlZXAgdGhlIHN1cHBvcnRpbmcgcmVjb3JkcyBjbG9zZSBhdCBoYW5kLlwiXSxcbiAgfSxcbl07XG5cbmV4cG9ydCBmdW5jdGlvbiBXb3JrZmxvd1RvdXIoKSB7XG4gIHJldHVybiAoXG4gICAgPFRhYnMuUm9vdCBkZWZhdWx0VmFsdWU9XCJvcmRlcnNcIiBjbGFzc05hbWU9XCJ3b3JrZmxvdy10b3VyXCI+XG4gICAgICA8VGFicy5MaXN0IGNsYXNzTmFtZT1cInRvdXItdGFic1wiIGFyaWEtbGFiZWw9XCJFeHBsb3JlIHRoZSB3aG9sZXNhbGUgd29ya2Zsb3dcIj5cbiAgICAgICAge3N0ZXBzLm1hcCgoc3RlcCwgaSkgPT4gKFxuICAgICAgICAgIDxUYWJzLlRyaWdnZXIga2V5PXtzdGVwLmlkfSB2YWx1ZT17c3RlcC5pZH0+XG4gICAgICAgICAgICA8c3BhbiBjbGFzc05hbWU9XCJ0YWItbnVtYmVyXCI+MHtpICsgMX08L3NwYW4+XG4gICAgICAgICAgICB7c3RlcC5sYWJlbH1cbiAgICAgICAgICA8L1RhYnMuVHJpZ2dlcj5cbiAgICAgICAgKSl9XG4gICAgICA8L1RhYnMuTGlzdD5cbiAgICAgIHtzdGVwcy5tYXAoKHN0ZXApID0+IChcbiAgICAgICAgPFRhYnMuQ29udGVudCBrZXk9e3N0ZXAuaWR9IHZhbHVlPXtzdGVwLmlkfSBjbGFzc05hbWU9XCJ0b3VyLXBhbmVsXCI+XG4gICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJ0b3VyLWNvcHlcIj5cbiAgICAgICAgICAgIDxzdGVwLmljb24gY2xhc3NOYW1lPVwiZmVhdHVyZS1pY29uXCIgc2l6ZT17Mjh9IC8+XG4gICAgICAgICAgICA8aDM+e3N0ZXAudGl0bGV9PC9oMz5cbiAgICAgICAgICAgIDxwPntzdGVwLnRleHR9PC9wPlxuICAgICAgICAgICAgPHVsIGNsYXNzTmFtZT1cImNoZWNrLWxpc3RcIj5cbiAgICAgICAgICAgICAge3N0ZXAucG9pbnRzLm1hcCgocG9pbnQpID0+IChcbiAgICAgICAgICAgICAgICA8bGkga2V5PXtwb2ludH0+XG4gICAgICAgICAgICAgICAgICA8Q2hlY2sgc2l6ZT17MTh9IC8+XG4gICAgICAgICAgICAgICAgICB7cG9pbnR9XG4gICAgICAgICAgICAgICAgPC9saT5cbiAgICAgICAgICAgICAgKSl9XG4gICAgICAgICAgICA8L3VsPlxuICAgICAgICAgICAgPExpbmsgY2xhc3NOYW1lPVwidGV4dC1saW5rXCIgaHJlZj1cIi9ib29rLWEtZGVtb1wiPlxuICAgICAgICAgICAgICBTZWUgaXQgaW4gYSBkZW1vIDxBcnJvd1VwUmlnaHQgc2l6ZT17MTd9IC8+XG4gICAgICAgICAgICA8L0xpbms+XG4gICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJ0b3VyLXByZXZpZXdcIj5cbiAgICAgICAgICAgIDxwIGNsYXNzTmFtZT1cInRvdXItZXhhbXBsZS1sYWJlbFwiPklMTFVTVFJBVElWRSBQUk9EVUNUIFZJRVc8L3A+XG4gICAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cInJlY29yZC1jYXJkXCI+XG4gICAgICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwicmVjb3JkLWNhcHRpb25cIj5cbiAgICAgICAgICAgICAgICB7c3RlcC5jYXB0aW9ufVxuICAgICAgICAgICAgICAgIDxzdGVwLmljb24gc2l6ZT17MjB9IC8+XG4gICAgICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgICAgICA8aDQ+e3N0ZXAuc2FtcGxlVGl0bGV9PC9oND5cbiAgICAgICAgICAgICAgPHNwYW4gY2xhc3NOYW1lPVwicmVjb3JkLXN0YXR1c1wiPlxuICAgICAgICAgICAgICAgIDxzcGFuIC8+XG4gICAgICAgICAgICAgICAge3N0ZXAuc3RhdHVzfVxuICAgICAgICAgICAgICA8L3NwYW4+XG4gICAgICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwicmVjb3JkLXJvd3NcIj5cbiAgICAgICAgICAgICAgICB7c3RlcC5yb3dzLm1hcCgoW2tleSwgdmFsXSkgPT4gKFxuICAgICAgICAgICAgICAgICAgPGRpdiBrZXk9e2tleX0+XG4gICAgICAgICAgICAgICAgICAgIDxzcGFuPntrZXl9PC9zcGFuPlxuICAgICAgICAgICAgICAgICAgICA8c3Ryb25nPnt2YWx9PC9zdHJvbmc+XG4gICAgICAgICAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgICAgICAgICApKX1cbiAgICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwicmVjb3JkLW5vdGVcIj5cbiAgICAgICAgICAgICAgICA8c3Bhbj57c3RlcC5mb290WzBdfTwvc3Bhbj5cbiAgICAgICAgICAgICAgICA8cD57c3RlcC5mb290WzFdfTwvcD5cbiAgICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgPC9UYWJzLkNvbnRlbnQ+XG4gICAgICApKX1cbiAgICA8L1RhYnMuUm9vdD5cbiAgKTtcbn1cbiJdLCJuYW1lcyI6WyJXb3JrZmxvd1RvdXIiLCJzdGVwcyIsImlkIiwibGFiZWwiLCJpY29uIiwiUGFja2FnZSIsInRpdGxlIiwidGV4dCIsInBvaW50cyIsImNhcHRpb24iLCJzYW1wbGVUaXRsZSIsInN0YXR1cyIsInJvd3MiLCJmb290IiwiUm91dGUiLCJDaGVja0NoZWNrIiwiUmVjZWlwdFRleHQiLCJUYWJzIiwiUm9vdCIsImRlZmF1bHRWYWx1ZSIsImNsYXNzTmFtZSIsIkxpc3QiLCJhcmlhLWxhYmVsIiwibWFwIiwic3RlcCIsImkiLCJUcmlnZ2VyIiwidmFsdWUiLCJzcGFuIiwiQ29udGVudCIsImRpdiIsInNpemUiLCJoMyIsInAiLCJ1bCIsInBvaW50IiwibGkiLCJDaGVjayIsIkxpbmsiLCJocmVmIiwiQXJyb3dVcFJpZ2h0IiwiaDQiLCJrZXkiLCJ2YWwiLCJzdHJvbmciXSwibWFwcGluZ3MiOiJBQUFBOzs7OzsrQkFrRmdCQTs7O2VBQUFBOzs7OzZEQWhGQzttRUFDSzs2QkFDdUQ7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7O0FBRTdFLDJFQUEyRTtBQUMzRSxzRUFBc0U7QUFDdEUsNEVBQTRFO0FBQzVFLGFBQWE7QUFFYixNQUFNQyxRQUFRO0lBQ1o7UUFDRUMsSUFBSTtRQUNKQyxPQUFPO1FBQ1BDLE1BQU1DLG9CQUFPO1FBQ2JDLE9BQU87UUFDUEMsTUFBTTtRQUNOQyxRQUFRO1lBQUM7WUFBcUM7U0FBc0M7UUFDcEZDLFNBQVM7UUFDVEMsYUFBYTtRQUNiQyxRQUFRO1FBQ1JDLE1BQU07WUFDSjtnQkFBQztnQkFBMEI7YUFBVTtZQUNyQztnQkFBQztn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

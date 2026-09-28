@@ -1,0 +1,121 @@
+9e8f80bd6f5886d69646fbdbdc93dea1
+"use client";
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+Object.defineProperty(exports, "PlanGateNotice", {
+    enumerable: true,
+    get: function() {
+        return PlanGateNotice;
+    }
+});
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+const _navigation = require("next/navigation");
+const _web = require("@routeflow/ui/web");
+const _apiclient = require("../lib/api-client");
+const _plangatelock = require("../lib/plan-gate-lock");
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+/** Repeat gates for one navigation are swallowed for this long — a little
+ *  longer than the 4s toast duration, so a burst never stacks. */ const DEDUP_WINDOW_MS = 5000;
+function PlanGateNotice() {
+    const { toast } = (0, _web.useToast)();
+    const pathname = (0, _navigation.usePathname)();
+    // A single navigation can fire several gated requests at once — one page
+    // firing many GETs behind the SAME flag (the analytics page alone fires 12,
+    // all behind flag.analytics), or, for a tenant licensed for some but not all
+    // of a page's features, several DIFFERENT flags failing together (B449: a
+    // LITE tenant hitting a locked route saw up to three toasts stack, naming
+    // contradictory tiers). Either way it's one navigation and one notice — key
+    // the dedup by pathname, not by flag, so it coalesces regardless of which
+    // query happened to fail first.
+    const lastNotified = _react.useRef(null);
+    // Explicit reset on navigation — a stale dedup entry from the PREVIOUS path must
+    // never suppress (or be mistaken for) a notice on this one; keying by pathname
+    // already implies this, but make it an actual invariant rather than an emergent one.
+    _react.useEffect(()=>{
+        lastNotified.current = null;
+    }, [
+        pathname
+    ]);
+    _react.useEffect(()=>{
+        return (0, _apiclient.registerPlanGateListener)((gate)=>{
+            // B449 fix-round finding 2: while `PlanGateBoundary` has this exact path locked,
+            // it already fired the ONE deterministic notice for this navigation, naming the
+            // route's own gate tier. A 403 from some other widget (e.g. a header/dashboard
+            // fetch that isn't fully suppressed) must never add a second, possibly
+            // contradictory one.
+            if ((0, _plangatelock.isRouteLocked)(pathname)) return;
+            const now = Date.now();
+            const prev = lastNotified.current;
+            if (prev && prev.pathname === pathname && now - prev.at < DEDUP_WINDOW_MS) return;
+            lastNotified.current = {
+                pathname,
+                at: now
+            };
+            toast({
+                title: gate.message,
+                description: upgradeHint(gate) ?? undefined,
+                variant: "warning"
+            });
+        });
+    }, [
+        toast,
+        pathname
+    ]);
+    return null;
+}
+/** "Add {addonSku}" / "Upgrade to {planKey}" hint text, or null when the gate
+ *  body carries no upgrade suggestion. Prices are shown when present. */ function upgradeHint(gate) {
+    const u = gate.upgrade;
+    if (!u) return null;
+    if (u.addonSku) {
+        return `Add ${u.addonSku}${u.addonMonthlyPrice ? ` · $${u.addonMonthlyPrice}/mo` : ""}`;
+    }
+    if (u.planKey) {
+        return `Upgrade to ${u.planKey}${u.planMonthlyPrice ? ` · $${u.planMonthlyPrice}/mo` : ""}`;
+    }
+    return null;
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2NvbXBvbmVudHMvUGxhbkdhdGVOb3RpY2UudHN4Il0sInNvdXJjZXNDb250ZW50IjpbIlwidXNlIGNsaWVudFwiO1xuXG5pbXBvcnQgKiBhcyBSZWFjdCBmcm9tIFwicmVhY3RcIjtcbmltcG9ydCB7IHVzZVBhdGhuYW1lIH0gZnJvbSBcIm5leHQvbmF2aWdhdGlvblwiO1xuaW1wb3J0IHsgdXNlVG9hc3QgfSBmcm9tIFwiQHJvdXRlZmxvdy91aS93ZWJcIjtcbmltcG9ydCB7IHJlZ2lzdGVyUGxhbkdhdGVMaXN0ZW5lciB9IGZyb20gXCJAL2xpYi9hcGktY2xpZW50XCI7XG5pbXBvcnQgeyBpc1JvdXRlTG9ja2VkIH0gZnJvbSBcIkAvbGliL3BsYW4tZ2F0ZS1sb2NrXCI7XG5pbXBvcnQgdHlwZSB7IFBsYW5HYXRlQm9keSB9IGZyb20gXCJAL2xpYi9wbGFuLWdhdGVcIjtcblxuLyoqIFJlcGVhdCBnYXRlcyBmb3Igb25lIG5hdmlnYXRpb24gYXJlIHN3YWxsb3dlZCBmb3IgdGhpcyBsb25nIOKAlCBhIGxpdHRsZVxuICogIGxvbmdlciB0aGFuIHRoZSA0cyB0b2FzdCBkdXJhdGlvbiwgc28gYSBidXJzdCBuZXZlciBzdGFja3MuICovXG5jb25zdCBERURVUF9XSU5ET1dfTVMgPSA1XzAwMDtcblxuLyoqXG4gKiBNb3VudCBvbmNlIG5lYXIgdGhlIGFwcCByb290IChtaXJyb3JzIFJlQXV0aFByb3ZpZGVyJ3MgcmVsYXRpb25zaGlwIHRvXG4gKiBzZXNzaW9uLWV4cGlyeS50cykgdG8gdHVybiBhIDQwMyBQTEFOX0dBVEUgb24gYSBnYXRlZCBHRVQgaW50byBhIGZyaWVuZGx5XG4gKiB0b2FzdCBpbnN0ZWFkIG9mIGEgcXVlcnkgZmFpbGluZyBzaWxlbnRseS4gUmVnaXN0ZXJzIHdpdGggdGhlIGJyaWRnZSBpblxuICogYXBpLWNsaWVudC50cyBvbiBtb3VudDsgcmVuZGVycyBub3RoaW5nIGl0c2VsZi5cbiAqXG4gKiBNdXRhdGlvbnMgYWxyZWFkeSBzdXJmYWNlIGEgbWVzc2FnZSB0b2FzdCB2aWEgYE11dGF0aW9uQ2FjaGUub25FcnJvcmAgaW5cbiAqIGFwcC9wcm92aWRlcnMudHN4LCBzbyBhcGktY2xpZW50LnRzIG9ubHkgbm90aWZpZXMgdGhpcyBsaXN0ZW5lciBmb3IgR0VUcyDigJRcbiAqIHNlZSB0aGUgYnJpZGdlIGNvbW1lbnQgdGhlcmUgZm9yIHdoeS4gRnVsbCBMT0NLRURfUEFHRSAvIElOTElORV9SRVNPTFZFXG4gKiBwYWdlIHN0YXRlcyAoY29tcG9uZW50cy9nYXRlcy9QbGFuR2F0ZXMudHN4KSBhcmUgYSBzZXBhcmF0ZSwgbGFyZ2VyXG4gKiBwZXItcGFnZSB0cmVhdG1lbnQgYW5kIG91dCBvZiBzY29wZSBoZXJlLlxuICovXG5leHBvcnQgZnVuY3Rpb24gUGxhbkdhdGVOb3RpY2UoKTogbnVsbCB7XG4gIGNvbnN0IHsgdG9hc3QgfSA9IHVzZVRvYXN0KCk7XG4gIGNvbnN0IHBhdGhuYW1lID0gdXNlUGF0aG5hbWUoKTtcbiAgLy8gQSBzaW5nbGUgbmF2aWdhdGlvbiBjYW4gZmlyZSBzZXZlcmFsIGdhdGVkIHJlcXVlc3RzIGF0IG9uY2Ug4oCUIG9uZSBwYWdlXG4gIC8vIGZpcmluZyBtYW55IEdFVHMgYmVoaW5kIHRoZSBTQU1FIGZsYWcgKHRoZSBhbmFseXRpY3MgcGFnZSBhbG9uZSBmaXJlcyAxMixcbiAgLy8gYWxsIGJlaGluZCBmbGFnLmFuYWx5dGljcyksIG9yLCBmb3IgYSB0ZW5hbnQgbGljZW5zZWQgZm9yIHNvbWUgYnV0IG5vdCBhbGxcbiAgLy8gb2YgYSBwYWdlJ3MgZmVhdHVyZXMsIHNldmVyYWwgRElGRkVSRU5UIGZsYWdzIGZhaWxpbmcgdG9nZXRoZXIgKEI0NDk6IGFcbiAgLy8gTElURSB0ZW5hbnQgaGl0dGluZyBhIGxvY2tlZCByb3V0ZSBzYXcgdXAgdG8gdGhyZWUgdG9hc3RzIHN0YWNrLCBuYW1pbmdcbiAgLy8gY29udHJhZGljdG9yeSB0aWVycykuIEVpdGhlciB3YXkgaXQncyBvbmUgbmF2aWdhdGlvbiBhbmQgb25lIG5vdGljZSDigJQga2V5XG4gIC8vIHRoZSBkZWR1cCBieSBwYXRobmFtZSwgbm90IGJ5IGZsYWcsIHNvIGl0IGNvYWxlc2NlcyByZWdhcmRsZXNzIG9mIHdoaWNoXG4gIC8vIHF1ZXJ5IGhhcHBlbmVkIHRvIGZhaWwgZmlyc3QuXG4gIGNvbnN0IGxhc3ROb3RpZmllZCA9IFJlYWN0LnVzZVJlZjx7IHBhdGhuYW1lOiBzdHJpbmc7IGF0OiBudW1iZXIgfSB8IG51bGw+KG51bGwpO1xuXG4gIC8vIEV4cGxpY2l0IHJlc2V0IG9uIG5hdmlnYXRpb24g4oCUIGEgc3RhbGUgZGVkdXAgZW50cnkgZnJvbSB0aGUgUFJFVklPVVMgcGF0aCBtdXN0XG4gIC8vIG5ldmVyIHN1cHByZXNzIChvciBiZSBtaXN0YWtlbiBmb3IpIGEgbm90aWNlIG9uIHRoaXMgb25lOyBrZXlpbmcgYnkgcGF0aG5hbWVcbiAgLy8gYWxyZWFkeSBpbXBsaWVzIHRoaXMsIGJ1dCBtYWtlIGl0IGFuIGFjdHVhbCBpbnZhcmlhbnQgcmF0aGVyIHRoYW4gYW4gZW1lcmdlbnQgb25lLlxuICBSZWFjdC51c2VFZmZlY3QoKCkgPT4ge1xuICAgIGxhc3ROb3RpZmllZC5jdXJyZW50ID0gbnVsbDtcbiAgfSwgW3BhdGhuYW1lXSk7XG5cbiAgUmVhY3QudXNlRWZmZWN0KCgpID0+IHtcbiAgICByZXR1cm4gcmVnaXN0ZXJQbGFuR2F0ZUxpc3RlbmVyKChnYXRlKSA9PiB7XG4gICAgICAvLyBCNDQ5IGZpeC1yb3VuZCBmaW5kaW5nIDI6IHdoaWxlIGBQbGFuR2F0ZUJvdW5kYXJ5YCBoYXMgdGhpcyBleGFjdCBwYXRoIGxvY2tlZCxcbiAgICAgIC8vIGl0IGFscmVhZHkgZmlyZWQgdGhlIE9ORSBkZXRlcm1pbmlzdGljIG5vdGljZSBmb3IgdGhpcyBuYXZpZ2F0aW9uLCBuYW1pbmcgdGhlXG4gICAgICAvLyByb3V0ZSdzIG93biBnYXRlIHRpZXIuIEEgNDAzIGZyb20gc29tZSBvdGhlciB3aWRnZXQgKGUuZy4gYSBoZWFkZXIvZGFzaGJvYXJkXG4gICAgICAvLyBmZXRjaCB0aGF0IGlzbid0IGZ1bGx5IHN1cHByZXNzZWQpIG11c3QgbmV2ZXIgYWRkIGEgc2Vjb25kLCBwb3NzaWJseVxuICAgICAgLy8gY29udHJhZGljdG9yeSBvbmUuXG4gICAgICBpZiAoaXNSb3V0ZUxvY2tlZChwYXRobmFtZSkpIHJldHVybjtcbiAgICAgIGNvbnN0IG5vdyA9IERhdGUubm93KCk7XG4gICAgICBjb25zdCBwcmV2ID0gbGFzdE5vdGlmaWVkLmN1cnJlbnQ7XG4gICAgICBpZiAocHJldiAmJiBwcmV2LnBhdGhuYW1lID09PSBwYXRobmFtZSAmJiBub3cgLSBwcmV2LmF0IDwgREVEVVBfV0lORE9XX01TKSByZXR1cm47XG4gICAgICBsYXN0Tm90aWZpZWQuY3VycmVudCA9IHsgcGF0aG5hbWUsIGF0OiBub3cgfTtcbiAgICAgIHRvYXN0KHtcbiAgICAgICAgdGl0bGU6IGdhdGUubWVzc2FnZSxcbiAgICAgICAgZGVzY3JpcHRpb246IHVwZ3JhZGVIaW50KGdhdGUpID8/IHVuZGVmaW5lZCxcbiAgICAgICAgdmFyaWFudDogXCJ3YXJuaW5nXCIsXG4gICAgICB9KTtcbiAgICB9KTtcbiAgfSwgW3RvYXN0LCBwYXRobmFtZV0pO1xuXG4gIHJldHVybiBudWxsO1xufVxuXG4vKiogXCJBZGQge2FkZG9uU2t1fVwiIC8gXCJVcGdyYWRlIHRvIHtwbGFuS2V5fVwiIGhpbnQgdGV4dCwgb3IgbnVsbCB3aGVuIHRoZSBnYXRlXG4gKiAgYm9keSBjYXJyaWVzIG5vIHVwZ3JhZGUgc3VnZ2VzdGlvbi4gUHJpY2VzIGFyZSBzaG93biB3aGVuIHByZXNlbnQuICovXG5mdW5jdGlvbiB1cGdyYWRlSGludChnYXRlOiBQbGFuR2F0ZUJvZHkpOiBzdHJpbmcgfCBudWxsIHtcbiAgY29uc3QgdSA9IGdhdGUudXBncmFkZTtcbiAgaWYgKCF1KSByZXR1cm4gbnVsbDtcbiAgaWYgKHUuYWRkb25Ta3UpIHtcbiAgICByZXR1cm4gYEFkZCAke3UuYWRkb25Ta3V9JHt1LmFkZG9uTW9udGhseVByaWNlID8gYCDCtyAkJHt1LmFkZG9uTW9udGhseVByaWNlfS9tb2AgOiBcIlwifWA7XG4gIH1cbiAgaWYgKHUucGxhbktleSkge1xuICAgIHJldHVybiBgVXBncmFkZSB0byAke3UucGxhbktleX0ke3UucGxhbk1vbnRobHlQcmljZSA/IGAgwrcgJCR7dS5wbGFuTW9udGhseVByaWNlfS9tb2AgOiBcIlwifWA7XG4gIH1cbiAgcmV0dXJuIG51bGw7XG59XG4iXSwibmFtZXMiOlsiUGxhbkdhdGVOb3RpY2UiLCJERURVUF9XSU5ET1dfTVMiLCJ0b2FzdCIsInVzZVRvYXN0IiwicGF0aG5hbWUiLCJ1c2VQYXRobmFtZSIsImxhc3ROb3RpZmllZCIsIlJlYWN0IiwidXNlUmVmIiwidXNlRWZmZWN0IiwiY3VycmVudCIsInJlZ2lzdGVyUGxhbkdhdGVMaXN0ZW5lciIsImdhdGUiLCJpc1JvdXRlTG9ja2VkIiwibm93IiwiRGF0ZSIsInByZXYiLCJhdCIsInRpdGxlIiwibWVzc2FnZSIsImRlc2NyaXB0aW9uIiwidXBncmFkZUhpbnQiLCJ1bmRlZmluZWQiLCJ2YXJpYW50IiwidSIsInVwZ3JhZGUiLCJhZGRvblNrdSIsImFkZG9uTW9udGhseVByaWNlIiwicGxhbktleSIsInBsYW5Nb250aGx5UHJpY2UiXSwibWFwcGluZ3MiOiJBQUFBOzs7OzsrQkF5QmdCQTs7O2VBQUFBOzs7K0RBdkJPOzRCQUNLO3FCQUNIOzJCQUNnQjs4QkFDWDs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7O0FBRzlCO2dFQUNnRSxHQUNoRSxNQUFNQyxrQkFBa0I7QUFjakIsU0FBU0Q7SUFDZCxNQUFNLEVBQUVFLEtBQUssRUFBRSxHQUFHQyxJQUFBQSxhQUFRO0lBQzFCLE1BQU1DLFdBQVdDLElBQUFBLHVCQUFXO0lBQzVCLHlFQUF5RTtJQUN6RSw0RUFBNEU7SUFDNUUsNkVBQTZFO0lBQzdFLDBFQUEwRTtJQUMxRSwwRUFBMEU7SUFDMUUsNEVBQTRFO0lBQzVFLDBFQUEwRTtJQUMxRSxnQ0FBZ0M7SUFDaEMsTUFBTUMsZUFBZUMsT0FBTUMsTUFBTSxDQUEwQztJQUUzRSxpRkFBaUY7SUFDakYsK0VBQStFO0lBQy9FLHFGQUFxRjtJQUNyRkQsT0FBTUUsU0FBUyxDQUFDO1FBQ2RILGFBQWFJLE9BQU8sR0FBRztJQUN6QixHQUFHO1FBQUNOO0tBQVM7SUFFYkcsT0FBTUUsU0FBUyxDQUFDO1FBQ2QsT0FBT0UsSUFBQUEsbUNBQXdCLEVBQUMsQ0FBQ0M7WUFDL0IsaUZBQWlGO1lBQ2pGLGdGQUFnRjtZQUNoRiwrRUFBK0U7WUFDL0UsdUVBQXVFO1lBQ3ZFLHFCQUFxQjtZQUNyQixJQUFJQyxJQUFBQSwyQkFBYSxFQUFDVCxXQUFXO1lBQzdCLE1BQU1VLE1BQU1DLEtBQUtELEdBQUc7WUFDcEIsTUFBTUUsT0FBT1YsYUFBYUksT0FBTztZQUNqQyxJQUFJTSxRQUFRQSxLQUFLWixRQUFRLEtBQUtBLFlBQVlVLE1BQU1FLEtBQUtDLEVBQUUsR0FBR2hCLGlCQUFpQjtZQUMzRUssYUFBYUksT0FBTyxHQUFHO2dCQUFFTjtnQkFBVWEsSUFBSUg7WUFBSTtZQUMzQ1osTUFBTTtnQkFDSmdCLE9BQU9OLEtBQUtPLE9BQU87Z0JBQ25CQyxhQUFhQyxZQUFZVCxTQUFTVTtnQkFDbENDLFNBQVM7WUFDWDtRQUNGO0lBQ0YsR0FBRztRQUFDckI7UUFBT0U7S0FBUztJQUVwQixPQUFPO0FBQ1Q7QUFFQTt1RUFDdUUsR0FDdkUsU0FBU2lCLFlBQVlULElBQWtCO0lBQ3JDLE1BQU1ZLElBQUlaLEtBQUthLE9BQU87SUFDdEIsSUFBSSxDQUFDRCxHQUFHLE9BQU87SUFDZixJQUFJQSxFQUFFRSxRQUFRLEVBQUU7UUFDZCxPQUFPLENBQUMsSUFBSSxFQUFFRixFQUFFRSxRQUFRLEdBQUdGLEVBQUVHLGlCQUFpQixHQUFHLENBQUMsSUFBSSxFQUFFSCxFQUFFRyxpQkFBaUIsQ0FBQyxHQUFHLENBQUMsR0FBRyxJQUFJO0lBQ3pGO0lBQ0EsSUFBSUgsRUFBRUksT0FBTyxFQUFFO1FBQ2IsT0FBTyxDQUFDLFdBQVcsRUFBRUosRUFBRUksT0FBTyxHQUFHSixFQUFFSyxnQkFBZ0IsR0FBRyxDQUFDLElBQUksRUFBRUwsRUFBRUssZ0JBQWdCLENBQUMsR0FBRyxDQUFDLEdBQUcsSUFBSTtJQUM3RjtJQUNBLE9BQU87QUFDVCJ9

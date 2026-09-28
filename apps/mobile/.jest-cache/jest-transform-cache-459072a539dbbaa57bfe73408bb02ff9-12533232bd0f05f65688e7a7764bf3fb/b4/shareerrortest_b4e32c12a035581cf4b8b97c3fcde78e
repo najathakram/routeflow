@@ -1,0 +1,28 @@
+9268e2677ccb3c6508d85a5a495f0c94
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const share_error_1 = require("../lib/share-error");
+/**
+ * Pins the iOS Safari share contract (customer report 2026-08-25: "can't
+ * share an invoice via phone, works on desktop"): a NotAllowedError from
+ * `navigator.share()` means the transient-activation window didn't survive
+ * the PDF fetch — the file is cached and ready, so it must route to the
+ * "tap again to share" recovery, NEVER to a hard failure toast. AbortError
+ * stays "user dismissed the sheet" and everything else stays a real failure.
+ */
+describe("classifyShareError", () => {
+    it("routes NotAllowedError (iOS expired activation) to the retap recovery", () => {
+        expect((0, share_error_1.classifyShareError)("NotAllowedError")).toBe("retap");
+    });
+    it("treats AbortError as a dismissed share sheet, not an error", () => {
+        expect((0, share_error_1.classifyShareError)("AbortError")).toBe("dismissed");
+    });
+    it("treats everything else as a real failure", () => {
+        expect((0, share_error_1.classifyShareError)("TypeError")).toBe("failed");
+        expect((0, share_error_1.classifyShareError)("DataError")).toBe("failed");
+        expect((0, share_error_1.classifyShareError)("")).toBe("failed");
+        expect((0, share_error_1.classifyShareError)(undefined)).toBe("failed");
+        expect((0, share_error_1.classifyShareError)(null)).toBe("failed");
+    });
+});
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvX190ZXN0c19fL3NoYXJlLWVycm9yLnRlc3QudHMiLCJtYXBwaW5ncyI6Ijs7QUFBQSxvREFBd0Q7QUFFeEQ7Ozs7Ozs7R0FPRztBQUNILFFBQVEsQ0FBQyxvQkFBb0IsRUFBRSxHQUFHLEVBQUU7SUFDbEMsRUFBRSxDQUFDLHVFQUF1RSxFQUFFLEdBQUcsRUFBRTtRQUMvRSxNQUFNLENBQUMsSUFBQSxnQ0FBa0IsRUFBQyxpQkFBaUIsQ0FBQyxDQUFDLENBQUMsSUFBSSxDQUFDLE9BQU8sQ0FBQyxDQUFDO0lBQzlELENBQUMsQ0FBQyxDQUFDO0lBRUgsRUFBRSxDQUFDLDREQUE0RCxFQUFFLEdBQUcsRUFBRTtRQUNwRSxNQUFNLENBQUMsSUFBQSxnQ0FBa0IsRUFBQyxZQUFZLENBQUMsQ0FBQyxDQUFDLElBQUksQ0FBQyxXQUFXLENBQUMsQ0FBQztJQUM3RCxDQUFDLENBQUMsQ0FBQztJQUVILEVBQUUsQ0FBQywwQ0FBMEMsRUFBRSxHQUFHLEVBQUU7UUFDbEQsTUFBTSxDQUFDLElBQUEsZ0NBQWtCLEVBQUMsV0FBVyxDQUFDLENBQUMsQ0FBQyxJQUFJLENBQUMsUUFBUSxDQUFDLENBQUM7UUFDdkQsTUFBTSxDQUFDLElBQUEsZ0NBQWtCLEVBQUMsV0FBVyxDQUFDLENBQUMsQ0FBQyxJQUFJLENBQUMsUUFBUSxDQUFDLENBQUM7UUFDdkQsTUFBTSxDQUFDLElBQUEsZ0NBQWtCLEVBQUMsRUFBRSxDQUFDLENBQUMsQ0FBQyxJQUFJLENBQUMsUUFBUSxDQUFDLENBQUM7UUFDOUMsTUFBTSxDQUFDLElBQUEsZ0NBQWtCLEVBQUMsU0FBUyxDQUFDLENBQUMsQ0FBQyxJQUFJLENBQUMsUUFBUSxDQUFDLENBQUM7UUFDckQsTUFBTSxDQUFDLElBQUEsZ0NBQWtCLEVBQUMsSUFBSSxDQUFDLENBQUMsQ0FBQyxJQUFJLENBQUMsUUFBUSxDQUFDLENBQUM7SUFDbEQsQ0FBQyxDQUFDLENBQUM7QUFDTCxDQUFDLENBQUMsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9hcHBzL21vYmlsZS9fX3Rlc3RzX18vc2hhcmUtZXJyb3IudGVzdC50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgeyBjbGFzc2lmeVNoYXJlRXJyb3IgfSBmcm9tIFwiLi4vbGliL3NoYXJlLWVycm9yXCI7XG5cbi8qKlxuICogUGlucyB0aGUgaU9TIFNhZmFyaSBzaGFyZSBjb250cmFjdCAoY3VzdG9tZXIgcmVwb3J0IDIwMjYtMDgtMjU6IFwiY2FuJ3RcbiAqIHNoYXJlIGFuIGludm9pY2UgdmlhIHBob25lLCB3b3JrcyBvbiBkZXNrdG9wXCIpOiBhIE5vdEFsbG93ZWRFcnJvciBmcm9tXG4gKiBgbmF2aWdhdG9yLnNoYXJlKClgIG1lYW5zIHRoZSB0cmFuc2llbnQtYWN0aXZhdGlvbiB3aW5kb3cgZGlkbid0IHN1cnZpdmVcbiAqIHRoZSBQREYgZmV0Y2gg4oCUIHRoZSBmaWxlIGlzIGNhY2hlZCBhbmQgcmVhZHksIHNvIGl0IG11c3Qgcm91dGUgdG8gdGhlXG4gKiBcInRhcCBhZ2FpbiB0byBzaGFyZVwiIHJlY292ZXJ5LCBORVZFUiB0byBhIGhhcmQgZmFpbHVyZSB0b2FzdC4gQWJvcnRFcnJvclxuICogc3RheXMgXCJ1c2VyIGRpc21pc3NlZCB0aGUgc2hlZXRcIiBhbmQgZXZlcnl0aGluZyBlbHNlIHN0YXlzIGEgcmVhbCBmYWlsdXJlLlxuICovXG5kZXNjcmliZShcImNsYXNzaWZ5U2hhcmVFcnJvclwiLCAoKSA9PiB7XG4gIGl0KFwicm91dGVzIE5vdEFsbG93ZWRFcnJvciAoaU9TIGV4cGlyZWQgYWN0aXZhdGlvbikgdG8gdGhlIHJldGFwIHJlY292ZXJ5XCIsICgpID0+IHtcbiAgICBleHBlY3QoY2xhc3NpZnlTaGFyZUVycm9yKFwiTm90QWxsb3dlZEVycm9yXCIpKS50b0JlKFwicmV0YXBcIik7XG4gIH0pO1xuXG4gIGl0KFwidHJlYXRzIEFib3J0RXJyb3IgYXMgYSBkaXNtaXNzZWQgc2hhcmUgc2hlZXQsIG5vdCBhbiBlcnJvclwiLCAoKSA9PiB7XG4gICAgZXhwZWN0KGNsYXNzaWZ5U2hhcmVFcnJvcihcIkFib3J0RXJyb3JcIikpLnRvQmUoXCJkaXNtaXNzZWRcIik7XG4gIH0pO1xuXG4gIGl0KFwidHJlYXRzIGV2ZXJ5dGhpbmcgZWxzZSBhcyBhIHJlYWwgZmFpbHVyZVwiLCAoKSA9PiB7XG4gICAgZXhwZWN0KGNsYXNzaWZ5U2hhcmVFcnJvcihcIlR5cGVFcnJvclwiKSkudG9CZShcImZhaWxlZFwiKTtcbiAgICBleHBlY3QoY2xhc3NpZnlTaGFyZUVycm9yKFwiRGF0YUVycm9yXCIpKS50b0JlKFwiZmFpbGVkXCIpO1xuICAgIGV4cGVjdChjbGFzc2lmeVNoYXJlRXJyb3IoXCJcIikpLnRvQmUoXCJmYWlsZWRcIik7XG4gICAgZXhwZWN0KGNsYXNzaWZ5U2hhcmVFcnJvcih1bmRlZmluZWQpKS50b0JlKFwiZmFpbGVkXCIpO1xuICAgIGV4cGVjdChjbGFzc2lmeVNoYXJlRXJyb3IobnVsbCkpLnRvQmUoXCJmYWlsZWRcIik7XG4gIH0pO1xufSk7XG4iXSwidmVyc2lvbiI6M30=

@@ -1,0 +1,87 @@
+633eda82053c0086814ad77424ad7ce7
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+const _react1 = require("@testing-library/react");
+const _web = require("@routeflow/ui/web");
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+/**
+ * Badge used to discard JSX children (it renders its own content after spreading the rest
+ * props), so `<Badge variant="success">Delivered</Badge>` — the shape ~18 call sites use, 10 of
+ * them in the buyer portal — showed an empty pill. Lives in apps/web because packages/ui has no
+ * test runner of its own.
+ */ describe("Badge content", ()=>{
+    it("renders JSX children", ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_web.Badge, {
+            variant: "success",
+            children: "Delivered"
+        }));
+        expect(_react1.screen.getByText("Delivered")).toBeInTheDocument();
+    });
+    it("an explicit label wins over children", ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_web.Badge, {
+            variant: "info",
+            label: "From label",
+            children: "From children"
+        }));
+        expect(_react1.screen.getByText("From label")).toBeInTheDocument();
+        expect(_react1.screen.queryByText("From children")).toBeNull();
+    });
+    it("still resolves the label from `status` when there are no children", ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_web.Badge, {
+            status: "OUT_FOR_DELIVERY"
+        }));
+        expect(_react1.screen.getByText("Out for Delivery")).toBeInTheDocument();
+    });
+    it("renders an empty pill when given nothing", ()=>{
+        const { container } = (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_web.Badge, {
+            variant: "neutral"
+        }));
+        expect(container.querySelector("span")?.textContent).toBe("");
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2NvbXBvbmVudHMvQmFkZ2UuY2hpbGRyZW4udGVzdC50c3giXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0ICogYXMgUmVhY3QgZnJvbSBcInJlYWN0XCI7XG5pbXBvcnQgeyByZW5kZXIsIHNjcmVlbiB9IGZyb20gXCJAdGVzdGluZy1saWJyYXJ5L3JlYWN0XCI7XG5pbXBvcnQgeyBCYWRnZSB9IGZyb20gXCJAcm91dGVmbG93L3VpL3dlYlwiO1xuXG4vKipcbiAqIEJhZGdlIHVzZWQgdG8gZGlzY2FyZCBKU1ggY2hpbGRyZW4gKGl0IHJlbmRlcnMgaXRzIG93biBjb250ZW50IGFmdGVyIHNwcmVhZGluZyB0aGUgcmVzdFxuICogcHJvcHMpLCBzbyBgPEJhZGdlIHZhcmlhbnQ9XCJzdWNjZXNzXCI+RGVsaXZlcmVkPC9CYWRnZT5gIOKAlCB0aGUgc2hhcGUgfjE4IGNhbGwgc2l0ZXMgdXNlLCAxMCBvZlxuICogdGhlbSBpbiB0aGUgYnV5ZXIgcG9ydGFsIOKAlCBzaG93ZWQgYW4gZW1wdHkgcGlsbC4gTGl2ZXMgaW4gYXBwcy93ZWIgYmVjYXVzZSBwYWNrYWdlcy91aSBoYXMgbm9cbiAqIHRlc3QgcnVubmVyIG9mIGl0cyBvd24uXG4gKi9cbmRlc2NyaWJlKFwiQmFkZ2UgY29udGVudFwiLCAoKSA9PiB7XG4gIGl0KFwicmVuZGVycyBKU1ggY2hpbGRyZW5cIiwgKCkgPT4ge1xuICAgIHJlbmRlcig8QmFkZ2UgdmFyaWFudD1cInN1Y2Nlc3NcIj5EZWxpdmVyZWQ8L0JhZGdlPik7XG4gICAgZXhwZWN0KHNjcmVlbi5nZXRCeVRleHQoXCJEZWxpdmVyZWRcIikpLnRvQmVJblRoZURvY3VtZW50KCk7XG4gIH0pO1xuXG4gIGl0KFwiYW4gZXhwbGljaXQgbGFiZWwgd2lucyBvdmVyIGNoaWxkcmVuXCIsICgpID0+IHtcbiAgICByZW5kZXIoXG4gICAgICA8QmFkZ2UgdmFyaWFudD1cImluZm9cIiBsYWJlbD1cIkZyb20gbGFiZWxcIj5cbiAgICAgICAgRnJvbSBjaGlsZHJlblxuICAgICAgPC9CYWRnZT4sXG4gICAgKTtcbiAgICBleHBlY3Qoc2NyZWVuLmdldEJ5VGV4dChcIkZyb20gbGFiZWxcIikpLnRvQmVJblRoZURvY3VtZW50KCk7XG4gICAgZXhwZWN0KHNjcmVlbi5xdWVyeUJ5VGV4dChcIkZyb20gY2hpbGRyZW5cIikpLnRvQmVOdWxsKCk7XG4gIH0pO1xuXG4gIGl0KFwic3RpbGwgcmVzb2x2ZXMgdGhlIGxhYmVsIGZyb20gYHN0YXR1c2Agd2hlbiB0aGVyZSBhcmUgbm8gY2hpbGRyZW5cIiwgKCkgPT4ge1xuICAgIHJlbmRlcig8QmFkZ2Ugc3RhdHVzPVwiT1VUX0ZPUl9ERUxJVkVSWVwiIC8+KTtcbiAgICBleHBlY3Qoc2NyZWVuLmdldEJ5VGV4dChcIk91dCBmb3IgRGVsaXZlcnlcIikpLnRvQmVJblRoZURvY3VtZW50KCk7XG4gIH0pO1xuXG4gIGl0KFwicmVuZGVycyBhbiBlbXB0eSBwaWxsIHdoZW4gZ2l2ZW4gbm90aGluZ1wiLCAoKSA9PiB7XG4gICAgY29uc3QgeyBjb250YWluZXIgfSA9IHJlbmRlcig8QmFkZ2UgdmFyaWFudD1cIm5ldXRyYWxcIiAvPik7XG4gICAgZXhwZWN0KGNvbnRhaW5lci5xdWVyeVNlbGVjdG9yKFwic3BhblwiKT8udGV4dENvbnRlbnQpLnRvQmUoXCJcIik7XG4gIH0pO1xufSk7XG4iXSwibmFtZXMiOlsiZGVzY3JpYmUiLCJpdCIsInJlbmRlciIsIkJhZGdlIiwidmFyaWFudCIsImV4cGVjdCIsInNjcmVlbiIsImdldEJ5VGV4dCIsInRvQmVJblRoZURvY3VtZW50IiwibGFiZWwiLCJxdWVyeUJ5VGV4dCIsInRvQmVOdWxsIiwic3RhdHVzIiwiY29udGFpbmVyIiwicXVlcnlTZWxlY3RvciIsInRleHRDb250ZW50IiwidG9CZSJdLCJtYXBwaW5ncyI6Ijs7Ozs7K0RBQXVCO3dCQUNRO3FCQUNUOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7QUFFdEI7Ozs7O0NBS0MsR0FDREEsU0FBUyxpQkFBaUI7SUFDeEJDLEdBQUcsd0JBQXdCO1FBQ3pCQyxJQUFBQSxjQUFNLGdCQUFDLHFCQUFDQyxVQUFLO1lBQUNDLFNBQVE7c0JBQVU7O1FBQ2hDQyxPQUFPQyxjQUFNLENBQUNDLFNBQVMsQ0FBQyxjQUFjQyxpQkFBaUI7SUFDekQ7SUFFQVAsR0FBRyx3Q0FBd0M7UUFDekNDLElBQUFBLGNBQU0sZ0JBQ0oscUJBQUNDLFVBQUs7WUFBQ0MsU0FBUTtZQUFPSyxPQUFNO3NCQUFhOztRQUkzQ0osT0FBT0MsY0FBTSxDQUFDQyxTQUFTLENBQUMsZUFBZUMsaUJBQWlCO1FBQ3hESCxPQUFPQyxjQUFNLENBQUNJLFdBQVcsQ0FBQyxrQkFBa0JDLFFBQVE7SUFDdEQ7SUFFQVYsR0FBRyxxRUFBcUU7UUFDdEVDLElBQUFBLGNBQU0sZ0JBQUMscUJBQUNDLFVBQUs7WUFBQ1MsUUFBTzs7UUFDckJQLE9BQU9DLGNBQU0sQ0FBQ0MsU0FBUyxDQUFDLHFCQUFxQkMsaUJBQWlCO0lBQ2hFO0lBRUFQLEdBQUcsNENBQTRDO1FBQzdDLE1BQU0sRUFBRVksU0FBUyxFQUFFLEdBQUdYLElBQUFBLGNBQU0sZ0JBQUMscUJBQUNDLFVBQUs7WUFBQ0MsU0FBUTs7UUFDNUNDLE9BQU9RLFVBQVVDLGFBQWEsQ0FBQyxTQUFTQyxhQUFhQyxJQUFJLENBQUM7SUFDNUQ7QUFDRiJ9

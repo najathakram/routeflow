@@ -1,0 +1,89 @@
+8f92a4ae0607f1d7ee9e84c8db222a69
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+const _react1 = require("@testing-library/react");
+const _web = require("@routeflow/ui/web");
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+/**
+ * `Modal` is centred with a -translate-y-1/2, so a dialog taller than the viewport spills off both
+ * edges and its header X / footer buttons become unreachable. `scroll` is the OPT-IN cap. jsdom has
+ * no layout, so this pins the structure that matters: opt-in caps the height and scrolls only the
+ * body (X and footer outside the scroller); the DEFAULT is untouched, because a default scroll
+ * container would clip absolutely-positioned typeaheads inside existing dialogs.
+ */ const tall = (scroll)=>(0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_web.Modal, {
+        open: true,
+        onClose: ()=>{},
+        title: "Tall",
+        footer: /*#__PURE__*/ (0, _jsxruntime.jsx)("button", {
+            children: "Save"
+        }),
+        scroll: scroll,
+        children: /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+            children: "body"
+        })
+    }));
+describe("Modal scroll (opt-in)", ()=>{
+    it("scroll: caps the height and scrolls only the body, never the header X or footer", ()=>{
+        tall(true);
+        expect(_react1.screen.getByRole("dialog").className).toMatch(/max-h-\[92vh\]/);
+        const scroller = _react1.screen.getByText("body").parentElement;
+        expect(scroller.className).toMatch(/overflow-y-auto/);
+        expect(scroller.contains(_react1.screen.getByRole("button", {
+            name: "Close"
+        }))).toBe(false);
+        expect(scroller.contains(_react1.screen.getByRole("button", {
+            name: "Save"
+        }))).toBe(false);
+    });
+    it("default: no height cap and no scroll container (nothing that could clip a dropdown)", ()=>{
+        tall();
+        expect(_react1.screen.getByRole("dialog").className).not.toMatch(/max-h-|overflow-/);
+        expect(_react1.screen.getByText("body").parentElement.className).not.toMatch(/overflow-/);
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2NvbXBvbmVudHMvTW9kYWwuc2Nyb2xsLnRlc3QudHN4Il0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCAqIGFzIFJlYWN0IGZyb20gXCJyZWFjdFwiO1xuaW1wb3J0IHsgcmVuZGVyLCBzY3JlZW4gfSBmcm9tIFwiQHRlc3RpbmctbGlicmFyeS9yZWFjdFwiO1xuaW1wb3J0IHsgTW9kYWwgfSBmcm9tIFwiQHJvdXRlZmxvdy91aS93ZWJcIjtcblxuLyoqXG4gKiBgTW9kYWxgIGlzIGNlbnRyZWQgd2l0aCBhIC10cmFuc2xhdGUteS0xLzIsIHNvIGEgZGlhbG9nIHRhbGxlciB0aGFuIHRoZSB2aWV3cG9ydCBzcGlsbHMgb2ZmIGJvdGhcbiAqIGVkZ2VzIGFuZCBpdHMgaGVhZGVyIFggLyBmb290ZXIgYnV0dG9ucyBiZWNvbWUgdW5yZWFjaGFibGUuIGBzY3JvbGxgIGlzIHRoZSBPUFQtSU4gY2FwLiBqc2RvbSBoYXNcbiAqIG5vIGxheW91dCwgc28gdGhpcyBwaW5zIHRoZSBzdHJ1Y3R1cmUgdGhhdCBtYXR0ZXJzOiBvcHQtaW4gY2FwcyB0aGUgaGVpZ2h0IGFuZCBzY3JvbGxzIG9ubHkgdGhlXG4gKiBib2R5IChYIGFuZCBmb290ZXIgb3V0c2lkZSB0aGUgc2Nyb2xsZXIpOyB0aGUgREVGQVVMVCBpcyB1bnRvdWNoZWQsIGJlY2F1c2UgYSBkZWZhdWx0IHNjcm9sbFxuICogY29udGFpbmVyIHdvdWxkIGNsaXAgYWJzb2x1dGVseS1wb3NpdGlvbmVkIHR5cGVhaGVhZHMgaW5zaWRlIGV4aXN0aW5nIGRpYWxvZ3MuXG4gKi9cbmNvbnN0IHRhbGwgPSAoc2Nyb2xsPzogYm9vbGVhbikgPT5cbiAgcmVuZGVyKFxuICAgIDxNb2RhbCBvcGVuIG9uQ2xvc2U9eygpID0+IHt9fSB0aXRsZT1cIlRhbGxcIiBmb290ZXI9ezxidXR0b24+U2F2ZTwvYnV0dG9uPn0gc2Nyb2xsPXtzY3JvbGx9PlxuICAgICAgPHA+Ym9keTwvcD5cbiAgICA8L01vZGFsPixcbiAgKTtcblxuZGVzY3JpYmUoXCJNb2RhbCBzY3JvbGwgKG9wdC1pbilcIiwgKCkgPT4ge1xuICBpdChcInNjcm9sbDogY2FwcyB0aGUgaGVpZ2h0IGFuZCBzY3JvbGxzIG9ubHkgdGhlIGJvZHksIG5ldmVyIHRoZSBoZWFkZXIgWCBvciBmb290ZXJcIiwgKCkgPT4ge1xuICAgIHRhbGwodHJ1ZSk7XG4gICAgZXhwZWN0KHNjcmVlbi5nZXRCeVJvbGUoXCJkaWFsb2dcIikuY2xhc3NOYW1lKS50b01hdGNoKC9tYXgtaC1cXFs5MnZoXFxdLyk7XG4gICAgY29uc3Qgc2Nyb2xsZXIgPSBzY3JlZW4uZ2V0QnlUZXh0KFwiYm9keVwiKS5wYXJlbnRFbGVtZW50IGFzIEhUTUxFbGVtZW50O1xuICAgIGV4cGVjdChzY3JvbGxlci5jbGFzc05hbWUpLnRvTWF0Y2goL292ZXJmbG93LXktYXV0by8pO1xuICAgIGV4cGVjdChzY3JvbGxlci5jb250YWlucyhzY3JlZW4uZ2V0QnlSb2xlKFwiYnV0dG9uXCIsIHsgbmFtZTogXCJDbG9zZVwiIH0pKSkudG9CZShmYWxzZSk7XG4gICAgZXhwZWN0KHNjcm9sbGVyLmNvbnRhaW5zKHNjcmVlbi5nZXRCeVJvbGUoXCJidXR0b25cIiwgeyBuYW1lOiBcIlNhdmVcIiB9KSkpLnRvQmUoZmFsc2UpO1xuICB9KTtcblxuICBpdChcImRlZmF1bHQ6IG5vIGhlaWdodCBjYXAgYW5kIG5vIHNjcm9sbCBjb250YWluZXIgKG5vdGhpbmcgdGhhdCBjb3VsZCBjbGlwIGEgZHJvcGRvd24pXCIsICgpID0+IHtcbiAgICB0YWxsKCk7XG4gICAgZXhwZWN0KHNjcmVlbi5nZXRCeVJvbGUoXCJkaWFsb2dcIikuY2xhc3NOYW1lKS5ub3QudG9NYXRjaCgvbWF4LWgtfG92ZXJmbG93LS8pO1xuICAgIGV4cGVjdCgoc2NyZWVuLmdldEJ5VGV4dChcImJvZHlcIikucGFyZW50RWxlbWVudCBhcyBIVE1MRWxlbWVudCkuY2xhc3NOYW1lKS5ub3QudG9NYXRjaChcbiAgICAgIC9vdmVyZmxvdy0vLFxuICAgICk7XG4gIH0pO1xufSk7XG4iXSwibmFtZXMiOlsidGFsbCIsInNjcm9sbCIsInJlbmRlciIsIk1vZGFsIiwib3BlbiIsIm9uQ2xvc2UiLCJ0aXRsZSIsImZvb3RlciIsImJ1dHRvbiIsInAiLCJkZXNjcmliZSIsIml0IiwiZXhwZWN0Iiwic2NyZWVuIiwiZ2V0QnlSb2xlIiwiY2xhc3NOYW1lIiwidG9NYXRjaCIsInNjcm9sbGVyIiwiZ2V0QnlUZXh0IiwicGFyZW50RWxlbWVudCIsImNvbnRhaW5zIiwibmFtZSIsInRvQmUiLCJub3QiXSwibWFwcGluZ3MiOiI7Ozs7OytEQUF1Qjt3QkFDUTtxQkFDVDs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7O0FBRXRCOzs7Ozs7Q0FNQyxHQUNELE1BQU1BLE9BQU8sQ0FBQ0MsU0FDWkMsSUFBQUEsY0FBTSxnQkFDSixxQkFBQ0MsVUFBSztRQUFDQyxJQUFJO1FBQUNDLFNBQVMsS0FBTztRQUFHQyxPQUFNO1FBQU9DLHNCQUFRLHFCQUFDQztzQkFBTzs7UUFBZVAsUUFBUUE7a0JBQ2pGLGNBQUEscUJBQUNRO3NCQUFFOzs7QUFJVEMsU0FBUyx5QkFBeUI7SUFDaENDLEdBQUcsbUZBQW1GO1FBQ3BGWCxLQUFLO1FBQ0xZLE9BQU9DLGNBQU0sQ0FBQ0MsU0FBUyxDQUFDLFVBQVVDLFNBQVMsRUFBRUMsT0FBTyxDQUFDO1FBQ3JELE1BQU1DLFdBQVdKLGNBQU0sQ0FBQ0ssU0FBUyxDQUFDLFFBQVFDLGFBQWE7UUFDdkRQLE9BQU9LLFNBQVNGLFNBQVMsRUFBRUMsT0FBTyxDQUFDO1FBQ25DSixPQUFPSyxTQUFTRyxRQUFRLENBQUNQLGNBQU0sQ0FBQ0MsU0FBUyxDQUFDLFVBQVU7WUFBRU8sTUFBTTtRQUFRLEtBQUtDLElBQUksQ0FBQztRQUM5RVYsT0FBT0ssU0FBU0csUUFBUSxDQUFDUCxjQUFNLENBQUNDLFNBQVMsQ0FBQyxVQUFVO1lBQUVPLE1BQU07UUFBTyxLQUFLQyxJQUFJLENBQUM7SUFDL0U7SUFFQVgsR0FBRyx1RkFBdUY7UUFDeEZYO1FBQ0FZLE9BQU9DLGNBQU0sQ0FBQ0MsU0FBUyxDQUFDLFVBQVVDLFNBQVMsRUFBRVEsR0FBRyxDQUFDUCxPQUFPLENBQUM7UUFDekRKLE9BQU8sQUFBQ0MsY0FBTSxDQUFDSyxTQUFTLENBQUMsUUFBUUMsYUFBYSxDQUFpQkosU0FBUyxFQUFFUSxHQUFHLENBQUNQLE9BQU8sQ0FDbkY7SUFFSjtBQUNGIn0=

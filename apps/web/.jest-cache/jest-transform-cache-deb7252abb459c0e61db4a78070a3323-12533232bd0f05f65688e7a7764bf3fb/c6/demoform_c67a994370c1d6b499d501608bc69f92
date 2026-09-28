@@ -1,0 +1,240 @@
+3eac9e2e71c004a184b16f5df9132e0b
+"use client";
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+Object.defineProperty(exports, "DemoForm", {
+    enumerable: true,
+    get: function() {
+        return DemoForm;
+    }
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+const _lucidereact = require("lucide-react");
+const _site = require("../lib/site");
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+function DemoForm() {
+    const [draft, setDraft] = _react.useState("");
+    const headingRef = _react.useRef(null);
+    function prepare(event) {
+        event.preventDefault();
+        const formData = new FormData(event.currentTarget);
+        const field = (name)=>{
+            const value = formData.get(name);
+            return typeof value === "string" ? value.trim() : "";
+        };
+        setDraft((0, _site.demoEmail)({
+            name: field("name"),
+            email: field("email"),
+            company: field("company"),
+            notes: field("notes")
+        }));
+        setTimeout(()=>headingRef.current?.focus(), 0);
+    }
+    if (draft) {
+        return /*#__PURE__*/ (0, _jsxruntime.jsx)("div", {
+            className: "demo-form-card",
+            children: /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                className: "draft-state",
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                        className: "draft-icon",
+                        children: /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.Check, {
+                            size: 26
+                        })
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("h2", {
+                        tabIndex: -1,
+                        ref: headingRef,
+                        children: "Your email draft is ready."
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("p", {
+                        children: [
+                            "Open your email app, review the details, and send the request to ",
+                            _site.site.email,
+                            ". Nothing has been sent yet."
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("a", {
+                        href: draft,
+                        className: "button",
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.Mail, {
+                                size: 18
+                            }),
+                            " Open email app"
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("p", {
+                        className: "draft-fallback",
+                        children: [
+                            "No email app? Contact ",
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("a", {
+                                href: `mailto:${_site.site.email}`,
+                                children: _site.site.email
+                            }),
+                            " with your company name and the workflow you want to discuss."
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("button", {
+                        type: "button",
+                        className: "text-link",
+                        onClick: ()=>setDraft(""),
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.ArrowLeft, {
+                                size: 16
+                            }),
+                            " Start a new draft"
+                        ]
+                    })
+                ]
+            })
+        });
+    }
+    return /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+        className: "demo-form-card",
+        children: [
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                className: "form-kicker",
+                children: "YOUR WORKFLOW, YOUR WALKTHROUGH"
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("h2", {
+                children: "Let’s start with your business."
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                children: "Tell us a little about your team."
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsxs)("form", {
+                onSubmit: prepare,
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                        className: "field",
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("label", {
+                                htmlFor: "demo-name",
+                                children: "Name"
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("input", {
+                                id: "demo-name",
+                                name: "name",
+                                autoComplete: "name",
+                                required: true,
+                                maxLength: 100,
+                                placeholder: "Alex Morgan"
+                            })
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                        className: "field",
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("label", {
+                                htmlFor: "demo-email",
+                                children: "Email"
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("input", {
+                                id: "demo-email",
+                                name: "email",
+                                type: "email",
+                                autoComplete: "email",
+                                required: true,
+                                maxLength: 160,
+                                placeholder: "alex@yourcompany.com"
+                            })
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                        className: "field",
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("label", {
+                                htmlFor: "demo-company",
+                                children: "Company"
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("input", {
+                                id: "demo-company",
+                                name: "company",
+                                autoComplete: "organization",
+                                required: true,
+                                maxLength: 160,
+                                placeholder: "Your distribution business"
+                            })
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                        className: "field",
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("label", {
+                                htmlFor: "demo-notes",
+                                children: "Notes"
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("textarea", {
+                                id: "demo-notes",
+                                name: "notes",
+                                maxLength: 1200,
+                                placeholder: "Tell us about your orders, delivery routes, or current tools.",
+                                rows: 3
+                            })
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("button", {
+                        className: "button",
+                        type: "submit",
+                        children: [
+                            "Prepare my demo request ",
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)(_lucidereact.ArrowRight, {
+                                size: 18
+                            })
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                        className: "form-disclosure",
+                        children: "This prepares an email for you to review and send. It does not submit or store your request."
+                    })
+                ]
+            })
+        ]
+    });
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8obWFya2V0aW5nKS9jb21wb25lbnRzL2RlbW8tZm9ybS50c3giXSwic291cmNlc0NvbnRlbnQiOlsiXCJ1c2UgY2xpZW50XCI7XG5cbmltcG9ydCAqIGFzIFJlYWN0IGZyb20gXCJyZWFjdFwiO1xuaW1wb3J0IHR5cGUgeyBGb3JtRXZlbnQgfSBmcm9tIFwicmVhY3RcIjtcbmltcG9ydCB7IEFycm93TGVmdCwgQXJyb3dSaWdodCwgQ2hlY2ssIE1haWwgfSBmcm9tIFwibHVjaWRlLXJlYWN0XCI7XG5pbXBvcnQgeyBkZW1vRW1haWwsIHNpdGUgfSBmcm9tIFwiLi4vbGliL3NpdGVcIjtcblxuLy8gQ2xpZW50LXNpZGUgYG1haWx0bzpgIGRyYWZ0IGJ1aWxkZXIg4oCUIHBvcnQgb2YgdGhlIHJlZGVzaWduJ3Ncbi8vIGNvbXBvbmVudHMvZGVtby1mb3JtLnRzeCAoTTEgwqcyZi/CpzEwKS4gRmllbGQgbGFiZWxzIGFyZSBcIk5hbWUgLyBFbWFpbCAvXG4vLyBDb21wYW55IC8gTm90ZXNcIiBwZXIgdXgtc3BlYy5tZCDCpzMncyBDb250YWN0IHBhZ2UgYW5hdG9teSAoc3BlYy5tZCBSOCkuIE5vXG4vLyBuZXR3b3JrIHJlcXVlc3QgaXMgZXZlciBtYWRlIOKAlCB0aGUgY29weSBiZWxvdyBkaXNjbG9zZXMgdGhhdCBleHBsaWNpdGx5LlxuXG5leHBvcnQgZnVuY3Rpb24gRGVtb0Zvcm0oKSB7XG4gIGNvbnN0IFtkcmFmdCwgc2V0RHJhZnRdID0gUmVhY3QudXNlU3RhdGUoXCJcIik7XG4gIGNvbnN0IGhlYWRpbmdSZWYgPSBSZWFjdC51c2VSZWY8SFRNTEhlYWRpbmdFbGVtZW50PihudWxsKTtcblxuICBmdW5jdGlvbiBwcmVwYXJlKGV2ZW50OiBGb3JtRXZlbnQ8SFRNTEZvcm1FbGVtZW50Pikge1xuICAgIGV2ZW50LnByZXZlbnREZWZhdWx0KCk7XG4gICAgY29uc3QgZm9ybURhdGEgPSBuZXcgRm9ybURhdGEoZXZlbnQuY3VycmVudFRhcmdldCk7XG4gICAgY29uc3QgZmllbGQgPSAobmFtZTogc3RyaW5nKSA9PiB7XG4gICAgICBjb25zdCB2YWx1ZSA9IGZvcm1EYXRhLmdldChuYW1lKTtcbiAgICAgIHJldHVybiB0eXBlb2YgdmFsdWUgPT09IFwic3RyaW5nXCIgPyB2YWx1ZS50cmltKCkgOiBcIlwiO1xuICAgIH07XG4gICAgc2V0RHJhZnQoXG4gICAgICBkZW1vRW1haWwoe1xuICAgICAgICBuYW1lOiBmaWVsZChcIm5hbWVcIiksXG4gICAgICAgIGVtYWlsOiBmaWVsZChcImVtYWlsXCIpLFxuICAgICAgICBjb21wYW55OiBmaWVsZChcImNvbXBhbnlcIiksXG4gICAgICAgIG5vdGVzOiBmaWVsZChcIm5vdGVzXCIpLFxuICAgICAgfSksXG4gICAgKTtcbiAgICBzZXRUaW1lb3V0KCgpID0+IGhlYWRpbmdSZWYuY3VycmVudD8uZm9jdXMoKSwgMCk7XG4gIH1cblxuICBpZiAoZHJhZnQpIHtcbiAgICByZXR1cm4gKFxuICAgICAgPGRpdiBjbGFzc05hbWU9XCJkZW1vLWZvcm0tY2FyZFwiPlxuICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cImRyYWZ0LXN0YXRlXCI+XG4gICAgICAgICAgPHNwYW4gY2xhc3NOYW1lPVwiZHJhZnQtaWNvblwiPlxuICAgICAgICAgICAgPENoZWNrIHNpemU9ezI2fSAvPlxuICAgICAgICAgIDwvc3Bhbj5cbiAgICAgICAgICA8aDIgdGFiSW5kZXg9ey0xfSByZWY9e2hlYWRpbmdSZWZ9PlxuICAgICAgICAgICAgWW91ciBlbWFpbCBkcmFmdCBpcyByZWFkeS5cbiAgICAgICAgICA8L2gyPlxuICAgICAgICAgIDxwPlxuICAgICAgICAgICAgT3BlbiB5b3VyIGVtYWlsIGFwcCwgcmV2aWV3IHRoZSBkZXRhaWxzLCBhbmQgc2VuZCB0aGUgcmVxdWVzdCB0byB7c2l0ZS5lbWFpbH0uIE5vdGhpbmdcbiAgICAgICAgICAgIGhhcyBiZWVuIHNlbnQgeWV0LlxuICAgICAgICAgIDwvcD5cbiAgICAgICAgICA8YSBocmVmPXtkcmFmdH0gY2xhc3NOYW1lPVwiYnV0dG9uXCI+XG4gICAgICAgICAgICA8TWFpbCBzaXplPXsxOH0gLz4gT3BlbiBlbWFpbCBhcHBcbiAgICAgICAgICA8L2E+XG4gICAgICAgICAgPHAgY2xhc3NOYW1lPVwiZHJhZnQtZmFsbGJhY2tcIj5cbiAgICAgICAgICAgIE5vIGVtYWlsIGFwcD8gQ29udGFjdCA8YSBocmVmPXtgbWFpbHRvOiR7c2l0ZS5lbWFpbH1gfT57c2l0ZS5lbWFpbH08L2E+IHdpdGggeW91clxuICAgICAgICAgICAgY29tcGFueSBuYW1lIGFuZCB0aGUgd29ya2Zsb3cgeW91IHdhbnQgdG8gZGlzY3Vzcy5cbiAgICAgICAgICA8L3A+XG4gICAgICAgICAgPGJ1dHRvbiB0eXBlPVwiYnV0dG9uXCIgY2xhc3NOYW1lPVwidGV4dC1saW5rXCIgb25DbGljaz17KCkgPT4gc2V0RHJhZnQoXCJcIil9PlxuICAgICAgICAgICAgPEFycm93TGVmdCBzaXplPXsxNn0gLz4gU3RhcnQgYSBuZXcgZHJhZnRcbiAgICAgICAgICA8L2J1dHRvbj5cbiAgICAgICAgPC9kaXY+XG4gICAgICA8L2Rpdj5cbiAgICApO1xuICB9XG5cbiAgcmV0dXJuIChcbiAgICA8ZGl2IGNsYXNzTmFtZT1cImRlbW8tZm9ybS1jYXJkXCI+XG4gICAgICA8c3BhbiBjbGFzc05hbWU9XCJmb3JtLWtpY2tlclwiPllPVVIgV09SS0ZMT1csIFlPVVIgV0FMS1RIUk9VR0g8L3NwYW4+XG4gICAgICA8aDI+TGV04oCZcyBzdGFydCB3aXRoIHlvdXIgYnVzaW5lc3MuPC9oMj5cbiAgICAgIDxwPlRlbGwgdXMgYSBsaXR0bGUgYWJvdXQgeW91ciB0ZWFtLjwvcD5cbiAgICAgIDxmb3JtIG9uU3VibWl0PXtwcmVwYXJlfT5cbiAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJmaWVsZFwiPlxuICAgICAgICAgIDxsYWJlbCBodG1sRm9yPVwiZGVtby1uYW1lXCI+TmFtZTwvbGFiZWw+XG4gICAgICAgICAgPGlucHV0XG4gICAgICAgICAgICBpZD1cImRlbW8tbmFtZVwiXG4gICAgICAgICAgICBuYW1lPVwibmFtZVwiXG4gICAgICAgICAgICBhdXRvQ29tcGxldGU9XCJuYW1lXCJcbiAgICAgICAgICAgIHJlcXVpcmVkXG4gICAgICAgICAgICBtYXhMZW5ndGg9ezEwMH1cbiAgICAgICAgICAgIHBsYWNlaG9sZGVyPVwiQWxleCBNb3JnYW5cIlxuICAgICAgICAgIC8+XG4gICAgICAgIDwvZGl2PlxuICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cImZpZWxkXCI+XG4gICAgICAgICAgPGxhYmVsIGh0bWxGb3I9XCJkZW1vLWVtYWlsXCI+RW1haWw8L2xhYmVsPlxuICAgICAgICAgIDxpbnB1dFxuICAgICAgICAgICAgaWQ9XCJkZW1vLWVtYWlsXCJcbiAgICAgICAgICAgIG5hbWU9XCJlbWFpbFwiXG4gICAgICAgICAgICB0eXBlPVwiZW1haWxcIlxuICAgICAgICAgICAgYXV0b0NvbXBsZXRlPVwiZW1haWxcIlxuICAgICAgICAgICAgcmVxdWlyZWRcbiAgICAgICAgICAgIG1heExlbmd0aD17MTYwfVxuICAgICAgICAgICAgcGxhY2Vob2xkZXI9XCJhbGV4QHlvdXJjb21wYW55LmNvbVwiXG4gICAgICAgICAgLz5cbiAgICAgICAgPC9kaXY+XG4gICAgICAgIDxkaXYgY2xhc3NOYW1lPVwiZmllbGRcIj5cbiAgICAgICAgICA8bGFiZWwgaHRtbEZvcj1cImRlbW8tY29tcGFueVwiPkNvbXBhbnk8L2xhYmVsPlxuICAgICAgICAgIDxpbnB1dFxuICAgICAgICAgICAgaWQ9XCJkZW1vLWNvbXBhbnlcIlxuICAgICAgICAgICAgbmFtZT1cImNvbXBhbnlcIlxuICAgICAgICAgICAgYXV0b0NvbXBsZXRlPVwib3JnYW5pemF0aW9uXCJcbiAgICAgICAgICAgIHJlcXVpcmVkXG4gICAgICAgICAgICBtYXhMZW5ndGg9ezE2MH1cbiAgICAgICAgICAgIHBsYWNlaG9sZGVyPVwiWW91ciBkaXN0cmlidXRpb24gYnVzaW5lc3NcIlxuICAgICAgICAgIC8+XG4gICAgICAgIDwvZGl2PlxuICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cImZpZWxkXCI+XG4gICAgICAgICAgPGxhYmVsIGh0bWxGb3I9XCJkZW1vLW5vdGVzXCI+Tm90ZXM8L2xhYmVsPlxuICAgICAgICAgIDx0ZXh0YXJlYVxuICAgICAgICAgICAgaWQ9XCJkZW1vLW5vdGVzXCJcbiAgICAgICAgICAgIG5hbWU9XCJub3Rlc1wiXG4gICAgICAgICAgICBtYXhMZW5ndGg9ezEyMDB9XG4gICAgICAgICAgICBwbGFjZWhvbGRlcj1cIlRlbGwgdXMgYWJvdXQgeW91ciBvcmRlcnMsIGRlbGl2ZXJ5IHJvdXRlcywgb3IgY3VycmVudCB0b29scy5cIlxuICAgICAgICAgICAgcm93cz17M31cbiAgICAgICAgICAvPlxuICAgICAgICA8L2Rpdj5cbiAgICAgICAgPGJ1dHRvbiBjbGFzc05hbWU9XCJidXR0b25cIiB0eXBlPVwic3VibWl0XCI+XG4gICAgICAgICAgUHJlcGFyZSBteSBkZW1vIHJlcXVlc3QgPEFycm93UmlnaHQgc2l6ZT17MTh9IC8+XG4gICAgICAgIDwvYnV0dG9uPlxuICAgICAgICA8cCBjbGFzc05hbWU9XCJmb3JtLWRpc2Nsb3N1cmVcIj5cbiAgICAgICAgICBUaGlzIHByZXBhcmVzIGFuIGVtYWlsIGZvciB5b3UgdG8gcmV2aWV3IGFuZCBzZW5kLiBJdCBkb2VzIG5vdCBzdWJtaXQgb3Igc3RvcmUgeW91clxuICAgICAgICAgIHJlcXVlc3QuXG4gICAgICAgIDwvcD5cbiAgICAgIDwvZm9ybT5cbiAgICA8L2Rpdj5cbiAgKTtcbn1cbiJdLCJuYW1lcyI6WyJEZW1vRm9ybSIsImRyYWZ0Iiwic2V0RHJhZnQiLCJSZWFjdCIsInVzZVN0YXRlIiwiaGVhZGluZ1JlZiIsInVzZVJlZiIsInByZXBhcmUiLCJldmVudCIsInByZXZlbnREZWZhdWx0IiwiZm9ybURhdGEiLCJGb3JtRGF0YSIsImN1cnJlbnRUYXJnZXQiLCJmaWVsZCIsIm5hbWUiLCJ2YWx1ZSIsImdldCIsInRyaW0iLCJkZW1vRW1haWwiLCJlbWFpbCIsImNvbXBhbnkiLCJub3RlcyIsInNldFRpbWVvdXQiLCJjdXJyZW50IiwiZm9jdXMiLCJkaXYiLCJjbGFzc05hbWUiLCJzcGFuIiwiQ2hlY2siLCJzaXplIiwiaDIiLCJ0YWJJbmRleCIsInJlZiIsInAiLCJzaXRlIiwiYSIsImhyZWYiLCJNYWlsIiwiYnV0dG9uIiwidHlwZSIsIm9uQ2xpY2siLCJBcnJvd0xlZnQiLCJmb3JtIiwib25TdWJtaXQiLCJsYWJlbCIsImh0bWxGb3IiLCJpbnB1dCIsImlkIiwiYXV0b0NvbXBsZXRlIiwicmVxdWlyZWQiLCJtYXhMZW5ndGgiLCJwbGFjZWhvbGRlciIsInRleHRhcmVhIiwicm93cyIsIkFycm93UmlnaHQiXSwibWFwcGluZ3MiOiJBQUFBOzs7OzsrQkFZZ0JBOzs7ZUFBQUE7Ozs7K0RBVk87NkJBRTRCO3NCQUNuQjs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7O0FBT3pCLFNBQVNBO0lBQ2QsTUFBTSxDQUFDQyxPQUFPQyxTQUFTLEdBQUdDLE9BQU1DLFFBQVEsQ0FBQztJQUN6QyxNQUFNQyxhQUFhRixPQUFNRyxNQUFNLENBQXFCO0lBRXBELFNBQVNDLFFBQVFDLEtBQWlDO1FBQ2hEQSxNQUFNQyxjQUFjO1FBQ3BCLE1BQU1DLFdBQVcsSUFBSUMsU0FBU0gsTUFBTUksYUFBYTtRQUNqRCxNQUFNQyxRQUFRLENBQUNDO1lBQ2IsTUFBTUMsUUFBUUwsU0FBU00sR0FBRyxDQUFDRjtZQUMzQixPQUFPLE9BQU9DLFVBQVUsV0FBV0EsTUFBTUUsSUFBSSxLQUFLO1FBQ3BEO1FBQ0FmLFNBQ0VnQixJQUFBQSxlQUFTLEVBQUM7WUFDUkosTUFBTUQsTUFBTTtZQUNaTSxPQUFPTixNQUFNO1lBQ2JPLFNBQVNQLE1BQU07WUFDZlEsT0FBT1IsTUFBTTtRQUNmO1FBRUZTLFdBQVcsSUFBTWpCLFdBQVdrQixPQUFPLEVBQUVDLFNBQVM7SUFDaEQ7SUFFQSxJQUFJdkIsT0FBTztRQUNULHFCQUNFLHFCQUFDd0I7WUFBSUMsV0FBVTtzQkFDYixjQUFBLHNCQUFDRDtnQkFBSUMsV0FBVTs7a0NBQ2IscUJBQUNDO3dCQUFLRCxXQUFVO2tDQUNkLGNBQUEscUJBQUNFLGtCQUFLOzRCQUFDQyxNQUFNOzs7a0NBRWYscUJBQUNDO3dCQUFHQyxVQUFVLENBQUM7d0JBQUdDLEtBQUszQjtrQ0FBWTs7a0NBR25DLHNCQUFDNEI7OzRCQUFFOzRCQUNpRUMsVUFBSSxDQUFDZixLQUFLOzRCQUFDOzs7a0NBRy9FLHNCQUFDZ0I7d0JBQUVDLE1BQU1uQzt3QkFBT3lCLFdBQVU7OzBDQUN4QixxQkFBQ1csaUJBQUk7Z0NBQUNSLE1BQU07OzRCQUFNOzs7a0NBRXBCLHNCQUFDSTt3QkFBRVAsV0FBVTs7NEJBQWlCOzBDQUNOLHFCQUFDUztnQ0FBRUMsTUFBTSxDQUFDLE9BQU8sRUFBRUYsVUFBSSxDQUFDZixLQUFLLEVBQUU7MENBQUdlLFVBQUksQ0FBQ2YsS0FBSzs7NEJBQUs7OztrQ0FHekUsc0JBQUNtQjt3QkFBT0MsTUFBSzt3QkFBU2IsV0FBVTt3QkFBWWMsU0FBUyxJQUFNdEMsU0FBUzs7MENBQ2xFLHFCQUFDdUMsc0JBQVM7Z0NBQUNaLE1BQU07OzRCQUFNOzs7Ozs7SUFLakM7SUFFQSxxQkFDRSxzQkFBQ0o7UUFBSUMsV0FBVTs7MEJBQ2IscUJBQUNDO2dCQUFLRCxXQUFVOzBCQUFjOzswQkFDOUIscUJBQUNJOzBCQUFHOzswQkFDSixxQkFBQ0c7MEJBQUU7OzBCQUNILHNCQUFDUztnQkFBS0MsVUFBVXBDOztrQ0FDZCxzQkFBQ2tCO3dCQUFJQyxXQUFVOzswQ0FDYixxQkFBQ2tCO2dDQUFNQyxTQUFROzBDQUFZOzswQ0FDM0IscUJBQUNDO2dDQUNDQyxJQUFHO2dDQUNIakMsTUFBSztnQ0FDTGtDLGNBQWE7Z0NBQ2JDLFFBQVE7Z0NBQ1JDLFdBQVc7Z0NBQ1hDLGFBQVk7Ozs7a0NBR2hCLHNCQUFDMUI7d0JBQUlDLFdBQVU7OzBDQUNiLHFCQUFDa0I7Z0NBQU1DLFNBQVE7MENBQWE7OzBDQUM1QixxQkFBQ0M7Z0NBQ0NDLElBQUc7Z0NBQ0hqQyxNQUFLO2dDQUNMeUIsTUFBSztnQ0FDTFMsY0FBYTtnQ0FDYkMsUUFBUTtnQ0FDUkMsV0FBVztnQ0FDWEMsYUFBWTs7OztrQ0FHaEIsc0JBQUMxQjt3QkFBSUMsV0FBVTs7MENBQ2IscUJBQUNrQjtnQ0FBTUMsU0FBUTswQ0FBZTs7MENBQzlCLHFCQUFDQztnQ0FDQ0MsSUFBRztnQ0FDSGpDLE1BQUs7Z0NBQ0xrQyxjQUFhO2dDQUNiQyxRQUFRO2dDQUNSQyxXQUFXO2dDQUNYQyxhQUFZOzs7O2tDQUdoQixzQkFBQzFCO3dCQUFJQyxXQUFVOzswQ0FDYixxQkFBQ2tCO2dDQUFNQyxTQUFROzBDQUFhOzswQ0FDNUIscUJBQUNPO2dDQUNDTCxJQUFHO2dDQUNIakMsTUFBSztnQ0FDTG9DLFdBQVc7Z0NBQ1hDLGFBQVk7Z0NBQ1pFLE1BQU07Ozs7a0NBR1Ysc0JBQUNmO3dCQUFPWixXQUFVO3dCQUFTYSxNQUFLOzs0QkFBUzswQ0FDZixxQkFBQ2UsdUJBQVU7Z0NBQUN6QixNQUFNOzs7O2tDQUU1QyxxQkFBQ0k7d0JBQUVQLFdBQVU7a0NBQWtCOzs7Ozs7QUFPdkMifQ==

@@ -1,0 +1,191 @@
+7c53f3c0f8bceae3af6befa3d17a6089
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+const _react1 = require("@testing-library/react");
+const _CopyButton = require("./CopyButton");
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+/**
+ * #2438: each CopyButton owns its status (the create-tenant card used to share one flag between two
+ * copy controls), "Copied" shows only after the clipboard write resolves, a failed write says so and
+ * selects the value for a manual copy (#2598 review), and the reset timer never outlives the button.
+ */ function mockClipboard(writeText) {
+    Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: writeText ? {
+            writeText
+        } : undefined
+    });
+}
+async function clickAndSettle(el) {
+    await (0, _react1.act)(async ()=>{
+        _react1.fireEvent.click(el);
+    });
+}
+describe("CopyButton", ()=>{
+    beforeEach(()=>{
+        jest.useFakeTimers();
+        mockClipboard(jest.fn().mockResolvedValue(undefined));
+    });
+    afterEach(()=>{
+        jest.useRealTimers();
+    });
+    it("copies its own value and shows Copied only once the write resolves, then resets", async ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_CopyButton.CopyButton, {
+            value: "abc-123",
+            label: "Copy code"
+        }));
+        const btn = _react1.screen.getByRole("button", {
+            name: "Copy code"
+        });
+        await clickAndSettle(btn);
+        expect(navigator.clipboard.writeText).toHaveBeenCalledWith("abc-123");
+        expect(btn).toHaveTextContent("Copied");
+        (0, _react1.act)(()=>{
+            jest.advanceTimersByTime(1200);
+        });
+        expect(btn).toHaveTextContent("Copy");
+        expect(btn).not.toHaveTextContent("Copied");
+    });
+    it("two buttons keep independent states", async ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsxs)(_jsxruntime.Fragment, {
+            children: [
+                /*#__PURE__*/ (0, _jsxruntime.jsx)(_CopyButton.CopyButton, {
+                    value: "one",
+                    label: "Copy one"
+                }),
+                /*#__PURE__*/ (0, _jsxruntime.jsx)(_CopyButton.CopyButton, {
+                    value: "two",
+                    label: "Copy two"
+                })
+            ]
+        }));
+        await clickAndSettle(_react1.screen.getByRole("button", {
+            name: "Copy one"
+        }));
+        expect(_react1.screen.getByRole("button", {
+            name: "Copy one"
+        })).toHaveTextContent("Copied");
+        expect(_react1.screen.getByRole("button", {
+            name: "Copy two"
+        })).not.toHaveTextContent("Copied");
+    });
+    it("a rejected write never shows Copied: it shows the failure text and selects the value", async ()=>{
+        mockClipboard(jest.fn().mockRejectedValue(new DOMException("denied", "NotAllowedError")));
+        function Harness() {
+            const ref = _react.useRef(null);
+            return /*#__PURE__*/ (0, _jsxruntime.jsxs)(_jsxruntime.Fragment, {
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                        ref: ref,
+                        children: "https://pay.example/link-for-this-tenant"
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)(_CopyButton.CopyButton, {
+                        value: "https://pay.example/link-for-this-tenant",
+                        label: "Copy link",
+                        failedText: "Copy failed — select the link",
+                        selectOnFail: ref
+                    })
+                ]
+            });
+        }
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(Harness, {}));
+        const btn = _react1.screen.getByRole("button", {
+            name: "Copy link"
+        });
+        await clickAndSettle(btn);
+        expect(btn).not.toHaveTextContent("Copied");
+        expect(btn).toHaveTextContent("Copy failed — select the link");
+        expect(window.getSelection()?.toString()).toBe("https://pay.example/link-for-this-tenant");
+    });
+    it("a missing Clipboard API is a failure too, not a silent Copied", async ()=>{
+        mockClipboard(undefined);
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_CopyButton.CopyButton, {
+            value: "x"
+        }));
+        const btn = _react1.screen.getByRole("button", {
+            name: "Copy value"
+        });
+        await clickAndSettle(btn);
+        expect(btn).not.toHaveTextContent("Copied");
+        expect(btn).toHaveTextContent("Copy failed — select it manually");
+    });
+    it("announces its status through a polite live region", ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_CopyButton.CopyButton, {
+            value: "x"
+        }));
+        const live = _react1.screen.getByRole("button", {
+            name: "Copy value"
+        }).querySelector("[aria-live]");
+        expect(live).toHaveAttribute("aria-live", "polite");
+    });
+    it("clears its reset timer on unmount (no state update after unmount)", async ()=>{
+        const spy = jest.spyOn(console, "error").mockImplementation(()=>{});
+        const { unmount } = (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_CopyButton.CopyButton, {
+            value: "x"
+        }));
+        await clickAndSettle(_react1.screen.getByRole("button", {
+            name: "Copy value"
+        }));
+        unmount();
+        (0, _react1.act)(()=>{
+            jest.advanceTimersByTime(5000);
+        });
+        expect(spy).not.toHaveBeenCalled();
+        spy.mockRestore();
+    });
+    it("uses the caller's className instead of the default styling", ()=>{
+        (0, _react1.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_CopyButton.CopyButton, {
+            value: "x",
+            className: "my-dark-btn"
+        }));
+        expect(_react1.screen.getByRole("button", {
+            name: "Copy value"
+        })).toHaveClass("my-dark-btn");
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2NvbXBvbmVudHMvQ29weUJ1dHRvbi50ZXN0LnRzeCJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgKiBhcyBSZWFjdCBmcm9tIFwicmVhY3RcIjtcbmltcG9ydCB7IGFjdCwgZmlyZUV2ZW50LCByZW5kZXIsIHNjcmVlbiB9IGZyb20gXCJAdGVzdGluZy1saWJyYXJ5L3JlYWN0XCI7XG5pbXBvcnQgeyBDb3B5QnV0dG9uIH0gZnJvbSBcIi4vQ29weUJ1dHRvblwiO1xuXG4vKipcbiAqICMyNDM4OiBlYWNoIENvcHlCdXR0b24gb3ducyBpdHMgc3RhdHVzICh0aGUgY3JlYXRlLXRlbmFudCBjYXJkIHVzZWQgdG8gc2hhcmUgb25lIGZsYWcgYmV0d2VlbiB0d29cbiAqIGNvcHkgY29udHJvbHMpLCBcIkNvcGllZFwiIHNob3dzIG9ubHkgYWZ0ZXIgdGhlIGNsaXBib2FyZCB3cml0ZSByZXNvbHZlcywgYSBmYWlsZWQgd3JpdGUgc2F5cyBzbyBhbmRcbiAqIHNlbGVjdHMgdGhlIHZhbHVlIGZvciBhIG1hbnVhbCBjb3B5ICgjMjU5OCByZXZpZXcpLCBhbmQgdGhlIHJlc2V0IHRpbWVyIG5ldmVyIG91dGxpdmVzIHRoZSBidXR0b24uXG4gKi9cbmZ1bmN0aW9uIG1vY2tDbGlwYm9hcmQod3JpdGVUZXh0OiBqZXN0Lk1vY2sgfCB1bmRlZmluZWQpIHtcbiAgT2JqZWN0LmRlZmluZVByb3BlcnR5KG5hdmlnYXRvciwgXCJjbGlwYm9hcmRcIiwge1xuICAgIGNvbmZpZ3VyYWJsZTogdHJ1ZSxcbiAgICB2YWx1ZTogd3JpdGVUZXh0ID8geyB3cml0ZVRleHQgfSA6IHVuZGVmaW5lZCxcbiAgfSk7XG59XG5cbmFzeW5jIGZ1bmN0aW9uIGNsaWNrQW5kU2V0dGxlKGVsOiBIVE1MRWxlbWVudCkge1xuICBhd2FpdCBhY3QoYXN5bmMgKCkgPT4ge1xuICAgIGZpcmVFdmVudC5jbGljayhlbCk7XG4gIH0pO1xufVxuXG5kZXNjcmliZShcIkNvcHlCdXR0b25cIiwgKCkgPT4ge1xuICBiZWZvcmVFYWNoKCgpID0+IHtcbiAgICBqZXN0LnVzZUZha2VUaW1lcnMoKTtcbiAgICBtb2NrQ2xpcGJvYXJkKGplc3QuZm4oKS5tb2NrUmVzb2x2ZWRWYWx1ZSh1bmRlZmluZWQpKTtcbiAgfSk7XG4gIGFmdGVyRWFjaCgoKSA9PiB7XG4gICAgamVzdC51c2VSZWFsVGltZXJzKCk7XG4gIH0pO1xuXG4gIGl0KFwiY29waWVzIGl0cyBvd24gdmFsdWUgYW5kIHNob3dzIENvcGllZCBvbmx5IG9uY2UgdGhlIHdyaXRlIHJlc29sdmVzLCB0aGVuIHJlc2V0c1wiLCBhc3luYyAoKSA9PiB7XG4gICAgcmVuZGVyKDxDb3B5QnV0dG9uIHZhbHVlPVwiYWJjLTEyM1wiIGxhYmVsPVwiQ29weSBjb2RlXCIgLz4pO1xuICAgIGNvbnN0IGJ0biA9IHNjcmVlbi5nZXRCeVJvbGUoXCJidXR0b25cIiwgeyBuYW1lOiBcIkNvcHkgY29kZVwiIH0pO1xuICAgIGF3YWl0IGNsaWNrQW5kU2V0dGxlKGJ0bik7XG4gICAgZXhwZWN0KG5hdmlnYXRvci5jbGlwYm9hcmQud3JpdGVUZXh0KS50b0hhdmVCZWVuQ2FsbGVkV2l0aChcImFiYy0xMjNcIik7XG4gICAgZXhwZWN0KGJ0bikudG9IYXZlVGV4dENvbnRlbnQoXCJDb3BpZWRcIik7XG4gICAgYWN0KCgpID0+IHtcbiAgICAgIGplc3QuYWR2YW5jZVRpbWVyc0J5VGltZSgxMjAwKTtcbiAgICB9KTtcbiAgICBleHBlY3QoYnRuKS50b0hhdmVUZXh0Q29udGVudChcIkNvcHlcIik7XG4gICAgZXhwZWN0KGJ0bikubm90LnRvSGF2ZVRleHRDb250ZW50KFwiQ29waWVkXCIpO1xuICB9KTtcblxuICBpdChcInR3byBidXR0b25zIGtlZXAgaW5kZXBlbmRlbnQgc3RhdGVzXCIsIGFzeW5jICgpID0+IHtcbiAgICByZW5kZXIoXG4gICAgICA8PlxuICAgICAgICA8Q29weUJ1dHRvbiB2YWx1ZT1cIm9uZVwiIGxhYmVsPVwiQ29weSBvbmVcIiAvPlxuICAgICAgICA8Q29weUJ1dHRvbiB2YWx1ZT1cInR3b1wiIGxhYmVsPVwiQ29weSB0d29cIiAvPlxuICAgICAgPC8+LFxuICAgICk7XG4gICAgYXdhaXQgY2xpY2tBbmRTZXR0bGUoc2NyZWVuLmdldEJ5Um9sZShcImJ1dHRvblwiLCB7IG5hbWU6IFwiQ29weSBvbmVcIiB9KSk7XG4gICAgZXhwZWN0KHNjcmVlbi5nZXRCeVJvbGUoXCJidXR0b25cIiwgeyBuYW1lOiBcIkNvcHkgb25lXCIgfSkpLnRvSGF2ZVRleHRDb250ZW50KFwiQ29waWVkXCIpO1xuICAgIGV4cGVjdChzY3JlZW4uZ2V0QnlSb2xlKFwiYnV0dG9uXCIsIHsgbmFtZTogXCJDb3B5IHR3b1wiIH0pKS5ub3QudG9IYXZlVGV4dENvbnRlbnQoXCJDb3BpZWRcIik7XG4gIH0pO1xuXG4gIGl0KFwiYSByZWplY3RlZCB3cml0ZSBuZXZlciBzaG93cyBDb3BpZWQ6IGl0IHNob3dzIHRoZSBmYWlsdXJlIHRleHQgYW5kIHNlbGVjdHMgdGhlIHZhbHVlXCIsIGFzeW5jICgpID0+IHtcbiAgICBtb2NrQ2xpcGJvYXJkKGplc3QuZm4oKS5tb2NrUmVqZWN0ZWRWYWx1ZShuZXcgRE9NRXhjZXB0aW9uKFwiZGVuaWVkXCIsIFwiTm90QWxsb3dlZEVycm9yXCIpKSk7XG4gICAgZnVuY3Rpb24gSGFybmVzcygpIHtcbiAgICAgIGNvbnN0IHJlZiA9IFJlYWN0LnVzZVJlZjxIVE1MU3BhbkVsZW1lbnQ+KG51bGwpO1xuICAgICAgcmV0dXJuIChcbiAgICAgICAgPD5cbiAgICAgICAgICA8c3BhbiByZWY9e3JlZn0+aHR0cHM6Ly9wYXkuZXhhbXBsZS9saW5rLWZvci10aGlzLXRlbmFudDwvc3Bhbj5cbiAgICAgICAgICA8Q29weUJ1dHRvblxuICAgICAgICAgICAgdmFsdWU9XCJodHRwczovL3BheS5leGFtcGxlL2xpbmstZm9yLXRoaXMtdGVuYW50XCJcbiAgICAgICAgICAgIGxhYmVsPVwiQ29weSBsaW5rXCJcbiAgICAgICAgICAgIGZhaWxlZFRleHQ9XCJDb3B5IGZhaWxlZCDigJQgc2VsZWN0IHRoZSBsaW5rXCJcbiAgICAgICAgICAgIHNlbGVjdE9uRmFpbD17cmVmfVxuICAgICAgICAgIC8+XG4gICAgICAgIDwvPlxuICAgICAgKTtcbiAgICB9XG4gICAgcmVuZGVyKDxIYXJuZXNzIC8+KTtcbiAgICBjb25zdCBidG4gPSBzY3JlZW4uZ2V0QnlSb2xlKFwiYnV0dG9uXCIsIHsgbmFtZTogXCJDb3B5IGxpbmtcIiB9KTtcbiAgICBhd2FpdCBjbGlja0FuZFNldHRsZShidG4pO1xuICAgIGV4cGVjdChidG4pLm5vdC50b0hhdmVUZXh0Q29udGVudChcIkNvcGllZFwiKTtcbiAgICBleHBlY3QoYnRuKS50b0hhdmVUZXh0Q29udGVudChcIkNvcHkgZmFpbGVkIOKAlCBzZWxlY3QgdGhlIGxpbmtcIik7XG4gICAgZXhwZWN0KHdpbmRvdy5nZXRTZWxlY3Rpb24oKT8udG9TdHJpbmcoKSkudG9CZShcImh0dHBzOi8vcGF5LmV4YW1wbGUvbGluay1mb3ItdGhpcy10ZW5hbnRcIik7XG4gIH0pO1xuXG4gIGl0KFwiYSBtaXNzaW5nIENsaXBib2FyZCBBUEkgaXMgYSBmYWlsdXJlIHRvbywgbm90IGEgc2lsZW50IENvcGllZFwiLCBhc3luYyAoKSA9PiB7XG4gICAgbW9ja0NsaXBib2FyZCh1bmRlZmluZWQpO1xuICAgIHJlbmRlcig8Q29weUJ1dHRvbiB2YWx1ZT1cInhcIiAvPik7XG4gICAgY29uc3QgYnRuID0gc2NyZWVuLmdldEJ5Um9sZShcImJ1dHRvblwiLCB7IG5hbWU6IFwiQ29weSB2YWx1ZVwiIH0pO1xuICAgIGF3YWl0IGNsaWNrQW5kU2V0dGxlKGJ0bik7XG4gICAgZXhwZWN0KGJ0bikubm90LnRvSGF2ZVRleHRDb250ZW50KFwiQ29waWVkXCIpO1xuICAgIGV4cGVjdChidG4pLnRvSGF2ZVRleHRDb250ZW50KFwiQ29weSBmYWlsZWQg4oCUIHNlbGVjdCBpdCBtYW51YWxseVwiKTtcbiAgfSk7XG5cbiAgaXQoXCJhbm5vdW5jZXMgaXRzIHN0YXR1cyB0aHJvdWdoIGEgcG9saXRlIGxpdmUgcmVnaW9uXCIsICgpID0+IHtcbiAgICByZW5kZXIoPENvcHlCdXR0b24gdmFsdWU9XCJ4XCIgLz4pO1xuICAgIGNvbnN0IGxpdmUgPSBzY3JlZW4uZ2V0QnlSb2xlKFwiYnV0dG9uXCIsIHsgbmFtZTogXCJDb3B5IHZhbHVlXCIgfSkucXVlcnlTZWxlY3RvcihcIlthcmlhLWxpdmVdXCIpO1xuICAgIGV4cGVjdChsaXZlKS50b0hhdmVBdHRyaWJ1dGUoXCJhcmlhLWxpdmVcIiwgXCJwb2xpdGVcIik7XG4gIH0pO1xuXG4gIGl0KFwiY2xlYXJzIGl0cyByZXNldCB0aW1lciBvbiB1bm1vdW50IChubyBzdGF0ZSB1cGRhdGUgYWZ0ZXIgdW5tb3VudClcIiwgYXN5bmMgKCkgPT4ge1xuICAgIGNvbnN0IHNweSA9IGplc3Quc3B5T24oY29uc29sZSwgXCJlcnJvclwiKS5tb2NrSW1wbGVtZW50YXRpb24oKCkgPT4ge30pO1xuICAgIGNvbnN0IHsgdW5tb3VudCB9ID0gcmVuZGVyKDxDb3B5QnV0dG9uIHZhbHVlPVwieFwiIC8+KTtcbiAgICBhd2FpdCBjbGlja0FuZFNldHRsZShzY3JlZW4uZ2V0QnlSb2xlKFwiYnV0dG9uXCIsIHsgbmFtZTogXCJDb3B5IHZhbHVlXCIgfSkpO1xuICAgIHVubW91bnQoKTtcbiAgICBhY3QoKCkgPT4ge1xuICAgICAgamVzdC5hZHZhbmNlVGltZXJzQnlUaW1lKDUwMDApO1xuICAgIH0pO1xuICAgIGV4cGVjdChzcHkpLm5vdC50b0hhdmVCZWVuQ2FsbGVkKCk7XG4gICAgc3B5Lm1vY2tSZXN0b3JlKCk7XG4gIH0pO1xuXG4gIGl0KFwidXNlcyB0aGUgY2FsbGVyJ3MgY2xhc3NOYW1lIGluc3RlYWQgb2YgdGhlIGRlZmF1bHQgc3R5bGluZ1wiLCAoKSA9PiB7XG4gICAgcmVuZGVyKDxDb3B5QnV0dG9uIHZhbHVlPVwieFwiIGNsYXNzTmFtZT1cIm15LWRhcmstYnRuXCIgLz4pO1xuICAgIGV4cGVjdChzY3JlZW4uZ2V0QnlSb2xlKFwiYnV0dG9uXCIsIHsgbmFtZTogXCJDb3B5IHZhbHVlXCIgfSkpLnRvSGF2ZUNsYXNzKFwibXktZGFyay1idG5cIik7XG4gIH0pO1xufSk7XG4iXSwibmFtZXMiOlsibW9ja0NsaXBib2FyZCIsIndyaXRlVGV4dCIsIk9iamVjdCIsImRlZmluZVByb3BlcnR5IiwibmF2aWdhdG9yIiwiY29uZmlndXJhYmxlIiwidmFsdWUiLCJ1bmRlZmluZWQiLCJjbGlja0FuZFNldHRsZSIsImVsIiwiYWN0IiwiZmlyZUV2ZW50IiwiY2xpY2siLCJkZXNjcmliZSIsImJlZm9yZUVhY2giLCJqZXN0IiwidXNlRmFrZVRpbWVycyIsImZuIiwibW9ja1Jlc29sdmVkVmFsdWUiLCJhZnRlckVhY2giLCJ1c2VSZWFsVGltZXJzIiwiaXQiLCJyZW5kZXIiLCJDb3B5QnV0dG9uIiwibGFiZWwiLCJidG4iLCJzY3JlZW4iLCJnZXRCeVJvbGUiLCJuYW1lIiwiZXhwZWN0IiwiY2xpcGJvYXJkIiwidG9IYXZlQmVlbkNhbGxlZFdpdGgiLCJ0b0hhdmVUZXh0Q29udGVudCIsImFkdmFuY2VUaW1lcnNCeVRpbWUiLCJub3QiLCJtb2NrUmVqZWN0ZWRWYWx1ZSIsIkRPTUV4Y2VwdGlvbiIsIkhhcm5lc3MiLCJyZWYiLCJSZWFjdCIsInVzZVJlZiIsInNwYW4iLCJmYWlsZWRUZXh0Iiwic2VsZWN0T25GYWlsIiwid2luZG93IiwiZ2V0U2VsZWN0aW9uIiwidG9TdHJpbmciLCJ0b0JlIiwibGl2ZSIsInF1ZXJ5U2VsZWN0b3IiLCJ0b0hhdmVBdHRyaWJ1dGUiLCJzcHkiLCJzcHlPbiIsImNvbnNvbGUiLCJtb2NrSW1wbGVtZW50YXRpb24iLCJ1bm1vdW50IiwidG9IYXZlQmVlbkNhbGxlZCIsIm1vY2tSZXN0b3JlIiwiY2xhc3NOYW1lIiwidG9IYXZlQ2xhc3MiXSwibWFwcGluZ3MiOiI7Ozs7OytEQUF1Qjt3QkFDd0I7NEJBQ3BCOzs7Ozs7Ozs7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

@@ -1,0 +1,194 @@
+ca34f6dc96d6b5ac0e45a5035d464ce9
+"use strict";
+jest.mock("next/navigation", ()=>({
+        useParams: ()=>({
+                seller: "acme",
+                id: "inv-1"
+            }),
+        useRouter: ()=>({
+                push: jest.fn()
+            })
+    }));
+jest.mock("@/lib/buyer-auth-context", ()=>({
+        ...jest.requireActual("@/lib/buyer-auth-context"),
+        useBuyerAuth: ()=>({
+                activeSeller: {
+                    id: "seller-1",
+                    slug: "acme"
+                },
+                isLoading: false
+            })
+    }));
+jest.mock("@/lib/api/buyer", ()=>({
+        ...jest.requireActual("@/lib/api/buyer"),
+        useBuyerInvoice: (...args)=>mockUseBuyerInvoice(...args)
+    }));
+jest.mock("@routeflow/ui/web", ()=>({
+        ...jest.requireActual("@routeflow/ui/web"),
+        useToast: ()=>({
+                toast: jest.fn(),
+                dismiss: jest.fn()
+            })
+    }));
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+const _render = require("../../../../../../test-utils/render");
+const _page = /*#__PURE__*/ _interop_require_default(require("./page"));
+function _interop_require_default(obj) {
+    return obj && obj.__esModule ? obj : {
+        default: obj
+    };
+}
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+/**
+ * WP2 — R5.8: the buyer invoice detail page renders each line item's
+ * buyer-visible `notes` (e.g. flavor) under the description cell, styled
+ * `mt-0.5 text-xs font-normal italic text-navy/60` (ruling HL-3 / ux-spec
+ * anatomy). A `null`/absent note renders nothing extra for that line.
+ */ function makeInvoice(overrides = {}) {
+    return {
+        id: "inv-1",
+        invoiceNumber: "INV-0001",
+        status: "SENT",
+        subtotal: 20,
+        taxAmount: 0,
+        discount: 0,
+        shippingFee: 0,
+        total: 20,
+        dueDate: null,
+        sentAt: null,
+        viewedAt: null,
+        paidAt: null,
+        issueDate: "2026-01-01",
+        pdfUrl: null,
+        notes: null,
+        terms: null,
+        orderId: null,
+        items: [
+            {
+                id: "item-1",
+                description: "Mango Juice",
+                productId: "p1",
+                qty: 1,
+                unitPrice: 10,
+                discount: 0,
+                subtotal: 10,
+                priceType: "STANDARD",
+                notes: "Mango"
+            },
+            {
+                id: "item-2",
+                description: "Orange Juice",
+                productId: "p2",
+                qty: 1,
+                unitPrice: 10,
+                discount: 0,
+                subtotal: 10,
+                priceType: "STANDARD",
+                notes: null
+            }
+        ],
+        payments: [],
+        customer: {
+            id: "cust-1",
+            businessName: "Acme Foods"
+        },
+        ...overrides
+    };
+}
+const mockUseBuyerInvoice = jest.fn((..._args)=>({
+        data: makeInvoice(),
+        isLoading: false,
+        isError: false
+    }));
+describe("buyer invoice detail — per-line note (R5.8)", ()=>{
+    beforeEach(()=>{
+        mockUseBuyerInvoice.mockReturnValue({
+            data: makeInvoice(),
+            isLoading: false,
+            isError: false
+        });
+    });
+    it("renders a note italic under the description for the line that has one", ()=>{
+        (0, _render.renderWithProviders)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_page.default, {}));
+        const noteEl = _render.screen.getByText("Mango");
+        expect(noteEl.className).toEqual(expect.stringContaining("italic"));
+    });
+    it("renders exactly one note paragraph — the null-note line renders nothing extra", ()=>{
+        (0, _render.renderWithProviders)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_page.default, {}));
+        const notes = document.querySelectorAll("p.italic");
+        expect(notes.length).toBe(1);
+    });
+    it("a multi-line note keeps its line breaks (whitespace-pre-line, not collapsed to a space)", ()=>{
+        mockUseBuyerInvoice.mockReturnValue({
+            data: makeInvoice({
+                items: [
+                    {
+                        id: "item-1",
+                        description: "Mango Juice",
+                        productId: "p1",
+                        qty: 1,
+                        unitPrice: 10,
+                        discount: 0,
+                        subtotal: 10,
+                        priceType: "STANDARD",
+                        notes: "Extra ice\nSide door\nCall on arrival"
+                    }
+                ]
+            }),
+            isLoading: false,
+            isError: false
+        });
+        (0, _render.renderWithProviders)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_page.default, {}));
+        // A plain <p> collapses "\n" to a space in the rendered browser text, so this must be a DOM
+        // query (the raw text content, not what a browser would visually show) plus the CSS rule that
+        // makes the browser actually respect it — not a text match, which can't tell the two apart.
+        const noteEl = _render.screen.getByText((_, el)=>el?.textContent === "Extra ice\nSide door\nCall on arrival");
+        expect(noteEl.className).toEqual(expect.stringContaining("whitespace-pre-line"));
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC9idXllci9wb3J0YWwvW3NlbGxlcl0vaW52b2ljZXMvW2lkXS9wYWdlLmxpbmUtbm90ZS50ZXN0LnRzeCJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgKiBhcyBSZWFjdCBmcm9tIFwicmVhY3RcIjtcbmltcG9ydCB7IHJlbmRlcldpdGhQcm92aWRlcnMsIHNjcmVlbiB9IGZyb20gXCJAL3Rlc3QtdXRpbHMvcmVuZGVyXCI7XG5pbXBvcnQgdHlwZSB7IEJ1eWVySW52b2ljZURldGFpbCB9IGZyb20gXCJAL2xpYi9hcGkvYnV5ZXJcIjtcbmltcG9ydCBQYWdlIGZyb20gXCIuL3BhZ2VcIjtcblxuLyoqXG4gKiBXUDIg4oCUIFI1Ljg6IHRoZSBidXllciBpbnZvaWNlIGRldGFpbCBwYWdlIHJlbmRlcnMgZWFjaCBsaW5lIGl0ZW0nc1xuICogYnV5ZXItdmlzaWJsZSBgbm90ZXNgIChlLmcuIGZsYXZvcikgdW5kZXIgdGhlIGRlc2NyaXB0aW9uIGNlbGwsIHN0eWxlZFxuICogYG10LTAuNSB0ZXh0LXhzIGZvbnQtbm9ybWFsIGl0YWxpYyB0ZXh0LW5hdnkvNjBgIChydWxpbmcgSEwtMyAvIHV4LXNwZWNcbiAqIGFuYXRvbXkpLiBBIGBudWxsYC9hYnNlbnQgbm90ZSByZW5kZXJzIG5vdGhpbmcgZXh0cmEgZm9yIHRoYXQgbGluZS5cbiAqL1xuZnVuY3Rpb24gbWFrZUludm9pY2Uob3ZlcnJpZGVzOiBQYXJ0aWFsPEJ1eWVySW52b2ljZURldGFpbD4gPSB7fSk6IEJ1eWVySW52b2ljZURldGFpbCB7XG4gIHJldHVybiB7XG4gICAgaWQ6IFwiaW52LTFcIixcbiAgICBpbnZvaWNlTnVtYmVyOiBcIklOVi0wMDAxXCIsXG4gICAgc3RhdHVzOiBcIlNFTlRcIixcbiAgICBzdWJ0b3RhbDogMjAsXG4gICAgdGF4QW1vdW50OiAwLFxuICAgIGRpc2NvdW50OiAwLFxuICAgIHNoaXBwaW5nRmVlOiAwLFxuICAgIHRvdGFsOiAyMCxcbiAgICBkdWVEYXRlOiBudWxsLFxuICAgIHNlbnRBdDogbnVsbCxcbiAgICB2aWV3ZWRBdDogbnVsbCxcbiAgICBwYWlkQXQ6IG51bGwsXG4gICAgaXNzdWVEYXRlOiBcIjIwMjYtMDEtMDFcIixcbiAgICBwZGZVcmw6IG51bGwsXG4gICAgbm90ZXM6IG51bGwsXG4gICAgdGVybXM6IG51bGwsXG4gICAgb3JkZXJJZDogbnVsbCxcbiAgICBpdGVtczogW1xuICAgICAge1xuICAgICAgICBpZDogXCJpdGVtLTFcIixcbiAgICAgICAgZGVzY3JpcHRpb246IFwiTWFuZ28gSnVpY2VcIixcbiAgICAgICAgcHJvZHVjdElkOiBcInAxXCIsXG4gICAgICAgIHF0eTogMSxcbiAgICAgICAgdW5pdFByaWNlOiAxMCxcbiAgICAgICAgZGlzY291bnQ6IDAsXG4gICAgICAgIHN1YnRvdGFsOiAxMCxcbiAgICAgICAgcHJpY2VUeXBlOiBcIlNUQU5EQVJEXCIsXG4gICAgICAgIG5vdGVzOiBcIk1hbmdvXCIsXG4gICAgICB9LFxuICAgICAge1xuICAgICAgICBpZDogXCJpdGVtLTJcIixcbiAgICAgICAgZGVzY3JpcHRpb246IFwiT3JhbmdlIEp1aWNlXCIsXG4gICAgICAgIHByb2R1Y3RJZDogXCJwMlwiLFxuICAgICAgICBxdHk6IDEsXG4gICAgICAgIHVuaXRQcmljZTogMTAsXG4gICAgICAgIGRpc2NvdW50OiAwLFxuICAgICAgICBzdWJ0b3RhbDogMTAsXG4gICAgICAgIHByaWNlVHlwZTogXCJTVEFOREFSRFwiLFxuICAgICAgICBub3RlczogbnVsbCxcbiAgICAgIH0sXG4gICAgXSxcbiAgICBwYXltZW50czogW10sXG4gICAgY3VzdG9tZXI6IHsgaWQ6IFwiY3VzdC0xXCIsIGJ1c2luZXNzTmFtZTogXCJBY21lIEZvb2RzXCIgfSxcbiAgICAuLi5vdmVycmlkZXMsXG4gIH07XG59XG5cbmNvbnN0IG1vY2tVc2VCdXllckludm9pY2UgPSBqZXN0LmZuKCguLi5fYXJnczogdW5rbm93bltdKSA9PiAoe1xuICBkYXRhOiBtYWtlSW52b2ljZSgpLFxuICBpc0xvYWRpbmc6IGZhbHNlLFxuICBpc0Vycm9yOiBmYWxzZSxcbn0pKTtcblxuamVzdC5tb2NrKFwibmV4dC9uYXZpZ2F0aW9uXCIsICgpID0+ICh7XG4gIHVzZVBhcmFtczogKCkgPT4gKHsgc2VsbGVyOiBcImFjbWVcIiwgaWQ6IFwiaW52LTFcIiB9KSxcbiAgdXNlUm91dGVyOiAoKSA9PiAoeyBwdXNoOiBqZXN0LmZuKCkgfSksXG59KSk7XG5cbmplc3QubW9jayhcIkAvbGliL2J1eWVyLWF1dGgtY29udGV4dFwiLCAoKSA9PiAoe1xuICAuLi5qZXN0LnJlcXVpcmVBY3R1YWwoXCJAL2xpYi9idXllci1hdXRoLWNvbnRleHRcIiksXG4gIHVzZUJ1eWVyQXV0aDogKCkgPT4gKHsgYWN0aXZlU2VsbGVyOiB7IGlkOiBcInNlbGxlci0xXCIsIHNsdWc6IFwiYWNtZVwiIH0sIGlzTG9hZGluZzogZmFsc2UgfSksXG59KSk7XG5cbmplc3QubW9jayhcIkAvbGliL2FwaS9idXllclwiLCAoKSA9PiAoe1xuICAuLi5qZXN0LnJlcXVpcmVBY3R1YWwoXCJAL2xpYi9hcGkvYnV5ZXJcIiksXG4gIHVzZUJ1eWVySW52b2ljZTogKC4uLmFyZ3M6IHVua25vd25bXSkgPT4gbW9ja1VzZUJ1eWVySW52b2ljZSguLi5hcmdzKSxcbn0pKTtcblxuamVzdC5tb2NrKFwiQHJvdXRlZmxvdy91aS93ZWJcIiwgKCkgPT4gKHtcbiAgLi4uamVzdC5yZXF1aXJlQWN0dWFsKFwiQHJvdXRlZmxvdy91aS93ZWJcIiksXG4gIHVzZVRvYXN0OiAoKSA9PiAoeyB0b2FzdDogamVzdC5mbigpLCBkaXNtaXNzOiBqZXN0LmZuKCkgfSksXG59KSk7XG5cbmRlc2NyaWJlKFwiYnV5ZXIgaW52b2ljZSBkZXRhaWwg4oCUIHBlci1saW5lIG5vdGUgKFI1LjgpXCIsICgpID0+IHtcbiAgYmVmb3JlRWFjaCgoKSA9PiB7XG4gICAgbW9ja1VzZUJ1eWVySW52b2ljZS5tb2NrUmV0dXJuVmFsdWUoeyBkYXRhOiBtYWtlSW52b2ljZSgpLCBpc0xvYWRpbmc6IGZhbHNlLCBpc0Vycm9yOiBmYWxzZSB9KTtcbiAgfSk7XG5cbiAgaXQoXCJyZW5kZXJzIGEgbm90ZSBpdGFsaWMgdW5kZXIgdGhlIGRlc2NyaXB0aW9uIGZvciB0aGUgbGluZSB0aGF0IGhhcyBvbmVcIiwgKCkgPT4ge1xuICAgIHJlbmRlcldpdGhQcm92aWRlcnMoPFBhZ2UgLz4pO1xuICAgIGNvbnN0IG5vdGVFbCA9IHNjcmVlbi5nZXRCeVRleHQoXCJNYW5nb1wiKTtcbiAgICBleHBlY3Qobm90ZUVsLmNsYXNzTmFtZSkudG9FcXVhbChleHBlY3Quc3RyaW5nQ29udGFpbmluZyhcIml0YWxpY1wiKSk7XG4gIH0pO1xuXG4gIGl0KFwicmVuZGVycyBleGFjdGx5IG9uZSBub3RlIHBhcmFncmFwaCDigJQgdGhlIG51bGwtbm90ZSBsaW5lIHJlbmRlcnMgbm90aGluZyBleHRyYVwiLCAoKSA9PiB7XG4gICAgcmVuZGVyV2l0aFByb3ZpZGVycyg8UGFnZSAvPik7XG4gICAgY29uc3Qgbm90ZXMgPSBkb2N1bWVudC5xdWVyeVNlbGVjdG9yQWxsKFwicC5pdGFsaWNcIik7XG4gICAgZXhwZWN0KG5vdGVzLmxlbmd0aCkudG9CZSgxKTtcbiAgfSk7XG5cbiAgaXQoXCJhIG11bHRpLWxpbmUgbm90ZSBrZWVwcyBpdHMgbGluZSBicmVha3MgKHdoaXRlc3BhY2UtcHJlLWxpbmUsIG5vdCBjb2xsYXBzZWQgdG8gYSBzcGFjZSlcIiwgKCkgPT4ge1xuICAgIG1vY2tVc2VCdXllckludm9pY2UubW9ja1JldHVyblZhbHVlKHtcbiAgICAgIGRhdGE6IG1ha2VJbnZvaWNlKHtcbiAgICAgICAgaXRlbXM6IFtcbiAgICAgICAgICB7XG4gICAgICAgICAgICBpZDogXCJpdGVtLTFcIixcbiAgICAgICAgICAgIGRlc2NyaXB0aW9uOiBcIk1hbmdvIEp1aWNlXCIsXG4gICAgICAgICAgICBwcm9kdWN0SWQ6IFwicDFcIixcbiAgICAgICAgICAgIHF0eTogMSxcbiAgICAgICAgICAgIHVuaXRQcmljZTogMTAsXG4gICAgICAgICAgICBkaXNjb3VudDogMCxcbiAgICAgICAgICAgIHN1YnRvdGFsOiAxMCxcbiAgICAgICAgICAgIHByaWNlVHlwZTogXCJTVEFOREFSRFwiLFxuICAgICAgICAgICAgbm90ZXM6IFwiRXh0cmEgaWNlXFxuU2lkZSBkb29yXFxuQ2FsbCBvbiBhcnJpdmFsXCIsXG4gICAgICAgICAgfSxcbiAgICAgICAgXSxcbiAgICAgIH0pLFxuICAgICAgaXNMb2FkaW5nOiBmYWxzZSxcbiAgICAgIGlzRXJyb3I6IGZhbHNlLFxuICAgIH0pO1xuICAgIHJlbmRlcldpdGhQcm92aWRlcnMoPFBhZ2UgLz4pO1xuICAgIC8vIEEgcGxhaW4gPHA+IGNvbGxhcHNlcyBcIlxcblwiIHRvIGEgc3BhY2UgaW4gdGhlIHJlbmRlcmVkIGJyb3dzZXIgdGV4dCwgc28gdGhpcyBtdXN0IGJlIGEgRE9NXG4gICAgLy8gcXVlcnkgKHRoZSByYXcgdGV4dCBjb250ZW50LCBub3Qgd2hhdCBhIGJyb3dzZXIgd291bGQgdmlzdWFsbHkgc2hvdykgcGx1cyB0aGUgQ1NTIHJ1bGUgdGhhdFxuICAgIC8vIG1ha2VzIHRoZSBicm93c2VyIGFjdHVhbGx5IHJlc3BlY3QgaXQg4oCUIG5vdCBhIHRleHQgbWF0Y2gsIHdoaWNoIGNhbid0IHRlbGwgdGhlIHR3byBhcGFydC5cbiAgICBjb25zdCBub3RlRWwgPSBzY3JlZW4uZ2V0QnlUZXh0KFxuICAgICAgKF8sIGVsKSA9PiBlbD8udGV4dENvbnRlbnQgPT09IFwiRXh0cmEgaWNlXFxuU2lkZSBkb29yXFxuQ2FsbCBvbiBhcnJpdmFsXCIsXG4gICAgKTtcbiAgICBleHBlY3Qobm90ZUVsLmNsYXNzTmFtZSkudG9FcXVhbChleHBlY3Quc3RyaW5nQ29udGFpbmluZyhcIndoaXRlc3BhY2UtcHJlLWxpbmVcIikpO1xuICB9KTtcbn0pO1xuIl0sIm5hbWVzIjpbImplc3QiLCJtb2NrIiwidXNlUGFyYW1zIiwic2VsbGVyIiwiaWQiLCJ1c2VSb3V0ZXIiLCJwdXNoIiwiZm4iLCJyZXF1aXJlQWN0dWFsIiwidXNlQnV5ZXJBdXRoIiwiYWN0aXZlU2VsbGVyIiwic2x1ZyIsImlzTG9hZGluZyIsInVzZUJ1eWVySW52b2ljZSIsImFyZ3MiLCJtb2NrVXNlQnV5ZXJJbnZvaWNlIiwidXNlVG9hc3QiLCJ0b2FzdCIsImRpc21pc3MiLCJtYWtlSW52b2ljZSIsIm92ZXJyaWRlcyIsImludm9pY2VOdW1iZXIiLCJzdGF0dXMiLCJzdWJ0b3RhbCIsInRheEFtb3VudCIsImRpc2NvdW50Iiwic2hpcHBpbmdGZWUiLCJ0b3RhbCIsImR1ZURhdGUiLCJzZW50QXQiLCJ2aWV3ZWRBdCIsInBhaWRBdCIsImlzc3VlRGF0ZSIsInBkZlVybCIsIm5vdGVzIiwidGVybXMiLCJvcmRlcklkIiwiaXRlbXMiLCJkZXNjcmlwdGlvbiIsInByb2R1Y3RJZCIsInF0eSIsInVuaXRQcmljZSIsInByaWNlVHlwZSIsInBheW1lbnRzIiwiY3VzdG9tZXIiLCJidXNpbmVzc05hbWUiLCJfYXJncyIsImRhdGEiLCJpc0Vycm9yIiwiZGVzY3JpYmUiLCJiZWZvcmVFYWNoIiwibW9ja1JldHVyblZhbHVlIiwiaXQiLCJyZW5kZXJXaXRoUHJvdmlkZXJzIiwiUGFnZSIsIm5vdGVFbCIsInNjcmVlbiIsImdldEJ5VGV4dCIsImV4cGVjdCIsImNsYXNzTmFtZSIsInRvRXF1YWwiLCJzdHJpbmdDb250YWluaW5nIiwiZG9jdW1lbnQiLCJxdWVyeVNlbGVjdG9yQWxsIiwibGVuZ3RoIiwidG9CZSIsIl8iLCJlbCIsInRleHRDb250ZW50Il0sIm1hcHBpbmdzIjoiO0FBa0VBQSxLQUFLQyxJQUFJLENBQUMsbUJBQW1CLElBQU8sQ0FBQTtRQUNsQ0MsV0FBVyxJQUFPLENBQUE7Z0JBQUVDLFFBQVE7Z0JBQVFDLElBQUk7WUFBUSxDQUFBO1FBQ2hEQyxXQUFXLElBQU8sQ0FBQTtnQkFBRUMsTUFBTU4sS0FBS08sRUFBRTtZQUFH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

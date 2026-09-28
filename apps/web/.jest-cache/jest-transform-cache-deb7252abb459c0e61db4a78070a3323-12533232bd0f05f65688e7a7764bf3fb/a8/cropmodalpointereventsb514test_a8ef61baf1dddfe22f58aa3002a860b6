@@ -1,0 +1,65 @@
+d5015c0f1d0102ebe7e16d20c921ef19
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _fs = /*#__PURE__*/ _interop_require_default(require("fs"));
+const _path = /*#__PURE__*/ _interop_require_default(require("path"));
+function _interop_require_default(obj) {
+    return obj && obj.__esModule ? obj : {
+        default: obj
+    };
+}
+/**
+ * B514 (C2 390px audit, biggest finding): CropModal's crop-box drag, corner
+ * resize, and focal-point placement were wired only to `onMouseDown` +
+ * `window.addEventListener("mousemove"/"mouseup")` — no touch handling at
+ * all, so the mandatory crop+focal step for every product image upload was
+ * unusable on a real phone. Converted to Pointer Events (one path for mouse,
+ * touch and stylus) rather than adding a second touch-event path alongside
+ * the mouse one, per the fix ruling — two paths drift. jsdom can't simulate
+ * real pointer capture or touch gestures, so this pins the source-level
+ * facts; the proof runner confirms the real behavior on a touch-emulated
+ * 390px viewport before merge.
+ */ function read() {
+    return _fs.default.readFileSync(_path.default.join(__dirname, "CropModal.tsx"), "utf8");
+}
+describe("B514 — CropModal drag/resize/focal-point use Pointer Events, not mouse-only", ()=>{
+    it("has no mouse-only event wiring left", ()=>{
+        const src = read();
+        expect(src).not.toMatch(/onMouseDown/);
+        expect(src).not.toMatch(/addEventListener\("mouse(move|up)"/);
+        expect(src).not.toMatch(/removeEventListener\("mouse(move|up)"/);
+        expect(src).not.toMatch(/\(e: MouseEvent\)/);
+    });
+    it("startDrag captures the pointer on the handle it starts on", ()=>{
+        const src = read();
+        expect(src).toContain("(e: React.PointerEvent<HTMLDivElement>, handleId: HandleId)");
+        expect(src).toContain("e.currentTarget.setPointerCapture(e.pointerId);");
+    });
+    it("crop-box drag and corner-resize handles use onPointerDown + touch-none", ()=>{
+        const src = read();
+        expect(src).toContain('onPointerDown={(e) => startDrag(e, "body")}');
+        expect(src).toContain("onPointerDown={(e) => startDrag(e, h)}");
+        // Both draggable surfaces (the box itself and each corner handle) must
+        // suppress the browser's own touch gestures (scroll/zoom) so a drag isn't
+        // stolen by the page the moment a finger moves.
+        expect((src.match(/className="touch-none"/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    });
+    it("the crop-box and focal-point drag listen for pointer move/up/cancel globally", ()=>{
+        const src = read();
+        expect(src).toContain('window.addEventListener("pointermove", onMove);');
+        expect(src).toContain('window.addEventListener("pointerup", onUp);');
+        expect(src).toContain('window.addEventListener("pointercancel", onUp);');
+        // Two independent drag effects (crop-box + focal-point) — both converted.
+        expect((src.match(/window\.addEventListener\("pointermove", onMove\);/g) ?? []).length).toBe(2);
+        expect((src.match(/window\.addEventListener\("pointercancel", onUp\);/g) ?? []).length).toBe(2);
+    });
+    it("the focal-point surface captures the pointer and suppresses touch gestures", ()=>{
+        const src = read();
+        expect(src).toContain('className="relative inline-block cursor-crosshair touch-none"');
+        expect(src).toContain("onPointerDown={(e) => {");
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS9wcm9kdWN0cy9baWRdL2Nyb3AtbW9kYWwtcG9pbnRlci1ldmVudHMtYjUxNC50ZXN0LnRzIl0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCBmcyBmcm9tIFwiZnNcIjtcbmltcG9ydCBwYXRoIGZyb20gXCJwYXRoXCI7XG5cbi8qKlxuICogQjUxNCAoQzIgMzkwcHggYXVkaXQsIGJpZ2dlc3QgZmluZGluZyk6IENyb3BNb2RhbCdzIGNyb3AtYm94IGRyYWcsIGNvcm5lclxuICogcmVzaXplLCBhbmQgZm9jYWwtcG9pbnQgcGxhY2VtZW50IHdlcmUgd2lyZWQgb25seSB0byBgb25Nb3VzZURvd25gICtcbiAqIGB3aW5kb3cuYWRkRXZlbnRMaXN0ZW5lcihcIm1vdXNlbW92ZVwiL1wibW91c2V1cFwiKWAg4oCUIG5vIHRvdWNoIGhhbmRsaW5nIGF0XG4gKiBhbGwsIHNvIHRoZSBtYW5kYXRvcnkgY3JvcCtmb2NhbCBzdGVwIGZvciBldmVyeSBwcm9kdWN0IGltYWdlIHVwbG9hZCB3YXNcbiAqIHVudXNhYmxlIG9uIGEgcmVhbCBwaG9uZS4gQ29udmVydGVkIHRvIFBvaW50ZXIgRXZlbnRzIChvbmUgcGF0aCBmb3IgbW91c2UsXG4gKiB0b3VjaCBhbmQgc3R5bHVzKSByYXRoZXIgdGhhbiBhZGRpbmcgYSBzZWNvbmQgdG91Y2gtZXZlbnQgcGF0aCBhbG9uZ3NpZGVcbiAqIHRoZSBtb3VzZSBvbmUsIHBlciB0aGUgZml4IHJ1bGluZyDigJQgdHdvIHBhdGhzIGRyaWZ0LiBqc2RvbSBjYW4ndCBzaW11bGF0ZVxuICogcmVhbCBwb2ludGVyIGNhcHR1cmUgb3IgdG91Y2ggZ2VzdHVyZXMsIHNvIHRoaXMgcGlucyB0aGUgc291cmNlLWxldmVsXG4gKiBmYWN0czsgdGhlIHByb29mIHJ1bm5lciBjb25maXJtcyB0aGUgcmVhbCBiZWhhdmlvciBvbiBhIHRvdWNoLWVtdWxhdGVkXG4gKiAzOTBweCB2aWV3cG9ydCBiZWZvcmUgbWVyZ2UuXG4gKi9cbmZ1bmN0aW9uIHJlYWQoKTogc3RyaW5nIHtcbiAgcmV0dXJuIGZzLnJlYWRGaWxlU3luYyhwYXRoLmpvaW4oX19kaXJuYW1lLCBcIkNyb3BNb2RhbC50c3hcIiksIFwidXRmOFwiKTtcbn1cblxuZGVzY3JpYmUoXCJCNTE0IOKAlCBDcm9wTW9kYWwgZHJhZy9yZXNpemUvZm9jYWwtcG9pbnQgdXNlIFBvaW50ZXIgRXZlbnRzLCBub3QgbW91c2Utb25seVwiLCAoKSA9PiB7XG4gIGl0KFwiaGFzIG5vIG1vdXNlLW9ubHkgZXZlbnQgd2lyaW5nIGxlZnRcIiwgKCkgPT4ge1xuICAgIGNvbnN0IHNyYyA9IHJlYWQoKTtcbiAgICBleHBlY3Qoc3JjKS5ub3QudG9NYXRjaCgvb25Nb3VzZURvd24vKTtcbiAgICBleHBlY3Qoc3JjKS5ub3QudG9NYXRjaCgvYWRkRXZlbnRMaXN0ZW5lclxcKFwibW91c2UobW92ZXx1cClcIi8pO1xuICAgIGV4cGVjdChzcmMpLm5vdC50b01hdGNoKC9yZW1vdmVFdmVudExpc3RlbmVyXFwoXCJtb3VzZShtb3ZlfHVwKVwiLyk7XG4gICAgZXhwZWN0KHNyYykubm90LnRvTWF0Y2goL1xcKGU6IE1vdXNlRXZlbnRcXCkvKTtcbiAgfSk7XG5cbiAgaXQoXCJzdGFydERyYWcgY2FwdHVyZXMgdGhlIHBvaW50ZXIgb24gdGhlIGhhbmRsZSBpdCBzdGFydHMgb25cIiwgKCkgPT4ge1xuICAgIGNvbnN0IHNyYyA9IHJlYWQoKTtcbiAgICBleHBlY3Qoc3JjKS50b0NvbnRhaW4oXCIoZTogUmVhY3QuUG9pbnRlckV2ZW50PEhUTUxEaXZFbGVtZW50PiwgaGFuZGxlSWQ6IEhhbmRsZUlkKVwiKTtcbiAgICBleHBlY3Qoc3JjKS50b0NvbnRhaW4oXCJlLmN1cnJlbnRUYXJnZXQuc2V0UG9pbnRlckNhcHR1cmUoZS5wb2ludGVySWQpO1wiKTtcbiAgfSk7XG5cbiAgaXQoXCJjcm9wLWJveCBkcmFnIGFuZCBjb3JuZXItcmVzaXplIGhhbmRsZXMgdXNlIG9uUG9pbnRlckRvd24gKyB0b3VjaC1ub25lXCIsICgpID0+IHtcbiAgICBjb25zdCBzcmMgPSByZWFkKCk7XG4gICAgZXhwZWN0KHNyYykudG9Db250YWluKCdvblBvaW50ZXJEb3duPXsoZSkgPT4gc3RhcnREcmFnKGUsIFwiYm9keVwiKX0nKTtcbiAgICBleHBlY3Qoc3JjKS50b0NvbnRhaW4oXCJvblBvaW50ZXJEb3duPXsoZSkgPT4gc3RhcnREcmFnKGUsIGgpfVwiKTtcbiAgICAvLyBCb3RoIGRyYWdnYWJsZSBzdXJmYWNlcyAodGhlIGJveCBpdHNlbGYgYW5kIGVhY2ggY29ybmVyIGhhbmRsZSkgbXVzdFxuICAgIC8vIHN1cHByZXNzIHRoZSBicm93c2VyJ3Mgb3duIHRvdWNoIGdlc3R1cmVzIChzY3JvbGwvem9vbSkgc28gYSBkcmFnIGlzbid0XG4gICAgLy8gc3RvbGVuIGJ5IHRoZSBwYWdlIHRoZSBtb21lbnQgYSBmaW5nZXIgbW92ZXMuXG4gICAgZXhwZWN0KChzcmMubWF0Y2goL2NsYXNzTmFtZT1cInRvdWNoLW5vbmVcIi9nKSA/PyBbXSkubGVuZ3RoKS50b0JlR3JlYXRlclRoYW5PckVxdWFsKDIpO1xuICB9KTtcblxuICBpdChcInRoZSBjcm9wLWJveCBhbmQgZm9jYWwtcG9pbnQgZHJhZyBsaXN0ZW4gZm9yIHBvaW50ZXIgbW92ZS91cC9jYW5jZWwgZ2xvYmFsbHlcIiwgKCkgPT4ge1xuICAgIGNvbnN0IHNyYyA9IHJlYWQoKTtcbiAgICBleHBlY3Qoc3JjKS50b0NvbnRhaW4oJ3dpbmRvdy5hZGRFdmVudExpc3RlbmVyKFwicG9pbnRlcm1vdmVcIiwgb25Nb3ZlKTsnKTtcbiAgICBleHBlY3Qoc3JjKS50b0NvbnRhaW4oJ3dpbmRvdy5hZGRFdmVudExpc3RlbmVyKFwicG9pbnRlcnVwXCIsIG9uVXApOycpO1xuICAgIGV4cGVjdChzcmMpLnRvQ29udGFpbignd2luZG93LmFkZEV2ZW50TGlzdGVuZXIoXCJwb2ludGVyY2FuY2VsXCIsIG9uVXApOycpO1xuICAgIC8vIFR3byBpbmRlcGVuZGVudCBkcmFnIGVmZmVjdHMgKGNyb3AtYm94ICsgZm9jYWwtcG9pbnQpIOKAlCBib3RoIGNvbnZlcnRlZC5cbiAgICBleHBlY3QoKHNyYy5tYXRjaCgvd2luZG93XFwuYWRkRXZlbnRMaXN0ZW5lclxcKFwicG9pbnRlcm1vdmVcIiwgb25Nb3ZlXFwpOy9nKSA/PyBbXSkubGVuZ3RoKS50b0JlKDIpO1xuICAgIGV4cGVjdCgoc3JjLm1hdGNoKC93aW5kb3dcXC5hZGRFdmVudExpc3RlbmVyXFwoXCJwb2ludGVyY2FuY2VsXCIsIG9uVXBcXCk7L2cpID8/IFtdKS5sZW5ndGgpLnRvQmUoMik7XG4gIH0pO1xuXG4gIGl0KFwidGhlIGZvY2FsLXBvaW50IHN1cmZhY2UgY2FwdHVyZXMgdGhlIHBvaW50ZXIgYW5kIHN1cHByZXNzZXMgdG91Y2ggZ2VzdHVyZXNcIiwgKCkgPT4ge1xuICAgIGNvbnN0IHNyYyA9IHJlYWQoKTtcbiAgICBleHBlY3Qoc3JjKS50b0NvbnRhaW4oJ2NsYXNzTmFtZT1cInJlbGF0aXZlIGlubGluZS1ibG9jayBjdXJzb3ItY3Jvc3NoYWlyIHRvdWNoLW5vbmVcIicpO1xuICAgIGV4cGVjdChzcmMpLnRvQ29udGFpbihcIm9uUG9pbnRlckRvd249eyhlKSA9PiB7XCIpO1xuICB9KTtcbn0pO1xuIl0sIm5hbWVzIjpbInJlYWQiLCJmcyIsInJlYWRGaWxlU3luYyIsInBhdGgiLCJqb2luIiwiX19kaXJuYW1lIiwiZGVzY3JpYmUiLCJpdCIsInNyYyIsImV4cGVjdCIsIm5vdCIsInRvTWF0Y2giLCJ0b0NvbnRhaW4iLCJtYXRjaCIsImxlbmd0aCIsInRvQmVHcmVhdGVyVGhhbk9yRXF1YWwiLCJ0b0JlIl0sIm1hcHBpbmdzIjoiOzs7OzJEQUFlOzZEQUNFOzs7Ozs7QUFFakI7Ozs7Ozs7Ozs7O0NBV0MsR0FDRCxTQUFTQTtJQUNQLE9BQU9DLFdBQUUsQ0FBQ0MsWUFBWSxDQUFDQyxhQUFJLENBQUNDLElBQUksQ0FBQ0MsV0FBVyxrQkFBa0I7QUFDaEU7QUFFQUMsU0FBUywrRUFBK0U7SUFDdEZDLEdBQUcsdUNBQXVDO1FBQ3hDLE1BQU1DLE1BQU1SO1FBQ1pTLE9BQU9ELEtBQUtFLEdBQUcsQ0FBQ0MsT0FBTyxDQUFDO1FBQ3hCRixPQUFPRCxLQUFLRSxHQUFHLENBQUNDLE9BQU8sQ0FBQztRQUN4QkYsT0FBT0QsS0FBS0UsR0FBRyxDQUFDQyxPQUFPLENBQUM7UUFDeEJGLE9BQU9ELEtBQUtFLEdBQUcsQ0FBQ0MsT0FBTyxDQUFDO0lBQzFCO0lBRUFKLEdBQUcsNkRBQTZEO1FBQzlELE1BQU1DLE1BQU1SO1FBQ1pTLE9BQU9ELEtBQUtJLFNBQVMsQ0FBQztRQUN0QkgsT0FBT0QsS0FBS0ksU0FBUyxDQUFDO0lBQ3hCO0lBRUFMLEdBQUcsMEVBQTBFO1FBQzNFLE1BQU1DLE1BQU1SO1FBQ1pTLE9BQU9ELEtBQUtJLFNBQVMsQ0FBQztRQUN0QkgsT0FBT0QsS0FBS0ksU0FBUyxDQUFDO1FBQ3RCLHVFQUF1RTtRQUN2RSwwRUFBMEU7UUFDMUUsZ0RBQWdEO1FBQ2hESCxPQUFPLEFBQUNELENBQUFBLElBQUlLLEtBQUssQ0FBQyw4QkFBOEIsRUFBRSxBQUFELEVBQUdDLE1BQU0sRUFBRUMsc0JBQXNCLENBQUM7SUFDckY7SUFFQVIsR0FBRyxnRkFBZ0Y7UUFDakYsTUFBTUMsTUFBTVI7UUFDWlMsT0FBT0QsS0FBS0ksU0FBUyxDQUFDO1FBQ3RCSCxPQUFPRCxLQUFLSSxTQUFTLENBQUM7UUFDdEJILE9BQU9ELEtBQUtJLFNBQVMsQ0FBQztRQUN0QiwwRUFBMEU7UUFDMUVILE9BQU8sQUFBQ0QsQ0FBQUEsSUFBSUssS0FBSyxDQUFDLDBEQUEwRCxFQUFFLEFBQUQsRUFBR0MsTUFBTSxFQUFFRSxJQUFJLENBQUM7UUFDN0ZQLE9BQU8sQUFBQ0QsQ0FBQUEsSUFBSUssS0FBSyxDQUFDLDBEQUEwRCxFQUFFLEFBQUQsRUFBR0MsTUFBTSxFQUFFRSxJQUFJLENBQUM7SUFDL0Y7SUFFQVQsR0FBRyw4RUFBOEU7UUFDL0UsTUFBTUMsTUFBTVI7UUFDWlMsT0FBT0QsS0FBS0ksU0FBUyxDQUFDO1FBQ3RCSCxPQUFPRCxLQUFLSSxTQUFTLENBQUM7SUFDeEI7QUFDRiJ9

@@ -1,0 +1,116 @@
+c9381cba65ae18c0cfcacdbf24e8cc5e
+/**
+ * `useOrderUiV2` — the dark gate for the card-list order detail (LANE-S / order-ui-redesign).
+ * It is ONE indirection over the in-development-surface flag (`developer_mode`), so this pins the
+ * behaviour through the real hook: dark for every tenant by default, on only when granted, and
+ * `resolved` reflects whether the addon list was actually read.
+ */ "use strict";
+jest.mock("@/lib/api-client", ()=>({
+        apiClient: {
+            get: jest.fn(),
+            post: jest.fn(),
+            patch: jest.fn(),
+            delete: jest.fn()
+        }
+    }));
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+const _react1 = require("@testing-library/react");
+const _reactquery = require("@tanstack/react-query");
+const _render = require("../../test-utils/render");
+const _apiclient = require("../api-client");
+const _addons = require("./addons");
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+const mockedGet = _apiclient.apiClient.get;
+function Wrapper({ children }) {
+    const [client] = _react.useState(_render.createTestQueryClient);
+    return /*#__PURE__*/ (0, _jsxruntime.jsx)(_reactquery.QueryClientProvider, {
+        client: client,
+        children: children
+    });
+}
+beforeEach(()=>jest.clearAllMocks());
+describe("useOrderUiV2", ()=>{
+    it("is dark for a tenant with no in-development addon", async ()=>{
+        mockedGet.mockResolvedValue({
+            data: {
+                addons: [
+                    "msrp"
+                ]
+            }
+        });
+        const { result } = (0, _react1.renderHook)(()=>(0, _addons.useOrderUiV2)(), {
+            wrapper: Wrapper
+        });
+        await (0, _react1.waitFor)(()=>expect(result.current.resolved).toBe(true));
+        expect(result.current.enabled).toBe(false);
+    });
+    it("is on once the tenant has been granted developer_mode", async ()=>{
+        mockedGet.mockResolvedValue({
+            data: {
+                addons: [
+                    "developer_mode"
+                ]
+            }
+        });
+        const { result } = (0, _react1.renderHook)(()=>(0, _addons.useOrderUiV2)(), {
+            wrapper: Wrapper
+        });
+        await (0, _react1.waitFor)(()=>expect(result.current.enabled).toBe(true));
+        expect(result.current.resolved).toBe(true);
+    });
+    it("fails dark, and reports unresolved, when the addon list cannot be read", async ()=>{
+        mockedGet.mockRejectedValue(new Error("boom"));
+        const { result } = (0, _react1.renderHook)(()=>(0, _addons.useOrderUiV2)(), {
+            wrapper: Wrapper
+        });
+        await (0, _react1.waitFor)(()=>expect(mockedGet).toHaveBeenCalled());
+        expect(result.current.enabled).toBe(false);
+        expect(result.current.resolved).toBe(false);
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2xpYi9hcGkvYWRkb25zLm9yZGVyLXVpLXYyLnRlc3QudHN4Il0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogYHVzZU9yZGVyVWlWMmAg4oCUIHRoZSBkYXJrIGdhdGUgZm9yIHRoZSBjYXJkLWxpc3Qgb3JkZXIgZGV0YWlsIChMQU5FLVMgLyBvcmRlci11aS1yZWRlc2lnbikuXG4gKiBJdCBpcyBPTkUgaW5kaXJlY3Rpb24gb3ZlciB0aGUgaW4tZGV2ZWxvcG1lbnQtc3VyZmFjZSBmbGFnIChgZGV2ZWxvcGVyX21vZGVgKSwgc28gdGhpcyBwaW5zIHRoZVxuICogYmVoYXZpb3VyIHRocm91Z2ggdGhlIHJlYWwgaG9vazogZGFyayBmb3IgZXZlcnkgdGVuYW50IGJ5IGRlZmF1bHQsIG9uIG9ubHkgd2hlbiBncmFudGVkLCBhbmRcbiAqIGByZXNvbHZlZGAgcmVmbGVjdHMgd2hldGhlciB0aGUgYWRkb24gbGlzdCB3YXMgYWN0dWFsbHkgcmVhZC5cbiAqL1xuaW1wb3J0ICogYXMgUmVhY3QgZnJvbSBcInJlYWN0XCI7XG5pbXBvcnQgeyByZW5kZXJIb29rLCB3YWl0Rm9yIH0gZnJvbSBcIkB0ZXN0aW5nLWxpYnJhcnkvcmVhY3RcIjtcbmltcG9ydCB7IFF1ZXJ5Q2xpZW50UHJvdmlkZXIgfSBmcm9tIFwiQHRhbnN0YWNrL3JlYWN0LXF1ZXJ5XCI7XG5pbXBvcnQgeyBjcmVhdGVUZXN0UXVlcnlDbGllbnQgfSBmcm9tIFwiQC90ZXN0LXV0aWxzL3JlbmRlclwiO1xuaW1wb3J0IHsgYXBpQ2xpZW50IH0gZnJvbSBcIkAvbGliL2FwaS1jbGllbnRcIjtcbmltcG9ydCB7IHVzZU9yZGVyVWlWMiB9IGZyb20gXCIuL2FkZG9uc1wiO1xuXG5qZXN0Lm1vY2soXCJAL2xpYi9hcGktY2xpZW50XCIsICgpID0+ICh7XG4gIGFwaUNsaWVudDogeyBnZXQ6IGplc3QuZm4oKSwgcG9zdDogamVzdC5mbigpLCBwYXRjaDogamVzdC5mbigpLCBkZWxldGU6IGplc3QuZm4oKSB9LFxufSkpO1xuXG5jb25zdCBtb2NrZWRHZXQgPSBhcGlDbGllbnQuZ2V0IGFzIGplc3QuTW9jaztcblxuZnVuY3Rpb24gV3JhcHBlcih7IGNoaWxkcmVuIH06IHsgY2hpbGRyZW46IFJlYWN0LlJlYWN0Tm9kZSB9KSB7XG4gIGNvbnN0IFtjbGllbnRdID0gUmVhY3QudXNlU3RhdGUoY3JlYXRlVGVzdFF1ZXJ5Q2xpZW50KTtcbiAgcmV0dXJuIDxRdWVyeUNsaWVudFByb3ZpZGVyIGNsaWVudD17Y2xpZW50fT57Y2hpbGRyZW59PC9RdWVyeUNsaWVudFByb3ZpZGVyPjtcbn1cblxuYmVmb3JlRWFjaCgoKSA9PiBqZXN0LmNsZWFyQWxsTW9ja3MoKSk7XG5cbmRlc2NyaWJlKFwidXNlT3JkZXJVaVYyXCIsICgpID0+IHtcbiAgaXQoXCJpcyBkYXJrIGZvciBhIHRlbmFudCB3aXRoIG5vIGluLWRldmVsb3BtZW50IGFkZG9uXCIsIGFzeW5jICgpID0+IHtcbiAgICBtb2NrZWRHZXQubW9ja1Jlc29sdmVkVmFsdWUoeyBkYXRhOiB7IGFkZG9uczogW1wibXNycFwiXSB9IH0pO1xuICAgIGNvbnN0IHsgcmVzdWx0IH0gPSByZW5kZXJIb29rKCgpID0+IHVzZU9yZGVyVWlWMigpLCB7IHdyYXBwZXI6IFdyYXBwZXIgfSk7XG4gICAgYXdhaXQgd2FpdEZvcigoKSA9PiBleHBlY3QocmVzdWx0LmN1cnJlbnQucmVzb2x2ZWQpLnRvQmUodHJ1ZSkpO1xuICAgIGV4cGVjdChyZXN1bHQuY3VycmVudC5lbmFibGVkKS50b0JlKGZhbHNlKTtcbiAgfSk7XG5cbiAgaXQoXCJpcyBvbiBvbmNlIHRoZSB0ZW5hbnQgaGFzIGJlZW4gZ3JhbnRlZCBkZXZlbG9wZXJfbW9kZVwiLCBhc3luYyAoKSA9PiB7XG4gICAgbW9ja2VkR2V0Lm1vY2tSZXNvbHZlZFZhbHVlKHsgZGF0YTogeyBhZGRvbnM6IFtcImRldmVsb3Blcl9tb2RlXCJdIH0gfSk7XG4gICAgY29uc3QgeyByZXN1bHQgfSA9IHJlbmRlckhvb2soKCkgPT4gdXNlT3JkZXJVaVYyKCksIHsgd3JhcHBlcjogV3JhcHBlciB9KTtcbiAgICBhd2FpdCB3YWl0Rm9yKCgpID0+IGV4cGVjdChyZXN1bHQuY3VycmVudC5lbmFibGVkKS50b0JlKHRydWUpKTtcbiAgICBleHBlY3QocmVzdWx0LmN1cnJlbnQucmVzb2x2ZWQpLnRvQmUodHJ1ZSk7XG4gIH0pO1xuXG4gIGl0KFwiZmFpbHMgZGFyaywgYW5kIHJlcG9ydHMgdW5yZXNvbHZlZCwgd2hlbiB0aGUgYWRkb24gbGlzdCBjYW5ub3QgYmUgcmVhZFwiLCBhc3luYyAoKSA9PiB7XG4gICAgbW9ja2VkR2V0Lm1vY2tSZWplY3RlZFZhbHVlKG5ldyBFcnJvcihcImJvb21cIikpO1xuICAgIGNvbnN0IHsgcmVzdWx0IH0gPSByZW5kZXJIb29rKCgpID0+IHVzZU9yZGVyVWlWMigpLCB7IHdyYXBwZXI6IFdyYXBwZXIgfSk7XG4gICAgYXdhaXQgd2FpdEZvcigoKSA9PiBleHBlY3QobW9ja2VkR2V0KS50b0hhdmVCZWVuQ2FsbGVkKCkpO1xuICAgIGV4cGVjdChyZXN1bHQuY3VycmVudC5lbmFibGVkKS50b0JlKGZhbHNlKTtcbiAgICBleHBlY3QocmVzdWx0LmN1cnJlbnQucmVzb2x2ZWQpLnRvQmUoZmFsc2UpO1xuICB9KTtcbn0pO1xuIl0sIm5hbWVzIjpbImplc3QiLCJtb2NrIiwiYXBpQ2xpZW50IiwiZ2V0IiwiZm4iLCJwb3N0IiwicGF0Y2giLCJkZWxldGUiLCJtb2NrZWRHZXQiLCJXcmFwcGVyIiwiY2hpbGRyZW4iLCJjbGllbnQiLCJSZWFjdCIsInVzZVN0YXRlIiwiY3JlYXRlVGVzdFF1ZXJ5Q2xpZW50IiwiUXVlcnlDbGllbnRQcm92aWRlciIsImJlZm9yZUVhY2giLCJjbGVhckFsbE1vY2tzIiwiZGVzY3JpYmUiLCJpdCIsIm1vY2tSZXNvbHZlZFZhbHVlIiwiZGF0YSIsImFkZG9ucyIsInJlc3VsdCIsInJlbmRlckhvb2siLCJ1c2VPcmRlclVpVjIiLCJ3cmFwcGVyIiwid2FpdEZvciIsImV4cGVjdCIsImN1cnJlbnQiLCJyZXNvbHZlZCIsInRvQmUiLCJlbmFibGVkIiwibW9ja1JlamVjdGVkVmFsdWUiLCJFcnJvciIsInRvSGF2ZUJlZW5DYWxsZWQiXSwibWFwcGluZ3MiOiJBQUFBOzs7OztDQUtDO0FBUURBLEtBQUtDLElBQUksQ0FBQyxvQkFBb0IsSUFBTyxDQUFBO1FBQ25DQyxXQUFXO1lBQUVDLEtBQUtILEtBQUtJLEVBQUU7WUFBSUMsTUFBTUwsS0FBS0ksRUFBRTtZQUFJRSxPQUFPTixLQUFLSSxFQUFFO1lBQUlHLFFBQVFQLEtBQUtJLEVBQUU7UUFBRztJQUNwRixDQUFBOzs7OzsrREFUdUI7d0JBQ2E7NEJBQ0E7d0JBQ0U7MkJBQ1o7d0JBQ0c7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7OztBQU03QixNQUFNSSxZQUFZTixvQkFBUyxDQUFDQyxHQUFHO0FBRS9CLFNBQVNNLFFBQVEsRUFBRUMsUUFBUSxFQUFpQztJQUMxRCxNQUFNLENBQUNDLE9BQU8sR0FBR0MsT0FBTUMsUUFBUSxDQUFDQyw2QkFBcUI7SUFDckQscUJBQU8scUJBQUNDLCtCQUFtQjtRQUFDSixRQUFRQTtrQkFBU0Q7O0FBQy9DO0FBRUFNLFdBQVcsSUFBTWhCLEtBQUtpQixhQUFhO0FBRW5DQyxTQUFTLGdCQUFnQjtJQUN2QkMsR0FBRyxxREFBcUQ7UUFDdERYLFVBQVVZLGlCQUFpQixDQUFDO1lBQUVDLE1BQU07Z0JBQUVDLFFBQVE7b0JBQUM7aUJBQU87WUFBQztRQUFFO1FBQ3pELE1BQU0sRUFBRUMsTUFBTSxFQUFFLEdBQUdDLElBQUFBLGtCQUFVLEVBQUMsSUFBTUMsSUFBQUEsb0JBQVksS0FBSTtZQUFFQyxTQUFTakI7UUFBUTtRQUN2RSxNQUFNa0IsSUFBQUEsZUFBTyxFQUFDLElBQU1DLE9BQU9MLE9BQU9NLE9BQU8sQ0FBQ0MsUUFBUSxFQUFFQyxJQUFJLENBQUM7UUFDekRILE9BQU9MLE9BQU9NLE9BQU8sQ0FBQ0csT0FBTyxFQUFFRCxJQUFJLENBQUM7SUFDdEM7SUFFQVosR0FBRyx5REFBeUQ7UUFDMURYLFVBQVVZLGlCQUFpQixDQUFDO1lBQUVDLE1BQU07Z0JBQUVDLFFBQVE7b0JBQUM7aUJBQWlCO1lBQUM7UUFBRTtRQUNuRSxNQUFNLEVBQUVDLE1BQU0sRUFBRSxHQUFHQyxJQUFBQSxrQkFBVSxFQUFDLElBQU1DLElBQUFBLG9CQUFZLEtBQUk7WUFBRUMsU0FBU2pCO1FBQVE7UUFDdkUsTUFBTWtCLElBQUFBLGVBQU8sRUFBQyxJQUFNQyxPQUFPTCxPQUFPTSxPQUFPLENBQUNHLE9BQU8sRUFBRUQsSUFBSSxDQUFDO1FBQ3hESCxPQUFPTCxPQUFPTSxPQUFPLENBQUNDLFFBQVEsRUFBRUMsSUFBSSxDQUFDO0lBQ3ZDO0lBRUFaLEdBQUcsMEVBQTBFO1FBQzNFWCxVQUFVeUIsaUJBQWlCLENBQUMsSUFBSUMsTUFBTTtRQUN0QyxNQUFNLEVBQUVYLE1BQU0sRUFBRSxHQUFHQyxJQUFBQSxrQkFBVSxFQUFDLElBQU1DLElBQUFBLG9CQUFZLEtBQUk7WUFBRUMsU0FBU2pCO1FBQVE7UUFDdkUsTUFBTWtCLElBQUFBLGVBQU8sRUFBQyxJQUFNQyxPQUFPcEIsV0FBVzJCLGdCQUFnQjtRQUN0RFAsT0FBT0wsT0FBT00sT0FBTyxDQUFDRyxPQUFPLEVBQUVELElBQUksQ0FBQztRQUNwQ0gsT0FBT0wsT0FBT00sT0FBTyxDQUFDQyxRQUFRLEVBQUVDLElBQUksQ0FBQztJQUN2QztBQUNGIn0=

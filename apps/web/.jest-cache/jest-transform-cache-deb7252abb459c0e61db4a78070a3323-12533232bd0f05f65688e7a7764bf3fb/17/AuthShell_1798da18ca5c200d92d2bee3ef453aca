@@ -1,0 +1,151 @@
+230200232a7715307c3e403c084f30b8
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+Object.defineProperty(exports, "AuthShell", {
+    enumerable: true,
+    get: function() {
+        return AuthShell;
+    }
+});
+const _jsxruntime = require("react/jsx-runtime");
+require("./auth-shell.css");
+const _link = /*#__PURE__*/ _interop_require_default(require("next/link"));
+const _brand = require("../brand");
+const _authcopy = require("./auth-copy");
+function _interop_require_default(obj) {
+    return obj && obj.__esModule ? obj : {
+        default: obj
+    };
+}
+function AuthShell({ audience, kicker, title, lead, backHref = "/", backLabel = "Back to website", logoUrl, logoAlt, footer, children }) {
+    const story = _authcopy.AUTH_STORY[audience];
+    return /*#__PURE__*/ (0, _jsxruntime.jsxs)("main", {
+        id: "main-content",
+        className: "rf-auth",
+        children: [
+            /*#__PURE__*/ (0, _jsxruntime.jsxs)("section", {
+                className: "rf-auth-story",
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)(_brand.Brand, {
+                        tone: "light",
+                        standalone: true,
+                        periodColor: "#7DDCD8"
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                        className: "rf-auth-story-copy",
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                className: "rf-kicker",
+                                children: story.kicker
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("h2", {
+                                children: story.heading
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                children: story.paragraph
+                            })
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                        className: "rf-auth-orbit",
+                        "aria-hidden": "true",
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                children: [
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                        children: _authcopy.AUTH_ORBIT.orderLabel
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("strong", {
+                                        children: _authcopy.AUTH_ORBIT.orderStatus
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                                        className: "rf-auth-track",
+                                        children: [
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("i", {}),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("i", {}),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("i", {}),
+                                            /*#__PURE__*/ (0, _jsxruntime.jsx)("i", {})
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                        children: _authcopy.AUTH_ORBIT.steps.join(" → ")
+                                    })
+                                ]
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("div", {
+                                className: "rf-auth-ai",
+                                children: /*#__PURE__*/ (0, _jsxruntime.jsxs)("span", {
+                                    children: [
+                                        _authcopy.AUTH_AI_CHIP.title,
+                                        /*#__PURE__*/ (0, _jsxruntime.jsx)("br", {}),
+                                        /*#__PURE__*/ (0, _jsxruntime.jsx)("small", {
+                                            children: _authcopy.AUTH_AI_CHIP.body
+                                        })
+                                    ]
+                                })
+                            })
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                        className: "rf-auth-bottom",
+                        children: _authcopy.AUTH_TAGLINE
+                    })
+                ]
+            }),
+            /*#__PURE__*/ (0, _jsxruntime.jsxs)("section", {
+                className: "rf-auth-form",
+                children: [
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)(_link.default, {
+                        href: backHref,
+                        className: "rf-back",
+                        children: [
+                            "← ",
+                            backLabel
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                        className: "rf-auth-card",
+                        children: [
+                            logoUrl ? // eslint-disable-next-line @next/next/no-img-element
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("img", {
+                                className: "rf-auth-tenant-logo",
+                                src: logoUrl,
+                                alt: logoAlt ?? "Workspace logo",
+                                height: 40
+                            }) : null,
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("span", {
+                                className: "rf-kicker",
+                                children: kicker
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("h1", {
+                                children: title
+                            }),
+                            lead ? /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+                                className: "rf-auth-lead",
+                                children: lead
+                            }) : null,
+                            children
+                        ]
+                    }),
+                    /*#__PURE__*/ (0, _jsxruntime.jsxs)("div", {
+                        className: "rf-auth-footer",
+                        children: [
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)("div", {
+                                className: "rf-auth-footer-links",
+                                children: footer
+                            }),
+                            /*#__PURE__*/ (0, _jsxruntime.jsx)(_link.default, {
+                                href: "/contact",
+                                children: "Need help?"
+                            })
+                        ]
+                    })
+                ]
+            })
+        ]
+    });
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2NvbXBvbmVudHMvYXV0aC9BdXRoU2hlbGwudHN4Il0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCBcIi4vYXV0aC1zaGVsbC5jc3NcIjtcbmltcG9ydCB0eXBlIHsgUmVhY3ROb2RlIH0gZnJvbSBcInJlYWN0XCI7XG5pbXBvcnQgTGluayBmcm9tIFwibmV4dC9saW5rXCI7XG5pbXBvcnQgeyBCcmFuZCB9IGZyb20gXCJAL2NvbXBvbmVudHMvYnJhbmRcIjtcbmltcG9ydCB7IEFVVEhfQUlfQ0hJUCwgQVVUSF9PUkJJVCwgQVVUSF9TVE9SWSwgQVVUSF9UQUdMSU5FLCB0eXBlIEF1dGhBdWRpZW5jZSB9IGZyb20gXCIuL2F1dGgtY29weVwiO1xuXG5leHBvcnQgaW50ZXJmYWNlIEF1dGhTaGVsbFByb3BzIHtcbiAgYXVkaWVuY2U6IEF1dGhBdWRpZW5jZTtcbiAga2lja2VyOiBzdHJpbmc7XG4gIHRpdGxlOiBzdHJpbmc7XG4gIGxlYWQ/OiBSZWFjdE5vZGU7XG4gIGJhY2tIcmVmPzogc3RyaW5nO1xuICBiYWNrTGFiZWw/OiBzdHJpbmc7XG4gIGxvZ29Vcmw/OiBzdHJpbmcgfCBudWxsO1xuICBsb2dvQWx0Pzogc3RyaW5nO1xuICBmb290ZXI/OiBSZWFjdE5vZGU7XG4gIGNoaWxkcmVuOiBSZWFjdE5vZGU7XG59XG5cbmV4cG9ydCBmdW5jdGlvbiBBdXRoU2hlbGwoe1xuICBhdWRpZW5jZSxcbiAga2lja2VyLFxuICB0aXRsZSxcbiAgbGVhZCxcbiAgYmFja0hyZWYgPSBcIi9cIixcbiAgYmFja0xhYmVsID0gXCJCYWNrIHRvIHdlYnNpdGVcIixcbiAgbG9nb1VybCxcbiAgbG9nb0FsdCxcbiAgZm9vdGVyLFxuICBjaGlsZHJlbixcbn06IEF1dGhTaGVsbFByb3BzKSB7XG4gIGNvbnN0IHN0b3J5ID0gQVVUSF9TVE9SWVthdWRpZW5jZV07XG4gIHJldHVybiAoXG4gICAgPG1haW4gaWQ9XCJtYWluLWNvbnRlbnRcIiBjbGFzc05hbWU9XCJyZi1hdXRoXCI+XG4gICAgICA8c2VjdGlvbiBjbGFzc05hbWU9XCJyZi1hdXRoLXN0b3J5XCI+XG4gICAgICAgIHsvKiBgc3RhbmRhbG9uZWAgY2FycmllcyB0aGUgYnJhbmQgdHlwZSBtZXRyaWNzOiB0aGUgYXV0aCBzaGVsbCBuZXZlclxuICAgICAgICAgICAgbG9hZHMgdGhlIGAucmYtbWFya2V0aW5nYCBjYXNjYWRlIHRoYXQgc3R5bGVzIGAuYnJhbmQtc2lnbmF0dXJlYC4gKi99XG4gICAgICAgIDxCcmFuZCB0b25lPVwibGlnaHRcIiBzdGFuZGFsb25lIHBlcmlvZENvbG9yPVwiIzdERENEOFwiIC8+XG4gICAgICAgIDxkaXYgY2xhc3NOYW1lPVwicmYtYXV0aC1zdG9yeS1jb3B5XCI+XG4gICAgICAgICAgPHNwYW4gY2xhc3NOYW1lPVwicmYta2lja2VyXCI+e3N0b3J5LmtpY2tlcn08L3NwYW4+XG4gICAgICAgICAgPGgyPntzdG9yeS5oZWFkaW5nfTwvaDI+XG4gICAgICAgICAgPHA+e3N0b3J5LnBhcmFncmFwaH08L3A+XG4gICAgICAgIDwvZGl2PlxuICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cInJmLWF1dGgtb3JiaXRcIiBhcmlhLWhpZGRlbj1cInRydWVcIj5cbiAgICAgICAgICB7LyogRWxlbWVudCByb2xlcyBtaXJyb3IgdGhlIHJlZGVzaWduIHNvdXJjZSAoYXV0aC1wcmV2aWV3LnRzeDo1MS02OSk6XG4gICAgICAgICAgICAgIHRoZSBwb3J0ZWQgYC5yZi1hdXRoLW9yYml0IHN0cm9uZ2AgLyBgLnJmLWF1dGgtb3JiaXQgc3BhbmAgcnVsZXNcbiAgICAgICAgICAgICAgd2VyZSB3cml0dGVuIGZvciBUSElTIG1hcHBpbmcuICovfVxuICAgICAgICAgIDxkaXY+XG4gICAgICAgICAgICA8c3Bhbj57QVVUSF9PUkJJVC5vcmRlckxhYmVsfTwvc3Bhbj5cbiAgICAgICAgICAgIDxzdHJvbmc+e0FVVEhfT1JCSVQub3JkZXJTdGF0dXN9PC9zdHJvbmc+XG4gICAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cInJmLWF1dGgtdHJhY2tcIj5cbiAgICAgICAgICAgICAgPGkgLz5cbiAgICAgICAgICAgICAgPGkgLz5cbiAgICAgICAgICAgICAgPGkgLz5cbiAgICAgICAgICAgICAgPGkgLz5cbiAgICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgICAgPHNwYW4+e0FVVEhfT1JCSVQuc3RlcHMuam9pbihcIiDihpIgXCIpfTwvc3Bhbj5cbiAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cInJmLWF1dGgtYWlcIj5cbiAgICAgICAgICAgIDxzcGFuPlxuICAgICAgICAgICAgICB7QVVUSF9BSV9DSElQLnRpdGxlfVxuICAgICAgICAgICAgICA8YnIgLz5cbiAgICAgICAgICAgICAgPHNtYWxsPntBVVRIX0FJX0NISVAuYm9keX08L3NtYWxsPlxuICAgICAgICAgICAgPC9zcGFuPlxuICAgICAgICAgIDwvZGl2PlxuICAgICAgICA8L2Rpdj5cbiAgICAgICAgPHNwYW4gY2xhc3NOYW1lPVwicmYtYXV0aC1ib3R0b21cIj57QVVUSF9UQUdMSU5FfTwvc3Bhbj5cbiAgICAgIDwvc2VjdGlvbj5cbiAgICAgIDxzZWN0aW9uIGNsYXNzTmFtZT1cInJmLWF1dGgtZm9ybVwiPlxuICAgICAgICA8TGluayBocmVmPXtiYWNrSHJlZn0gY2xhc3NOYW1lPVwicmYtYmFja1wiPlxuICAgICAgICAgIOKGkCB7YmFja0xhYmVsfVxuICAgICAgICA8L0xpbms+XG4gICAgICAgIDxkaXYgY2xhc3NOYW1lPVwicmYtYXV0aC1jYXJkXCI+XG4gICAgICAgICAge2xvZ29VcmwgPyAoXG4gICAgICAgICAgICAvLyBlc2xpbnQtZGlzYWJsZS1uZXh0LWxpbmUgQG5leHQvbmV4dC9uby1pbWctZWxlbWVudFxuICAgICAgICAgICAgPGltZ1xuICAgICAgICAgICAgICBjbGFzc05hbWU9XCJyZi1hdXRoLXRlbmFudC1sb2dvXCJcbiAgICAgICAgICAgICAgc3JjPXtsb2dvVXJsfVxuICAgICAgICAgICAgICBhbHQ9e2xvZ29BbHQgPz8gXCJXb3Jrc3BhY2UgbG9nb1wifVxuICAgICAgICAgICAgICBoZWlnaHQ9ezQwfVxuICAgICAgICAgICAgLz5cbiAgICAgICAgICApIDogbnVsbH1cbiAgICAgICAgICA8c3BhbiBjbGFzc05hbWU9XCJyZi1raWNrZXJcIj57a2lja2VyfTwvc3Bhbj5cbiAgICAgICAgICA8aDE+e3RpdGxlfTwvaDE+XG4gICAgICAgICAge2xlYWQgPyA8cCBjbGFzc05hbWU9XCJyZi1hdXRoLWxlYWRcIj57bGVhZH08L3A+IDogbnVsbH1cbiAgICAgICAgICB7Y2hpbGRyZW59XG4gICAgICAgIDwvZGl2PlxuICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cInJmLWF1dGgtZm9vdGVyXCI+XG4gICAgICAgICAgey8qIEFsd2F5cyByZW5kZXJlZCwgZXZlbiB3aXRoIG5vIGBmb290ZXJgIHByb3AsIHNvIHRoZSBmb290ZXInc1xuICAgICAgICAgICAgICBganVzdGlmeS1jb250ZW50OiBzcGFjZS1iZXR3ZWVuYCBrZWVwcyBcIk5lZWQgaGVscD9cIiBhdCB0aGUgZW5kXG4gICAgICAgICAgICAgIGluc3RlYWQgb2YgY29sbGFwc2luZyBpdCB0byB0aGUgbGVmdCBlZGdlLiAqL31cbiAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cInJmLWF1dGgtZm9vdGVyLWxpbmtzXCI+e2Zvb3Rlcn08L2Rpdj5cbiAgICAgICAgICA8TGluayBocmVmPVwiL2NvbnRhY3RcIj5OZWVkIGhlbHA/PC9MaW5rPlxuICAgICAgICA8L2Rpdj5cbiAgICAgIDwvc2VjdGlvbj5cbiAgICA8L21haW4+XG4gICk7XG59XG4iXSwibmFtZXMiOlsiQXV0aFNoZWxsIiwiYXVkaWVuY2UiLCJraWNrZXIiLCJ0aXRsZSIsImxlYWQiLCJiYWNrSHJlZiIsImJhY2tMYWJlbCIsImxvZ29VcmwiLCJsb2dvQWx0IiwiZm9vdGVyIiwiY2hpbGRyZW4iLCJzdG9yeSIsIkFVVEhfU1RPUlkiLCJtYWluIiwiaWQiLCJjbGFzc05hbWUiLCJzZWN0aW9uIiwiQnJhbmQiLCJ0b25lIiwic3RhbmRhbG9uZSIsInBlcmlvZENvbG9yIiwiZGl2Iiwic3BhbiIsImgyIiwiaGVhZGluZyIsInAiLCJwYXJhZ3JhcGgiLCJhcmlhLWhpZGRlbiIsIkFVVEhfT1JCSVQiLCJvcmRlckxhYmVsIiwic3Ryb25nIiwib3JkZXJTdGF0dXMiLCJpIiwic3RlcHMiLCJqb2luIiwiQVVUSF9BSV9DSElQIiwiYnIiLCJzbWFsbCIsImJvZHkiLCJBVVRIX1RBR0xJTkUiLCJMaW5rIiwiaHJlZiIsImltZyIsInNyYyIsImFsdCIsImhlaWdodCIsImgxIl0sIm1hcHBpbmdzIjoiOzs7OytCQW1CZ0JBOzs7ZUFBQUE7Ozs7UUFuQlQ7NkRBRVU7dUJBQ0s7MEJBQ2dFOzs7Ozs7QUFlL0UsU0FBU0EsVUFBVSxFQUN4QkMsUUFBUSxFQUNSQyxNQUFNLEVBQ05DLEtBQUssRUFDTEMsSUFBSSxFQUNKQyxXQUFXLEdBQUcsRUFDZEMsWUFBWSxpQkFBaUIsRUFDN0JDLE9BQU8sRUFDUEMsT0FBTyxFQUNQQyxNQUFNLEVBQ05DLFFBQVEsRUFDTztJQUNmLE1BQU1DLFFBQVFDLG9CQUFVLENBQUNYLFNBQVM7SUFDbEMscUJBQ0Usc0JBQUNZO1FBQUtDLElBQUc7UUFBZUMsV0FBVTs7MEJBQ2hDLHNCQUFDQztnQkFBUUQsV0FBVTs7a0NBR2pCLHFCQUFDRSxZQUFLO3dCQUFDQyxNQUFLO3dCQUFRQyxVQUFVO3dCQUFDQyxhQUFZOztrQ0FDM0Msc0JBQUNDO3dCQUFJTixXQUFVOzswQ0FDYixxQkFBQ087Z0NBQUtQLFdBQVU7MENBQWFKLE1BQU1ULE1BQU07OzBDQUN6QyxxQkFBQ3FCOzBDQUFJWixNQUFNYSxPQUFPOzswQ0FDbEIscUJBQUNDOzBDQUFHZCxNQUFNZSxTQUFTOzs7O2tDQUVyQixzQkFBQ0w7d0JBQUlOLFdBQVU7d0JBQWdCWSxlQUFZOzswQ0FJekMsc0JBQUNOOztrREFDQyxxQkFBQ0M7a0RBQU1NLG9CQUFVLENBQUNDLFVBQVU7O2tEQUM1QixxQkFBQ0M7a0RBQVFGLG9CQUFVLENBQUNHLFdBQVc7O2tEQUMvQixzQkFBQ1Y7d0NBQUlOLFdBQVU7OzBEQUNiLHFCQUFDaUI7MERBQ0QscUJBQUNBOzBEQUNELHFCQUFDQTswREFDRCxxQkFBQ0E7OztrREFFSCxxQkFBQ1Y7a0RBQU1NLG9CQUFVLENBQUNLLEtBQUssQ0FBQ0MsSUFBSSxDQUFDOzs7OzBDQUUvQixxQkFBQ2I7Z0NBQUlOLFdBQVU7MENBQ2IsY0FBQSxzQkFBQ087O3dDQUNFYSxzQkFBWSxDQUFDaEMsS0FBSztzREFDbkIscUJBQUNpQztzREFDRCxxQkFBQ0M7c0RBQU9GLHNCQUFZLENBQUNHLElBQUk7Ozs7Ozs7a0NBSS9CLHFCQUFDaEI7d0JBQUtQLFdBQVU7a0NBQWtCd0Isc0JBQVk7Ozs7MEJBRWhELHNCQUFDdkI7Z0JBQVFELFdBQVU7O2tDQUNqQixzQkFBQ3lCLGFBQUk7d0JBQUNDLE1BQU1wQzt3QkFBVVUsV0FBVTs7NEJBQVU7NEJBQ3JDVDs7O2tDQUVMLHNCQUFDZTt3QkFBSU4sV0FBVTs7NEJBQ1pSLFVBQ0MscURBQXFEOzBDQUNyRCxxQkFBQ21DO2dDQUNDM0IsV0FBVTtnQ0FDVjRCLEtBQUtwQztnQ0FDTHFDLEtBQUtwQyxXQUFXO2dDQUNoQnFDLFFBQVE7aUNBRVI7MENBQ0oscUJBQUN2QjtnQ0FBS1AsV0FBVTswQ0FBYWI7OzBDQUM3QixxQkFBQzRDOzBDQUFJM0M7OzRCQUNKQyxxQkFBTyxxQkFBQ3FCO2dDQUFFVixXQUFVOzBDQUFnQlg7aUNBQVk7NEJBQ2hETTs7O2tDQUVILHNCQUFDVzt3QkFBSU4sV0FBVTs7MENBSWIscUJBQUNNO2dDQUFJTixXQUFVOzBDQUF3Qk47OzBDQUN2QyxxQkFBQytCLGFBQUk7Z0NBQUNDLE1BQUs7MENBQVc7Ozs7Ozs7O0FBS2hDIn0=

@@ -1,0 +1,73 @@
+76b9e4b0a62512c15b976464e240c26c
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+exports.buildPOLine = buildPOLine;
+exports.derivedCaseCost = derivedCaseCost;
+const pricing_1 = require("./pricing");
+const isCaseInput = (i)=>i.caseCost !== undefined;
+const wholeNonNegative = (n)=>Number.isFinite(Number(n)) && Number(n) >= 0;
+/** `Decimal(10,3)` quantity precision. */ const round3 = (n)=>Math.round(Number((n * 1000).toFixed(4))) / 1000;
+/** Builds the stored amounts of one PO line. Throws RangeError on an input no valid line can have. */ function buildPOLine(input) {
+    if (isCaseInput(input)) {
+        const pack = Number(input.packSize);
+        if (!Number.isInteger(pack) || pack <= 1) {
+            throw new RangeError(`a case line needs a whole packSize above 1, got ${input.packSize}`);
+        }
+        const caseCost = Number(input.caseCost);
+        if (!Number.isFinite(caseCost) || caseCost < 0) {
+            throw new RangeError(`caseCost must be a non-negative number, got ${input.caseCost}`);
+        }
+        const cases = Number(input.cases);
+        const loose = Number(input.loosePieces ?? 0);
+        if (!wholeNonNegative(cases) || !Number.isInteger(cases)) {
+            throw new RangeError(`cases must be a whole number, got ${input.cases}`);
+        }
+        if (!wholeNonNegative(loose) || !Number.isInteger(loose)) {
+            throw new RangeError(`loosePieces must be a whole number, got ${input.loosePieces}`);
+        }
+        const qtyOrdered = cases * pack + loose;
+        return {
+            qtyOrdered,
+            unitCost: (0, pricing_1.roundUnitCost)(caseCost / pack),
+            // caseCost x (cases + loose / pack) evaluated as (caseCost x pieces) / pack: one rounding, at the end
+            totalCost: (0, pricing_1.roundMoney)(caseCost * qtyOrdered / pack),
+            packSize: pack,
+            caseCost
+        };
+    }
+    const qtyOrdered = round3(Number(input.qtyOrdered));
+    const unitCost = Number(input.unitCost);
+    if (!Number.isFinite(qtyOrdered) || qtyOrdered < 0) {
+        throw new RangeError(`qtyOrdered must be a non-negative number, got ${input.qtyOrdered}`);
+    }
+    if (!Number.isFinite(unitCost) || unitCost < 0) {
+        throw new RangeError(`unitCost must be a non-negative number, got ${input.unitCost}`);
+    }
+    return {
+        qtyOrdered,
+        unitCost,
+        totalCost: (0, pricing_1.roundMoney)(qtyOrdered * unitCost),
+        packSize: null,
+        caseCost: null
+    };
+}
+/**
+ * The case cost an operator sees for a STORED line. When the line's exact `totalCost` and `qtyOrdered` are known
+ * it is derived FROM THE TOTAL: `totalCost x packSize / qtyOrdered` (a new exact row, 1,000 cases stored at
+ * $11,000.00, reads back 11 whatever its 4 dp per-piece cost is). Without them (no stored total) it falls back to
+ * `unitCost x packSize` at 4 dp. An OLD drifted row (0.9167 a piece, total 11,000.40) reads back 11.0004: shown
+ * honestly, never masked, so the operator re-enters 11.00. Existing rows are read as stored and never rewritten.
+ */ function derivedCaseCost(unitCost, packSize, exact) {
+    const pack = Number(packSize);
+    if (!Number.isInteger(pack) || pack <= 1) return (0, pricing_1.roundUnitCost)(Number(unitCost) || 0);
+    const total = Number(exact?.totalCost);
+    const qty = Number(exact?.qtyOrdered);
+    if (exact?.totalCost != null && Number.isFinite(total) && total > 0 && qty > 0) {
+        return (0, pricing_1.roundUnitCost)(total * pack / qty);
+    }
+    return (0, pricing_1.roundUnitCost)((Number(unitCost) || 0) * pack);
+} //# sourceMappingURL=po-line.js.map
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoicG8tbGluZS5qcyIsInNvdXJjZXMiOlsiLi4vc3JjL3BvLWxpbmUudHMiXSwic291cmNlUm9vdCI6IiIsIm5hbWVzIjpbXSwibWFwcGluZ3MiOiI7Ozs7QUF1REEsUUFBQSxXQUFBLEdBQUEsWUEyQ0M7QUFTRCxRQUFBLGVBQUEsR0FBQSxnQkFhQztBQXhIRCxNQUFBLFlBQUEsUUFBQSxhQUFzRDtBQThDdEQsTUFBTSxXQUFXLEdBQUcsQ0FBQyxDQUFxQyxFQUF3QixDQUMvRSxDQURpRixBQUM1RCxDQUFDLFFBQVEsS0FBSyxTQUFTLENBQUM7QUFFaEQsTUFBTSxnQkFBZ0IsR0FBRyxDQUFDLENBQVUsRUFBRSxDQUFHLENBQUQsS0FBTyxDQUFDLFFBQVEsQ0FBQyxNQUFNLENBQUMsQ0FBQyxDQUFDLENBQUMsSUFBSSxNQUFNLENBQUMsQ0FBQyxDQUFDLElBQUksQ0FBQyxDQUFDO0FBRXRGLHdDQUFBLEVBQTBDLENBQzFDLE1BQU0sTUFBTSxHQUFHLENBQUMsQ0FBUyxFQUFFLENBQUcsQ0FBRCxHQUFLLENBQUMsS0FBSyxDQUFDLE1BQU0sQ0FBQyxDQUFDLENBQUMsR0FBRyxJQUFBLENBQUksQ0FBQyxBQUFDLE9BQU8sQ0FBQyxDQUFDLENBQUMsQ0FBQyxDQUFDLEdBQUcsSUFBSSxDQUFDO0FBRS9FLG9HQUFBLEVBQXNHLENBQ3RHLFNBQWdCLFdBQVcsQ0FBQyxLQUF5QztJQUNuRSxJQUFJLFdBQVcsQ0FBQyxLQUFLLENBQUMsRUFBRSxDQUFDO1FBQ3ZCLE1BQU0sSUFBSSxHQUFHLE1BQU0sQ0FBQyxLQUFLLENBQUMsUUFBUSxDQUFDLENBQUM7UUFDcEMsSUFBSSxDQUFDLE1BQU0sQ0FBQyxTQUFTLENBQUMsSUFBSSxDQUFDLElBQUksSUFBSSxJQUFJLENBQUMsRUFBRSxDQUFDO1lBQ3pDLE1BQU0sSUFBSSxVQUFVLENBQUMsQ0FBQSxnREFBQSxFQUFtRCxLQUFLLENBQUMsUUFBUSxFQUFFLENBQUMsQ0FBQztRQUM1RixDQUFDO1FBQ0QsTUFBTSxRQUFRLEdBQUcs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

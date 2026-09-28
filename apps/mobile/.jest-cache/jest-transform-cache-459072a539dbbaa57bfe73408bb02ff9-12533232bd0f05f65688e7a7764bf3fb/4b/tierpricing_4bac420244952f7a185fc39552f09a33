@@ -1,0 +1,65 @@
+553da4099096b975528d3d184883d74a
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.TIER_FIELDS = void 0;
+exports.getTierPrice = getTierPrice;
+exports.cascadeTierPrices = cascadeTierPrices;
+const pricing_1 = require("./pricing");
+function getTierPrice(product, tier) {
+    const fallback = Number(product.pricePerUnit) || 0;
+    switch (tier) {
+        case 1:
+            return fallback;
+        case 2:
+            return Number(product.priceTier2 ?? product.pricePerUnit) || fallback;
+        case 3:
+            return Number(product.priceTier3 ?? product.pricePerUnit) || fallback;
+        case 4:
+            return Number(product.priceTier4 ?? product.pricePerUnit) || fallback;
+        case 5:
+            return Number(product.priceTier5 ?? product.pricePerUnit) || fallback;
+        default:
+            return fallback;
+    }
+}
+exports.TIER_FIELDS = [
+    "pricePerUnit",
+    "priceTier2",
+    "priceTier3",
+    "priceTier4",
+    "priceTier5",
+];
+/**
+ * Tier-edit cascade: COMMITTING a new price on tier N copies it down to every lower tier
+ * (N+1..5) unconditionally, so an operator can walk the ladder setting each break once.
+ * Returns ONLY the cascaded fields, as 2-dp decimal strings (ready for a form draft or a
+ * PATCH payload); the edited field itself stays the caller's own write.
+ *
+ * Returns {} for tier 5 (nothing below it), negative, or non-finite input.
+ *
+ * NOT used for Tier 1 / `pricePerUnit` — the list price keeps its existing "smart" behavior
+ * (only tiers that still matched the OLD list price follow it), which preserves a
+ * deliberately customized ladder when the list price is re-priced.
+ *
+ * Committing 0 cascades an explicit "0.00", which under getTierPrice's `|| fallback` guard
+ * means "these tiers inherit the list price again" — that is intended.
+ *
+ * Change detection ("the user focused and typed but did not actually change anything")
+ * belongs to the caller's commit mechanism, never to this function.
+ *
+ * REG-B122: the cent rounding MUST go through {@link roundMoney} — never re-inline a
+ * rounding expression here. An inlined `+ Number.EPSILON` nudge round-DOWNS every
+ * half-cent value (2.135 -> "2.13"), which is a tier price a cent below what the same
+ * number becomes on every other money path.
+ */
+function cascadeTierPrices(field, value) {
+    const idx = exports.TIER_FIELDS.indexOf(field);
+    if (idx < 1 || !Number.isFinite(value) || value < 0)
+        return {};
+    const v = (0, pricing_1.roundMoney)(Math.abs(value)).toFixed(2);
+    const patch = {};
+    for (let i = idx + 1; i < exports.TIER_FIELDS.length; i++)
+        patch[exports.TIER_FIELDS[i]] = v;
+    return patch;
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvcGFja2FnZXMvcHJpY2luZy9zcmMvdGllci1wcmljaW5nLnRzIiwibWFwcGluZ3MiOiI7OztBQUVBLG9DQWdCQztBQW1DRCw4Q0FVQztBQS9ERCx1Q0FBdUM7QUFFdkMsU0FBZ0IsWUFBWSxDQUFDLE9BQVksRUFBRSxJQUFZO0lBQ3JELE1BQU0sUUFBUSxHQUFHLE1BQU0sQ0FBQyxPQUFPLENBQUMsWUFBWSxDQUFDLElBQUksQ0FBQyxDQUFDO0lBQ25ELFFBQVEsSUFBSSxFQUFFLENBQUM7UUFDYixLQUFLLENBQUM7WUFDSixPQUFPLFFBQVEsQ0FBQztRQUNsQixLQUFLLENBQUM7WUFDSixPQUFPLE1BQU0sQ0FBQyxPQUFPLENBQUMsVUFBVSxJQUFJLE9BQU8sQ0FBQyxZQUFZLENBQUMsSUFBSSxRQUFRLENBQUM7UUFDeEUsS0FBSyxDQUFDO1lBQ0osT0FBTyxNQUFNLENBQUMsT0FBTyxDQUFDLFVBQVUsSUFBSSxPQUFPLENBQUMsWUFBWSxDQUFDLElBQUksUUFBUSxDQUFDO1FBQ3hFLEtBQUssQ0FBQztZQUNKLE9BQU8sTUFBTSxDQUFDLE9BQU8sQ0FBQyxVQUFVLElBQUksT0FBTyxDQUFDLFlBQVksQ0FBQyxJQUFJLFFBQVEsQ0FBQztRQUN4RSxLQUFLLENBQUM7WUFDSixPQUFPLE1BQU0sQ0FBQyxPQUFPLENBQUMsVUFBVSxJQUFJLE9BQU8sQ0FBQyxZQUFZLENBQUMsSUFBSSxRQUFRLENBQUM7UUFDeEU7WUFDRSxPQUFPLFFBQVEsQ0FBQztJQUNwQixDQUFDO0FBQ0gsQ0FBQztBQUlZLFFBQUEsV0FBVyxHQUF5QjtJQUMvQyxjQUFjO0lBQ2QsWUFBWTtJQUNaLFlBQVk7SUFDWixZQUFZO0lBQ1osWUFBWTtDQUNiLENBQUM7QUFFRjs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7OztHQXNCRztBQUNILFNBQWdCLGlCQUFpQixDQUMvQixLQUFnQixFQUNoQixLQUFhO0lBRWIsTUFBTSxHQUFHLEdBQUcsbUJBQVcsQ0FBQyxPQUFPLENBQUMsS0FBSyxDQUFDLENBQUM7SUFDdkMsSUFBSSxHQUFHLEdBQUcsQ0FBQyxJQUFJLENBQUMsTUFBTSxDQUFDLFFBQVEsQ0FBQyxLQUFLLENBQUMsSUFBSSxLQUFLLEdBQUcsQ0FBQztRQUFFLE9BQU8sRUFBRSxDQUFDO0lBQy9ELE1BQU0sQ0FBQyxHQUFHLElBQUEsb0JBQVUsRUFBQyxJQUFJLENBQUMsR0FBRyxDQUFDLEtBQUssQ0FBQyxDQUFDLENBQUMsT0FBTyxDQUFDLENBQUMsQ0FBQyxDQUFDO0lBQ2pELE1BQU0sS0FBSyxHQUF1QyxFQUFFLENBQUM7SUFDckQsS0FBSyxJQUFJLENBQUMsR0FBRyxHQUFHLEdBQUcsQ0FBQyxFQUFFLENBQUMsR0FBRyxtQkFBVyxDQUFDLE1BQU0sRUFBRSxDQUFDLEVBQUU7UUFBRSxLQUFLLENBQUMsbUJBQVcsQ0FBQyxDQUFDLENBQUMsQ0FBQyxHQUFHLENBQUMsQ0FBQztJQUM3RSxPQUFPLEtBQUssQ0FBQztBQUNmLENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvcGFja2FnZXMvcHJpY2luZy9zcmMvdGllci1wcmljaW5nLnRzIl0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCB7IHJvdW5kTW9uZXkgfSBmcm9tIFwiLi9wcmljaW5nXCI7XG5cbmV4cG9ydCBmdW5jdGlvbiBnZXRUaWVyUHJpY2UocHJvZHVjdDogYW55LCB0aWVyOiBudW1iZXIpOiBudW1iZXIge1xuICBjb25zdCBmYWxsYmFjayA9IE51bWJlcihwcm9kdWN0LnByaWNlUGVyVW5pdCkgfHwgMDtcbiAgc3dpdGNoICh0aWVyKSB7XG4gICAgY2FzZSAxOlxuICAgICAgcmV0dXJuIGZhbGxiYWNrO1xuICAgIGNhc2UgMjpcbiAgICAgIHJldHVybiBOdW1iZXIocHJvZHVjdC5wcmljZVRpZXIyID8/IHByb2R1Y3QucHJpY2VQZXJVbml0KSB8fCBmYWxsYmFjaztcbiAgICBjYXNlIDM6XG4gICAgICByZXR1cm4gTnVtYmVyKHByb2R1Y3QucHJpY2VUaWVyMyA/PyBwcm9kdWN0LnByaWNlUGVyVW5pdCkgfHwgZmFsbGJhY2s7XG4gICAgY2FzZSA0OlxuICAgICAgcmV0dXJuIE51bWJlcihwcm9kdWN0LnByaWNlVGllcjQgPz8gcHJvZHVjdC5wcmljZVBlclVuaXQpIHx8IGZhbGxiYWNrO1xuICAgIGNhc2UgNTpcbiAgICAgIHJldHVybiBOdW1iZXIocHJvZHVjdC5wcmljZVRpZXI1ID8/IHByb2R1Y3QucHJpY2VQZXJVbml0KSB8fCBmYWxsYmFjaztcbiAgICBkZWZhdWx0OlxuICAgICAgcmV0dXJuIGZhbGxiYWNrO1xuICB9XG59XG5cbi8qKiBUaGUgZml2ZSB0aWVyIHByaWNlIGNvbHVtbnMgaW4gbGFkZGVyIG9yZGVyLiBJbmRleCAwIChgcHJpY2VQZXJVbml0YCkgaXMgVGllciAxIC8gbGlzdC4gKi9cbmV4cG9ydCB0eXBlIFRpZXJGaWVsZCA9IFwicHJpY2VQZXJVbml0XCIgfCBcInByaWNlVGllcjJcIiB8IFwicHJpY2VUaWVyM1wiIHwgXCJwcmljZVRpZXI0XCIgfCBcInByaWNlVGllcjVcIjtcbmV4cG9ydCBjb25zdCBUSUVSX0ZJRUxEUzogcmVhZG9ubHkgVGllckZpZWxkW10gPSBbXG4gIFwicHJpY2VQZXJVbml0XCIsXG4gIFwicHJpY2VUaWVyMlwiLFxuICBcInByaWNlVGllcjNcIixcbiAgXCJwcmljZVRpZXI0XCIsXG4gIFwicHJpY2VUaWVyNVwiLFxuXTtcblxuLyoqXG4gKiBUaWVyLWVkaXQgY2FzY2FkZTogQ09NTUlUVElORyBhIG5ldyBwcmljZSBvbiB0aWVyIE4gY29waWVzIGl0IGRvd24gdG8gZXZlcnkgbG93ZXIgdGllclxuICogKE4rMS4uNSkgdW5jb25kaXRpb25hbGx5LCBzbyBhbiBvcGVyYXRvciBjYW4gd2FsayB0aGUgbGFkZGVyIHNldHRpbmcgZWFjaCBicmVhayBvbmNlLlxuICogUmV0dXJucyBPTkxZIHRoZSBjYXNjYWRlZCBmaWVsZHMsIGFzIDItZHAgZGVjaW1hbCBzdHJpbmdzIChyZWFkeSBmb3IgYSBmb3JtIGRyYWZ0IG9yIGFcbiAqIFBBVENIIHBheWxvYWQpOyB0aGUgZWRpdGVkIGZpZWxkIGl0c2VsZiBzdGF5cyB0aGUgY2FsbGVyJ3Mgb3duIHdyaXRlLlxuICpcbiAqIFJldHVybnMge30gZm9yIHRpZXIgNSAobm90aGluZyBiZWxvdyBpdCksIG5lZ2F0aXZlLCBvciBub24tZmluaXRlIGlucHV0LlxuICpcbiAqIE5PVCB1c2VkIGZvciBUaWVyIDEgLyBgcHJpY2VQZXJVbml0YCDigJQgdGhlIGxpc3QgcHJpY2Uga2VlcHMgaXRzIGV4aXN0aW5nIFwic21hcnRcIiBiZWhhdmlvclxuICogKG9ubHkgdGllcnMgdGhhdCBzdGlsbCBtYXRjaGVkIHRoZSBPTEQgbGlzdCBwcmljZSBmb2xsb3cgaXQpLCB3aGljaCBwcmVzZXJ2ZXMgYVxuICogZGVsaWJlcmF0ZWx5IGN1c3RvbWl6ZWQgbGFkZGVyIHdoZW4gdGhlIGxpc3QgcHJpY2UgaXMgcmUtcHJpY2VkLlxuICpcbiAqIENvbW1pdHRpbmcgMCBjYXNjYWRlcyBhbiBleHBsaWNpdCBcIjAuMDBcIiwgd2hpY2ggdW5kZXIgZ2V0VGllclByaWNlJ3MgYHx8IGZhbGxiYWNrYCBndWFyZFxuICogbWVhbnMgXCJ0aGVzZSB0aWVycyBpbmhlcml0IHRoZSBsaXN0IHByaWNlIGFnYWluXCIg4oCUIHRoYXQgaXMgaW50ZW5kZWQuXG4gKlxuICogQ2hhbmdlIGRldGVjdGlvbiAoXCJ0aGUgdXNlciBmb2N1c2VkIGFuZCB0eXBlZCBidXQgZGlkIG5vdCBhY3R1YWxseSBjaGFuZ2UgYW55dGhpbmdcIilcbiAqIGJlbG9uZ3MgdG8gdGhlIGNhbGxlcidzIGNvbW1pdCBtZWNoYW5pc20sIG5ldmVyIHRvIHRoaXMgZnVuY3Rpb24uXG4gKlxuICogUkVHLUIxMjI6IHRoZSBjZW50IHJvdW5kaW5nIE1VU1QgZ28gdGhyb3VnaCB7QGxpbmsgcm91bmRNb25leX0g4oCUIG5ldmVyIHJlLWlubGluZSBhXG4gKiByb3VuZGluZyBleHByZXNzaW9uIGhlcmUuIEFuIGlubGluZWQgYCsgTnVtYmVyLkVQU0lMT05gIG51ZGdlIHJvdW5kLURPV05TIGV2ZXJ5XG4gKiBoYWxmLWNlbnQgdmFsdWUgKDIuMTM1IC0+IFwiMi4xM1wiKSwgd2hpY2ggaXMgYSB0aWVyIHByaWNlIGEgY2VudCBiZWxvdyB3aGF0IHRoZSBzYW1lXG4gKiBudW1iZXIgYmVjb21lcyBvbiBldmVyeSBvdGhlciBtb25leSBwYXRoLlxuICovXG5leHBvcnQgZnVuY3Rpb24gY2FzY2FkZVRpZXJQcmljZXMoXG4gIGZpZWxkOiBUaWVyRmllbGQsXG4gIHZhbHVlOiBudW1iZXIsXG4pOiBQYXJ0aWFsPFJlY29yZDxUaWVyRmllbGQsIHN0cmluZz4+IHtcbiAgY29uc3QgaWR4ID0gVElFUl9GSUVMRFMuaW5kZXhPZihmaWVsZCk7XG4gIGlmIChpZHggPCAxIHx8ICFOdW1iZXIuaXNGaW5pdGUodmFsdWUpIHx8IHZhbHVlIDwgMCkgcmV0dXJuIHt9O1xuICBjb25zdCB2ID0gcm91bmRNb25leShNYXRoLmFicyh2YWx1ZSkpLnRvRml4ZWQoMik7XG4gIGNvbnN0IHBhdGNoOiBQYXJ0aWFsPFJlY29yZDxUaWVyRmllbGQsIHN0cmluZz4+ID0ge307XG4gIGZvciAobGV0IGkgPSBpZHggKyAxOyBpIDwgVElFUl9GSUVMRFMubGVuZ3RoOyBpKyspIHBhdGNoW1RJRVJfRklFTERTW2ldXSA9IHY7XG4gIHJldHVybiBwYXRjaDtcbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

@@ -1,0 +1,75 @@
+baa5b42dcb0e03a61e69a431ab107f52
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.useInlineReturnRemoveGuard = useInlineReturnRemoveGuard;
+const React = __importStar(require("react"));
+const native_1 = require("@react-navigation/native");
+const inline_return_screen_1 = require("./inline-return-screen");
+/**
+ * Locks EVERY removal path while an inline-return capture is in flight: Android system back, this
+ * stack's swipe, and a parent-stack swipe/dismiss. A capture that already landed must never be
+ * dropped — the next confirm would mint a fresh key and book a second Return and credit.
+ *
+ * Uses `usePreventRemove`, not a raw `beforeRemove` listener: native-stack only sets
+ * `preventNativeDismiss` (the iOS swipe/dismiss gesture) from routes registered through
+ * usePreventRemove's context (react-navigation core 7.x + the native-stack that ships with
+ * expo-router 55), so a bare listener runs after the native pop has already happened.
+ *
+ * Every blocked action is DROPPED — a user back press, and a tab tap (an untargeted POP_TO from
+ * OperatorTabBar) must NOT replay after the capture settles, or it would close the result screen
+ * before the operator sees it (and invite a second capture with a fresh key). The one exception is
+ * a sign-out: the session-expired handler's root-targeted REPLACE cannot be replayed through this
+ * screen's navigation (the router adds this screen as `source`, which the root stack cannot find),
+ * so while signed out we only REMEMBER that a redirect is owed and re-issue the login redirect
+ * from the container once the capture settles.
+ */
+function useInlineReturnRemoveGuard(state, { signedOut, onSignedOutRedirect }) {
+    const locked = !(0, inline_return_screen_1.canLeaveInlineReturn)(state);
+    const redirectOwed = React.useRef(false);
+    const signedOutRef = React.useRef(signedOut);
+    signedOutRef.current = signedOut;
+    (0, native_1.usePreventRemove)(locked, () => {
+        if (signedOutRef.current)
+            redirectOwed.current = true;
+    });
+    React.useEffect(() => {
+        if (locked || !redirectOwed.current)
+            return;
+        redirectOwed.current = false;
+        onSignedOutRedirect();
+    }, [locked, onSignedOutRedirect]);
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3VzZS1pbmxpbmUtcmV0dXJuLXJlbW92ZS1ndWFyZC50cyIsIm1hcHBpbmdzIjoiOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7OztBQTZCQSxnRUFrQkM7QUEvQ0QsNkNBQStCO0FBQy9CLHFEQUE0RDtBQUM1RCxpRUFBNEY7QUFTNUY7Ozs7Ozs7Ozs7Ozs7Ozs7O0dBaUJHO0FBQ0gsU0FBZ0IsMEJBQTBCLENBQ3hDLEtBQThCLEVBQzlCLEVBQUUsU0FBUyxFQUFFLG1CQUFtQixFQUFrQztJQUVsRSxNQUFNLE1BQU0sR0FBRyxDQUFDLElBQUEsMkNBQW9CLEVBQUMsS0FBSyxDQUFDLENBQUM7SUFDNUMsTUFBTSxZQUFZLEdBQUcsS0FBSyxDQUFDLE1BQU0sQ0FBQyxLQUFLLENBQUMsQ0FBQztJQUN6QyxNQUFNLFlBQVksR0FBRyxLQUFLLENBQUMsTUFBTSxDQUFDLFNBQVMsQ0FBQyxDQUFDO0lBQzdDLFlBQVksQ0FBQyxPQUFPLEdBQUcsU0FBUyxDQUFDO0lBRWpDLElBQUEseUJBQWdCLEVBQUMsTUFBTSxFQUFFLEdBQUcsRUFBRTtRQUM1QixJQUFJLFlBQVksQ0FBQyxPQUFPO1lBQUUsWUFBWSxDQUFDLE9BQU8sR0FBRyxJQUFJLENBQUM7SUFDeEQsQ0FBQyxDQUFDLENBQUM7SUFFSCxLQUFLLENBQUMsU0FBUyxDQUFDLEdBQUcsRUFBRTtRQUNuQixJQUFJLE1BQU0sSUFBSSxDQUFDLFlBQVksQ0FBQyxPQUFPO1lBQUUsT0FBTztRQUM1QyxZQUFZLENBQUMsT0FBTyxHQUFHLEtBQUssQ0FBQztRQUM3QixtQkFBbUIsRUFBRSxDQUFDO0lBQ3hCLENBQUMsRUFBRSxDQUFDLE1BQU0sRUFBRSxtQkFBbUIsQ0FBQyxDQUFDLENBQUM7QUFDcEMsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9hcHBzL21vYmlsZS9saWIvdXNlLWlubGluZS1yZXR1cm4tcmVtb3ZlLWd1YXJkLnRzIl0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCAqIGFzIFJlYWN0IGZyb20gXCJyZWFjdFwiO1xuaW1wb3J0IHsgdXNlUHJldmVudFJlbW92ZSB9IGZyb20gXCJAcmVhY3QtbmF2aWdhdGlvbi9uYXRpdmVcIjtcbmltcG9ydCB7IGNhbkxlYXZlSW5saW5lUmV0dXJuLCB0eXBlIElubGluZVJldHVyblNjcmVlblN0YXRlIH0gZnJvbSBcIi4vaW5saW5lLXJldHVybi1zY3JlZW5cIjtcblxuZXhwb3J0IGludGVyZmFjZSBJbmxpbmVSZXR1cm5SZW1vdmVHdWFyZE9wdGlvbnMge1xuICAvKiogVHJ1ZSB3aGVuIHRoZSBzdGFmZiBzZXNzaW9uIGlzIGdvbmUgKHRoZSBzZXNzaW9uLWV4cGlyZWQgaGFuZGxlciBjbGVhcmVkIHRoZSB1c2VyKS4gKi9cbiAgc2lnbmVkT3V0OiBib29sZWFuO1xuICAvKiogUmUtaXNzdWVzIHRoZSBsb2dpbiByZWRpcmVjdCBmcm9tIHRoZSBDT05UQUlORVIgKHJvdXRlci5yZXBsYWNlKFwiLyhhdXRoKS9sb2dpblwiKSkuICovXG4gIG9uU2lnbmVkT3V0UmVkaXJlY3Q6ICgpID0+IHZvaWQ7XG59XG5cbi8qKlxuICogTG9ja3MgRVZFUlkgcmVtb3ZhbCBwYXRoIHdoaWxlIGFuIGlubGluZS1yZXR1cm4gY2FwdHVyZSBpcyBpbiBmbGlnaHQ6IEFuZHJvaWQgc3lzdGVtIGJhY2ssIHRoaXNcbiAqIHN0YWNrJ3Mgc3dpcGUsIGFuZCBhIHBhcmVudC1zdGFjayBzd2lwZS9kaXNtaXNzLiBBIGNhcHR1cmUgdGhhdCBhbHJlYWR5IGxhbmRlZCBtdXN0IG5ldmVyIGJlXG4gKiBkcm9wcGVkIOKAlCB0aGUgbmV4dCBjb25maXJtIHdvdWxkIG1pbnQgYSBmcmVzaCBrZXkgYW5kIGJvb2sgYSBzZWNvbmQgUmV0dXJuIGFuZCBjcmVkaXQuXG4gKlxuICogVXNlcyBgdXNlUHJldmVudFJlbW92ZWAsIG5vdCBhIHJhdyBgYmVmb3JlUmVtb3ZlYCBsaXN0ZW5lcjogbmF0aXZlLXN0YWNrIG9ubHkgc2V0c1xuICogYHByZXZlbnROYXRpdmVEaXNtaXNzYCAodGhlIGlPUyBzd2lwZS9kaXNtaXNzIGdlc3R1cmUpIGZyb20gcm91dGVzIHJlZ2lzdGVyZWQgdGhyb3VnaFxuICogdXNlUHJldmVudFJlbW92ZSdzIGNvbnRleHQgKHJlYWN0LW5hdmlnYXRpb24gY29yZSA3LnggKyB0aGUgbmF0aXZlLXN0YWNrIHRoYXQgc2hpcHMgd2l0aFxuICogZXhwby1yb3V0ZXIgNTUpLCBzbyBhIGJhcmUgbGlzdGVuZXIgcnVucyBhZnRlciB0aGUgbmF0aXZlIHBvcCBoYXMgYWxyZWFkeSBoYXBwZW5lZC5cbiAqXG4gKiBFdmVyeSBibG9ja2VkIGFjdGlvbiBpcyBEUk9QUEVEIOKAlCBhIHVzZXIgYmFjayBwcmVzcywgYW5kIGEgdGFiIHRhcCAoYW4gdW50YXJnZXRlZCBQT1BfVE8gZnJvbVxuICogT3BlcmF0b3JUYWJCYXIpIG11c3QgTk9UIHJlcGxheSBhZnRlciB0aGUgY2FwdHVyZSBzZXR0bGVzLCBvciBpdCB3b3VsZCBjbG9zZSB0aGUgcmVzdWx0IHNjcmVlblxuICogYmVmb3JlIHRoZSBvcGVyYXRvciBzZWVzIGl0IChhbmQgaW52aXRlIGEgc2Vjb25kIGNhcHR1cmUgd2l0aCBhIGZyZXNoIGtleSkuIFRoZSBvbmUgZXhjZXB0aW9uIGlzXG4gKiBhIHNpZ24tb3V0OiB0aGUgc2Vzc2lvbi1leHBpcmVkIGhhbmRsZXIncyByb290LXRhcmdldGVkIFJFUExBQ0UgY2Fubm90IGJlIHJlcGxheWVkIHRocm91Z2ggdGhpc1xuICogc2NyZWVuJ3MgbmF2aWdhdGlvbiAodGhlIHJvdXRlciBhZGRzIHRoaXMgc2NyZWVuIGFzIGBzb3VyY2VgLCB3aGljaCB0aGUgcm9vdCBzdGFjayBjYW5ub3QgZmluZCksXG4gKiBzbyB3aGlsZSBzaWduZWQgb3V0IHdlIG9ubHkgUkVNRU1CRVIgdGhhdCBhIHJlZGlyZWN0IGlzIG93ZWQgYW5kIHJlLWlzc3VlIHRoZSBsb2dpbiByZWRpcmVjdFxuICogZnJvbSB0aGUgY29udGFpbmVyIG9uY2UgdGhlIGNhcHR1cmUgc2V0dGxlcy5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIHVzZUlubGluZVJldHVyblJlbW92ZUd1YXJkKFxuICBzdGF0ZTogSW5saW5lUmV0dXJuU2NyZWVuU3RhdGUsXG4gIHsgc2lnbmVkT3V0LCBvblNpZ25lZE91dFJlZGlyZWN0IH06IElubGluZVJldHVyblJlbW92ZUd1YXJkT3B0aW9ucyxcbik6IHZvaWQge1xuICBjb25zdCBsb2NrZWQgPSAhY2FuTGVhdmVJbmxpbmVSZXR1cm4oc3RhdGUpO1xuICBjb25zdCByZWRpcmVjdE93ZWQgPSBSZWFjdC51c2VSZWYoZmFsc2UpO1xuICBjb25zdCBzaWduZWRPdXRSZWYgPSBSZWFjdC51c2VSZWYoc2lnbmVkT3V0KTtcbiAgc2lnbmVkT3V0UmVmLmN1cnJlbnQgPSBzaWduZWRPdXQ7XG5cbiAgdXNlUHJldmVudFJlbW92ZShsb2NrZWQsICgpID0+IHtcbiAgICBpZiAoc2lnbmVkT3V0UmVmLmN1cnJlbnQpIHJlZGlyZWN0T3dlZC5jdXJyZW50ID0gdHJ1ZTtcbiAgfSk7XG5cbiAgUmVhY3QudXNlRWZmZWN0KCgpID0+IHtcbiAgICBpZiAobG9ja2VkIHx8ICFyZWRpcmVjdE93ZWQuY3VycmVudCkgcmV0dXJuO1xuICAgIHJlZGlyZWN0T3dlZC5jdXJyZW50ID0gZmFsc2U7XG4gICAgb25TaWduZWRPdXRSZWRpcmVjdCgpO1xuICB9LCBbbG9ja2VkLCBvblNpZ25lZE91dFJlZGlyZWN0XSk7XG59XG4iXSwidmVyc2lvbiI6M30=

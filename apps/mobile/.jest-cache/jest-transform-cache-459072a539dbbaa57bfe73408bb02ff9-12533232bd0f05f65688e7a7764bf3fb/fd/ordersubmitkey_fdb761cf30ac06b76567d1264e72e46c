@@ -1,0 +1,105 @@
+e24c6ba27040852df5fa1fecc48a5225
+"use strict";
+/**
+ * Client-generated Idempotency-Key for POST /orders (F30 · R8, REG-B196).
+ *
+ * One key PER CUSTOMER cart session (B215/R3): minted lazily on first read for that customer and
+ * reused across every retry/replay of the SAME cart (a tapped-twice submit, a timed-out request
+ * the operator retries, an offline-queue replay) so the server's tenant-scoped unique constraint
+ * on `Order.idempotencyKey` can collapse duplicates into a single order — replay returns the
+ * original order instead of creating a sibling (apps/api/src/orders). This converts the queue's
+ * at-least-once replay semantics into effectively-once, closing B196's duplicate-order leg even
+ * when a queue bug re-sends the same cart twice.
+ *
+ * Keys are held in a `customerId -> key` map rather than one module singleton, because the
+ * server's replay identity is CUSTOMER-SCOPED: carrying one customer's key onto another's cart
+ * makes the submit look like a replay of an order that is not theirs and the API refuses it
+ * outright (409 `IDEMPOTENCY_KEY_CONFLICT` / `HELD_BY_OTHER_ORDER`). A map needs no rotation on
+ * "Change customer" at all — each customer simply reads their own slot, so switching away from A
+ * and back leaves A's slot holding the key its own in-flight retry must send, instead of minting a
+ * sibling duplicate order.
+ *
+ * A customer's key is cleared — so their NEXT cart mints a fresh one — ONLY on:
+ *   1. a successful submit for that customer (the cart that owned the key is now a real order;
+ *      any further submit is deliberately a NEW order and must get its own key)
+ *   2. `clearAllOrderSubmitKeys()`, which drops every slot at once — a teardown helper (used by
+ *      the specs today; no screen path calls it)
+ *   3. the 409 "Open order" wind-down for that customer (the key is already spoken for; the cart
+ *      that owned it is finished with)
+ *
+ * A failed submit (timeout, 4xx, network drop) must NOT clear that customer's key — that cart is
+ * still live, and a retry/replay needs the SAME key so server-side idempotency can catch it
+ * instead of minting a sibling duplicate order.
+ *
+ * Pure module, no RN dependency — imported today by NewOrderScreen's submit wiring, and usable
+ * as-is from any plain-Node context (Jest).
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.getOrderSubmitKey = getOrderSubmitKey;
+exports.resetOrderSubmitKey = resetOrderSubmitKey;
+exports.clearAllOrderSubmitKeys = clearAllOrderSubmitKeys;
+/**
+ * A v4-shaped UUID built from `Math.random`. This value only needs to be
+ * unique per cart session — it is never used for cryptographic purposes — so
+ * `Math.random` keeps this module dependency-free (no `uuid` package, no
+ * `expo-crypto`) and usable as-is under plain Node in Jest.
+ */
+function mintCartSessionKey() {
+    const bytes = [];
+    for (let i = 0; i < 16; i++) {
+        bytes.push(Math.floor(Math.random() * 256));
+    }
+    // Stamp the version (4) and variant (10) nibbles per RFC 4122 §4.4.
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = bytes.map((b) => b.toString(16).padStart(2, "0"));
+    return [
+        hex.slice(0, 4).join(""),
+        hex.slice(4, 6).join(""),
+        hex.slice(6, 8).join(""),
+        hex.slice(8, 10).join(""),
+        hex.slice(10, 16).join(""),
+    ].join("-");
+}
+/** `customerId -> that customer's live cart-session key`. */
+const keysByCustomer = new Map();
+/**
+ * The slot a null/undefined customerId uses. A cart with no customer resolved yet still needs a
+ * stable key (the screen can submit as soon as one is picked), and it must not be confused with
+ * any real customer id — customer ids are UUIDs, so no collision is possible.
+ */
+const NO_CUSTOMER = "__none__";
+function slot(customerId) {
+    return customerId ?? NO_CUSTOMER;
+}
+/**
+ * Return this customer's cart-session Idempotency-Key, minting one on first call for them.
+ * Every submit/retry/replay of the SAME cart must send this exact value on the
+ * `Idempotency-Key` header of POST /orders.
+ */
+function getOrderSubmitKey(customerId) {
+    const id = slot(customerId);
+    let key = keysByCustomer.get(id);
+    if (!key) {
+        key = mintCartSessionKey();
+        keysByCustomer.set(id, key);
+    }
+    return key;
+}
+/**
+ * Start a fresh cart session FOR ONE CUSTOMER: their next `getOrderSubmitKey()` call mints a new
+ * key, and every other customer's key is untouched. Call this ONLY after a submit for that
+ * customer actually succeeds, or on the 409 "Open order" wind-down — never on failure or timeout,
+ * or a retry of the same cart would mint a sibling key and defeat server-side idempotency.
+ */
+function resetOrderSubmitKey(customerId) {
+    keysByCustomer.delete(slot(customerId));
+}
+/**
+ * Drop EVERY customer's key at once. A teardown helper — the specs use it to isolate cases; no
+ * screen path calls it. Never call this on a submit failure.
+ */
+function clearAllOrderSubmitKeys() {
+    keysByCustomer.clear();
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL29yZGVyLXN1Ym1pdC1rZXkudHMiLCJtYXBwaW5ncyI6IjtBQUFBOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7R0FpQ0c7O0FBOENILDhDQVFDO0FBUUQsa0RBRUM7QUFNRCwwREFFQztBQXRFRDs7Ozs7R0FLRztBQUNILFNBQVMsa0JBQWtCO0lBQ3pCLE1BQU0sS0FBSyxHQUFhLEVBQUUsQ0FBQztJQUMzQixLQUFLLElBQUksQ0FBQyxHQUFHLENBQUMsRUFBRSxDQUFDLEdBQUcsRUFBRSxFQUFFLENBQUMsRUFBRSxFQUFFLENBQUM7UUFDNUIsS0FBSyxDQUFDLElBQUksQ0FBQyxJQUFJLENBQUMsS0FBSyxDQUFDLElBQUksQ0FBQyxNQUFNLEVBQUUsR0FBRyxHQUFHLENBQUMsQ0FBQyxDQUFDO0lBQzlDLENBQUM7SUFDRCxvRUFBb0U7SUFDcEUsS0FBSyxDQUFDLENBQUMsQ0FBQyxHQUFHLENBQUMsS0FBSyxDQUFDLENBQUMsQ0FBRSxHQUFHLElBQUksQ0FBQyxHQUFHLElBQUksQ0FBQztJQUNyQyxLQUFLLENBQUMsQ0FBQyxDQUFDLEdBQUcsQ0FBQyxLQUFLLENBQUMsQ0FBQyxDQUFFLEdBQUcsSUFBSSxDQUFDLEdBQUcsSUFBSSxDQUFDO0lBRXJDLE1BQU0sR0FBRyxHQUFHLEtBQUssQ0FBQyxHQUFHLENBQUMsQ0FBQyxDQUFDLEVBQUUsRUFBRSxDQUFDLENBQUMsQ0FBQyxRQUFRLENBQUMsRUFBRSxDQUFDLENBQUMsUUFBUSxDQUFDLENBQUMsRUFBRSxHQUFHLENBQUMsQ0FBQyxDQUFDO0lBQzlELE9BQU87UUFDTCxHQUFHLENBQUMsS0FBSyxDQUFDLENBQUMsRUFBRSxDQUFDLENBQUMsQ0FBQyxJQUFJLENBQUMsRUFBRSxDQUFDO1FBQ3hCLEdBQUcsQ0FBQyxLQUFLLENBQUMsQ0FBQyxFQUFFLENBQUMsQ0FBQyxDQUFDLElBQUksQ0FBQyxFQUFFLENBQUM7UUFDeEIsR0FBRyxDQUFDLEtBQUssQ0FBQyxDQUFDLEVBQUUsQ0FBQyxDQUFDLENBQUMsSUFBSSxDQUFDLEVBQUUsQ0FBQztRQUN4QixHQUFHLENBQUMsS0FBSyxDQUFDLENBQUMsRUFBRSxFQUFFLENBQUMsQ0FBQyxJQUFJLENBQUMsRUFBRSxDQUFDO1FBQ3pCLEdBQUcsQ0FBQyxLQUFLLENBQUMsRUFBRSxFQUFFLEVBQUUsQ0FBQyxDQUFDLElBQUksQ0FBQyxFQUFFLENBQUM7S0FDM0IsQ0FBQyxJQUFJLENBQUMsR0FBRyxDQUFDLENBQUM7QUFDZCxDQUFDO0FBRUQsNkRBQTZEO0FBQzdELE1BQU0sY0FBYyxHQUFHLElBQUksR0FBRyxFQUFrQixDQUFDO0FBRWpEOzs7O0dBSUc7QUFDSCxNQUFNLFdBQVcsR0FBRyxVQUFVLENBQUM7QUFFL0IsU0FBUyxJQUFJLENBQUMsVUFBcUM7SUFDakQsT0FBTyxVQUFVLElBQUksV0FBVyxDQUFDO0FBQ25DLENBQUM7QUFFRDs7OztHQUlHO0FBQ0gsU0FBZ0IsaUJBQWlCLENBQUMsVUFBcUM7SUFDckUsTUFBTSxFQUFFLEdBQUcsSUFBSSxDQUFDLFVBQVUsQ0FBQyxDQUFDO0lBQzVCLElBQUksR0FBRyxHQUFHLGNBQWMsQ0FBQyxHQUFHLENBQUMsRUFBRSxDQUFDLENBQUM7SUFDakMsSUFBSSxDQUFDLEdBQUcsRUFBRSxDQUFDO1FBQ1QsR0FBRyxHQUFHLGtCQUFrQixFQUFFLENBQUM7UUFDM0IsY0FBYyxDQUFDLEdBQUcsQ0FBQyxFQUFFLEVBQUUsR0FBRyxDQUFDLENBQUM7SUFDOUIsQ0FBQztJQUNELE9BQU8sR0FBRyxDQUFDO0FBQ2IsQ0FBQztBQUVEOzs7OztHQUtHO0FBQ0gsU0FBZ0IsbUJBQW1CLENBQUMsVUFBcUM7SUFDdkUsY0FBYyxDQUFDLE1BQU0sQ0FBQyxJQUFJLENBQUMsVUFBVSxDQUFDLENBQUMsQ0FBQztBQUMxQyxDQUFDO0FBRUQ7OztHQUdHO0FBQ0gsU0FBZ0IsdUJBQXVCO0lBQ3JDLGNBQWMsQ0FBQyxLQUFLLEVBQUUsQ0FBQztBQUN6QixDQUFDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvbW9iaWxlL2xpYi9vcmRlci1zdWJtaXQta2V5LnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogQ2xpZW50LWdlbmVyYXRlZCBJZGVtcG90ZW5jeS1LZXkgZm9yIFBPU1QgL29yZGVycyAoRjMwIMK3IFI4LCBSRUctQjE5NikuXG4gKlxuICogT25lIGtleSBQRVIgQ1VTVE9NRVIgY2FydCBzZXNzaW9uIChCMjE1L1IzKTogbWludGVkIGxhemlseSBvbiBmaXJzdCByZWFkIGZvciB0aGF0IGN1c3RvbWVyIGFuZFxuICogcmV1c2VkIGFjcm9zcyBldmVyeSByZXRyeS9yZXBsYXkgb2YgdGhlIFNBTUUgY2FydCAoYSB0YXBwZWQtdHdpY2Ugc3VibWl0LCBhIHRpbWVkLW91dCByZXF1ZXN0XG4gKiB0aGUgb3BlcmF0b3IgcmV0cmllcywgYW4gb2ZmbGluZS1xdWV1ZSByZXBsYXkpIHNvIHRoZSBzZXJ2ZXIncyB0ZW5hbnQtc2NvcGVkIHVuaXF1ZSBjb25zdHJhaW50XG4gKiBvbiBgT3JkZXIuaWRlbXBvdGVuY3lLZXlgIGNhbiBjb2xsYXBzZSBkdXBsaWNhdGVzIGludG8gYSBzaW5nbGUgb3JkZXIg4oCUIHJlcGxheSByZXR1cm5zIHRoZVxuICogb3JpZ2luYWwgb3JkZXIgaW5zdGVhZCBvZiBjcmVhdGluZyBhIHNpYmxpbmcgKGFwcHMvYXBpL3NyYy9vcmRlcnMpLiBUaGlzIGNvbnZlcnRzIHRoZSBxdWV1ZSdzXG4gKiBhdC1sZWFzdC1vbmNlIHJlcGxheSBzZW1hbnRpY3MgaW50byBlZmZlY3RpdmVseS1vbmNlLCBjbG9zaW5nIEIxOTYncyBkdXBsaWNhdGUtb3JkZXIgbGVnIGV2ZW5cbiAqIHdoZW4gYSBxdWV1ZSBidWcgcmUtc2VuZHMgdGhlIHNhbWUgY2FydCB0d2ljZS5cbiAqXG4gKiBLZXlzIGFyZSBoZWxkIGluIGEgYGN1c3RvbWVySWQgLT4ga2V5YCBtYXAgcmF0aGVyIHRoYW4gb25lIG1vZHVsZSBzaW5nbGV0b24sIGJlY2F1c2UgdGhlXG4gKiBzZXJ2ZXIncyByZXBsYXkgaWRlbnRpdHkgaXMgQ1VTVE9NRVItU0NPUEVEOiBjYXJyeWluZyBvbmUgY3VzdG9tZXIncyBrZXkgb250byBhbm90aGVyJ3MgY2FydFxuICogbWFrZXMgdGhlIHN1Ym1pdCBsb29rIGxpa2UgYSByZXBsYXkgb2YgYW4gb3JkZXIgdGhhdCBpcyBub3QgdGhlaXJzIGFuZCB0aGUgQVBJIHJlZnVzZXMgaXRcbiAqIG91dHJpZ2h0ICg0MDkgYElERU1QT1RFTkNZX0tFWV9DT05GTElDVGAgLyBgSEVMRF9CWV9PVEhFUl9PUkRFUmApLiBBIG1hcCBuZWVkcyBubyByb3RhdGlvbiBvblxuICogXCJDaGFuZ2UgY3VzdG9tZXJcIiBhdCBhbGwg4oCUIGVhY2ggY3VzdG9tZXIgc2ltcGx5IHJlYWRzIHRoZWlyIG93biBzbG90LCBzbyBzd2l0Y2hpbmcgYXdheSBmcm9tIEFcbiAqIGFuZCBiYWNrIGxlYXZlcyBBJ3Mgc2xvdCBob2xkaW5nIHRoZSBrZXkgaXRzIG93biBpbi1mbGlnaHQgcmV0cnkgbXVzdCBzZW5kLCBpbnN0ZWFkIG9mIG1pbnRpbmcgYVxuICogc2libGluZyBkdXBsaWNhdGUgb3JkZXIuXG4gKlxuICogQSBjdXN0b21lcidzIGtleSBpcyBjbGVhcmVkIOKAlCBzbyB0aGVpciBORVhUIGNhcnQgbWludHMgYSBmcmVzaCBvbmUg4oCUIE9OTFkgb246XG4gKiAgIDEuIGEgc3VjY2Vzc2Z1bCBzdWJtaXQgZm9yIHRoYXQgY3VzdG9tZXIgKHRoZSBjYXJ0IHRoYXQgb3duZWQgdGhlIGtleSBpcyBub3cgYSByZWFsIG9yZGVyO1xuICogICAgICBhbnkgZnVydGhlciBzdWJtaXQgaXMgZGVsaWJlcmF0ZWx5IGEgTkVXIG9yZGVyIGFuZCBtdXN0IGdldCBpdHMgb3duIGtleSlcbiAqICAgMi4gYGNsZWFyQWxsT3JkZXJTdWJtaXRLZXlzKClgLCB3aGljaCBkcm9wcyBldmVyeSBzbG90IGF0IG9uY2Ug4oCUIGEgdGVhcmRvd24gaGVscGVyICh1c2VkIGJ5XG4gKiAgICAgIHRoZSBzcGVjcyB0b2RheTsgbm8gc2NyZWVuIHBhdGggY2FsbHMgaXQpXG4gKiAgIDMuIHRoZSA0MDkgXCJPcGVuIG9yZGVyXCIgd2luZC1kb3duIGZvciB0aGF0IGN1c3RvbWVyICh0aGUga2V5IGlzIGFscmVhZHkgc3Bva2VuIGZvcjsgdGhlIGNhcnRcbiAqICAgICAgdGhhdCBvd25lZCBpdCBpcyBmaW5pc2hlZCB3aXRoKVxuICpcbiAqIEEgZmFpbGVkIHN1Ym1pdCAodGltZW91dCwgNHh4LCBuZXR3b3JrIGRyb3ApIG11c3QgTk9UIGNsZWFyIHRoYXQgY3VzdG9tZXIncyBrZXkg4oCUIHRoYXQgY2FydCBpc1xuICogc3RpbGwgbGl2ZSwgYW5kIGEgcmV0cnkvcmVwbGF5IG5lZWRzIHRoZSBTQU1FIGtleSBzbyBzZXJ2ZXItc2lkZSBpZGVtcG90ZW5jeSBjYW4gY2F0Y2ggaXRcbiAqIGluc3RlYWQgb2YgbWludGluZyBhIHNpYmxpbmcgZHVwbGljYXRlIG9yZGVyLlxuICpcbiAqIFB1cmUgbW9kdWxlLCBubyBSTiBkZXBlbmRlbmN5IOKAlCBpbXBvcnRlZCB0b2RheSBieSBOZXdPcmRlclNjcmVlbidzIHN1Ym1pdCB3aXJpbmcsIGFuZCB1c2FibGVcbiAqIGFzLWlzIGZyb20gYW55IHBsYWluLU5vZGUgY29udGV4dCAoSmVzdCkuXG4gKi9cblxuLyoqXG4gKiBBIHY0LXNoYXBlZCBVVUlEIGJ1aWx0IGZyb20gYE1hdGgucmFuZG9tYC4gVGhpcyB2YWx1ZSBvbmx5IG5lZWRzIHRvIGJlXG4gKiB1bmlxdWUgcGVyIGNhcnQgc2Vzc2lvbiDigJQgaXQgaXMgbmV2ZXIgdXNlZCBmb3IgY3J5cHRvZ3JhcGhpYyBwdXJwb3NlcyDigJQgc29cbiAqIGBNYXRoLnJhbmRvbWAga2VlcHMgdGhpcyBtb2R1bGUgZGVwZW5kZW5jeS1mcmVlIChubyBgdXVpZGAgcGFja2FnZSwgbm9cbiAqIGBleHBvLWNyeXB0b2ApIGFuZCB1c2FibGUgYXMtaXMgdW5kZXIgcGxhaW4gTm9kZSBpbiBKZXN0LlxuICovXG5mdW5jdGlvbiBtaW50Q2FydFNlc3Npb25LZXkoKTogc3RyaW5nIHtcbiAgY29uc3QgYnl0ZXM6IG51bWJlcltdID0gW107XG4gIGZvciAobGV0IGkgPSAwOyBpIDwgMTY7IGkrKykge1xuICAgIGJ5dGVzLnB1c2goTWF0aC5mbG9vcihNYXRoLnJhbmRvbSgpICogMjU2KSk7XG4gIH1cbiAgLy8gU3RhbXAgdGhlIHZlcnNpb24gKDQpIGFuZCB2YXJpYW50ICgxMCkgbmliYmxlcyBwZXIgUkZDIDQxMjIgwqc0LjQuXG4gIGJ5dGVzWzZdID0gKGJ5dGVzWzZdISAmIDB4MGYpIHwgMHg0MDtcbiAgYnl0ZXNbOF0gPSAoYnl0ZXNbOF0hICYgMHgzZikgfCAweDgwO1xuXG4gIGNvbnN0IGhleCA9IGJ5dGVzLm1hcCgoYikgPT4gYi50b1N0cmluZygxNikucGFkU3RhcnQoMiwgXCIwXCIpKTtcbiAgcmV0dXJuIFtcbiAgICBoZXguc2xpY2UoMCwgNCkuam9pbihcIlwiKSxcbiAgICBoZXguc2xpY2UoNCwgNikuam9pbihcIlwiKSxcbiAgICBoZXguc2xpY2UoNiwgOCkuam9pbihcIlwiKSxcbiAgICBoZXguc2xpY2UoOCwgMTApLmpvaW4oXCJcIiksXG4gICAgaGV4LnNsaWNlKDEwLCAxNikuam9pbihcIlwiKSxcbiAgXS5qb2luKFwiLVwiKTtcbn1cblxuLyoqIGBjdXN0b21lcklkIC0+IHRoYXQgY3VzdG9tZXIncyBsaXZlIGNhcnQtc2Vzc2lvbiBrZXlgLiAqL1xuY29uc3Qga2V5c0J5Q3VzdG9tZXIgPSBuZXcgTWFwPHN0cmluZywgc3RyaW5nPigpO1xuXG4vKipcbiAqIFRoZSBzbG90IGEgbnVsbC91bmRlZmluZWQgY3VzdG9tZXJJZCB1c2VzLiBBIGNhcnQgd2l0aCBubyBjdXN0b21lciByZXNvbHZlZCB5ZXQgc3RpbGwgbmVlZHMgYVxuICogc3RhYmxlIGtleSAodGhlIHNjcmVlbiBjYW4gc3VibWl0IGFzIHNvb24gYXMgb25lIGlzIHBpY2tlZCksIGFuZCBpdCBtdXN0IG5vdCBiZSBjb25mdXNlZCB3aXRoXG4gKiBhbnkgcmVhbCBjdXN0b21lciBpZCDigJQgY3VzdG9tZXIgaWRzIGFyZSBVVUlEcywgc28gbm8gY29sbGlzaW9uIGlzIHBvc3NpYmxlLlxuICovXG5jb25zdCBOT19DVVNUT01FUiA9IFwiX19ub25lX19cIjtcblxuZnVuY3Rpb24gc2xvdChjdXN0b21lcklkOiBzdHJpbmcgfCBudWxsIHwgdW5kZWZpbmVkKTogc3RyaW5nIHtcbiAgcmV0dXJuIGN1c3RvbWVySWQgPz8gTk9fQ1VTVE9NRVI7XG59XG5cbi8qKlxuICogUmV0dXJuIHRoaXMgY3VzdG9tZXIncyBjYXJ0LXNlc3Npb24gSWRlbXBvdGVuY3ktS2V5LCBtaW50aW5nIG9uZSBvbiBmaXJzdCBjYWxsIGZvciB0aGVtLlxuICogRXZlcnkgc3VibWl0L3JldHJ5L3JlcGxheSBvZiB0aGUgU0FNRSBjYXJ0IG11c3Qgc2VuZCB0aGlzIGV4YWN0IHZhbHVlIG9uIHRoZVxuICogYElkZW1wb3RlbmN5LUtleWAgaGVhZGVyIG9mIFBPU1QgL29yZGVycy5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIGdldE9yZGVyU3VibWl0S2V5KGN1c3RvbWVySWQ6IHN0cmluZyB8IG51bGwgfCB1bmRlZmluZWQpOiBzdHJpbmcge1xuICBjb25zdCBpZCA9IHNsb3QoY3VzdG9tZXJJZCk7XG4gIGxldCBrZXkgPSBrZXlzQnlDdXN0b21lci5nZXQoaWQpO1xuICBpZiAoIWtleSkge1xuICAgIGtleSA9IG1pbnRDYXJ0U2Vzc2lvbktleSgpO1xuICAgIGtleXNCeUN1c3RvbWVyLnNldChpZCwga2V5KTtcbiAgfVxuICByZXR1cm4ga2V5O1xufVxuXG4vKipcbiAqIFN0YXJ0IGEgZnJlc2ggY2FydCBzZXNzaW9uIEZPUiBPTkUgQ1VTVE9NRVI6IHRoZWlyIG5leHQgYGdldE9yZGVyU3VibWl0S2V5KClgIGNhbGwgbWludHMgYSBuZXdcbiAqIGtleSwgYW5kIGV2ZXJ5IG90aGVyIGN1c3RvbWVyJ3Mga2V5IGlzIHVudG91Y2hlZC4gQ2FsbCB0aGlzIE9OTFkgYWZ0ZXIgYSBzdWJtaXQgZm9yIHRoYXRcbiAqIGN1c3RvbWVyIGFjdHVhbGx5IHN1Y2NlZWRzLCBvciBvbiB0aGUgNDA5IFwiT3BlbiBvcmRlclwiIHdpbmQtZG93biDigJQgbmV2ZXIgb24gZmFpbHVyZSBvciB0aW1lb3V0LFxuICogb3IgYSByZXRyeSBvZiB0aGUgc2FtZSBjYXJ0IHdvdWxkIG1pbnQgYSBzaWJsaW5nIGtleSBhbmQgZGVmZWF0IHNlcnZlci1zaWRlIGlkZW1wb3RlbmN5LlxuICovXG5leHBvcnQgZnVuY3Rpb24gcmVzZXRPcmRlclN1Ym1pdEtleShjdXN0b21lcklkOiBzdHJpbmcgfCBudWxsIHwgdW5kZWZpbmVkKTogdm9pZCB7XG4gIGtleXNCeUN1c3RvbWVyLmRlbGV0ZShzbG90KGN1c3RvbWVySWQpKTtcbn1cblxuLyoqXG4gKiBEcm9wIEVWRVJZIGN1c3RvbWVyJ3Mga2V5IGF0IG9uY2UuIEEgdGVhcmRvd24gaGVscGVyIOKAlCB0aGUgc3BlY3MgdXNlIGl0IHRvIGlzb2xhdGUgY2FzZXM7IG5vXG4gKiBzY3JlZW4gcGF0aCBjYWxscyBpdC4gTmV2ZXIgY2FsbCB0aGlzIG9uIGEgc3VibWl0IGZhaWx1cmUuXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiBjbGVhckFsbE9yZGVyU3VibWl0S2V5cygpOiB2b2lkIHtcbiAga2V5c0J5Q3VzdG9tZXIuY2xlYXIoKTtcbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

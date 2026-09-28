@@ -1,0 +1,96 @@
+830f7481ee43b7e76fe8ef5bea82dcb9
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.CHILD_STATE = void 0;
+exports.useRouteCache = useRouteCache;
+const React = __importStar(require("react"));
+const isRecordEqual_js_1 = require("./isRecordEqual.js");
+/**
+ * Utilities such as `getFocusedRouteNameFromRoute` need to access state.
+ * So we need a way to suppress the warning for those use cases.
+ * This is fine since they are internal utilities and this is not public API.
+ */
+exports.CHILD_STATE = Symbol('CHILD_STATE');
+/**
+ * Hook to cache route props for each screen in the navigator.
+ * This lets add warnings and modifications to the route object but keep references between renders.
+ */
+function useRouteCache(routes) {
+    // Cache object which holds route objects for each screen
+    const cache = React.useMemo(() => ({
+        current: new Map()
+    }), []);
+    const next = routes.reduce((acc, route) => {
+        const previous = cache.current.get(route.key);
+        const { state, ...routeWithoutState } = route;
+        let proxy;
+        if (previous && (0, isRecordEqual_js_1.isRecordEqual)(previous, routeWithoutState)) {
+            // If a cached route object already exists, reuse it
+            proxy = previous;
+        }
+        else {
+            proxy = routeWithoutState;
+        }
+        if (process.env.NODE_ENV !== 'production' && proxy !== previous) {
+            // FIXME: since the state is updated with mutation, the route object cannot be frozen
+            // As a workaround, loop through the object and make the properties readonly
+            // Only needed once per proxy - skip if we're reusing a previously-frozen one
+            for (const [key, value] of Object.entries(proxy)) {
+                Object.defineProperty(proxy, key, {
+                    enumerable: true,
+                    configurable: true,
+                    writable: false,
+                    value
+                });
+            }
+        }
+        // @ts-expect-error: this isn't in type definitions coz we want this private
+        if (proxy[exports.CHILD_STATE] !== state) {
+            Object.defineProperty(proxy, exports.CHILD_STATE, {
+                enumerable: false,
+                configurable: true,
+                value: state
+            });
+        }
+        acc.set(route.key, proxy);
+        return acc;
+    }, new Map());
+    React.useInsertionEffect(() => {
+        cache.current = next;
+    });
+    return Array.from(next.values());
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0Mzcvbm9kZV9tb2R1bGVzL0ByZWFjdC1uYXZpZ2F0aW9uL2NvcmUvbGliL21vZHVsZS91c2VSb3V0ZUNhY2hlLmpzIiwibWFwcGluZ3MiOiJBQUFBLFlBQVksQ0FBQzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7O0FBZWIsc0NBK0NDO0FBNURELDZDQUErQjtBQUMvQix5REFBbUQ7QUFDbkQ7Ozs7R0FJRztBQUNVLFFBQUEsV0FBVyxHQUFHLE1BQU0sQ0FBQyxhQUFhLENBQUMsQ0FBQztBQUVqRDs7O0dBR0c7QUFDSCxTQUFnQixhQUFhLENBQUMsTUFBTTtJQUNsQyx5REFBeUQ7SUFDekQsTUFBTSxLQUFLLEdBQUcsS0FBSyxDQUFDLE9BQU8sQ0FBQyxHQUFHLEVBQUUsQ0FBQyxDQUFDO1FBQ2pDLE9BQU8sRUFBRSxJQUFJLEdBQUcsRUFBRTtLQUNuQixDQUFDLEVBQUUsRUFBRSxDQUFDLENBQUM7SUFDUixNQUFNLElBQUksR0FBRyxNQUFNLENBQUMsTUFBTSxDQUFDLENBQUMsR0FBRyxFQUFFLEtBQUssRUFBRSxFQUFFO1FBQ3hDLE1BQU0sUUFBUSxHQUFHLEtBQUssQ0FBQyxPQUFPLENBQUMsR0FBRyxDQUFDLEtBQUssQ0FBQyxHQUFHLENBQUMsQ0FBQztRQUM5QyxNQUFNLEVBQ0osS0FBSyxFQUNMLEdBQUcsaUJBQWlCLEVBQ3JCLEdBQUcsS0FBSyxDQUFDO1FBQ1YsSUFBSSxLQUFLLENBQUM7UUFDVixJQUFJLFFBQVEsSUFBSSxJQUFBLGdDQUFhLEVBQUMsUUFBUSxFQUFFLGlCQUFpQixDQUFDLEVBQUUsQ0FBQztZQUMzRCxvREFBb0Q7WUFDcEQsS0FBSyxHQUFHLFFBQVEsQ0FBQztRQUNuQixDQUFDO2FBQU0sQ0FBQztZQUNOLEtBQUssR0FBRyxpQkFBaUIsQ0FBQztRQUM1QixDQUFDO1FBQ0QsSUFBSSxPQUFPLENBQUMsR0FBRyxDQUFDLFFBQVEsS0FBSyxZQUFZLElBQUksS0FBSyxLQUFLLFFBQVEsRUFBRSxDQUFDO1lBQ2hFLHFGQUFxRjtZQUNyRiw0RUFBNEU7WUFDNUUsNkVBQTZFO1lBQzdFLEtBQUssTUFBTSxDQUFDLEdBQUcsRUFBRSxLQUFLLENBQUMsSUFBSSxNQUFNLENBQUMsT0FBTyxDQUFDLEtBQUssQ0FBQyxFQUFFLENBQUM7Z0JBQ2pELE1BQU0sQ0FBQyxjQUFjLENBQUMsS0FBSyxFQUFFLEdBQUcsRUFBRTtvQkFDaEMsVUFBVSxFQUFFLElBQUk7b0JBQ2hCLFlBQVksRUFBRSxJQUFJO29CQUNsQixRQUFRLEVBQUUsS0FBSztvQkFDZixLQUFLO2lCQUNOLENBQUMsQ0FBQztZQUNMLENBQUM7UUFDSCxDQUFDO1FBRUQsNEVBQTRFO1FBQzVFLElBQUksS0FBSyxDQUFDLG1CQUFXLENBQUMsS0FBSyxLQUFLLEVBQUUsQ0FBQztZQUNqQyxNQUFNLENBQUMsY0FBYyxDQUFDLEtBQUssRUFBRSxtQkFBVyxFQUFFO2dCQUN4QyxVQUFVLEVBQUUsS0FBSztnQkFDakIsWUFBWSxFQUFFLElBQUk7Z0JBQ2xCLEtBQUssRUFBRSxLQUFLO2FBQ2IsQ0FBQyxDQUFDO1FBQ0wsQ0FBQztRQUNELEdBQUcsQ0FBQyxHQUFHLENBQUMsS0FBSyxDQUFDLEdBQUcsRUFBRSxLQUFLLENBQUMsQ0FBQztRQUMxQixPQUFPLEdBQUcsQ0FBQztJQUNiLENBQUMsRUFBRSxJQUFJLEdBQUcsRUFBRSxDQUFDLENBQUM7SUFDZCxLQUFLLENBQUMsa0JBQWtCLENBQUMsR0FBRyxFQUFFO1FBQzVCLEtBQUssQ0FBQyxPQUFPLEdBQUcsSUFBSSxDQUFDO0lBQ3ZCLENBQUMsQ0FBQyxDQUFDO0lBQ0gsT0FBTyxLQUFLLENBQUMsSUFBSSxDQUFDLElBQUksQ0FBQyxNQUFNLEVBQUUsQ0FBQyxDQUFDO0FBQ25DLENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0Mzcvbm9kZV9tb2R1bGVzL0ByZWFjdC1uYXZpZ2F0aW9uL2NvcmUvbGliL21vZHVsZS91c2VSb3V0ZUNhY2hlLmpzIl0sInNvdXJjZXNDb250ZW50IjpbIlwidXNlIHN0cmljdFwiO1xuXG5pbXBvcnQgKiBhcyBSZWFjdCBmcm9tICdyZWFjdCc7XG5pbXBvcnQgeyBpc1JlY29yZEVxdWFsIH0gZnJvbSBcIi4vaXNSZWNvcmRFcXVhbC5qc1wiO1xuLyoqXG4gKiBVdGlsaXRpZXMgc3VjaCBhcyBgZ2V0Rm9jdXNlZFJvdXRlTmFtZUZyb21Sb3V0ZWAgbmVlZCB0byBhY2Nlc3Mgc3RhdGUuXG4gKiBTbyB3ZSBuZWVkIGEgd2F5IHRvIHN1cHByZXNzIHRoZSB3YXJuaW5nIGZvciB0aG9zZSB1c2UgY2FzZXMuXG4gKiBUaGlzIGlzIGZpbmUgc2luY2UgdGhleSBhcmUgaW50ZXJuYWwgdXRpbGl0aWVzIGFuZCB0aGlzIGlzIG5vdCBwdWJsaWMgQVBJLlxuICovXG5leHBvcnQgY29uc3QgQ0hJTERfU1RBVEUgPSBTeW1ib2woJ0NISUxEX1NUQVRFJyk7XG5cbi8qKlxuICogSG9vayB0byBjYWNoZSByb3V0ZSBwcm9wcyBmb3IgZWFjaCBzY3JlZW4gaW4gdGhlIG5hdmlnYXRvci5cbiAqIFRoaXMgbGV0cyBhZGQgd2FybmluZ3MgYW5kIG1vZGlmaWNhdGlvbnMgdG8gdGhlIHJvdXRlIG9iamVjdCBidXQga2VlcCByZWZlcmVuY2VzIGJldHdlZW4gcmVuZGVycy5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIHVzZVJvdXRlQ2FjaGUocm91dGVzKSB7XG4gIC8vIENhY2hlIG9iamVjdCB3aGljaCBob2xkcyByb3V0ZSBvYmplY3RzIGZvciBlYWNoIHNjcmVlblxuICBjb25zdCBjYWNoZSA9IFJlYWN0LnVzZU1lbW8oKCkgPT4gKHtcbiAgICBjdXJyZW50OiBuZXcgTWFwKClcbiAgfSksIFtdKTtcbiAgY29uc3QgbmV4dCA9IHJvdXRlcy5yZWR1Y2UoKGFjYywgcm91dGUpID0+IHtcbiAgICBjb25zdCBwcmV2aW91cyA9IGNhY2hlLmN1cnJlbnQuZ2V0KHJvdXRlLmtleSk7XG4gICAgY29uc3Qge1xuICAgICAgc3RhdGUsXG4gICAgICAuLi5yb3V0ZVdpdGhvdXRTdGF0ZVxuICAgIH0gPSByb3V0ZTtcbiAgICBsZXQgcHJveHk7XG4gICAgaWYgKHByZXZpb3VzICYmIGlzUmVjb3JkRXF1YWwocHJldmlvdXMsIHJvdXRlV2l0aG91dFN0YXRlKSkge1xuICAgICAgLy8gSWYgYSBjYWNoZWQgcm91dGUgb2JqZWN0IGFscmVhZHkgZXhpc3RzLCByZXVzZSBpdFxuICAgICAgcHJveHkgPSBwcmV2aW91cztcbiAgICB9IGVsc2Uge1xuICAgICAgcHJveHkgPSByb3V0ZVdpdGhvdXRTdGF0ZTtcbiAgICB9XG4gICAgaWYgKHByb2Nlc3MuZW52Lk5PREVfRU5WICE9PSAncHJvZHVjdGlvbicgJiYgcHJveHkgIT09IHByZXZpb3VzKSB7XG4gICAgICAvLyBGSVhNRTogc2luY2UgdGhlIHN0YXRlIGlzIHVwZGF0ZWQgd2l0aCBtdXRhdGlvbiwgdGhlIHJvdXRlIG9iamVjdCBjYW5ub3QgYmUgZnJvemVuXG4gICAgICAvLyBBcyBhIHdvcmthcm91bmQsIGxvb3AgdGhyb3VnaCB0aGUgb2JqZWN0IGFuZCBtYWtlIHRoZSBwcm9wZXJ0aWVzIHJlYWRvbmx5XG4gICAgICAvLyBPbmx5IG5lZWRlZCBvbmNlIHBlciBwcm94eSAtIHNraXAgaWYgd2UncmUgcmV1c2luZyBhIHByZXZpb3VzbHktZnJvemVuIG9uZVxuICAgICAgZm9yIChjb25zdCBba2V5LCB2YWx1ZV0gb2YgT2JqZWN0LmVudHJpZXMocHJveHkpKSB7XG4gICAgICAgIE9iamVjdC5kZWZpbmVQcm9wZXJ0eShwcm94eSwga2V5LCB7XG4gICAgICAgICAgZW51bWVyYWJsZTogdHJ1ZSxcbiAgICAgICAgICBjb25maWd1cmFibGU6IHRydWUsXG4gICAgICAgICAgd3JpdGFibGU6IGZhbHNlLFxuICAgICAgICAgIHZhbHVlXG4gICAgICAgIH0pO1xuICAgICAgfVxuICAgIH1cblxuICAgIC8vIEB0cy1leHBlY3QtZXJyb3I6IHRoaXMgaXNuJ3QgaW4gdHlwZSBkZWZpbml0aW9ucyBjb3ogd2Ugd2FudCB0aGlzIHByaXZhdGVcbiAgICBpZiAocHJveHlbQ0hJTERfU1RBVEVdICE9PSBzdGF0ZSkge1xuICAgICAgT2JqZWN0LmRlZmluZVByb3BlcnR5KHByb3h5LCBDSElMRF9TVEFURSwge1xuICAgICAgICBlbnVtZXJhYmxlOiBmYWxzZSxcbiAgICAgICAgY29uZmlndXJhYmxlOiB0cnVlLFxuICAgICAgICB2YWx1ZTogc3RhdGVcbiAgICAgIH0pO1xuICAgIH1cbiAgICBhY2Muc2V0KHJvdXRlLmtleSwgcHJveHkpO1xuICAgIHJldHVybiBhY2M7XG4gIH0sIG5ldyBNYXAoKSk7XG4gIFJlYWN0LnVzZUluc2VydGlvbkVmZmVjdCgoKSA9PiB7XG4gICAgY2FjaGUuY3VycmVudCA9IG5leHQ7XG4gIH0pO1xuICByZXR1cm4gQXJyYXkuZnJvbShuZXh0LnZhbHVlcygpKTtcbn1cbi8vIyBzb3VyY2VNYXBwaW5nVVJMPXVzZVJvdXRlQ2FjaGUuanMubWFwIl0sInZlcnNpb24iOjN9

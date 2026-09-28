@@ -1,0 +1,53 @@
+d60847077f01c97a2094df30195fef3e
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.showToast = showToast;
+const react_native_1 = require("react-native");
+const toast_host_1 = require("./toast-host");
+function showToast(message) {
+    if (react_native_1.Platform.OS === "android") {
+        react_native_1.ToastAndroid.show(message, react_native_1.ToastAndroid.SHORT);
+    }
+    else if (react_native_1.Platform.OS === "web") {
+        if (typeof document === "undefined")
+            return;
+        const el = document.createElement("div");
+        el.textContent = message;
+        Object.assign(el.style, {
+            position: "fixed",
+            // Clear of the bottom nav (~57px + safe-area inset), which is now on every
+            // operator screen rather than just the tab routes.
+            bottom: "96px",
+            left: "50%",
+            transform: "translateX(-50%)",
+            background: "rgba(30,30,30,0.88)",
+            color: "#fff",
+            padding: "10px 18px",
+            borderRadius: "24px",
+            fontSize: "14px",
+            fontFamily: "system-ui, sans-serif",
+            zIndex: "999999",
+            pointerEvents: "none",
+            whiteSpace: "nowrap",
+            transition: "opacity 0.3s",
+        });
+        document.body.appendChild(el);
+        setTimeout(() => {
+            el.style.opacity = "0";
+            setTimeout(() => el.remove(), 350);
+        }, 2200);
+    }
+    else {
+        // iOS (REG-B151): route to whichever screen's InlineToast is currently
+        // mounted (lib/toast-host.ts); when no host is registered, fall back to
+        // a native alert so the message is never silently dropped.
+        const host = (0, toast_host_1.getToastHost)();
+        if (host) {
+            host(message);
+        }
+        else {
+            react_native_1.Alert.alert(message);
+        }
+    }
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3RvYXN0LnRzIiwibWFwcGluZ3MiOiI7O0FBR0EsOEJBeUNDO0FBNUNELCtDQUE2RDtBQUM3RCw2Q0FBNEM7QUFFNUMsU0FBZ0IsU0FBUyxDQUFDLE9BQWU7SUFDdkMsSUFBSSx1QkFBUSxDQUFDLEVBQUUsS0FBSyxTQUFTLEVBQUUsQ0FBQztRQUM5QiwyQkFBWSxDQUFDLElBQUksQ0FBQyxPQUFPLEVBQUUsMkJBQVksQ0FBQyxLQUFLLENBQUMsQ0FBQztJQUNqRCxDQUFDO1NBQU0sSUFBSSx1QkFBUSxDQUFDLEVBQUUsS0FBSyxLQUFLLEVBQUUsQ0FBQztRQUNqQyxJQUFJLE9BQU8sUUFBUSxLQUFLLFdBQVc7WUFBRSxPQUFPO1FBQzVDLE1BQU0sRUFBRSxHQUFHLFFBQVEsQ0FBQyxhQUFhLENBQUMsS0FBSyxDQUFDLENBQUM7UUFDekMsRUFBRSxDQUFDLFdBQVcsR0FBRyxPQUFPLENBQUM7UUFDekIsTUFBTSxDQUFDLE1BQU0sQ0FBQyxFQUFFLENBQUMsS0FBSyxFQUFFO1lBQ3RCLFFBQVEsRUFBRSxPQUFPO1lBQ2pCLDJFQUEyRTtZQUMzRSxtREFBbUQ7WUFDbkQsTUFBTSxFQUFFLE1BQU07WUFDZCxJQUFJLEVBQUUsS0FBSztZQUNYLFNBQVMsRUFBRSxrQkFBa0I7WUFDN0IsVUFBVSxFQUFFLHFCQUFxQjtZQUNqQyxLQUFLLEVBQUUsTUFBTTtZQUNiLE9BQU8sRUFBRSxXQUFXO1lBQ3BCLFlBQVksRUFBRSxNQUFNO1lBQ3BCLFFBQVEsRUFBRSxNQUFNO1lBQ2hCLFVBQVUsRUFBRSx1QkFBdUI7WUFDbkMsTUFBTSxFQUFFLFFBQVE7WUFDaEIsYUFBYSxFQUFFLE1BQU07WUFDckIsVUFBVSxFQUFFLFFBQVE7WUFDcEIsVUFBVSxFQUFFLGNBQWM7U0FDM0IsQ0FBQyxDQUFDO1FBQ0gsUUFBUSxDQUFDLElBQUksQ0FBQyxXQUFXLENBQUMsRUFBRSxDQUFDLENBQUM7UUFDOUIsVUFBVSxDQUFDLEdBQUcsRUFBRTtZQUNkLEVBQUUsQ0FBQyxLQUFLLENBQUMsT0FBTyxHQUFHLEdBQUcsQ0FBQztZQUN2QixVQUFVLENBQUMsR0FBRyxFQUFFLENBQUMsRUFBRSxDQUFDLE1BQU0sRUFBRSxFQUFFLEdBQUcsQ0FBQyxDQUFDO1FBQ3JDLENBQUMsRUFBRSxJQUFJLENBQUMsQ0FBQztJQUNYLENBQUM7U0FBTSxDQUFDO1FBQ04sdUVBQXVFO1FBQ3ZFLHdFQUF3RTtRQUN4RSwyREFBMkQ7UUFDM0QsTUFBTSxJQUFJLEdBQUcsSUFBQSx5QkFBWSxHQUFFLENBQUM7UUFDNUIsSUFBSSxJQUFJLEVBQUUsQ0FBQztZQUNULElBQUksQ0FBQyxPQUFPLENBQUMsQ0FBQztRQUNoQixDQUFDO2FBQU0sQ0FBQztZQUNOLG9CQUFLLENBQUMsS0FBSyxDQUFDLE9BQU8sQ0FBQyxDQUFDO1FBQ3ZCLENBQUM7SUFDSCxDQUFDO0FBQ0gsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9hcHBzL21vYmlsZS9saWIvdG9hc3QudHMiXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IHsgQWxlcnQsIFBsYXRmb3JtLCBUb2FzdEFuZHJvaWQgfSBmcm9tIFwicmVhY3QtbmF0aXZlXCI7XG5pbXBvcnQgeyBnZXRUb2FzdEhvc3QgfSBmcm9tIFwiLi90b2FzdC1ob3N0XCI7XG5cbmV4cG9ydCBmdW5jdGlvbiBzaG93VG9hc3QobWVzc2FnZTogc3RyaW5nKSB7XG4gIGlmIChQbGF0Zm9ybS5PUyA9PT0gXCJhbmRyb2lkXCIpIHtcbiAgICBUb2FzdEFuZHJvaWQuc2hvdyhtZXNzYWdlLCBUb2FzdEFuZHJvaWQuU0hPUlQpO1xuICB9IGVsc2UgaWYgKFBsYXRmb3JtLk9TID09PSBcIndlYlwiKSB7XG4gICAgaWYgKHR5cGVvZiBkb2N1bWVudCA9PT0gXCJ1bmRlZmluZWRcIikgcmV0dXJuO1xuICAgIGNvbnN0IGVsID0gZG9jdW1lbnQuY3JlYXRlRWxlbWVudChcImRpdlwiKTtcbiAgICBlbC50ZXh0Q29udGVudCA9IG1lc3NhZ2U7XG4gICAgT2JqZWN0LmFzc2lnbihlbC5zdHlsZSwge1xuICAgICAgcG9zaXRpb246IFwiZml4ZWRcIixcbiAgICAgIC8vIENsZWFyIG9mIHRoZSBib3R0b20gbmF2ICh+NTdweCArIHNhZmUtYXJlYSBpbnNldCksIHdoaWNoIGlzIG5vdyBvbiBldmVyeVxuICAgICAgLy8gb3BlcmF0b3Igc2NyZWVuIHJhdGhlciB0aGFuIGp1c3QgdGhlIHRhYiByb3V0ZXMuXG4gICAgICBib3R0b206IFwiOTZweFwiLFxuICAgICAgbGVmdDogXCI1MCVcIixcbiAgICAgIHRyYW5zZm9ybTogXCJ0cmFuc2xhdGVYKC01MCUpXCIsXG4gICAgICBiYWNrZ3JvdW5kOiBcInJnYmEoMzAsMzAsMzAsMC44OClcIixcbiAgICAgIGNvbG9yOiBcIiNmZmZcIixcbiAgICAgIHBhZGRpbmc6IFwiMTBweCAxOHB4XCIsXG4gICAgICBib3JkZXJSYWRpdXM6IFwiMjRweFwiLFxuICAgICAgZm9udFNpemU6IFwiMTRweFwiLFxuICAgICAgZm9udEZhbWlseTogXCJzeXN0ZW0tdWksIHNhbnMtc2VyaWZcIixcbiAgICAgIHpJbmRleDogXCI5OTk5OTlcIixcbiAgICAgIHBvaW50ZXJFdmVudHM6IFwibm9uZVwiLFxuICAgICAgd2hpdGVTcGFjZTogXCJub3dyYXBcIixcbiAgICAgIHRyYW5zaXRpb246IFwib3BhY2l0eSAwLjNzXCIsXG4gICAgfSk7XG4gICAgZG9jdW1lbnQuYm9keS5hcHBlbmRDaGlsZChlbCk7XG4gICAgc2V0VGltZW91dCgoKSA9PiB7XG4gICAgICBlbC5zdHlsZS5vcGFjaXR5ID0gXCIwXCI7XG4gICAgICBzZXRUaW1lb3V0KCgpID0+IGVsLnJlbW92ZSgpLCAzNTApO1xuICAgIH0sIDIyMDApO1xuICB9IGVsc2Uge1xuICAgIC8vIGlPUyAoUkVHLUIxNTEpOiByb3V0ZSB0byB3aGljaGV2ZXIgc2NyZWVuJ3MgSW5saW5lVG9hc3QgaXMgY3VycmVudGx5XG4gICAgLy8gbW91bnRlZCAobGliL3RvYXN0LWhvc3QudHMpOyB3aGVuIG5vIGhvc3QgaXMgcmVnaXN0ZXJlZCwgZmFsbCBiYWNrIHRvXG4gICAgLy8gYSBuYXRpdmUgYWxlcnQgc28gdGhlIG1lc3NhZ2UgaXMgbmV2ZXIgc2lsZW50bHkgZHJvcHBlZC5cbiAgICBjb25zdCBob3N0ID0gZ2V0VG9hc3RIb3N0KCk7XG4gICAgaWYgKGhvc3QpIHtcbiAgICAgIGhvc3QobWVzc2FnZSk7XG4gICAgfSBlbHNlIHtcbiAgICAgIEFsZXJ0LmFsZXJ0KG1lc3NhZ2UpO1xuICAgIH1cbiAgfVxufVxuIl0sInZlcnNpb24iOjN9

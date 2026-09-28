@@ -1,0 +1,13 @@
+a72c241ca7d1387fc43a8b9cb7b5202e
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.surfaceForSegments = surfaceForSegments;
+/**
+ * Which web surface a route belongs to (#2330). The `(customer)` group is the buyer portal
+ * (web `.surface-buyer`, emerald). Every other group (driver, operator, tenant, auth) is the
+ * operator surface, which follows the tenant brand.
+ */
+function surfaceForSegments(segments) {
+    return segments[0] === "(customer)" ? "buyer" : "operator";
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3RoZW1lLXN1cmZhY2UudHMiLCJtYXBwaW5ncyI6Ijs7QUFPQSxnREFFQztBQVBEOzs7O0dBSUc7QUFDSCxTQUFnQixrQkFBa0IsQ0FBQyxRQUEyQjtJQUM1RCxPQUFPLFFBQVEsQ0FBQyxDQUFDLENBQUMsS0FBSyxZQUFZLENBQUMsQ0FBQyxDQUFDLE9BQU8sQ0FBQyxDQUFDLENBQUMsVUFBVSxDQUFDO0FBQzdELENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3RoZW1lLXN1cmZhY2UudHMiXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IHR5cGUgeyBMZWRnZXJTdXJmYWNlIH0gZnJvbSBcIkByb3V0ZWZsb3cvdWkvbGVkZ2VyXCI7XG5cbi8qKlxuICogV2hpY2ggd2ViIHN1cmZhY2UgYSByb3V0ZSBiZWxvbmdzIHRvICgjMjMzMCkuIFRoZSBgKGN1c3RvbWVyKWAgZ3JvdXAgaXMgdGhlIGJ1eWVyIHBvcnRhbFxuICogKHdlYiBgLnN1cmZhY2UtYnV5ZXJgLCBlbWVyYWxkKS4gRXZlcnkgb3RoZXIgZ3JvdXAgKGRyaXZlciwgb3BlcmF0b3IsIHRlbmFudCwgYXV0aCkgaXMgdGhlXG4gKiBvcGVyYXRvciBzdXJmYWNlLCB3aGljaCBmb2xsb3dzIHRoZSB0ZW5hbnQgYnJhbmQuXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiBzdXJmYWNlRm9yU2VnbWVudHMoc2VnbWVudHM6IHJlYWRvbmx5IHN0cmluZ1tdKTogTGVkZ2VyU3VyZmFjZSB7XG4gIHJldHVybiBzZWdtZW50c1swXSA9PT0gXCIoY3VzdG9tZXIpXCIgPyBcImJ1eWVyXCIgOiBcIm9wZXJhdG9yXCI7XG59XG4iXSwidmVyc2lvbiI6M30=

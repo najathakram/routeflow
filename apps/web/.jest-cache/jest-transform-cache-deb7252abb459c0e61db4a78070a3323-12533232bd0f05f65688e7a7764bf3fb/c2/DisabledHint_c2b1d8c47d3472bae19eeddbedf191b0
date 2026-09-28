@@ -1,0 +1,64 @@
+cc24cf90574160cd3c00bb66a1ef44f0
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+Object.defineProperty(exports, "DisabledHint", {
+    enumerable: true,
+    get: function() {
+        return DisabledHint;
+    }
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+function DisabledHint({ id, show, children, className = "text-xs text-slate-400" }) {
+    if (!show) return null;
+    return /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+        id: id,
+        className: className,
+        children: children
+    });
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8ocGxhdGZvcm0tYWRtaW4pL19jb21wb25lbnRzL0Rpc2FibGVkSGludC50c3giXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0ICogYXMgUmVhY3QgZnJvbSBcInJlYWN0XCI7XG5cbi8qKlxuICogQSBjb250cm9sIHRoYXQgaXMgZGlzYWJsZWQgZm9yIGEgcmVhc29uIHRoZSB1c2VyIGNhbm5vdCBzZWUgc2F5cyBub3RoaW5nIHRvIGEga2V5Ym9hcmQgb3JcbiAqIHNjcmVlbi1yZWFkZXIgdXNlciAoYSBkaXNhYmxlZCBidXR0b24gaXMgbm90IGZvY3VzYWJsZSwgYW5kIGEgYHRpdGxlYCB0b29sdGlwIGlzIG1vdXNlLW9ubHkpLlxuICogUmVuZGVyIHRoaXMgbmV4dCB0byBpdCB3aGlsZSB0aGUgcmVhc29uIGhvbGRzIGFuZCBwb2ludCB0aGUgY29udHJvbCdzIGBhcmlhLWRlc2NyaWJlZGJ5YCBhdCBgaWRgXG4gKiAoQTMgRjgpLiBSZW5kZXJzIG5vdGhpbmcgd2hlbiBgc2hvd2AgaXMgZmFsc2UsIHNvIHRoZSByZWZlcmVuY2UgaXMgb25seSBzZXQgd2hpbGUgaXQgcmVzb2x2ZXMuXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiBEaXNhYmxlZEhpbnQoe1xuICBpZCxcbiAgc2hvdyxcbiAgY2hpbGRyZW4sXG4gIGNsYXNzTmFtZSA9IFwidGV4dC14cyB0ZXh0LXNsYXRlLTQwMFwiLFxufToge1xuICBpZDogc3RyaW5nO1xuICBzaG93OiBib29sZWFuO1xuICBjaGlsZHJlbjogUmVhY3QuUmVhY3ROb2RlO1xuICBjbGFzc05hbWU/OiBzdHJpbmc7XG59KSB7XG4gIGlmICghc2hvdykgcmV0dXJuIG51bGw7XG4gIHJldHVybiAoXG4gICAgPHAgaWQ9e2lkfSBjbGFzc05hbWU9e2NsYXNzTmFtZX0+XG4gICAgICB7Y2hpbGRyZW59XG4gICAgPC9wPlxuICApO1xufVxuIl0sIm5hbWVzIjpbIkRpc2FibGVkSGludCIsImlkIiwic2hvdyIsImNoaWxkcmVuIiwiY2xhc3NOYW1lIiwicCJdLCJtYXBwaW5ncyI6Ijs7OzsrQkFRZ0JBOzs7ZUFBQUE7Ozs7K0RBUk87Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7OztBQVFoQixTQUFTQSxhQUFhLEVBQzNCQyxFQUFFLEVBQ0ZDLElBQUksRUFDSkMsUUFBUSxFQUNSQyxZQUFZLHdCQUF3QixFQU1yQztJQUNDLElBQUksQ0FBQ0YsTUFBTSxPQUFPO0lBQ2xCLHFCQUNFLHFCQUFDRztRQUFFSixJQUFJQTtRQUFJRyxXQUFXQTtrQkFDbkJEOztBQUdQIn0=

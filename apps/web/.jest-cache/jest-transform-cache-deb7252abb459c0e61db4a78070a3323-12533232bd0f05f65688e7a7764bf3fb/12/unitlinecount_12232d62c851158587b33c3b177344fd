@@ -1,0 +1,32 @@
+5a11abe9d900273f84a1a2780b67e40c
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+exports.unitLineCount = unitLineCount;
+/**
+ * #2276 / SA-388 (#938, tier 1): the ONE count function for a stored unit-aware order line — the
+ * count of its named unit ("3 Cases"), derived from the server's stored fields. Web (orders/[id]
+ * edit) and mobile (edit-items-draft, buyer edit-items) both import this; there are no copies.
+ *
+ * - `boxes` when it is a positive integer (unit-line-build.ts stores the COUNT there);
+ * - else `qty ÷ unitsPerBox` — the line's SNAPSHOT factor — when that factor is an integer ≥ 1 and
+ *   `qty` (base pieces) is a POSITIVE integer and a whole multiple of it (factor-1 "Each" lines,
+ *   boxes null, land here);
+ * - else `null`: LOCKED. There is no safe count, so the caller takes no qty edit and refuses a
+ *   price/note edit rather than guessing. Falling back to raw `qty` read base pieces as the count —
+ *   a price-only save re-billed a 3-Case line as 36 Cases (12x).
+ *
+ * Fields are `unknown` so both apps' line shapes (numbers, or Decimal-as-string JSON) fit.
+ */ function unitLineCount(li) {
+    const boxes = li.boxes == null ? null : Number(li.boxes);
+    if (boxes != null && Number.isInteger(boxes) && boxes > 0) return boxes;
+    const factor = li.unitsPerBox == null ? null : Number(li.unitsPerBox);
+    const qty = Number(li.qty);
+    if (factor != null && Number.isInteger(factor) && factor >= 1 && Number.isInteger(qty) && qty > 0 && qty % factor === 0) {
+        return qty / factor;
+    }
+    return null;
+} //# sourceMappingURL=unit-line-count.js.map
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoidW5pdC1saW5lLWNvdW50LmpzIiwic291cmNlcyI6WyIuLi9zcmMvdW5pdC1saW5lLWNvdW50LnRzIl0sInNvdXJjZVJvb3QiOiIiLCJuYW1lcyI6W10sIm1hcHBpbmdzIjoiOzs7O0FBZUEsUUFBQSxhQUFBLEdBQUEsY0FvQkM7QUFuQ0Q7Ozs7Ozs7Ozs7Ozs7O0dBY0csQ0FDSCxTQUFnQixhQUFhLENBQUMsRUFJN0I7SUFDQyxNQUFNLEtBQUssR0FBRyxFQUFFLENBQUMsS0FBSyxJQUFJLElBQUksQ0FBQyxDQUFDLENBQUMsSUFBSSxDQUFDLENBQUMsQ0FBQyxNQUFNLENBQUMsRUFBRSxDQUFDLEtBQUssQ0FBQyxDQUFDO0lBQ3pELElBQUksS0FBSyxJQUFJLElBQUksSUFBSSxNQUFNLENBQUMsU0FBUyxDQUFDLEtBQUssQ0FBQyxJQUFJLEtBQUssR0FBRyxDQUFDLEVBQUUsT0FBTyxLQUFLLENBQUM7SUFDeEUsTUFBTSxNQUFNLEdBQUcsRUFBRSxDQUFDLFdBQVcsSUFBSSxJQUFJLENBQUMsQ0FBQyxDQUFDLElBQUksQ0FBQyxDQUFDLENBQUMsTUFBTSxDQUFDLEVBQUUsQ0FBQyxXQUFXLENBQUMsQ0FBQztJQUN0RSxNQUFNLEdBQUcsR0FBRyxNQUFNLENBQUMsRUFBRSxDQUFDLEdBQUcsQ0FBQyxDQUFDO0lBQzNCLElBQ0UsTUFBTSxJQUFJLElBQUksSUFDZCxNQUFNLENBQUMsU0FBUyxDQUFDLE1BQU0sQ0FBQyxJQUN4QixNQUFNLElBQUksQ0FBQyxJQUNYLE1BQU0sQ0FBQyxTQUFTLENBQUMsR0FBRyxDQUFDLElBQ3JCLEdBQUcsR0FBRyxDQUFDLElBQ1AsR0FBRyxHQUFHLE1BQU0sS0FBSyxDQUFDLEVBQ2xCLENBQUM7UUFDRCxPQUFPLEdBQUcsR0FBRyxNQUFNLENBQUM7SUFDdEIsQ0FBQztJQUNELE9BQU8sSUFBSSxDQUFDO0FBQ2QsQ0FBQyJ9

@@ -1,0 +1,97 @@
+a439deffd7bddf253013af70572bfe37
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.useFocusEvents = useFocusEvents;
+const React = __importStar(require("react"));
+const NavigationContext_js_1 = require("./NavigationContext.js");
+/**
+ * Hook to take care of emitting `focus` and `blur` events.
+ */
+function useFocusEvents({ state, emitter }) {
+    const navigation = React.useContext(NavigationContext_js_1.NavigationContext);
+    const lastFocusedKeyRef = React.useRef(undefined);
+    const currentFocusedKey = state.routes[state.index].key;
+    // When the parent screen changes its focus state, we also need to change child's focus
+    // Coz the child screen can't be focused if the parent screen is out of focus
+    React.useEffect(() => navigation?.addListener('focus', () => {
+        lastFocusedKeyRef.current = currentFocusedKey;
+        emitter.emit({
+            type: 'focus',
+            target: currentFocusedKey
+        });
+    }), [currentFocusedKey, emitter, navigation]);
+    React.useEffect(() => navigation?.addListener('blur', () => {
+        lastFocusedKeyRef.current = undefined;
+        emitter.emit({
+            type: 'blur',
+            target: currentFocusedKey
+        });
+    }), [currentFocusedKey, emitter, navigation]);
+    React.useEffect(() => {
+        const lastFocusedKey = lastFocusedKeyRef.current;
+        const isFocused = navigation ? navigation.isFocused() : true;
+        if (isFocused) {
+            // Remember the current route as focused if the navigator is focused
+            lastFocusedKeyRef.current = currentFocusedKey;
+        }
+        // We wouldn't have `lastFocusedKey` on initial mount
+        // Fire focus event for the current route on mount if there's no parent navigator
+        if (lastFocusedKey === undefined && !navigation) {
+            emitter.emit({
+                type: 'focus',
+                target: currentFocusedKey
+            });
+        }
+        // We should only emit events when the focused key changed and navigator is focused
+        // When navigator is not focused, screens inside shouldn't receive focused status either
+        if (lastFocusedKey === currentFocusedKey || !isFocused) {
+            return;
+        }
+        if (lastFocusedKey === undefined) {
+            // Only fire events after initial mount
+            return;
+        }
+        emitter.emit({
+            type: 'blur',
+            target: lastFocusedKey
+        });
+        emitter.emit({
+            type: 'focus',
+            target: currentFocusedKey
+        });
+    }, [currentFocusedKey, emitter, navigation]);
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0Mzcvbm9kZV9tb2R1bGVzL0ByZWFjdC1uYXZpZ2F0aW9uL2NvcmUvbGliL21vZHVsZS91c2VGb2N1c0V2ZW50cy5qcyIsIm1hcHBpbmdzIjoiQUFBQSxZQUFZLENBQUM7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7O0FBT2Isd0NBMkRDO0FBaEVELDZDQUErQjtBQUMvQixpRUFBMkQ7QUFDM0Q7O0dBRUc7QUFDSCxTQUFnQixjQUFjLENBQUMsRUFDN0IsS0FBSyxFQUNMLE9BQU8sRUFDUjtJQUNDLE1BQU0sVUFBVSxHQUFHLEtBQUssQ0FBQyxVQUFVLENBQUMsd0NBQWlCLENBQUMsQ0FBQztJQUN2RCxNQUFNLGlCQUFpQixHQUFHLEtBQUssQ0FBQyxNQUFNLENBQUMsU0FBUyxDQUFDLENBQUM7SUFDbEQsTUFBTSxpQkFBaUIsR0FBRyxLQUFLLENBQUMsTUFBTSxDQUFDLEtBQUssQ0FBQyxLQUFLLENBQUMsQ0FBQyxHQUFHLENBQUM7SUFFeEQsdUZBQXVGO0lBQ3ZGLDZFQUE2RTtJQUM3RSxLQUFLLENBQUMsU0FBUyxDQUFDLEdBQUcsRUFBRSxDQUFDLFVBQVUsRUFBRSxXQUFXLENBQUMsT0FBTyxFQUFFLEdBQUcsRUFBRTtRQUMxRCxpQkFBaUIsQ0FBQyxPQUFPLEdBQUcsaUJBQWlCLENBQUM7UUFDOUMsT0FBTyxDQUFDLElBQUksQ0FBQztZQUNYLElBQUksRUFBRSxPQUFPO1lBQ2IsTUFBTSxFQUFFLGlCQUFpQjtTQUMxQixDQUFDLENBQUM7SUFDTCxDQUFDLENBQUMsRUFBRSxDQUFDLGlCQUFpQixFQUFFLE9BQU8sRUFBRSxVQUFVLENBQUMsQ0FBQyxDQUFDO0lBQzlDLEtBQUssQ0FBQyxTQUFTLENBQUMsR0FBRyxFQUFFLENBQUMsVUFBVSxFQUFFLFdBQVcsQ0FBQyxNQUFNLEVBQUUsR0FBRyxFQUFFO1FBQ3pELGlCQUFpQixDQUFDLE9BQU8sR0FBRyxTQUFTLENBQUM7UUFDdEMsT0FBTyxDQUFDLElBQUksQ0FBQztZQUNYLElBQUksRUFBRSxNQUFNO1lBQ1osTUFBTSxFQUFFLGlCQUFpQjtTQUMxQixDQUFDLENBQUM7SUFDTCxDQUFDLENBQUMsRUFBRSxDQUFDLGlCQUFpQixFQUFFLE9BQU8sRUFBRSxVQUFVLENBQUMsQ0FBQyxDQUFDO0lBQzlDLEtBQUssQ0FBQyxTQUFTLENBQUMsR0FBRyxFQUFFO1FBQ25CLE1BQU0sY0FBYyxHQUFHLGlCQUFpQixDQUFDLE9BQU8sQ0FBQztRQUNqRCxNQUFNLFNBQVMsR0FBRyxVQUFVLENBQUMsQ0FBQyxDQUFDLFVBQVUsQ0FBQyxTQUFTLEVBQUUsQ0FBQyxDQUFDLENBQUMsSUFBSSxDQUFDO1FBQzdELElBQUksU0FBUyxFQUFFLENBQUM7WUFDZCxvRUFBb0U7WUFDcEUsaUJBQWlCLENBQUMsT0FBTyxHQUFHLGlCQUFpQixDQUFDO1FBQ2hELENBQUM7UUFFRCxxREFBcUQ7UUFDckQsaUZBQWlGO1FBQ2pGLElBQUksY0FBYyxLQUFLLFNBQVMsSUFBSSxDQUFDLFVBQVUsRUFBRSxDQUFDO1lBQ2hELE9BQU8sQ0FBQyxJQUFJLENBQUM7Z0JBQ1gsSUFBSSxFQUFFLE9BQU87Z0JBQ2IsTUFBTSxFQUFFLGlCQUFpQjthQUMxQixDQUFDLENBQUM7UUFDTCxDQUFDO1FBRUQsbUZBQW1GO1FBQ25GLHdGQUF3RjtRQUN4RixJQUFJLGNBQWMsS0FBSyxpQkFBaUIsSUFBSSxDQUFDLFNBQVMsRUFBRSxDQUFDO1lBQ3ZELE9BQU87UUFDVCxDQUFDO1FBQ0QsSUFBSSxjQUFjLEtBQUssU0FBUyxFQUFFLENBQUM7WUFDakMsdUNBQXVDO1lBQ3ZDLE9BQU87UUFDVCxDQUFDO1FBQ0QsT0FBTyxDQUFDLElBQUksQ0FBQztZQUNYLElBQUksRUFBRSxNQUFNO1lBQ1osTUFBTSxFQUFFLGNBQWM7U0FDdkIsQ0FBQyxDQUFDO1FBQ0gsT0FBTyxDQUFDLElBQUksQ0FBQztZQUNYLElBQUksRUFBRSxPQUFPO1lBQ2IsTUFBTSxFQUFFLGlCQUFpQjtTQUMxQixDQUFDLENBQUM7SUFDTCxDQUFDLEVBQUUsQ0FBQyxpQkFBaUIsRUFBRSxPQUFPLEVBQUUsVUFBVSxDQUFDLENBQUMsQ0FBQztBQUMvQyxDQUFDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L25vZGVfbW9kdWxlcy9AcmVhY3QtbmF2aWdhdGlvbi9jb3JlL2xpYi9tb2R1bGUvdXNlRm9jdXNFdmVudHMuanMiXSwic291cmNlc0NvbnRlbnQiOlsiXCJ1c2Ugc3RyaWN0XCI7XG5cbmltcG9ydCAqIGFzIFJlYWN0IGZyb20gJ3JlYWN0JztcbmltcG9ydCB7IE5hdmlnYXRpb25Db250ZXh0IH0gZnJvbSBcIi4vTmF2aWdhdGlvbkNvbnRleHQuanNcIjtcbi8qKlxuICogSG9vayB0byB0YWtlIGNhcmUgb2YgZW1pdHRpbmcgYGZvY3VzYCBhbmQgYGJsdXJgIGV2ZW50cy5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIHVzZUZvY3VzRXZlbnRzKHtcbiAgc3RhdGUsXG4gIGVtaXR0ZXJcbn0pIHtcbiAgY29uc3QgbmF2aWdhdGlvbiA9IFJlYWN0LnVzZUNvbnRleHQoTmF2aWdhdGlvbkNvbnRleHQpO1xuICBjb25zdCBsYXN0Rm9jdXNlZEtleVJlZiA9IFJlYWN0LnVzZVJlZih1bmRlZmluZWQpO1xuICBjb25zdCBjdXJyZW50Rm9jdXNlZEtleSA9IHN0YXRlLnJvdXRlc1tzdGF0ZS5pbmRleF0ua2V5O1xuXG4gIC8vIFdoZW4gdGhlIHBhcmVudCBzY3JlZW4gY2hhbmdlcyBpdHMgZm9jdXMgc3RhdGUsIHdlIGFsc28gbmVlZCB0byBjaGFuZ2UgY2hpbGQncyBmb2N1c1xuICAvLyBDb3ogdGhlIGNoaWxkIHNjcmVlbiBjYW4ndCBiZSBmb2N1c2VkIGlmIHRoZSBwYXJlbnQgc2NyZWVuIGlzIG91dCBvZiBmb2N1c1xuICBSZWFjdC51c2VFZmZlY3QoKCkgPT4gbmF2aWdhdGlvbj8uYWRkTGlzdGVuZXIoJ2ZvY3VzJywgKCkgPT4ge1xuICAgIGxhc3RGb2N1c2VkS2V5UmVmLmN1cnJlbnQgPSBjdXJyZW50Rm9jdXNlZEtleTtcbiAgICBlbWl0dGVyLmVtaXQoe1xuICAgICAgdHlwZTogJ2ZvY3VzJyxcbiAgICAgIHRhcmdldDogY3VycmVudEZvY3VzZWRLZXlcbiAgICB9KTtcbiAgfSksIFtjdXJyZW50Rm9jdXNlZEtleSwgZW1pdHRlciwgbmF2aWdhdGlvbl0pO1xuICBSZWFjdC51c2VFZmZlY3QoKCkgPT4gbmF2aWdhdGlvbj8uYWRkTGlzdGVuZXIoJ2JsdXInLCAoKSA9PiB7XG4gICAgbGFzdEZvY3VzZWRLZXlSZWYuY3VycmVudCA9IHVuZGVmaW5lZDtcbiAgICBlbWl0dGVyLmVtaXQoe1xuICAgICAgdHlwZTogJ2JsdXInLFxuICAgICAgdGFyZ2V0OiBjdXJyZW50Rm9jdXNlZEtleVxuICAgIH0pO1xuICB9KSwgW2N1cnJlbnRGb2N1c2VkS2V5LCBlbWl0dGVyLCBuYXZpZ2F0aW9uXSk7XG4gIFJlYWN0LnVzZUVmZmVjdCgoKSA9PiB7XG4gICAgY29uc3QgbGFzdEZvY3VzZWRLZXkgPSBsYXN0Rm9jdXNlZEtleVJlZi5jdXJyZW50O1xuICAgIGNvbnN0IGlzRm9jdXNlZCA9IG5hdmlnYXRpb24gPyBuYXZpZ2F0aW9uLmlzRm9jdXNlZCgpIDogdHJ1ZTtcbiAgICBpZiAoaXNGb2N1c2VkKSB7XG4gICAgICAvLyBSZW1lbWJlciB0aGUgY3VycmVudCByb3V0ZSBhcyBmb2N1c2VkIGlmIHRoZSBuYXZpZ2F0b3IgaXMgZm9jdXNlZFxuICAgICAgbGFzdEZvY3VzZWRLZXlSZWYuY3VycmVudCA9IGN1cnJlbnRGb2N1c2VkS2V5O1xuICAgIH1cblxuICAgIC8vIFdlIHdvdWxkbid0IGhhdmUgYGxhc3RGb2N1c2VkS2V5YCBvbiBpbml0aWFsIG1vdW50XG4gICAgLy8gRmlyZSBmb2N1cyBldmVudCBmb3IgdGhlIGN1cnJlbnQgcm91dGUgb24gbW91bnQgaWYgdGhlcmUncyBubyBwYXJlbnQgbmF2aWdhdG9yXG4gICAgaWYgKGxhc3RGb2N1c2VkS2V5ID09PSB1bmRlZmluZWQgJiYgIW5hdmlnYXRpb24pIHtcbiAgICAgIGVtaXR0ZXIuZW1pdCh7XG4gICAgICAgIHR5cGU6ICdmb2N1cycsXG4gICAgICAgIHRhcmdldDogY3VycmVudEZvY3VzZWRLZXlcbiAgICAgIH0pO1xuICAgIH1cblxuICAgIC8vIFdlIHNob3VsZCBvbmx5IGVtaXQgZXZlbnRzIHdoZW4gdGhlIGZvY3VzZWQga2V5IGNoYW5nZWQgYW5kIG5hdmlnYXRvciBpcyBmb2N1c2VkXG4gICAgLy8gV2hlbiBuYXZpZ2F0b3IgaXMgbm90IGZvY3VzZWQsIHNjcmVlbnMgaW5zaWRlIHNob3VsZG4ndCByZWNlaXZlIGZvY3VzZWQgc3RhdHVzIGVpdGhlclxuICAgIGlmIChsYXN0Rm9jdXNlZEtleSA9PT0gY3VycmVudEZvY3VzZWRLZXkgfHwgIWlzRm9jdXNlZCkge1xuICAgICAgcmV0dXJuO1xuICAgIH1cbiAgICBpZiAobGFzdEZvY3VzZWRLZXkgPT09IHVuZGVmaW5lZCkge1xuICAgICAgLy8gT25seSBmaXJlIGV2ZW50cyBhZnRlciBpbml0aWFsIG1vdW50XG4gICAgICByZXR1cm47XG4gICAgfVxuICAgIGVtaXR0ZXIuZW1pdCh7XG4gICAgICB0eXBlOiAnYmx1cicsXG4gICAgICB0YXJnZXQ6IGxhc3RGb2N1c2VkS2V5XG4gICAgfSk7XG4gICAgZW1pdHRlci5lbWl0KHtcbiAgICAgIHR5cGU6ICdmb2N1cycsXG4gICAgICB0YXJnZXQ6IGN1cnJlbnRGb2N1c2VkS2V5XG4gICAgfSk7XG4gIH0sIFtjdXJyZW50Rm9jdXNlZEtleSwgZW1pdHRlciwgbmF2aWdhdGlvbl0pO1xufVxuLy8jIHNvdXJjZU1hcHBpbmdVUkw9dXNlRm9jdXNFdmVudHMuanMubWFwIl0sInZlcnNpb24iOjN9

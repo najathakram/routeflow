@@ -1,0 +1,42 @@
+d6a08295ed06ed626a089c074de89aa1
+/**
+ * #2329 (T0.1): `globals.css` cannot import TypeScript, so this pins it to the one Ledger token
+ * source (`packages/ui/src/tokens/ledger.ts`) the way enum-parity.spec.ts pins Prisma enums
+ * (L-072). Every custom property in `:root` and `.surface-buyer` must equal what
+ * `ledgerCssVars()` says, and neither side may carry a var the other lacks.
+ */ "use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _fs = require("fs");
+const _path = require("path");
+const _ledger = require("@routeflow/ui/ledger");
+const css = (0, _fs.readFileSync)((0, _path.join)(__dirname, "..", "app", "globals.css"), "utf8");
+/** The custom properties declared directly inside `selector { … }` (comments stripped). */ function block(selector) {
+    const clean = css.replace(/\/\*[\s\S]*?\*\//g, "");
+    const at = clean.search(new RegExp(`(^|\\n)${selector.replace(".", "\\.")}\\s*\\{`));
+    if (at < 0) throw new Error(`${selector} not found in globals.css`);
+    const open = clean.indexOf("{", at);
+    const body = clean.slice(open + 1, clean.indexOf("}", open));
+    const vars = {};
+    for (const m of body.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)){
+        vars[m[1]] = m[2].replace(/\s+/g, " ").trim();
+    }
+    return vars;
+}
+describe("globals.css ⇄ Ledger token source (#2329)", ()=>{
+    it.each([
+        [
+            ":root",
+            "operator"
+        ],
+        [
+            ".surface-buyer",
+            "buyer"
+        ]
+    ])("%s matches ledgerCssVars(%s) exactly", (selector, surface)=>{
+        expect(block(selector)).toEqual((0, _ledger.ledgerCssVars)(surface));
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2xpYi9sZWRnZXItY3NzLXBhcml0eS50ZXN0LnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogIzIzMjkgKFQwLjEpOiBgZ2xvYmFscy5jc3NgIGNhbm5vdCBpbXBvcnQgVHlwZVNjcmlwdCwgc28gdGhpcyBwaW5zIGl0IHRvIHRoZSBvbmUgTGVkZ2VyIHRva2VuXG4gKiBzb3VyY2UgKGBwYWNrYWdlcy91aS9zcmMvdG9rZW5zL2xlZGdlci50c2ApIHRoZSB3YXkgZW51bS1wYXJpdHkuc3BlYy50cyBwaW5zIFByaXNtYSBlbnVtc1xuICogKEwtMDcyKS4gRXZlcnkgY3VzdG9tIHByb3BlcnR5IGluIGA6cm9vdGAgYW5kIGAuc3VyZmFjZS1idXllcmAgbXVzdCBlcXVhbCB3aGF0XG4gKiBgbGVkZ2VyQ3NzVmFycygpYCBzYXlzLCBhbmQgbmVpdGhlciBzaWRlIG1heSBjYXJyeSBhIHZhciB0aGUgb3RoZXIgbGFja3MuXG4gKi9cbmltcG9ydCB7IHJlYWRGaWxlU3luYyB9IGZyb20gXCJmc1wiO1xuaW1wb3J0IHsgam9pbiB9IGZyb20gXCJwYXRoXCI7XG5pbXBvcnQgeyBsZWRnZXJDc3NWYXJzIH0gZnJvbSBcIkByb3V0ZWZsb3cvdWkvbGVkZ2VyXCI7XG5cbmNvbnN0IGNzcyA9IHJlYWRGaWxlU3luYyhqb2luKF9fZGlybmFtZSwgXCIuLlwiLCBcImFwcFwiLCBcImdsb2JhbHMuY3NzXCIpLCBcInV0ZjhcIik7XG5cbi8qKiBUaGUgY3VzdG9tIHByb3BlcnRpZXMgZGVjbGFyZWQgZGlyZWN0bHkgaW5zaWRlIGBzZWxlY3RvciB7IOKApiB9YCAoY29tbWVudHMgc3RyaXBwZWQpLiAqL1xuZnVuY3Rpb24gYmxvY2soc2VsZWN0b3I6IHN0cmluZyk6IFJlY29yZDxzdHJpbmcsIHN0cmluZz4ge1xuICBjb25zdCBjbGVhbiA9IGNzcy5yZXBsYWNlKC9cXC9cXCpbXFxzXFxTXSo/XFwqXFwvL2csIFwiXCIpO1xuICBjb25zdCBhdCA9IGNsZWFuLnNlYXJjaChuZXcgUmVnRXhwKGAoXnxcXFxcbikke3NlbGVjdG9yLnJlcGxhY2UoXCIuXCIsIFwiXFxcXC5cIil9XFxcXHMqXFxcXHtgKSk7XG4gIGlmIChhdCA8IDApIHRocm93IG5ldyBFcnJvcihgJHtzZWxlY3Rvcn0gbm90IGZvdW5kIGluIGdsb2JhbHMuY3NzYCk7XG4gIGNvbnN0IG9wZW4gPSBjbGVhbi5pbmRleE9mKFwie1wiLCBhdCk7XG4gIGNvbnN0IGJvZHkgPSBjbGVhbi5zbGljZShvcGVuICsgMSwgY2xlYW4uaW5kZXhPZihcIn1cIiwgb3BlbikpO1xuICBjb25zdCB2YXJzOiBSZWNvcmQ8c3RyaW5nLCBzdHJpbmc+ID0ge307XG4gIGZvciAoY29uc3QgbSBvZiBib2R5Lm1hdGNoQWxsKC8oLS1bXFx3LV0rKVxccyo6XFxzKihbXjtdKyk7L2cpKSB7XG4gICAgdmFyc1ttWzFdXSA9IG1bMl0ucmVwbGFjZSgvXFxzKy9nLCBcIiBcIikudHJpbSgpO1xuICB9XG4gIHJldHVybiB2YXJzO1xufVxuXG5kZXNjcmliZShcImdsb2JhbHMuY3NzIOKHhCBMZWRnZXIgdG9rZW4gc291cmNlICgjMjMyOSlcIiwgKCkgPT4ge1xuICBpdC5lYWNoKFtcbiAgICBbXCI6cm9vdFwiLCBcIm9wZXJhdG9yXCJdLFxuICAgIFtcIi5zdXJmYWNlLWJ1eWVyXCIsIFwiYnV5ZXJcIl0sXG4gIF0gYXMgY29uc3QpKFwiJXMgbWF0Y2hlcyBsZWRnZXJDc3NWYXJzKCVzKSBleGFjdGx5XCIsIChzZWxlY3Rvciwgc3VyZmFjZSkgPT4ge1xuICAgIGV4cGVjdChibG9jayhzZWxlY3RvcikpLnRvRXF1YWwobGVkZ2VyQ3NzVmFycyhzdXJmYWNlKSk7XG4gIH0pO1xufSk7XG4iXSwibmFtZXMiOlsiY3NzIiwicmVhZEZpbGVTeW5jIiwiam9pbiIsIl9fZGlybmFtZSIsImJsb2NrIiwic2VsZWN0b3IiLCJjbGVhbiIsInJlcGxhY2UiLCJhdCIsInNlYXJjaCIsIlJlZ0V4cCIsIkVycm9yIiwib3BlbiIsImluZGV4T2YiLCJib2R5Iiwic2xpY2UiLCJ2YXJzIiwibSIsIm1hdGNoQWxsIiwidHJpbSIsImRlc2NyaWJlIiwiaXQiLCJlYWNoIiwic3VyZmFjZSIsImV4cGVjdCIsInRvRXF1YWwiLCJsZWRnZXJDc3NWYXJzIl0sIm1hcHBpbmdzIjoiQUFBQTs7Ozs7Q0FLQzs7OztvQkFDNEI7c0JBQ1I7d0JBQ1M7QUFFOUIsTUFBTUEsTUFBTUMsSUFBQUEsZ0JBQVksRUFBQ0MsSUFBQUEsVUFBSSxFQUFDQyxXQUFXLE1BQU0sT0FBTyxnQkFBZ0I7QUFFdEUseUZBQXlGLEdBQ3pGLFNBQVNDLE1BQU1DLFFBQWdCO0lBQzdCLE1BQU1DLFFBQVFOLElBQUlPLE9BQU8sQ0FBQyxxQkFBcUI7SUFDL0MsTUFBTUMsS0FBS0YsTUFBTUcsTUFBTSxDQUFDLElBQUlDLE9BQU8sQ0FBQyxPQUFPLEVBQUVMLFNBQVNFLE9BQU8sQ0FBQyxLQUFLLE9BQU8sT0FBTyxDQUFDO0lBQ2xGLElBQUlDLEtBQUssR0FBRyxNQUFNLElBQUlHLE1BQU0sR0FBR04sU0FBUyx5QkFBeUIsQ0FBQztJQUNsRSxNQUFNTyxPQUFPTixNQUFNTyxPQUFPLENBQUMsS0FBS0w7SUFDaEMsTUFBTU0sT0FBT1IsTUFBTVMsS0FBSyxDQUFDSCxPQUFPLEdBQUdOLE1BQU1PLE9BQU8sQ0FBQyxLQUFLRDtJQUN0RCxNQUFNSSxPQUErQixDQUFDO0lBQ3RDLEtBQUssTUFBTUMsS0FBS0gsS0FBS0ksUUFBUSxDQUFDLDhCQUErQjtRQUMzREYsSUFBSSxDQUFDQyxDQUFDLENBQUMsRUFBRSxDQUFDLEdBQUdBLENBQUMsQ0FBQyxFQUFFLENBQUNWLE9BQU8sQ0FBQyxRQUFRLEtBQUtZLElBQUk7SUFDN0M7SUFDQSxPQUFPSDtBQUNUO0FBRUFJLFNBQVMsNkNBQTZDO0lBQ3BEQyxHQUFHQyxJQUFJLENBQUM7UUFDTjtZQUFDO1lBQVM7U0FBVztRQUNyQjtZQUFDO1lBQWtCO1NBQVE7S0FDNUIsRUFBVyx3Q0FBd0MsQ0FBQ2pCLFVBQVVrQjtRQUM3REMsT0FBT3BCLE1BQU1DLFdBQVdvQixPQUFPLENBQUNDLElBQUFBLHFCQUFhLEVBQUNIO0lBQ2hEO0FBQ0YifQ==

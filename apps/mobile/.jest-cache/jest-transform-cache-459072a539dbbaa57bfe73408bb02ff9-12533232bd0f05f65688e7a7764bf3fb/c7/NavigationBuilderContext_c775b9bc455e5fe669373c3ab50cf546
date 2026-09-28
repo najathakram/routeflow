@@ -1,0 +1,54 @@
+63363ae3176817355c208589e843da22
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.NavigationBuilderContext = void 0;
+const React = __importStar(require("react"));
+/**
+ * Context which holds the required helpers needed to build nested navigators.
+ */
+exports.NavigationBuilderContext = React.createContext({
+    onDispatchAction: () => undefined,
+    onEmitEvent: () => undefined,
+    onOptionsChange: () => undefined,
+    getIsStateEmitted: () => false,
+    scheduleUpdate: () => {
+        throw new Error("Couldn't find a context for scheduling updates.");
+    },
+    flushUpdates: () => {
+        throw new Error("Couldn't find a context for flushing updates.");
+    }
+});
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0Mzcvbm9kZV9tb2R1bGVzL0ByZWFjdC1uYXZpZ2F0aW9uL2NvcmUvbGliL21vZHVsZS9OYXZpZ2F0aW9uQnVpbGRlckNvbnRleHQuanMiLCJtYXBwaW5ncyI6IkFBQUEsWUFBWSxDQUFDOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7QUFFYiw2Q0FBK0I7QUFDL0I7O0dBRUc7QUFDVSxRQUFBLHdCQUF3QixHQUFnQixLQUFLLENBQUMsYUFBYSxDQUFDO0lBQ3ZFLGdCQUFnQixFQUFFLEdBQUcsRUFBRSxDQUFDLFNBQVM7SUFDakMsV0FBVyxFQUFFLEdBQUcsRUFBRSxDQUFDLFNBQVM7SUFDNUIsZUFBZSxFQUFFLEdBQUcsRUFBRSxDQUFDLFNBQVM7SUFDaEMsaUJBQWlCLEVBQUUsR0FBRyxFQUFFLENBQUMsS0FBSztJQUM5QixjQUFjLEVBQUUsR0FBRyxFQUFFO1FBQ25CLE1BQU0sSUFBSSxLQUFLLENBQUMsaURBQWlELENBQUMsQ0FBQztJQUNyRSxDQUFDO0lBQ0QsWUFBWSxFQUFFLEdBQUcsRUFBRTtRQUNqQixNQUFNLElBQUksS0FBSyxDQUFDLCtDQUErQyxDQUFDLENBQUM7SUFDbkUsQ0FBQztDQUNGLENBQUMsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9ub2RlX21vZHVsZXMvQHJlYWN0LW5hdmlnYXRpb24vY29yZS9saWIvbW9kdWxlL05hdmlnYXRpb25CdWlsZGVyQ29udGV4dC5qcyJdLCJzb3VyY2VzQ29udGVudCI6WyJcInVzZSBzdHJpY3RcIjtcblxuaW1wb3J0ICogYXMgUmVhY3QgZnJvbSAncmVhY3QnO1xuLyoqXG4gKiBDb250ZXh0IHdoaWNoIGhvbGRzIHRoZSByZXF1aXJlZCBoZWxwZXJzIG5lZWRlZCB0byBidWlsZCBuZXN0ZWQgbmF2aWdhdG9ycy5cbiAqL1xuZXhwb3J0IGNvbnN0IE5hdmlnYXRpb25CdWlsZGVyQ29udGV4dCA9IC8qI19fUFVSRV9fKi9SZWFjdC5jcmVhdGVDb250ZXh0KHtcbiAgb25EaXNwYXRjaEFjdGlvbjogKCkgPT4gdW5kZWZpbmVkLFxuICBvbkVtaXRFdmVudDogKCkgPT4gdW5kZWZpbmVkLFxuICBvbk9wdGlvbnNDaGFuZ2U6ICgpID0+IHVuZGVmaW5lZCxcbiAgZ2V0SXNTdGF0ZUVtaXR0ZWQ6ICgpID0+IGZhbHNlLFxuICBzY2hlZHVsZVVwZGF0ZTogKCkgPT4ge1xuICAgIHRocm93IG5ldyBFcnJvcihcIkNvdWxkbid0IGZpbmQgYSBjb250ZXh0IGZvciBzY2hlZHVsaW5nIHVwZGF0ZXMuXCIpO1xuICB9LFxuICBmbHVzaFVwZGF0ZXM6ICgpID0+IHtcbiAgICB0aHJvdyBuZXcgRXJyb3IoXCJDb3VsZG4ndCBmaW5kIGEgY29udGV4dCBmb3IgZmx1c2hpbmcgdXBkYXRlcy5cIik7XG4gIH1cbn0pO1xuLy8jIHNvdXJjZU1hcHBpbmdVUkw9TmF2aWdhdGlvbkJ1aWxkZXJDb250ZXh0LmpzLm1hcCJdLCJ2ZXJzaW9uIjozfQ==

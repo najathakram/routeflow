@@ -1,0 +1,98 @@
+07796848491754cf8e22d70ec5bc7030
+"use strict";
+jest.mock("@/lib/api-client", ()=>({
+        apiClient: {
+            get: jest.fn().mockResolvedValue({
+                data: {}
+            }),
+            post: jest.fn().mockResolvedValue({
+                data: {}
+            }),
+            patch: jest.fn(),
+            delete: jest.fn()
+        }
+    }));
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+const _userevent = /*#__PURE__*/ _interop_require_default(require("@testing-library/user-event"));
+const _render = require("../../../test-utils/render");
+const _page = /*#__PURE__*/ _interop_require_default(require("./page"));
+const _apiclient = require("../../../lib/api-client");
+function _interop_require_default(obj) {
+    return obj && obj.__esModule ? obj : {
+        default: obj
+    };
+}
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+describe("ForgotPasswordPage (operator)", ()=>{
+    beforeEach(()=>jest.clearAllMocks());
+    it("shows the zod validation message and never calls the API on an invalid submit", async ()=>{
+        const user = _userevent.default.setup();
+        (0, _render.renderWithProviders)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_page.default, {}));
+        await user.click(_render.screen.getByRole("button", {
+            name: /send reset link/i
+        }));
+        expect(await _render.screen.findByText("Email is required")).toBeInTheDocument();
+        expect(_apiclient.apiClient.post).not.toHaveBeenCalled();
+    });
+    it("submits the trimmed, lowercased email with surface: web", async ()=>{
+        const user = _userevent.default.setup();
+        (0, _render.renderWithProviders)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_page.default, {}));
+        await user.type(_render.screen.getByLabelText("Email"), "  Jane@Example.com  ");
+        await user.click(_render.screen.getByRole("button", {
+            name: /send reset link/i
+        }));
+        await (0, _render.waitFor)(()=>{
+            expect(_apiclient.apiClient.post).toHaveBeenCalledWith("/auth/request-password-reset", {
+                email: "jane@example.com",
+                surface: "web"
+            });
+        });
+        expect(await _render.screen.findByText("Check your inbox")).toBeInTheDocument();
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oYXV0aCkvZm9yZ290LXBhc3N3b3JkL3BhZ2UudGVzdC50c3giXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0ICogYXMgUmVhY3QgZnJvbSBcInJlYWN0XCI7XG5pbXBvcnQgdXNlckV2ZW50IGZyb20gXCJAdGVzdGluZy1saWJyYXJ5L3VzZXItZXZlbnRcIjtcbmltcG9ydCB7IHJlbmRlcldpdGhQcm92aWRlcnMsIHNjcmVlbiwgd2FpdEZvciB9IGZyb20gXCJAL3Rlc3QtdXRpbHMvcmVuZGVyXCI7XG5pbXBvcnQgRm9yZ290UGFzc3dvcmRQYWdlIGZyb20gXCIuL3BhZ2VcIjtcblxuamVzdC5tb2NrKFwiQC9saWIvYXBpLWNsaWVudFwiLCAoKSA9PiAoe1xuICBhcGlDbGllbnQ6IHtcbiAgICBnZXQ6IGplc3QuZm4oKS5tb2NrUmVzb2x2ZWRWYWx1ZSh7IGRhdGE6IHt9IH0pLFxuICAgIHBvc3Q6IGplc3QuZm4oKS5tb2NrUmVzb2x2ZWRWYWx1ZSh7IGRhdGE6IHt9IH0pLFxuICAgIHBhdGNoOiBqZXN0LmZuKCksXG4gICAgZGVsZXRlOiBqZXN0LmZuKCksXG4gIH0sXG59KSk7XG5cbmltcG9ydCB7IGFwaUNsaWVudCB9IGZyb20gXCJAL2xpYi9hcGktY2xpZW50XCI7XG5cbmRlc2NyaWJlKFwiRm9yZ290UGFzc3dvcmRQYWdlIChvcGVyYXRvcilcIiwgKCkgPT4ge1xuICBiZWZvcmVFYWNoKCgpID0+IGplc3QuY2xlYXJBbGxNb2NrcygpKTtcblxuICBpdChcInNob3dzIHRoZSB6b2QgdmFsaWRhdGlvbiBtZXNzYWdlIGFuZCBuZXZlciBjYWxscyB0aGUgQVBJIG9uIGFuIGludmFsaWQgc3VibWl0XCIsIGFzeW5jICgpID0+IHtcbiAgICBjb25zdCB1c2VyID0gdXNlckV2ZW50LnNldHVwKCk7XG4gICAgcmVuZGVyV2l0aFByb3ZpZGVycyg8Rm9yZ290UGFzc3dvcmRQYWdlIC8+KTtcblxuICAgIGF3YWl0IHVzZXIuY2xpY2soc2NyZWVuLmdldEJ5Um9sZShcImJ1dHRvblwiLCB7IG5hbWU6IC9zZW5kIHJlc2V0IGxpbmsvaSB9KSk7XG5cbiAgICBleHBlY3QoYXdhaXQgc2NyZWVuLmZpbmRCeVRleHQoXCJFbWFpbCBpcyByZXF1aXJlZFwiKSkudG9CZUluVGhlRG9jdW1lbnQoKTtcbiAgICBleHBlY3QoYXBpQ2xpZW50LnBvc3QpLm5vdC50b0hhdmVCZWVuQ2FsbGVkKCk7XG4gIH0pO1xuXG4gIGl0KFwic3VibWl0cyB0aGUgdHJpbW1lZCwgbG93ZXJjYXNlZCBlbWFpbCB3aXRoIHN1cmZhY2U6IHdlYlwiLCBhc3luYyAoKSA9PiB7XG4gICAgY29uc3QgdXNlciA9IHVzZXJFdmVudC5zZXR1cCgpO1xuICAgIHJlbmRlcldpdGhQcm92aWRlcnMoPEZvcmdvdFBhc3N3b3JkUGFnZSAvPik7XG5cbiAgICBhd2FpdCB1c2VyLnR5cGUoc2NyZWVuLmdldEJ5TGFiZWxUZXh0KFwiRW1haWxcIiksIFwiICBKYW5lQEV4YW1wbGUuY29tICBcIik7XG4gICAgYXdhaXQgdXNlci5jbGljayhzY3JlZW4uZ2V0QnlSb2xlKFwiYnV0dG9uXCIsIHsgbmFtZTogL3NlbmQgcmVzZXQgbGluay9pIH0pKTtcblxuICAgIGF3YWl0IHdhaXRGb3IoKCkgPT4ge1xuICAgICAgZXhwZWN0KGFwaUNsaWVudC5wb3N0KS50b0hhdmVCZWVuQ2FsbGVkV2l0aChcIi9hdXRoL3JlcXVlc3QtcGFzc3dvcmQtcmVzZXRcIiwge1xuICAgICAgICBlbWFpbDogXCJqYW5lQGV4YW1wbGUuY29tXCIsXG4gICAgICAgIHN1cmZhY2U6IFwid2ViXCIsXG4gICAgICB9KTtcbiAgICB9KTtcbiAgICBleHBlY3QoYXdhaXQgc2NyZWVuLmZpbmRCeVRleHQoXCJDaGVjayB5b3VyIGluYm94XCIpKS50b0JlSW5UaGVEb2N1bWVudCgpO1xuICB9KTtcbn0pO1xuIl0sIm5hbWVzIjpbImplc3QiLCJtb2NrIiwiYXBpQ2xpZW50IiwiZ2V0IiwiZm4iLCJtb2NrUmVzb2x2ZWRWYWx1ZSIsImRhdGEiLCJwb3N0IiwicGF0Y2giLCJkZWxldGUiLCJkZXNjcmliZSIsImJlZm9yZUVhY2giLCJjbGVhckFsbE1vY2tzIiwiaXQiLCJ1c2VyIiwidXNlckV2ZW50Iiwic2V0dXAiLCJyZW5kZXJXaXRoUHJvdmlkZXJzIiwiRm9yZ290UGFzc3dvcmRQYWdlIiwiY2xpY2siLCJzY3JlZW4iLCJnZXRCeVJvbGUiLCJuYW1lIiwiZXhwZWN0IiwiZmluZEJ5VGV4dCIsInRvQmVJblRoZURvY3VtZW50Iiwibm90IiwidG9IYXZlQmVlbkNhbGxlZCIsInR5cGUiLCJnZXRCeUxhYmVsVGV4dCIsIndhaXRGb3IiLCJ0b0hhdmVCZWVuQ2FsbGVkV2l0aCIsImVtYWlsIiwic3VyZmFjZSJdLCJtYXBwaW5ncyI6IjtBQUtBQSxLQUFLQyxJQUFJLENBQUMsb0JBQW9CLElBQU8sQ0FBQTtRQUNuQ0MsV0FBVztZQUNUQyxLQUFLSCxLQUFLSSxFQUFFLEdBQUdDLGlCQUFpQixDQUFDO2dCQUFFQyxNQUFNLENBQUM7WUFBRTtZQUM1Q0MsTUFBTVAsS0FBS0ksRUFBRSxHQUFHQyxpQkFBaUIsQ0FBQztnQkFBRUMsTUFBTSxDQUFDO1lBQUU7WUFDN0NFLE9BQU9SLEtBQUtJLEVBQUU7WUFDZEssUUFBUVQsS0FBS0ksRUFBRTtRQUNqQjtJQUNGLENBQUE7Ozs7OytEQVp1QjtrRUFDRDt3QkFDK0I7NkRBQ3RCOzJCQVdMOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7OztBQUUxQk0sU0FBUyxpQ0FBaUM7SUFDeENDLFdBQVcsSUFBTVgsS0FBS1ksYUFBYTtJQUVuQ0MsR0FBRyxpRkFBaUY7UUFDbEYsTUFBTUMsT0FBT0Msa0JBQVMsQ0FBQ0MsS0FBSztRQUM1QkMsSUFBQUEsMkJBQW1CLGdCQUFDLHFCQUFDQyxhQUFrQjtRQUV2QyxNQUFNSixLQUFLSyxLQUFLLENBQUNDLGNBQU0sQ0FBQ0MsU0FBUyxDQUFDLFVBQVU7WUFBRUMsTUFBTTtRQUFtQjtRQUV2RUMsT0FBTyxNQUFNSCxjQUFNLENBQUNJLFVBQVUsQ0FBQyxzQkFBc0JDLGlCQUFpQjtRQUN0RUYsT0FBT3JCLG9CQUFTLENBQUNLLElBQUksRUFBRW1CLEdBQUcsQ0FBQ0MsZ0JBQWdCO0lBQzdDO0lBRUFkLEdBQUcsMkRBQTJEO1FBQzVELE1BQU1DLE9BQU9DLGtCQUFTLENBQUNDLEtBQUs7UUFDNUJDLElBQUFBLDJCQUFtQixnQkFBQyxxQkFBQ0MsYUFBa0I7UUFFdkMsTUFBTUosS0FBS2MsSUFBSSxDQUFDUixjQUFNLENBQUNTLGNBQWMsQ0FBQyxVQUFVO1FBQ2hELE1BQU1mLEtBQUtLLEtBQUssQ0FBQ0MsY0FBTSxDQUFDQyxTQUFTLENBQUMsVUFBVTtZQUFFQyxNQUFNO1FBQW1CO1FBRXZFLE1BQU1RLElBQUFBLGVBQU8sRUFBQztZQUNaUCxPQUFPckIsb0JBQVMsQ0FBQ0ssSUFBSSxFQUFFd0Isb0JBQW9CLENBQUMsZ0NBQWdDO2dCQUMxRUMsT0FBTztnQkFDUEMsU0FBUztZQUNYO1FBQ0Y7UUFDQVYsT0FBTyxNQUFNSCxjQUFNLENBQUNJLFVBQVUsQ0FBQyxxQkFBcUJDLGlCQUFpQjtJQUN2RTtBQUNGIn0=

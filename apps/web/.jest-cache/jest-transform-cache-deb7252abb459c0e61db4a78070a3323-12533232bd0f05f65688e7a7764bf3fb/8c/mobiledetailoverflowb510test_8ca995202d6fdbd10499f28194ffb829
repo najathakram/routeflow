@@ -1,0 +1,50 @@
+529c80b5eb8174cac9cf8a75b1a331fe
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _fs = /*#__PURE__*/ _interop_require_default(require("fs"));
+const _path = /*#__PURE__*/ _interop_require_default(require("path"));
+function _interop_require_default(obj) {
+    return obj && obj.__esModule ? obj : {
+        default: obj
+    };
+}
+/**
+ * B510 (C2 390px audit): three tables were wrapped in `overflow-hidden`
+ * instead of `overflow-x-auto`, so a row wider than the viewport clipped
+ * instead of scrolling. jsdom has no layout engine and can't prove the
+ * visual fix, so this pins the source-level fact a real browser can't
+ * regress silently: each wrapper carries a horizontal-scroll class and its
+ * table has an explicit min-width instead of relying on the (now-removed)
+ * hidden overflow to hide the squeeze.
+ */ function read(relPath) {
+    return _fs.default.readFileSync(_path.default.join(__dirname, relPath), "utf8");
+}
+describe("B510 — detail-screen tables scroll instead of clipping at mobile widths", ()=>{
+    it("customers/[id] statement ledger uses overflow-x-auto, not overflow-hidden", ()=>{
+        const src = read("customers/[id]/page.tsx");
+        expect(src).toContain('<div className="-mx-8 overflow-x-auto">');
+        expect(src).toContain('<table className="w-full min-w-[640px] text-sm">');
+        expect(src).not.toContain('<div className="-mx-8 overflow-hidden">');
+    });
+    it("customers/[id] statement summary strip stacks to 2 columns below sm", ()=>{
+        const src = read("customers/[id]/page.tsx");
+        expect(src).toContain("grid grid-cols-2 gap-px overflow-hidden rounded-lg");
+        expect(src).toContain("sm:grid-cols-4");
+    });
+    it("returns/[id] items table uses overflow-x-auto, not overflow-hidden", ()=>{
+        const src = read("returns/[id]/page.tsx");
+        expect(src).toContain('<div className="-mx-6 overflow-x-auto border-t border-surface-border">');
+        expect(src).toContain('<table className="w-full min-w-[520px] text-sm">');
+        expect(src).not.toContain('<div className="-mx-6 overflow-hidden border-t');
+    });
+    it("orders SplitInvoiceModal table uses overflow-x-auto, not overflow-hidden", ()=>{
+        const src = read("orders/_components/SplitInvoiceModal.tsx");
+        expect(src).toContain('<div className="overflow-x-auto rounded-md border border-surface-border">');
+        expect(src).toContain('<table className="w-full min-w-[420px] text-sm">');
+        expect(src).not.toContain('<div className="overflow-hidden rounded-md border');
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS9tb2JpbGUtZGV0YWlsLW92ZXJmbG93LWI1MTAudGVzdC50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgZnMgZnJvbSBcImZzXCI7XG5pbXBvcnQgcGF0aCBmcm9tIFwicGF0aFwiO1xuXG4vKipcbiAqIEI1MTAgKEMyIDM5MHB4IGF1ZGl0KTogdGhyZWUgdGFibGVzIHdlcmUgd3JhcHBlZCBpbiBgb3ZlcmZsb3ctaGlkZGVuYFxuICogaW5zdGVhZCBvZiBgb3ZlcmZsb3cteC1hdXRvYCwgc28gYSByb3cgd2lkZXIgdGhhbiB0aGUgdmlld3BvcnQgY2xpcHBlZFxuICogaW5zdGVhZCBvZiBzY3JvbGxpbmcuIGpzZG9tIGhhcyBubyBsYXlvdXQgZW5naW5lIGFuZCBjYW4ndCBwcm92ZSB0aGVcbiAqIHZpc3VhbCBmaXgsIHNvIHRoaXMgcGlucyB0aGUgc291cmNlLWxldmVsIGZhY3QgYSByZWFsIGJyb3dzZXIgY2FuJ3RcbiAqIHJlZ3Jlc3Mgc2lsZW50bHk6IGVhY2ggd3JhcHBlciBjYXJyaWVzIGEgaG9yaXpvbnRhbC1zY3JvbGwgY2xhc3MgYW5kIGl0c1xuICogdGFibGUgaGFzIGFuIGV4cGxpY2l0IG1pbi13aWR0aCBpbnN0ZWFkIG9mIHJlbHlpbmcgb24gdGhlIChub3ctcmVtb3ZlZClcbiAqIGhpZGRlbiBvdmVyZmxvdyB0byBoaWRlIHRoZSBzcXVlZXplLlxuICovXG5mdW5jdGlvbiByZWFkKHJlbFBhdGg6IHN0cmluZyk6IHN0cmluZyB7XG4gIHJldHVybiBmcy5yZWFkRmlsZVN5bmMocGF0aC5qb2luKF9fZGlybmFtZSwgcmVsUGF0aCksIFwidXRmOFwiKTtcbn1cblxuZGVzY3JpYmUoXCJCNTEwIOKAlCBkZXRhaWwtc2NyZWVuIHRhYmxlcyBzY3JvbGwgaW5zdGVhZCBvZiBjbGlwcGluZyBhdCBtb2JpbGUgd2lkdGhzXCIsICgpID0+IHtcbiAgaXQoXCJjdXN0b21lcnMvW2lkXSBzdGF0ZW1lbnQgbGVkZ2VyIHVzZXMgb3ZlcmZsb3cteC1hdXRvLCBub3Qgb3ZlcmZsb3ctaGlkZGVuXCIsICgpID0+IHtcbiAgICBjb25zdCBzcmMgPSByZWFkKFwiY3VzdG9tZXJzL1tpZF0vcGFnZS50c3hcIik7XG4gICAgZXhwZWN0KHNyYykudG9Db250YWluKCc8ZGl2IGNsYXNzTmFtZT1cIi1teC04IG92ZXJmbG93LXgtYXV0b1wiPicpO1xuICAgIGV4cGVjdChzcmMpLnRvQ29udGFpbignPHRhYmxlIGNsYXNzTmFtZT1cInctZnVsbCBtaW4tdy1bNjQwcHhdIHRleHQtc21cIj4nKTtcbiAgICBleHBlY3Qoc3JjKS5ub3QudG9Db250YWluKCc8ZGl2IGNsYXNzTmFtZT1cIi1teC04IG92ZXJmbG93LWhpZGRlblwiPicpO1xuICB9KTtcblxuICBpdChcImN1c3RvbWVycy9baWRdIHN0YXRlbWVudCBzdW1tYXJ5IHN0cmlwIHN0YWNrcyB0byAyIGNvbHVtbnMgYmVsb3cgc21cIiwgKCkgPT4ge1xuICAgIGNvbnN0IHNyYyA9IHJlYWQoXCJjdXN0b21lcnMvW2lkXS9wYWdlLnRzeFwiKTtcbiAgICBleHBlY3Qoc3JjKS50b0NvbnRhaW4oXCJncmlkIGdyaWQtY29scy0yIGdhcC1weCBvdmVyZmxvdy1oaWRkZW4gcm91bmRlZC1sZ1wiKTtcbiAgICBleHBlY3Qoc3JjKS50b0NvbnRhaW4oXCJzbTpncmlkLWNvbHMtNFwiKTtcbiAgfSk7XG5cbiAgaXQoXCJyZXR1cm5zL1tpZF0gaXRlbXMgdGFibGUgdXNlcyBvdmVyZmxvdy14LWF1dG8sIG5vdCBvdmVyZmxvdy1oaWRkZW5cIiwgKCkgPT4ge1xuICAgIGNvbnN0IHNyYyA9IHJlYWQoXCJyZXR1cm5zL1tpZF0vcGFnZS50c3hcIik7XG4gICAgZXhwZWN0KHNyYykudG9Db250YWluKCc8ZGl2IGNsYXNzTmFtZT1cIi1teC02IG92ZXJmbG93LXgtYXV0byBib3JkZXItdCBib3JkZXItc3VyZmFjZS1ib3JkZXJcIj4nKTtcbiAgICBleHBlY3Qoc3JjKS50b0NvbnRhaW4oJzx0YWJsZSBjbGFzc05hbWU9XCJ3LWZ1bGwgbWluLXctWzUyMHB4XSB0ZXh0LXNtXCI+Jyk7XG4gICAgZXhwZWN0KHNyYykubm90LnRvQ29udGFpbignPGRpdiBjbGFzc05hbWU9XCItbXgtNiBvdmVyZmxvdy1oaWRkZW4gYm9yZGVyLXQnKTtcbiAgfSk7XG5cbiAgaXQoXCJvcmRlcnMgU3BsaXRJbnZvaWNlTW9kYWwgdGFibGUgdXNlcyBvdmVyZmxvdy14LWF1dG8sIG5vdCBvdmVyZmxvdy1oaWRkZW5cIiwgKCkgPT4ge1xuICAgIGNvbnN0IHNyYyA9IHJlYWQoXCJvcmRlcnMvX2NvbXBvbmVudHMvU3BsaXRJbnZvaWNlTW9kYWwudHN4XCIpO1xuICAgIGV4cGVjdChzcmMpLnRvQ29udGFpbihcbiAgICAgICc8ZGl2IGNsYXNzTmFtZT1cIm92ZXJmbG93LXgtYXV0byByb3VuZGVkLW1kIGJvcmRlciBib3JkZXItc3VyZmFjZS1ib3JkZXJcIj4nLFxuICAgICk7XG4gICAgZXhwZWN0KHNyYykudG9Db250YWluKCc8dGFibGUgY2xhc3NOYW1lPVwidy1mdWxsIG1pbi13LVs0MjBweF0gdGV4dC1zbVwiPicpO1xuICAgIGV4cGVjdChzcmMpLm5vdC50b0NvbnRhaW4oJzxkaXYgY2xhc3NOYW1lPVwib3ZlcmZsb3ctaGlkZGVuIHJvdW5kZWQtbWQgYm9yZGVyJyk7XG4gIH0pO1xufSk7XG4iXSwibmFtZXMiOlsicmVhZCIsInJlbFBhdGgiLCJmcyIsInJlYWRGaWxlU3luYyIsInBhdGgiLCJqb2luIiwiX19kaXJuYW1lIiwiZGVzY3JpYmUiLCJpdCIsInNyYyIsImV4cGVjdCIsInRvQ29udGFpbiIsIm5vdCJdLCJtYXBwaW5ncyI6Ijs7OzsyREFBZTs2REFDRTs7Ozs7O0FBRWpCOzs7Ozs7OztDQVFDLEdBQ0QsU0FBU0EsS0FBS0MsT0FBZTtJQUMzQixPQUFPQyxXQUFFLENBQUNDLFlBQVksQ0FBQ0MsYUFBSSxDQUFDQyxJQUFJLENBQUNDLFdBQVdMLFVBQVU7QUFDeEQ7QUFFQU0sU0FBUywyRUFBMkU7SUFDbEZDLEdBQUcsNkVBQTZFO1FBQzlFLE1BQU1DLE1BQU1ULEtBQUs7UUFDakJVLE9BQU9ELEtBQUtFLFNBQVMsQ0FBQztRQUN0QkQsT0FBT0QsS0FBS0UsU0FBUyxDQUFDO1FBQ3RCRCxPQUFPRCxLQUFLRyxHQUFHLENBQUNELFNBQVMsQ0FBQztJQUM1QjtJQUVBSCxHQUFHLHVFQUF1RTtRQUN4RSxNQUFNQyxNQUFNVCxLQUFLO1FBQ2pCVSxPQUFPRCxLQUFLRSxTQUFTLENBQUM7UUFDdEJELE9BQU9ELEtBQUtFLFNBQVMsQ0FBQztJQUN4QjtJQUVBSCxHQUFHLHNFQUFzRTtRQUN2RSxNQUFNQyxNQUFNVCxLQUFLO1FBQ2pCVSxPQUFPRCxLQUFLRSxTQUFTLENBQUM7UUFDdEJELE9BQU9ELEtBQUtFLFNBQVMsQ0FBQztRQUN0QkQsT0FBT0QsS0FBS0csR0FBRyxDQUFDRCxTQUFTLENBQUM7SUFDNUI7SUFFQUgsR0FBRyw0RUFBNEU7UUFDN0UsTUFBTUMsTUFBTVQsS0FBSztRQUNqQlUsT0FBT0QsS0FBS0UsU0FBUyxDQUNuQjtRQUVGRCxPQUFPRCxLQUFLRSxTQUFTLENBQUM7UUFDdEJELE9BQU9ELEtBQUtHLEdBQUcsQ0FBQ0QsU0FBUyxDQUFDO0lBQzVCO0FBQ0YifQ==

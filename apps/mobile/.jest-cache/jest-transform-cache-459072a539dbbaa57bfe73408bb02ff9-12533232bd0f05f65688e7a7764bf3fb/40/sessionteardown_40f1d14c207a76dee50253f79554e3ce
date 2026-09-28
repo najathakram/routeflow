@@ -1,0 +1,128 @@
+421b2201749a80f4e6aedb72156a40da
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.teardownUserSession = teardownUserSession;
+const async_storage_1 = __importDefault(require("@react-native-async-storage/async-storage"));
+const query_client_1 = require("./query-client");
+const location_tracker_1 = require("./location-tracker");
+const auth_1 = require("./auth");
+const user_scoped_storage_1 = require("./user-scoped-storage");
+const edit_items_draft_1 = require("./edit-items-draft");
+const podStore_1 = require("../store/podStore");
+const runSettlementStore_1 = require("../store/runSettlementStore");
+const mileageStore_1 = require("../store/mileageStore");
+const routeStore_1 = require("../store/routeStore");
+const delivery_plan_store_1 = require("../store/delivery-plan-store");
+const listUiStore_1 = require("../store/listUiStore");
+const productPickerStore_1 = require("../store/productPickerStore");
+const stopCartStore_1 = require("../store/stopCartStore");
+const returnSubmissionStore_1 = require("../store/returnSubmissionStore");
+const inlineReturnSubmissionStore_1 = require("../store/inlineReturnSubmissionStore");
+/**
+ * D1 (cause-ruling.md §3) — the ONE place every user-scoped side effect of
+ * ending a session lands. Called by `useAuthStore.logout()` BEFORE
+ * `apiLogout()` (tokens are still valid at that point) and by the
+ * session-expired path (lib/auth-store.ts `registerStaffSessionExpiredHandler`
+ * callback).
+ *
+ * Covers:
+ *  - B150 — background GPS kept tracking after sign-out. `stopLocationTracking`
+ *    is called unconditionally, with no role/realm gate, so BOTH the driver
+ *    realm (which already stopped tracking on route completion elsewhere) and
+ *    the operator realm (which had no stop site at all) go through the same
+ *    call.
+ *  - B140 — the query cache and the 10 user-scoped stores below survived a
+ *    sign-out, so the next login on the same device could see the prior
+ *    user's data flash on screen. (Driver-durability lane: stopCartStore and
+ *    returnSubmissionStore joined the original 7 — same reset()/persisted-
+ *    blob pattern, same reason.)
+ *  - B136 keyspace — the order-item editor's staged-edit snapshot is one key
+ *    PER ORDER (`rf.edit-items.v1:<userId>:<orderId>`), not a single blob, so
+ *    it cannot be addressed by a `clearUserScopedStorage(NAME, userId)` call.
+ *    Step (6) sweeps the outgoing user's whole prefix instead (RULINGS R1).
+ *
+ * Deliberately NOT touched here:
+ *  - The tenant store (Q2 — a shared-tablet branded login must survive a
+ *    sign-out; see `store/offlineQueue.ts` is likewise left alone below).
+ *  - The offline queue. D2 stamps every entry with its owning user at
+ *    enqueue time, and sign-out must never flush or clear it — flushing on
+ *    sign-out is a network gamble, and identity-stamped entries stay
+ *    correctly attributed to the user who queued them regardless of who is
+ *    signed in when the drain next runs.
+ */
+async function teardownUserSession(options = {}) {
+    // (0) Resolve the outgoing identity FIRST, before anything downstream can
+    // delete the tokens (`apiLogout()` on the logout path; the api-client's own
+    // wipe, which has already happened, on the session-expired path). Every
+    // persisted clear below is addressed with this id.
+    const userId = options.userId ?? (await (0, auth_1.getStoredUser)())?.id ?? null;
+    // (1) Stop background location tracking — both realms, unconditionally.
+    await (0, location_tracker_1.stopLocationTracking)();
+    // (2) Offline queue: intentionally left untouched — see the file header.
+    // (3) Let in-flight mutations settle, then drop the query cache.
+    await query_client_1.queryClient.cancelQueries();
+    query_client_1.queryClient.clear();
+    // (4) Reset the 10 user-scoped stores. All 10 expose a `reset()`;
+    // `resetIfPresent` stays a defensive no-op so a store that ever loses one
+    // can never turn a sign-out into a crash.
+    resetIfPresent(podStore_1.usePodStore.getState());
+    resetIfPresent(runSettlementStore_1.useRunSettlementStore.getState());
+    resetIfPresent(mileageStore_1.useMileageStore.getState());
+    resetIfPresent(routeStore_1.useRouteStore.getState());
+    resetIfPresent(delivery_plan_store_1.useDeliveryPlanStore.getState());
+    resetIfPresent(listUiStore_1.useListUiStore.getState());
+    resetIfPresent(productPickerStore_1.useProductPickerStore.getState());
+    resetIfPresent(stopCartStore_1.useStopCartStore.getState());
+    resetIfPresent(returnSubmissionStore_1.useReturnSubmissionStore.getState());
+    resetIfPresent(inlineReturnSubmissionStore_1.useInlineReturnSubmissionStore.getState());
+    // (5) Remove the five PERSISTED user-scoped blobs by the id resolved in (0).
+    // The `reset()` calls above kick off zustand-persist writes that are
+    // fire-and-forget and resolve their own key one async hop later — by then
+    // the tokens may be gone, so that write can land in the `anon` bucket and
+    // leave `routeflow-pod-store:<userId>` intact, resurrecting the cleared
+    // captures at the next sign-in. Deleting the key outright here makes the
+    // clear deterministic: the late write may only ever re-create the reset
+    // (empty) state, never the old blob. A null id clears the anon bucket,
+    // which is harmless.
+    await Promise.all([
+        (0, user_scoped_storage_1.clearUserScopedStorage)(podStore_1.POD_STORE_NAME, userId),
+        (0, user_scoped_storage_1.clearUserScopedStorage)(runSettlementStore_1.RUN_SETTLEMENT_STORE_NAME, userId),
+        (0, user_scoped_storage_1.clearUserScopedStorage)(stopCartStore_1.STOP_CART_STORE_NAME, userId),
+        (0, user_scoped_storage_1.clearUserScopedStorage)(returnSubmissionStore_1.RETURN_SUBMISSION_STORE_NAME, userId),
+        (0, user_scoped_storage_1.clearUserScopedStorage)(inlineReturnSubmissionStore_1.INLINE_RETURN_SUBMISSION_STORE_NAME, userId),
+    ]);
+    // (6) Sweep the per-ORDER keyspaces. These are not one key per store but one
+    // key per order, so the only way to clear them is to enumerate and match a
+    // prefix. Same B136/B137/B140 reason as (5): a staged order edit the last
+    // operator left behind must never be offered for restore to the next login
+    // on a shared device.
+    await clearStorageByPrefix((0, edit_items_draft_1.editItemsSnapshotUserPrefix)(userId));
+    // Belt-and-braces: the write path now refuses to stage under `anon` at all,
+    // but a pre-existing anon-bucket key (an older build, a path this pass
+    // missed) must not survive teardown either — same B136/B137/B140 reason.
+    await clearStorageByPrefix((0, edit_items_draft_1.editItemsSnapshotUserPrefix)(null));
+}
+/**
+ * Remove every AsyncStorage key under `prefix`. Best-effort BY CONTRACT — a
+ * storage failure (an unavailable native module, a platform quirk, an older
+ * mock without `getAllKeys`) must degrade to "not swept", never turn a
+ * sign-out into a thrown error the way step (5)'s unguarded removes cannot.
+ */
+async function clearStorageByPrefix(prefix) {
+    try {
+        const keys = await async_storage_1.default.getAllKeys();
+        const mine = (keys ?? []).filter((key) => key.startsWith(prefix));
+        if (mine.length > 0)
+            await async_storage_1.default.multiRemove(mine);
+    }
+    catch {
+        // Best-effort — never break sign-out on a storage failure.
+    }
+}
+function resetIfPresent(state) {
+    state.reset?.();
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3Nlc3Npb24tdGVhcmRvd24udHMiLCJtYXBwaW5ncyI6Ijs7Ozs7QUFvRUEsa0RBeURDO0FBN0hELDhGQUFxRTtBQUNyRSxpREFBNkM7QUFDN0MseURBQTBEO0FBQzFELGlDQUF1QztBQUN2QywrREFBK0Q7QUFDL0QseURBQWlFO0FBQ2pFLGdEQUFnRTtBQUNoRSxvRUFBK0Y7QUFDL0Ysd0RBQXdEO0FBQ3hELG9EQUFvRDtBQUNwRCxzRUFBb0U7QUFDcEUsc0RBQXNEO0FBQ3RELG9FQUFvRTtBQUNwRSwwREFBZ0Y7QUFDaEYsMEVBR3dDO0FBQ3hDLHNGQUc4QztBQWU5Qzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7OztHQStCRztBQUNJLEtBQUssVUFBVSxtQkFBbUIsQ0FBQyxVQUEyQixFQUFFO0lBQ3JFLDBFQUEwRTtJQUMxRSw0RUFBNEU7SUFDNUUsd0VBQXdFO0lBQ3hFLG1EQUFtRDtJQUNuRCxNQUFNLE1BQU0sR0FBRyxPQUFPLENBQUMsTUFBTSxJQUFJLENBQUMsTUFBTSxJQUFBLG9CQUFhLEdBQUUsQ0FBQyxFQUFFLEVBQUUsSUFBSSxJQUFJLENBQUM7SUFFckUsd0VBQXdFO0lBQ3hFLE1BQU0sSUFBQSx1Q0FBb0IsR0FBRSxDQUFDO0lBRTdCLHlFQUF5RTtJQUV6RSxpRUFBaUU7SUFDakUsTUFBTSwwQkFBVyxDQUFDLGFBQWEsRUFBRSxDQUFDO0lBQ2xDLDBCQUFXLENBQUMsS0FBSyxFQUFFLENBQUM7SUFFcEIsa0VBQWtFO0lBQ2xFLDBFQUEwRTtJQUMxRSwwQ0FBMEM7SUFDMUMsY0FBYyxDQUFDLHNCQUFXLENBQUMsUUFBUSxFQUFFLENBQUMsQ0FBQztJQUN2QyxjQUFjLENBQUMsMENBQXFCLENBQUMsUUFBUSxFQUFFLENBQUMsQ0FBQztJQUNqRCxjQUFjLENBQUMsOEJBQWUsQ0FBQyxRQUFRLEVBQUUsQ0FBQyxDQUFDO0lBQzNDLGNBQWMsQ0FBQywwQkFBYSxDQUFDLFFBQVEsRUFBRSxDQUFDLENBQUM7SUFDekMsY0FBYyxDQUFDLDBDQUFvQixDQUFDLFFBQVEsRUFBRSxDQUFDLENBQUM7SUFDaEQsY0FBYyxDQUFDLDRCQUFjLENBQUMsUUFBUSxFQUFFLENBQUMsQ0FBQztJQUMxQyxjQUFjLENBQUMsMENBQXFCLENBQUMsUUFBUSxFQUFFLENBQUMsQ0FBQztJQUNqRCxjQUFjLENBQUMsZ0NBQWdCLENBQUMsUUFBUSxFQUFFLENBQUMsQ0FBQztJQUM1QyxjQUFjLENBQUMsZ0RBQXdCLENBQUMsUUFBUSxFQUFFLENBQUMsQ0FBQztJQUNwRCxjQUFjLENBQUMsNERBQThCLENBQUMsUUFBUSxFQUFFLENBQUMsQ0FBQztJQUUxRCw2RUFBNkU7SUFDN0UscUVBQXFFO0lBQ3JFLDBFQUEwRTtJQUMxRSwwRUFBMEU7SUFDMUUsd0VBQXdFO0lBQ3hFLHlFQUF5RTtJQUN6RSx3RUFBd0U7SUFDeEUsdUVBQXVFO0lBQ3ZFLHFCQUFxQjtJQUNyQixNQUFNLE9BQU8sQ0FBQyxHQUFHLENBQUM7UUFDaEIsSUFBQSw0Q0FBc0IsRUFBQyx5QkFBYyxFQUFFLE1BQU0sQ0FBQztRQUM5QyxJQUFBLDRDQUFzQixFQUFDLDhDQUF5QixFQUFFLE1BQU0sQ0FBQztRQUN6RCxJQUFBLDRDQUFzQixFQUFDLG9DQUFvQixFQUFFLE1BQU0sQ0FBQztRQUNwRCxJQUFBLDRDQUFzQixFQUFDLG9EQUE0QixFQUFFLE1BQU0sQ0FBQztRQUM1RCxJQUFBLDRDQUFzQixFQUFDLGlFQUFtQyxFQUFFLE1BQU0sQ0FBQztLQUNwRSxDQUFDLENBQUM7SUFFSCw2RUFBNkU7SUFDN0UsMkVBQTJFO0lBQzNFLDBFQUEwRTtJQUMxRSwyRUFBMkU7SUFDM0Usc0JBQXNCO0lBQ3RCLE1BQU0sb0JBQW9CLENBQUMsSUFBQSw4Q0FBMkIsRUFBQyxNQUFNLENBQUMsQ0FBQyxDQUFDO0lBQ2hFLDRFQUE0RTtJQUM1RSx1RUFBdUU7SUFDdkUseUVBQXlFO0lBQ3pFLE1BQU0sb0JBQW9CLENBQUMsSUFBQSw4Q0FBMkIsRUFBQyxJQUFJLENBQUMsQ0FBQyxDQUFDO0FBQ2hFLENBQUM7QUFFRDs7Ozs7R0FLRztBQUNILEtBQUssVUFBVSxvQkFBb0IsQ0FBQyxNQUFjO0lBQ2hELElBQUksQ0FBQztRQUNILE1BQU0sSUFBSSxHQUFHLE1BQU0sdUJBQVksQ0FBQyxVQUFVLEVBQUUsQ0FBQztRQUM3QyxNQUFNLElBQUksR0FBRyxDQUFDLElBQUksSUFBSSxFQUFFLENBQUMsQ0FBQyxNQUFNLENBQUMsQ0FBQyxHQUFHLEVBQUUsRUFBRSxDQUFDLEdBQUcsQ0FBQyxVQUFVLENBQUMsTUFBTSxDQUFDLENBQUMsQ0FBQztRQUNsRSxJQUFJLElBQUksQ0FBQyxNQUFNLEdBQUcsQ0FBQztZQUFFLE1BQU0sdUJBQVksQ0FBQyxXQUFXLENBQUMsSUFBSSxDQUFDLENBQUM7SUFDNUQsQ0FBQztJQUFDLE1BQU0sQ0FBQztRQUNQLDJEQUEyRDtJQUM3RCxDQUFDO0FBQ0gsQ0FBQztBQU1ELFNBQVMsY0FBYyxDQUFDLEtBQWM7SUFDbkMsS0FBeUIsQ0FBQyxLQUFLLEVBQUUsRUFBRSxDQUFDO0FBQ3ZDLENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3Nlc3Npb24tdGVhcmRvd24udHMiXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IEFzeW5jU3RvcmFnZSBmcm9tIFwiQHJlYWN0LW5hdGl2ZS1hc3luYy1zdG9yYWdlL2FzeW5jLXN0b3JhZ2VcIjtcbmltcG9ydCB7IHF1ZXJ5Q2xpZW50IH0gZnJvbSBcIi4vcXVlcnktY2xpZW50XCI7XG5pbXBvcnQgeyBzdG9wTG9jYXRpb25UcmFja2luZyB9IGZyb20gXCIuL2xvY2F0aW9uLXRyYWNrZXJcIjtcbmltcG9ydCB7IGdldFN0b3JlZFVzZXIgfSBmcm9tIFwiLi9hdXRoXCI7XG5pbXBvcnQgeyBjbGVhclVzZXJTY29wZWRTdG9yYWdlIH0gZnJvbSBcIi4vdXNlci1zY29wZWQtc3RvcmFnZVwiO1xuaW1wb3J0IHsgZWRpdEl0ZW1zU25hcHNob3RVc2VyUHJlZml4IH0gZnJvbSBcIi4vZWRpdC1pdGVtcy1kcmFmdFwiO1xuaW1wb3J0IHsgUE9EX1NUT1JFX05BTUUsIHVzZVBvZFN0b3JlIH0gZnJvbSBcIi4uL3N0b3JlL3BvZFN0b3JlXCI7XG5pbXBvcnQgeyBSVU5fU0VUVExFTUVOVF9TVE9SRV9OQU1FLCB1c2VSdW5TZXR0bGVtZW50U3RvcmUgfSBmcm9tIFwiLi4vc3RvcmUvcnVuU2V0dGxlbWVudFN0b3JlXCI7XG5pbXBvcnQgeyB1c2VNaWxlYWdlU3RvcmUgfSBmcm9tIFwiLi4vc3RvcmUvbWlsZWFnZVN0b3JlXCI7XG5pbXBvcnQgeyB1c2VSb3V0ZVN0b3JlIH0gZnJvbSBcIi4uL3N0b3JlL3JvdXRlU3RvcmVcIjtcbmltcG9ydCB7IHVzZURlbGl2ZXJ5UGxhblN0b3JlIH0gZnJvbSBcIi4uL3N0b3JlL2RlbGl2ZXJ5LXBsYW4tc3RvcmVcIjtcbmltcG9ydCB7IHVzZUxpc3RVaVN0b3JlIH0gZnJvbSBcIi4uL3N0b3JlL2xpc3RVaVN0b3JlXCI7XG5pbXBvcnQgeyB1c2VQcm9kdWN0UGlja2VyU3RvcmUgfSBmcm9tIFwiLi4vc3RvcmUvcHJvZHVjdFBpY2tlclN0b3JlXCI7XG5pbXBvcnQgeyBTVE9QX0NBUlRfU1RPUkVfTkFNRSwgdXNlU3RvcENhcnRTdG9yZSB9IGZyb20gXCIuLi9zdG9yZS9zdG9wQ2FydFN0b3JlXCI7XG5pbXBvcnQge1xuICBSRVRVUk5fU1VCTUlTU0lPTl9TVE9SRV9OQU1FLFxuICB1c2VSZXR1cm5TdWJtaXNzaW9uU3RvcmUsXG59IGZyb20gXCIuLi9zdG9yZS9yZXR1cm5TdWJtaXNzaW9uU3RvcmVcIjtcbmltcG9ydCB7XG4gIElOTElORV9SRVRVUk5fU1VCTUlTU0lPTl9TVE9SRV9OQU1FLFxuICB1c2VJbmxpbmVSZXR1cm5TdWJtaXNzaW9uU3RvcmUsXG59IGZyb20gXCIuLi9zdG9yZS9pbmxpbmVSZXR1cm5TdWJtaXNzaW9uU3RvcmVcIjtcblxuZXhwb3J0IHR5cGUgVGVhcmRvd25SZWFzb24gPSBcImxvZ291dFwiIHwgXCJzZXNzaW9uLWV4cGlyZWRcIiB8IFwiY3Jvc3MtdGFiXCI7XG5cbmV4cG9ydCBpbnRlcmZhY2UgVGVhcmRvd25PcHRpb25zIHtcbiAgcmVhc29uPzogVGVhcmRvd25SZWFzb247XG4gIC8qKlxuICAgKiBUaGUgdXNlciB3aG9zZSBzZXNzaW9uIGlzIGVuZGluZywgc3VwcGxpZWQgYnkgdGhlIGNhbGxlciB3aGlsZSBpdCBzdGlsbFxuICAgKiBrbm93cyAoYm90aCBjYWxsIHNpdGVzIHJlYWQgYHVzZUF1dGhTdG9yZWAncyBpbi1tZW1vcnkgdXNlcikuIEZhbGxzIGJhY2tcbiAgICogdG8gdGhlIHN0b3JlZCB1c2VyLCByZXNvbHZlZCBhcyB0aGUgRklSU1QgdGhpbmcgdGVhcmRvd24gZG9lcyDigJQgc2VlIHRoZVxuICAgKiBwZXJzaXN0ZWQtY2xlYXIgbm90ZSBpbiB0aGUgZnVuY3Rpb24gYm9keS5cbiAgICovXG4gIHVzZXJJZD86IHN0cmluZyB8IG51bGw7XG59XG5cbi8qKlxuICogRDEgKGNhdXNlLXJ1bGluZy5tZCDCpzMpIOKAlCB0aGUgT05FIHBsYWNlIGV2ZXJ5IHVzZXItc2NvcGVkIHNpZGUgZWZmZWN0IG9mXG4gKiBlbmRpbmcgYSBzZXNzaW9uIGxhbmRzLiBDYWxsZWQgYnkgYHVzZUF1dGhTdG9yZS5sb2dvdXQoKWAgQkVGT1JFXG4gKiBgYXBpTG9nb3V0KClgICh0b2tlbnMgYXJlIHN0aWxsIHZhbGlkIGF0IHRoYXQgcG9pbnQpIGFuZCBieSB0aGVcbiAqIHNlc3Npb24tZXhwaXJlZCBwYXRoIChsaWIvYXV0aC1zdG9yZS50cyBgcmVnaXN0ZXJTdGFmZlNlc3Npb25FeHBpcmVkSGFuZGxlcmBcbiAqIGNhbGxiYWNrKS5cbiAqXG4gKiBDb3ZlcnM6XG4gKiAgLSBCMTUwIOKAlCBiYWNrZ3JvdW5kIEdQUyBrZXB0IHRyYWNraW5nIGFmdGVyIHNpZ24tb3V0LiBgc3RvcExvY2F0aW9uVHJhY2tpbmdgXG4gKiAgICBpcyBjYWxsZWQgdW5jb25kaXRpb25hbGx5LCB3aXRoIG5vIHJvbGUvcmVhbG0gZ2F0ZSwgc28gQk9USCB0aGUgZHJpdmVyXG4gKiAgICByZWFsbSAod2hpY2ggYWxyZWFkeSBzdG9wcGVkIHRyYWNraW5nIG9uIHJvdXRlIGNvbXBsZXRpb24gZWxzZXdoZXJlKSBhbmRcbiAqICAgIHRoZSBvcGVyYXRvciByZWFsbSAod2hpY2ggaGFkIG5vIHN0b3Agc2l0ZSBhdCBhbGwpIGdvIHRocm91Z2ggdGhlIHNhbWVcbiAqICAgIGNhbGwuXG4gKiAgLSBCMTQwIOKAlCB0aGUgcXVlcnkgY2FjaGUgYW5kIHRoZSAxMCB1c2VyLXNjb3BlZCBzdG9yZXMgYmVsb3cgc3Vydml2ZWQgYVxuICogICAgc2lnbi1vdXQsIHNvIHRoZSBuZXh0IGxvZ2luIG9uIHRoZSBzYW1lIGRldmljZSBjb3VsZCBzZWUgdGhlIHByaW9yXG4gKiAgICB1c2VyJ3MgZGF0YSBmbGFzaCBvbiBzY3JlZW4uIChEcml2ZXItZHVyYWJpbGl0eSBsYW5lOiBzdG9wQ2FydFN0b3JlIGFuZFxuICogICAgcmV0dXJuU3VibWlzc2lvblN0b3JlIGpvaW5lZCB0aGUgb3JpZ2luYWwgNyDigJQgc2FtZSByZXNldCgpL3BlcnNpc3RlZC1cbiAqICAgIGJsb2IgcGF0dGVybiwgc2FtZSByZWFzb24uKVxuICogIC0gQjEzNiBrZXlzcGFjZSDigJQgdGhlIG9yZGVyLWl0ZW0gZWRpdG9yJ3Mgc3RhZ2VkLWVkaXQgc25hcHNob3QgaXMgb25lIGtleVxuICogICAgUEVSIE9SREVSIChgcmYuZWRpdC1pdGVtcy52MTo8dXNlcklkPjo8b3JkZXJJZD5gKSwgbm90IGEgc2luZ2xlIGJsb2IsIHNvXG4gKiAgICBpdCBjYW5ub3QgYmUgYWRkcmVzc2VkIGJ5IGEgYGNsZWFyVXNlclNjb3BlZFN0b3JhZ2UoTkFNRSwgdXNlcklkKWAgY2FsbC5cbiAqICAgIFN0ZXAgKDYpIHN3ZWVwcyB0aGUgb3V0Z29pbmcgdXNlcidzIHdob2xlIHByZWZpeCBpbnN0ZWFkIChSVUxJTkdTIFIxKS5cbiAqXG4gKiBEZWxpYmVyYXRlbHkgTk9UIHRvdWNoZWQgaGVyZTpcbiAqICAtIFRoZSB0ZW5hbnQgc3RvcmUgKFEyIOKAlCBhIHNoYXJlZC10YWJsZXQgYnJhbmRlZCBsb2dpbiBtdXN0IHN1cnZpdmUgYVxuICogICAgc2lnbi1vdXQ7IHNlZSBgc3RvcmUvb2ZmbGluZVF1ZXVlLnRzYCBpcyBsaWtld2lzZSBsZWZ0IGFsb25lIGJlbG93KS5cbiAqICAtIFRoZSBvZmZsaW5lIHF1ZXVlLiBEMiBzdGFtcHMgZXZlcnkgZW50cnkgd2l0aCBpdHMgb3duaW5nIHVzZXIgYXRcbiAqICAgIGVucXVldWUgdGltZSwgYW5kIHNpZ24tb3V0IG11c3QgbmV2ZXIgZmx1c2ggb3IgY2xlYXIgaXQg4oCUIGZsdXNoaW5nIG9uXG4gKiAgICBzaWduLW91dCBpcyBhIG5ldHdvcmsgZ2FtYmxlLCBhbmQgaWRlbnRpdHktc3RhbXBlZCBlbnRyaWVzIHN0YXlcbiAqICAgIGNvcnJlY3RseSBhdHRyaWJ1dGVkIHRvIHRoZSB1c2VyIHdobyBxdWV1ZWQgdGhlbSByZWdhcmRsZXNzIG9mIHdobyBpc1xuICogICAgc2lnbmVkIGluIHdoZW4gdGhlIGRyYWluIG5leHQgcnVucy5cbiAqL1xuZXhwb3J0IGFzeW5jIGZ1bmN0aW9uIHRlYXJkb3duVXNlclNlc3Npb24ob3B0aW9uczogVGVhcmRvd25PcHRpb25zID0ge30pOiBQcm9taXNlPHZvaWQ+IHtcbiAgLy8gKDApIFJlc29sdmUgdGhlIG91dGdvaW5nIGlkZW50aXR5IEZJUlNULCBiZWZvcmUgYW55dGhpbmcgZG93bnN0cmVhbSBjYW5cbiAgLy8gZGVsZXRlIHRoZSB0b2tlbnMgKGBhcGlMb2dvdXQoKWAgb24gdGhlIGxvZ291dCBwYXRoOyB0aGUgYXBpLWNsaWVudCdzIG93blxuICAvLyB3aXBlLCB3aGljaCBoYXMgYWxyZWFkeSBoYXBwZW5lZCwgb24gdGhlIHNlc3Npb24tZXhwaXJlZCBwYXRoKS4gRXZlcnlcbiAgLy8gcGVyc2lzdGVkIGNsZWFyIGJlbG93IGlzIGFkZHJlc3NlZCB3aXRoIHRoaXMgaWQuXG4gIGNvbnN0IHVzZXJJZCA9IG9wdGlvbnMudXNlcklkID8/IChhd2FpdCBnZXRTdG9yZWRVc2VyKCkpPy5pZCA/PyBudWxsO1xuXG4gIC8vICgxKSBTdG9wIGJhY2tncm91bmQgbG9jYXRpb24gdHJhY2tpbmcg4oCUIGJvdGggcmVhbG1zLCB1bmNvbmRpdGlvbmFsbHkuXG4gIGF3YWl0IHN0b3BMb2NhdGlvblRyYWNraW5nKCk7XG5cbiAgLy8gKDIpIE9mZmxpbmUgcXVldWU6IGludGVudGlvbmFsbHkgbGVmdCB1bnRvdWNoZWQg4oCUIHNlZSB0aGUgZmlsZSBoZWFkZXIuXG5cbiAgLy8gKDMpIExldCBpbi1mbGlnaHQgbXV0YXRpb25zIHNldHRsZSwgdGhlbiBkcm9wIHRoZSBxdWVyeSBjYWNoZS5cbiAgYXdhaXQgcXVlcnlDbGllbnQuY2FuY2VsUXVlcmllcygpO1xuICBxdWVyeUNsaWVudC5jbGVhcigpO1xuXG4gIC8vICg0KSBSZXNldCB0aGUgMTAgdXNlci1zY29wZWQgc3RvcmVzLiBBbGwgMTAgZXhwb3NlIGEgYHJlc2V0KClgO1xuICAvLyBgcmVzZXRJZlByZXNlbnRgIHN0YXlzIGEgZGVmZW5zaXZlIG5vLW9wIHNvIGEgc3RvcmUgdGhhdCBldmVyIGxvc2VzIG9uZVxuICAvLyBjYW4gbmV2ZXIgdHVybiBhIHNpZ24tb3V0IGludG8gYSBjcmFzaC5cbiAgcmVzZXRJZlByZXNlbnQodXNlUG9kU3RvcmUuZ2V0U3RhdGUoKSk7XG4gIHJlc2V0SWZQcmVzZW50KHVzZVJ1blNldHRsZW1lbnRTdG9yZS5nZXRTdGF0ZSgpKTtcbiAgcmVzZXRJZlByZXNlbnQodXNlTWlsZWFnZVN0b3JlLmdldFN0YXRlKCkpO1xuICByZXNldElmUHJlc2VudCh1c2VSb3V0ZVN0b3JlLmdldFN0YXRlKCkpO1xuICByZXNldElmUHJlc2VudCh1c2VEZWxpdmVyeVBsYW5TdG9yZS5nZXRTdGF0ZSgpKTtcbiAgcmVzZXRJZlByZXNlbnQodXNlTGlzdFVpU3RvcmUuZ2V0U3RhdGUoKSk7XG4gIHJlc2V0SWZQcmVzZW50KHVzZVByb2R1Y3RQaWNrZXJTdG9yZS5nZXRTdGF0ZSgpKTtcbiAgcmVzZXRJZlByZXNlbnQodXNlU3RvcENhcnRTdG9yZS5nZXRTdGF0ZSgpKTtcbiAgcmVzZXRJZlByZXNlbnQodXNlUmV0dXJuU3VibWlzc2lvblN0b3JlLmdldFN0YXRlKCkpO1xuICByZXNldElmUHJlc2VudCh1c2VJbmxpbmVSZXR1cm5TdWJtaXNzaW9uU3RvcmUuZ2V0U3RhdGUoKSk7XG5cbiAgLy8gKDUpIFJlbW92ZSB0aGUgZml2ZSBQRVJTSVNURUQgdXNlci1zY29wZWQgYmxvYnMgYnkgdGhlIGlkIHJlc29sdmVkIGluICgwKS5cbiAgLy8gVGhlIGByZXNldCgpYCBjYWxscyBhYm92ZSBraWNrIG9mZiB6dXN0YW5kLXBlcnNpc3Qgd3JpdGVzIHRoYXQgYXJlXG4gIC8vIGZpcmUtYW5kLWZvcmdldCBhbmQgcmVzb2x2ZSB0aGVpciBvd24ga2V5IG9uZSBhc3luYyBob3AgbGF0ZXIg4oCUIGJ5IHRoZW5cbiAgLy8gdGhlIHRva2VucyBtYXkgYmUgZ29uZSwgc28gdGhhdCB3cml0ZSBjYW4gbGFuZCBpbiB0aGUgYGFub25gIGJ1Y2tldCBhbmRcbiAgLy8gbGVhdmUgYHJvdXRlZmxvdy1wb2Qtc3RvcmU6PHVzZXJJZD5gIGludGFjdCwgcmVzdXJyZWN0aW5nIHRoZSBjbGVhcmVkXG4gIC8vIGNhcHR1cmVzIGF0IHRoZSBuZXh0IHNpZ24taW4uIERlbGV0aW5nIHRoZSBrZXkgb3V0cmlnaHQgaGVyZSBtYWtlcyB0aGVcbiAgLy8gY2xlYXIgZGV0ZXJtaW5pc3RpYzogdGhlIGxhdGUgd3JpdGUgbWF5IG9ubHkgZXZlciByZS1jcmVhdGUgdGhlIHJlc2V0XG4gIC8vIChlbXB0eSkgc3RhdGUsIG5ldmVyIHRoZSBvbGQgYmxvYi4gQSBudWxsIGlkIGNsZWFycyB0aGUgYW5vbiBidWNrZXQsXG4gIC8vIHdoaWNoIGlzIGhhcm1sZXNzLlxuICBhd2FpdCBQcm9taXNlLmFsbChbXG4gICAgY2xlYXJVc2VyU2NvcGVkU3RvcmFnZShQT0RfU1RPUkVfTkFNRSwgdXNlcklkKSxcbiAgICBjbGVhclVzZXJTY29wZWRTdG9yYWdlKFJVTl9TRVRUTEVNRU5UX1NUT1JFX05BTUUsIHVzZXJJZCksXG4gICAgY2xlYXJVc2VyU2NvcGVkU3RvcmFnZShTVE9QX0NBUlRfU1RPUkVfTkFNRSwgdXNlcklkKSxcbiAgICBjbGVhclVzZXJTY29wZWRTdG9yYWdlKFJFVFVSTl9TVUJNSVNTSU9OX1NUT1JFX05BTUUsIHVzZXJJZCksXG4gICAgY2xlYXJVc2VyU2NvcGVkU3RvcmFnZShJTkxJTkVfUkVUVVJOX1NVQk1JU1NJT05fU1RPUkVfTkFNRSwgdXNlcklkKSxcbiAgXSk7XG5cbiAgLy8gKDYpIFN3ZWVwIHRoZSBwZXItT1JERVIga2V5c3BhY2VzLiBUaGVzZSBhcmUgbm90IG9uZSBrZXkgcGVyIHN0b3JlIGJ1dCBvbmVcbiAgLy8ga2V5IHBlciBvcmRlciwgc28gdGhlIG9ubHkgd2F5IHRvIGNsZWFyIHRoZW0gaXMgdG8gZW51bWVyYXRlIGFuZCBtYXRjaCBhXG4gIC8vIHByZWZpeC4gU2FtZSBCMTM2L0IxMzcvQjE0MCByZWFzb24gYXMgKDUpOiBhIHN0YWdlZCBvcmRlciBlZGl0IHRoZSBsYXN0XG4gIC8vIG9wZXJhdG9yIGxlZnQgYmVoaW5kIG11c3QgbmV2ZXIgYmUgb2ZmZXJlZCBmb3IgcmVzdG9yZSB0byB0aGUgbmV4dCBsb2dpblxuICAvLyBvbiBhIHNoYXJlZCBkZXZpY2UuXG4gIGF3YWl0IGNsZWFyU3RvcmFnZUJ5UHJlZml4KGVkaXRJdGVtc1NuYXBzaG90VXNlclByZWZpeCh1c2VySWQpKTtcbiAgLy8gQmVsdC1hbmQtYnJhY2VzOiB0aGUgd3JpdGUgcGF0aCBub3cgcmVmdXNlcyB0byBzdGFnZSB1bmRlciBgYW5vbmAgYXQgYWxsLFxuICAvLyBidXQgYSBwcmUtZXhpc3RpbmcgYW5vbi1idWNrZXQga2V5IChhbiBvbGRlciBidWlsZCwgYSBwYXRoIHRoaXMgcGFzc1xuICAvLyBtaXNzZWQpIG11c3Qgbm90IHN1cnZpdmUgdGVhcmRvd24gZWl0aGVyIOKAlCBzYW1lIEIxMzYvQjEzNy9CMTQwIHJlYXNvbi5cbiAgYXdhaXQgY2xlYXJTdG9yYWdlQnlQcmVmaXgoZWRpdEl0ZW1zU25hcHNob3RVc2VyUHJlZml4KG51bGwpKTtcbn1cblxuLyoqXG4gKiBSZW1vdmUgZXZlcnkgQXN5bmNTdG9yYWdlIGtleSB1bmRlciBgcHJlZml4YC4gQmVzdC1lZmZvcnQgQlkgQ09OVFJBQ1Qg4oCUIGFcbiAqIHN0b3JhZ2UgZmFpbHVyZSAoYW4gdW5hdmFpbGFibGUgbmF0aXZlIG1vZHVsZSwgYSBwbGF0Zm9ybSBxdWlyaywgYW4gb2xkZXJcbiAqIG1vY2sgd2l0aG91dCBgZ2V0QWxsS2V5c2ApIG11c3QgZGVncmFkZSB0byBcIm5vdCBzd2VwdFwiLCBuZXZlciB0dXJuIGFcbiAqIHNpZ24tb3V0IGludG8gYSB0aHJvd24gZXJyb3IgdGhlIHdheSBzdGVwICg1KSdzIHVuZ3VhcmRlZCByZW1vdmVzIGNhbm5vdC5cbiAqL1xuYXN5bmMgZnVuY3Rpb24gY2xlYXJTdG9yYWdlQnlQcmVmaXgocHJlZml4OiBzdHJpbmcpOiBQcm9taXNlPHZvaWQ+IHtcbiAgdHJ5IHtcbiAgICBjb25zdCBrZXlzID0gYXdhaXQgQXN5bmNTdG9yYWdlLmdldEFsbEtleXMoKTtcbiAgICBjb25zdCBtaW5lID0gKGtleXMgPz8gW10pLmZpbHRlcigoa2V5KSA9PiBrZXkuc3RhcnRzV2l0aChwcmVmaXgpKTtcbiAgICBpZiAobWluZS5sZW5ndGggPiAwKSBhd2FpdCBBc3luY1N0b3JhZ2UubXVsdGlSZW1vdmUobWluZSk7XG4gIH0gY2F0Y2gge1xuICAgIC8vIEJlc3QtZWZmb3J0IOKAlCBuZXZlciBicmVhayBzaWduLW91dCBvbiBhIHN0b3JhZ2UgZmFpbHVyZS5cbiAgfVxufVxuXG5pbnRlcmZhY2UgUmVzZXR0YWJsZVN0YXRlIHtcbiAgcmVzZXQ/OiAoKSA9PiB2b2lkO1xufVxuXG5mdW5jdGlvbiByZXNldElmUHJlc2VudChzdGF0ZTogdW5rbm93bik6IHZvaWQge1xuICAoc3RhdGUgYXMgUmVzZXR0YWJsZVN0YXRlKS5yZXNldD8uKCk7XG59XG4iXSwidmVyc2lvbiI6M30=

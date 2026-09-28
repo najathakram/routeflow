@@ -1,0 +1,44 @@
+a2c3d1fa397be24b9c1124a7f81ce839
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _fs = require("fs");
+const _path = require("path");
+/**
+ * WP2 — R5.9 sweep, R5.10 extended for multi-line notes. Static pin on the
+ * buyer web renderers (the invoice-detail render is also proven behaviorally
+ * by `page.line-note.test.tsx`'s RTL test — this file pins it too, plus the
+ * order-detail render which has no RTL coverage) AND on the operator
+ * (dashboard) invoice detail's `{item.notes}` render — the multi-line notes
+ * change touched that one too (no extracted component to hang an RTL test
+ * off of, see the PR), so it now carries the same NOTE_CLASS as the buyer
+ * surfaces rather than being a NEG case.
+ */ const BUYER_INVOICE_PATH = (0, _path.join)(__dirname, "[seller]", "invoices", "[id]", "page.tsx");
+const BUYER_ORDER_PATH = (0, _path.join)(__dirname, "[seller]", "orders", "[id]", "page.tsx");
+const OPERATOR_INVOICE_PATH = (0, _path.join)(__dirname, "..", "..", "(dashboard)", "invoices", "[id]", "page.tsx");
+// Multi-line notes (B-notes-multiline): a bare "\n" collapses to a space in a plain <p>, so the
+// class picked up `whitespace-pre-line`. Updated deliberately, not fought — see the PR.
+const NOTE_CLASS = "mt-0.5 whitespace-pre-line text-xs font-normal italic text-navy/60";
+describe("static pin: buyer web per-line note render (R5.9 sweep)", ()=>{
+    const buyerInvoiceSrc = (0, _fs.readFileSync)(BUYER_INVOICE_PATH, "utf8");
+    const buyerOrderSrc = (0, _fs.readFileSync)(BUYER_ORDER_PATH, "utf8");
+    const operatorInvoiceSrc = (0, _fs.readFileSync)(OPERATOR_INVOICE_PATH, "utf8");
+    it("buyer invoice detail renders {item.notes} exactly once with the NP marker", ()=>{
+        const matches = buyerInvoiceSrc.match(/\{item\.notes\}/g) ?? [];
+        expect(matches.length).toBe(1);
+        expect(buyerInvoiceSrc).toContain(`className="${NOTE_CLASS}"`);
+    });
+    it("buyer order detail renders {li.notes} exactly once with the NP marker", ()=>{
+        const matches = buyerOrderSrc.match(/\{li\.notes\}/g) ?? [];
+        expect(matches.length).toBe(1);
+        expect(buyerOrderSrc).toContain(`className="${NOTE_CLASS}"`);
+    });
+    it("operator (dashboard) invoice detail renders {item.notes} exactly once with the NP marker", ()=>{
+        const matches = operatorInvoiceSrc.match(/\{item\.notes\}/g) ?? [];
+        expect(matches.length).toBe(1);
+        expect(operatorInvoiceSrc).toContain(`className="${NOTE_CLASS}"`);
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC9idXllci9wb3J0YWwvbGluZS1ub3RlLXJlbmRlci5zdGF0aWMudGVzdC50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgeyByZWFkRmlsZVN5bmMgfSBmcm9tIFwiZnNcIjtcbmltcG9ydCB7IGpvaW4gfSBmcm9tIFwicGF0aFwiO1xuXG4vKipcbiAqIFdQMiDigJQgUjUuOSBzd2VlcCwgUjUuMTAgZXh0ZW5kZWQgZm9yIG11bHRpLWxpbmUgbm90ZXMuIFN0YXRpYyBwaW4gb24gdGhlXG4gKiBidXllciB3ZWIgcmVuZGVyZXJzICh0aGUgaW52b2ljZS1kZXRhaWwgcmVuZGVyIGlzIGFsc28gcHJvdmVuIGJlaGF2aW9yYWxseVxuICogYnkgYHBhZ2UubGluZS1ub3RlLnRlc3QudHN4YCdzIFJUTCB0ZXN0IOKAlCB0aGlzIGZpbGUgcGlucyBpdCB0b28sIHBsdXMgdGhlXG4gKiBvcmRlci1kZXRhaWwgcmVuZGVyIHdoaWNoIGhhcyBubyBSVEwgY292ZXJhZ2UpIEFORCBvbiB0aGUgb3BlcmF0b3JcbiAqIChkYXNoYm9hcmQpIGludm9pY2UgZGV0YWlsJ3MgYHtpdGVtLm5vdGVzfWAgcmVuZGVyIOKAlCB0aGUgbXVsdGktbGluZSBub3Rlc1xuICogY2hhbmdlIHRvdWNoZWQgdGhhdCBvbmUgdG9vIChubyBleHRyYWN0ZWQgY29tcG9uZW50IHRvIGhhbmcgYW4gUlRMIHRlc3RcbiAqIG9mZiBvZiwgc2VlIHRoZSBQUiksIHNvIGl0IG5vdyBjYXJyaWVzIHRoZSBzYW1lIE5PVEVfQ0xBU1MgYXMgdGhlIGJ1eWVyXG4gKiBzdXJmYWNlcyByYXRoZXIgdGhhbiBiZWluZyBhIE5FRyBjYXNlLlxuICovXG5jb25zdCBCVVlFUl9JTlZPSUNFX1BBVEggPSBqb2luKF9fZGlybmFtZSwgXCJbc2VsbGVyXVwiLCBcImludm9pY2VzXCIsIFwiW2lkXVwiLCBcInBhZ2UudHN4XCIpO1xuY29uc3QgQlVZRVJfT1JERVJfUEFUSCA9IGpvaW4oX19kaXJuYW1lLCBcIltzZWxsZXJdXCIsIFwib3JkZXJzXCIsIFwiW2lkXVwiLCBcInBhZ2UudHN4XCIpO1xuY29uc3QgT1BFUkFUT1JfSU5WT0lDRV9QQVRIID0gam9pbihcbiAgX19kaXJuYW1lLFxuICBcIi4uXCIsXG4gIFwiLi5cIixcbiAgXCIoZGFzaGJvYXJkKVwiLFxuICBcImludm9pY2VzXCIsXG4gIFwiW2lkXVwiLFxuICBcInBhZ2UudHN4XCIsXG4pO1xuLy8gTXVsdGktbGluZSBub3RlcyAoQi1ub3Rlcy1tdWx0aWxpbmUpOiBhIGJhcmUgXCJcXG5cIiBjb2xsYXBzZXMgdG8gYSBzcGFjZSBpbiBhIHBsYWluIDxwPiwgc28gdGhlXG4vLyBjbGFzcyBwaWNrZWQgdXAgYHdoaXRlc3BhY2UtcHJlLWxpbmVgLiBVcGRhdGVkIGRlbGliZXJhdGVseSwgbm90IGZvdWdodCDigJQgc2VlIHRoZSBQUi5cbmNvbnN0IE5PVEVfQ0xBU1MgPSBcIm10LTAuNSB3aGl0ZXNwYWNlLXByZS1saW5lIHRleHQteHMgZm9udC1ub3JtYWwgaXRhbGljIHRleHQtbmF2eS82MFwiO1xuXG5kZXNjcmliZShcInN0YXRpYyBwaW46IGJ1eWVyIHdlYiBwZXItbGluZSBub3RlIHJlbmRlciAoUjUuOSBzd2VlcClcIiwgKCkgPT4ge1xuICBjb25zdCBidXllckludm9pY2VTcmMgPSByZWFkRmlsZVN5bmMoQlVZRVJfSU5WT0lDRV9QQVRILCBcInV0ZjhcIik7XG4gIGNvbnN0IGJ1eWVyT3JkZXJTcmMgPSByZWFkRmlsZVN5bmMoQlVZRVJfT1JERVJfUEFUSCwgXCJ1dGY4XCIpO1xuICBjb25zdCBvcGVyYXRvckludm9pY2VTcmMgPSByZWFkRmlsZVN5bmMoT1BFUkFUT1JfSU5WT0lDRV9QQVRILCBcInV0ZjhcIik7XG5cbiAgaXQoXCJidXllciBpbnZvaWNlIGRldGFpbCByZW5kZXJzIHtpdGVtLm5vdGVzfSBleGFjdGx5IG9uY2Ugd2l0aCB0aGUgTlAgbWFya2VyXCIsICgpID0+IHtcbiAgICBjb25zdCBtYXRjaGVzID0gYnV5ZXJJbnZvaWNlU3JjLm1hdGNoKC9cXHtpdGVtXFwubm90ZXNcXH0vZykgPz8gW107XG4gICAgZXhwZWN0KG1hdGNoZXMubGVuZ3RoKS50b0JlKDEpO1xuICAgIGV4cGVjdChidXllckludm9pY2VTcmMpLnRvQ29udGFpbihgY2xhc3NOYW1lPVwiJHtOT1RFX0NMQVNTfVwiYCk7XG4gIH0pO1xuXG4gIGl0KFwiYnV5ZXIgb3JkZXIgZGV0YWlsIHJlbmRlcnMge2xpLm5vdGVzfSBleGFjdGx5IG9uY2Ugd2l0aCB0aGUgTlAgbWFya2VyXCIsICgpID0+IHtcbiAgICBjb25zdCBtYXRjaGVzID0gYnV5ZXJPcmRlclNyYy5tYXRjaCgvXFx7bGlcXC5ub3Rlc1xcfS9nKSA/PyBbXTtcbiAgICBleHBlY3QobWF0Y2hlcy5sZW5ndGgpLnRvQmUoMSk7XG4gICAgZXhwZWN0KGJ1eWVyT3JkZXJTcmMpLnRvQ29udGFpbihgY2xhc3NOYW1lPVwiJHtOT1RFX0NMQVNTfVwiYCk7XG4gIH0pO1xuXG4gIGl0KFwib3BlcmF0b3IgKGRhc2hib2FyZCkgaW52b2ljZSBkZXRhaWwgcmVuZGVycyB7aXRlbS5ub3Rlc30gZXhhY3RseSBvbmNlIHdpdGggdGhlIE5QIG1hcmtlclwiLCAoKSA9PiB7XG4gICAgY29uc3QgbWF0Y2hlcyA9IG9wZXJhdG9ySW52b2ljZVNyYy5tYXRjaCgvXFx7aXRlbVxcLm5vdGVzXFx9L2cpID8/IFtdO1xuICAgIGV4cGVjdChtYXRjaGVzLmxlbmd0aCkudG9CZSgxKTtcbiAgICBleHBlY3Qob3BlcmF0b3JJbnZvaWNlU3JjKS50b0NvbnRhaW4oYGNsYXNzTmFtZT1cIiR7Tk9URV9DTEFTU31cImApO1xuICB9KTtcbn0pO1xuIl0sIm5hbWVzIjpbIkJVWUVSX0lOVk9JQ0VfUEFUSCIsImpvaW4iLCJfX2Rpcm5hbWUiLCJCVVlFUl9PUkRFUl9QQVRIIiwiT1BFUkFUT1JfSU5WT0lDRV9QQVRIIiwiTk9URV9DTEFTUyIsImRlc2NyaWJlIiwiYnV5ZXJJbnZvaWNlU3JjIiwicmVhZEZpbGVTeW5jIiwiYnV5ZXJPcmRlclNyYyIsIm9wZXJhdG9ySW52b2ljZVNyYyIsIml0IiwibWF0Y2hlcyIsIm1hdGNoIiwiZXhwZWN0IiwibGVuZ3RoIiwidG9CZSIsInRvQ29udGFpbiJdLCJtYXBwaW5ncyI6Ijs7OztvQkFBNkI7c0JBQ1I7QUFFckI7Ozs7Ozs7OztDQVNDLEdBQ0QsTUFBTUEscUJBQXFCQyxJQUFBQSxVQUFJLEVBQUNDLFdBQVcsWUFBWSxZQUFZLFFBQVE7QUFDM0UsTUFBTUMsbUJBQW1CRixJQUFBQSxVQUFJLEVBQUNDLFdBQVcsWUFBWSxVQUFVLFFBQVE7QUFDdkUsTUFBTUUsd0JBQXdCSCxJQUFBQSxVQUFJLEVBQ2hDQyxXQUNBLE1BQ0EsTUFDQSxlQUNBLFlBQ0EsUUFDQTtBQUVGLGdHQUFnRztBQUNoRyx3RkFBd0Y7QUFDeEYsTUFBTUcsYUFBYTtBQUVuQkMsU0FBUywyREFBMkQ7SUFDbEUsTUFBTUMsa0JBQWtCQyxJQUFBQSxnQkFBWSxFQUFDUixvQkFBb0I7SUFDekQsTUFBTVMsZ0JBQWdCRCxJQUFBQSxnQkFBWSxFQUFDTCxrQkFBa0I7SUFDckQsTUFBTU8scUJBQXFCRixJQUFBQSxnQkFBWSxFQUFDSix1QkFBdUI7SUFFL0RPLEdBQUcsNkVBQTZFO1FBQzlFLE1BQU1DLFVBQVVMLGdCQUFnQk0sS0FBSyxDQUFDLHVCQUF1QixFQUFFO1FBQy9EQyxPQUFPRixRQUFRRyxNQUFNLEVBQUVDLElBQUksQ0FBQztRQUM1QkYsT0FBT1AsaUJBQWlCVSxTQUFTLENBQUMsQ0FBQyxXQUFXLEVBQUVaLFdBQVcsQ0FBQyxDQUFDO0lBQy9EO0lBRUFNLEdBQUcseUVBQXlFO1FBQzFFLE1BQU1DLFVBQVVILGNBQWNJLEtBQUssQ0FBQyxxQkFBcUIsRUFBRTtRQUMzREMsT0FBT0YsUUFBUUcsTUFBTSxFQUFFQyxJQUFJLENBQUM7UUFDNUJGLE9BQU9MLGVBQWVRLFNBQVMsQ0FBQyxDQUFDLFdBQVcsRUFBRVosV0FBVyxDQUFDLENBQUM7SUFDN0Q7SUFFQU0sR0FBRyw0RkFBNEY7UUFDN0YsTUFBTUMsVUFBVUYsbUJBQW1CRyxLQUFLLENBQUMsdUJBQXVCLEVBQUU7UUFDbEVDLE9BQU9GLFFBQVFHLE1BQU0sRUFBRUMsSUFBSSxDQUFDO1FBQzVCRixPQUFPSixvQkFBb0JPLFNBQVMsQ0FBQyxDQUFDLFdBQVcsRUFBRVosV0FBVyxDQUFDLENBQUM7SUFDbEU7QUFDRiJ9

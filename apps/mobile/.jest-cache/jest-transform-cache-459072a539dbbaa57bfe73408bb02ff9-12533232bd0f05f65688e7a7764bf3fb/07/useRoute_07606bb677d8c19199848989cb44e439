@@ -1,0 +1,52 @@
+be6ddbf7b47e25e9cbd43e6059d87b9c
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.useRoute = useRoute;
+const React = __importStar(require("react"));
+const NavigationProvider_js_1 = require("./NavigationProvider.js");
+/**
+ * Hook to access the route prop of the parent screen anywhere.
+ *
+ * @returns Route prop of the parent screen.
+ */
+function useRoute() {
+    const route = React.useContext(NavigationProvider_js_1.NavigationRouteContext);
+    if (route === undefined) {
+        throw new Error("Couldn't find a route object. Is your component inside a screen in a navigator?");
+    }
+    return route;
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0Mzcvbm9kZV9tb2R1bGVzL0ByZWFjdC1uYXZpZ2F0aW9uL2NvcmUvbGliL21vZHVsZS91c2VSb3V0ZS5qcyIsIm1hcHBpbmdzIjoiQUFBQSxZQUFZLENBQUM7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7O0FBU2IsNEJBTUM7QUFiRCw2Q0FBK0I7QUFDL0IsbUVBQWlFO0FBQ2pFOzs7O0dBSUc7QUFDSCxTQUFnQixRQUFRO0lBQ3RCLE1BQU0sS0FBSyxHQUFHLEtBQUssQ0FBQyxVQUFVLENBQUMsOENBQXNCLENBQUMsQ0FBQztJQUN2RCxJQUFJLEtBQUssS0FBSyxTQUFTLEVBQUUsQ0FBQztRQUN4QixNQUFNLElBQUksS0FBSyxDQUFDLGlGQUFpRixDQUFDLENBQUM7SUFDckcsQ0FBQztJQUNELE9BQU8sS0FBSyxDQUFDO0FBQ2YsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9ub2RlX21vZHVsZXMvQHJlYWN0LW5hdmlnYXRpb24vY29yZS9saWIvbW9kdWxlL3VzZVJvdXRlLmpzIl0sInNvdXJjZXNDb250ZW50IjpbIlwidXNlIHN0cmljdFwiO1xuXG5pbXBvcnQgKiBhcyBSZWFjdCBmcm9tICdyZWFjdCc7XG5pbXBvcnQgeyBOYXZpZ2F0aW9uUm91dGVDb250ZXh0IH0gZnJvbSBcIi4vTmF2aWdhdGlvblByb3ZpZGVyLmpzXCI7XG4vKipcbiAqIEhvb2sgdG8gYWNjZXNzIHRoZSByb3V0ZSBwcm9wIG9mIHRoZSBwYXJlbnQgc2NyZWVuIGFueXdoZXJlLlxuICpcbiAqIEByZXR1cm5zIFJvdXRlIHByb3Agb2YgdGhlIHBhcmVudCBzY3JlZW4uXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiB1c2VSb3V0ZSgpIHtcbiAgY29uc3Qgcm91dGUgPSBSZWFjdC51c2VDb250ZXh0KE5hdmlnYXRpb25Sb3V0ZUNvbnRleHQpO1xuICBpZiAocm91dGUgPT09IHVuZGVmaW5lZCkge1xuICAgIHRocm93IG5ldyBFcnJvcihcIkNvdWxkbid0IGZpbmQgYSByb3V0ZSBvYmplY3QuIElzIHlvdXIgY29tcG9uZW50IGluc2lkZSBhIHNjcmVlbiBpbiBhIG5hdmlnYXRvcj9cIik7XG4gIH1cbiAgcmV0dXJuIHJvdXRlO1xufVxuLy8jIHNvdXJjZU1hcHBpbmdVUkw9dXNlUm91dGUuanMubWFwIl0sInZlcnNpb24iOjN9

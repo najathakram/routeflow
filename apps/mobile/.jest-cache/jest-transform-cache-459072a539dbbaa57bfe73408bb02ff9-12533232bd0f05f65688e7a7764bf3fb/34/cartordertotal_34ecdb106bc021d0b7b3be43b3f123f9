@@ -1,0 +1,77 @@
+a07eb1121114c76bfa0671db684ccfc7
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.lineUnitFor = lineUnitFor;
+exports.priceEditorPrefill = priceEditorPrefill;
+exports.priceEditorSaveOverride = priceEditorSaveOverride;
+exports.computeOrderTotal = computeOrderTotal;
+const pricing_1 = require("@routeflow/pricing");
+const unit_options_1 = require("./unit-options");
+const cart_line_state_1 = require("./cart-line-state");
+/**
+ * Pure, parameterized version of NewOrderScreen.tsx's `lineUnitFor` — lifted out so the
+ * order-total fix (SA-085: a unit-sold line's footer showed $24.00 beside a $220.00 line,
+ * because this derivation fell back to the pack's tier price whenever `unitPrice` was unset,
+ * with no `unitLabel` awareness) has an executable pin instead of only a screenshot.
+ *
+ * What this line actually charges: overrides count only on non-SPECIAL (tier === 1) lines
+ * (web parity). Routes the fallback through `unitPriceBase` so a unit-sold line (qty in that
+ * unit, no explicit override) prices off its OWN resolved level, never the pack's tier price.
+ */
+function lineUnitFor(line, product, tier) {
+    const isSpecial = tier !== 1;
+    const tierPrice = (0, pricing_1.getTierPrice)(product, tier);
+    const base = (0, unit_options_1.unitPriceBase)(line ?? {}, tierPrice);
+    return isSpecial ? base : (0, cart_line_state_1.effectiveUnitPrice)(line, base);
+}
+/**
+ * SA-085i(b): the tray price-editor's pre-fill — the SAME price every other reader of this
+ * line uses (`lineUnitFor`), never the pack's tier price for a unit-sold line. A thin, named
+ * wrapper so the screen's call site and this function's own tests both read as "the pre-fill,"
+ * not a second derivation.
+ */
+function priceEditorPrefill(line, product, tier) {
+    return lineUnitFor(line, product, tier);
+}
+/**
+ * SA-085i(b): what the price editor's Save writes — an override ONLY when the typed price
+ * actually diverges from the resolved base (the same comparison submit/park already make).
+ * Saving a pre-fill UNTOUCHED must never store a redundant override (a unit line's pre-fill
+ * equals its own base, never the pack's tier price — the bug the pre-fill fix itself closed).
+ */
+function priceEditorSaveOverride(typed, base) {
+    return typed != null && typed === base ? null : typed;
+}
+/**
+ * Pure version of NewOrderScreen.tsx's `total`/`totalItems` useMemo. Same inputs, same
+ * iteration order, same rounding — the component's memo should read as a thin wrapper over
+ * this, not a second implementation of it.
+ */
+function computeOrderTotal(items, productById, unlisted, tierForProduct) {
+    let total = 0;
+    let totalItems = 0;
+    for (const [id, line] of Object.entries(items)) {
+        const p = productById.get(id);
+        if (!p)
+            continue;
+        const qty = (0, pricing_1.effectiveQty)(line, p.unitsPerBox);
+        if (qty <= 0)
+            continue;
+        totalItems += qty;
+        total += (0, pricing_1.computeLineSubtotal)({
+            unitPrice: lineUnitFor(line, p, tierForProduct(id)),
+            qty,
+            boxes: line.boxes ?? null,
+            pieces: line.pieces ?? null,
+            unitsPerBox: p.unitsPerBox ?? null,
+        });
+    }
+    for (const u of unlisted) {
+        if (u.qty <= 0)
+            continue;
+        totalItems += u.qty;
+        total += (0, pricing_1.computeLineSubtotal)({ unitPrice: u.unitPrice, qty: u.qty });
+    }
+    return { total: (0, pricing_1.roundMoney)(total), totalItems };
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL2NhcnQtb3JkZXItdG90YWwudHMiLCJtYXBwaW5ncyI6Ijs7QUFjQSxrQ0FLQztBQVFELGdEQU1DO0FBUUQsMERBRUM7QUFZRCw4Q0E0QkM7QUFuRkQsZ0RBQWlHO0FBQ2pHLGlEQUErQztBQUMvQyx1REFBcUY7QUFFckY7Ozs7Ozs7OztHQVNHO0FBQ0gsU0FBZ0IsV0FBVyxDQUFDLElBQTJCLEVBQUUsT0FBZ0IsRUFBRSxJQUFZO0lBQ3JGLE1BQU0sU0FBUyxHQUFHLElBQUksS0FBSyxDQUFDLENBQUM7SUFDN0IsTUFBTSxTQUFTLEdBQUcsSUFBQSxzQkFBWSxFQUFDLE9BQU8sRUFBRSxJQUFJLENBQUMsQ0FBQztJQUM5QyxNQUFNLElBQUksR0FBRyxJQUFBLDRCQUFhLEVBQUMsSUFBSSxJQUFJLEVBQUUsRUFBRSxTQUFTLENBQUMsQ0FBQztJQUNsRCxPQUFPLFNBQVMsQ0FBQyxDQUFDLENBQUMsSUFBSSxDQUFDLENBQUMsQ0FBQyxJQUFBLG9DQUFrQixFQUFDLElBQUksRUFBRSxJQUFJLENBQUMsQ0FBQztBQUMzRCxDQUFDO0FBRUQ7Ozs7O0dBS0c7QUFDSCxTQUFnQixrQkFBa0IsQ0FDaEMsSUFBMkIsRUFDM0IsT0FBZ0IsRUFDaEIsSUFBWTtJQUVaLE9BQU8sV0FBVyxDQUFDLElBQUksRUFBRSxPQUFPLEVBQUUsSUFBSSxDQUFDLENBQUM7QUFDMUMsQ0FBQztBQUVEOzs7OztHQUtHO0FBQ0gsU0FBZ0IsdUJBQXVCLENBQUMsS0FBb0IsRUFBRSxJQUFZO0lBQ3hFLE9BQU8sS0FBSyxJQUFJLElBQUksSUFBSSxLQUFLLEtBQUssSUFBSSxDQUFDLENBQUMsQ0FBQyxJQUFJLENBQUMsQ0FBQyxDQUFDLEtBQUssQ0FBQztBQUN4RCxDQUFDO0FBT0Q7Ozs7R0FJRztBQUNILFNBQWdCLGlCQUFpQixDQUMvQixLQUFnQyxFQUNoQyxXQUFpQyxFQUNqQyxRQUE2QixFQUM3QixjQUE2QztJQUU3QyxJQUFJLEtBQUssR0FBRyxDQUFDLENBQUM7SUFDZCxJQUFJLFVBQVUsR0FBRyxDQUFDLENBQUM7SUFDbkIsS0FBSyxNQUFNLENBQUMsRUFBRSxFQUFFLElBQUksQ0FBQyxJQUFJLE1BQU0sQ0FBQyxPQUFPLENBQUMsS0FBSyxDQUFDLEVBQUUsQ0FBQztRQUMvQyxNQUFNLENBQUMsR0FBRyxXQUFXLENBQUMsR0FBRyxDQUFDLEVBQUUsQ0FBQyxDQUFDO1FBQzlCLElBQUksQ0FBQyxDQUFDO1lBQUUsU0FBUztRQUNqQixNQUFNLEdBQUcsR0FBRyxJQUFBLHNCQUFZLEVBQUMsSUFBSSxFQUFFLENBQUMsQ0FBQyxXQUFXLENBQUMsQ0FBQztRQUM5QyxJQUFJLEdBQUcsSUFBSSxDQUFDO1lBQUUsU0FBUztRQUN2QixVQUFVLElBQUksR0FBRyxDQUFDO1FBQ2xCLEtBQUssSUFBSSxJQUFBLDZCQUFtQixFQUFDO1lBQzNCLFNBQVMsRUFBRSxXQUFXLENBQUMsSUFBSSxFQUFFLENBQUMsRUFBRSxjQUFjLENBQUMsRUFBRSxDQUFDLENBQUM7WUFDbkQsR0FBRztZQUNILEtBQUssRUFBRSxJQUFJLENBQUMsS0FBSyxJQUFJLElBQUk7WUFDekIsTUFBTSxFQUFFLElBQUksQ0FBQyxNQUFNLElBQUksSUFBSTtZQUMzQixXQUFXLEVBQUUsQ0FBQyxDQUFDLFdBQVcsSUFBSSxJQUFJO1NBQ25DLENBQUMsQ0FBQztJQUNMLENBQUM7SUFDRCxLQUFLLE1BQU0sQ0FBQyxJQUFJLFFBQVEsRUFBRSxDQUFDO1FBQ3pCLElBQUksQ0FBQyxDQUFDLEdBQUcsSUFBSSxDQUFDO1lBQUUsU0FBUztRQUN6QixVQUFVLElBQUksQ0FBQyxDQUFDLEdBQUcsQ0FBQztRQUNwQixLQUFLLElBQUksSUFBQSw2QkFBbUIsRUFBQyxFQUFFLFNBQVMsRUFBRSxDQUFDLENBQUMsU0FBUyxFQUFFLEdBQUcsRUFBRSxDQUFDLENBQUMsR0FBRyxFQUFFLENBQUMsQ0FBQztJQUN2RSxDQUFDO0lBQ0QsT0FBTyxFQUFFLEtBQUssRUFBRSxJQUFBLG9CQUFVLEVBQUMsS0FBSyxDQUFDLEVBQUUsVUFBVSxFQUFFLENBQUM7QUFDbEQsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvVXNlcnMvbmFqYXRoYWtyYW0vY29kZS9yb3V0ZWZsb3ctMjQzNy9hcHBzL21vYmlsZS9saWIvY2FydC1vcmRlci10b3RhbC50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgeyBjb21wdXRlTGluZVN1YnRvdGFsLCBlZmZlY3RpdmVRdHksIGdldFRpZXJQcmljZSwgcm91bmRNb25leSB9IGZyb20gXCJAcm91dGVmbG93L3ByaWNpbmdcIjtcbmltcG9ydCB7IHVuaXRQcmljZUJhc2UgfSBmcm9tIFwiLi91bml0LW9wdGlvbnNcIjtcbmltcG9ydCB7IGVmZmVjdGl2ZVVuaXRQcmljZSwgdHlwZSBMaW5lU3RhdGUsIHR5cGUgUHJvZHVjdCB9IGZyb20gXCIuL2NhcnQtbGluZS1zdGF0ZVwiO1xuXG4vKipcbiAqIFB1cmUsIHBhcmFtZXRlcml6ZWQgdmVyc2lvbiBvZiBOZXdPcmRlclNjcmVlbi50c3gncyBgbGluZVVuaXRGb3JgIOKAlCBsaWZ0ZWQgb3V0IHNvIHRoZVxuICogb3JkZXItdG90YWwgZml4IChTQS0wODU6IGEgdW5pdC1zb2xkIGxpbmUncyBmb290ZXIgc2hvd2VkICQyNC4wMCBiZXNpZGUgYSAkMjIwLjAwIGxpbmUsXG4gKiBiZWNhdXNlIHRoaXMgZGVyaXZhdGlvbiBmZWxsIGJhY2sgdG8gdGhlIHBhY2sncyB0aWVyIHByaWNlIHdoZW5ldmVyIGB1bml0UHJpY2VgIHdhcyB1bnNldCxcbiAqIHdpdGggbm8gYHVuaXRMYWJlbGAgYXdhcmVuZXNzKSBoYXMgYW4gZXhlY3V0YWJsZSBwaW4gaW5zdGVhZCBvZiBvbmx5IGEgc2NyZWVuc2hvdC5cbiAqXG4gKiBXaGF0IHRoaXMgbGluZSBhY3R1YWxseSBjaGFyZ2VzOiBvdmVycmlkZXMgY291bnQgb25seSBvbiBub24tU1BFQ0lBTCAodGllciA9PT0gMSkgbGluZXNcbiAqICh3ZWIgcGFyaXR5KS4gUm91dGVzIHRoZSBmYWxsYmFjayB0aHJvdWdoIGB1bml0UHJpY2VCYXNlYCBzbyBhIHVuaXQtc29sZCBsaW5lIChxdHkgaW4gdGhhdFxuICogdW5pdCwgbm8gZXhwbGljaXQgb3ZlcnJpZGUpIHByaWNlcyBvZmYgaXRzIE9XTiByZXNvbHZlZCBsZXZlbCwgbmV2ZXIgdGhlIHBhY2sncyB0aWVyIHByaWNlLlxuICovXG5leHBvcnQgZnVuY3Rpb24gbGluZVVuaXRGb3IobGluZTogTGluZVN0YXRlIHwgdW5kZWZpbmVkLCBwcm9kdWN0OiBQcm9kdWN0LCB0aWVyOiBudW1iZXIpOiBudW1iZXIge1xuICBjb25zdCBpc1NwZWNpYWwgPSB0aWVyICE9PSAxO1xuICBjb25zdCB0aWVyUHJpY2UgPSBnZXRUaWVyUHJpY2UocHJvZHVjdCwgdGllcik7XG4gIGNvbnN0IGJhc2UgPSB1bml0UHJpY2VCYXNlKGxpbmUgPz8ge30sIHRpZXJQcmljZSk7XG4gIHJldHVybiBpc1NwZWNpYWwgPyBiYXNlIDogZWZmZWN0aXZlVW5pdFByaWNlKGxpbmUsIGJhc2UpO1xufVxuXG4vKipcbiAqIFNBLTA4NWkoYik6IHRoZSB0cmF5IHByaWNlLWVkaXRvcidzIHByZS1maWxsIOKAlCB0aGUgU0FNRSBwcmljZSBldmVyeSBvdGhlciByZWFkZXIgb2YgdGhpc1xuICogbGluZSB1c2VzIChgbGluZVVuaXRGb3JgKSwgbmV2ZXIgdGhlIHBhY2sncyB0aWVyIHByaWNlIGZvciBhIHVuaXQtc29sZCBsaW5lLiBBIHRoaW4sIG5hbWVkXG4gKiB3cmFwcGVyIHNvIHRoZSBzY3JlZW4ncyBjYWxsIHNpdGUgYW5kIHRoaXMgZnVuY3Rpb24ncyBvd24gdGVzdHMgYm90aCByZWFkIGFzIFwidGhlIHByZS1maWxsLFwiXG4gKiBub3QgYSBzZWNvbmQgZGVyaXZhdGlvbi5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIHByaWNlRWRpdG9yUHJlZmlsbChcbiAgbGluZTogTGluZVN0YXRlIHwgdW5kZWZpbmVkLFxuICBwcm9kdWN0OiBQcm9kdWN0LFxuICB0aWVyOiBudW1iZXIsXG4pOiBudW1iZXIge1xuICByZXR1cm4gbGluZVVuaXRGb3IobGluZSwgcHJvZHVjdCwgdGllcik7XG59XG5cbi8qKlxuICogU0EtMDg1aShiKTogd2hhdCB0aGUgcHJpY2UgZWRpdG9yJ3MgU2F2ZSB3cml0ZXMg4oCUIGFuIG92ZXJyaWRlIE9OTFkgd2hlbiB0aGUgdHlwZWQgcHJpY2VcbiAqIGFjdHVhbGx5IGRpdmVyZ2VzIGZyb20gdGhlIHJlc29sdmVkIGJhc2UgKHRoZSBzYW1lIGNvbXBhcmlzb24gc3VibWl0L3BhcmsgYWxyZWFkeSBtYWtlKS5cbiAqIFNhdmluZyBhIHByZS1maWxsIFVOVE9VQ0hFRCBtdXN0IG5ldmVyIHN0b3JlIGEgcmVkdW5kYW50IG92ZXJyaWRlIChhIHVuaXQgbGluZSdzIHByZS1maWxsXG4gKiBlcXVhbHMgaXRzIG93biBiYXNlLCBuZXZlciB0aGUgcGFjaydzIHRpZXIgcHJpY2Ug4oCUIHRoZSBidWcgdGhlIHByZS1maWxsIGZpeCBpdHNlbGYgY2xvc2VkKS5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIHByaWNlRWRpdG9yU2F2ZU92ZXJyaWRlKHR5cGVkOiBudW1iZXIgfCBudWxsLCBiYXNlOiBudW1iZXIpOiBudW1iZXIgfCBudWxsIHtcbiAgcmV0dXJuIHR5cGVkICE9IG51bGwgJiYgdHlwZWQgPT09IGJhc2UgPyBudWxsIDogdHlwZWQ7XG59XG5cbmV4cG9ydCBpbnRlcmZhY2UgVW5saXN0ZWRUb3RhbExpbmUge1xuICBxdHk6IG51bWJlcjtcbiAgdW5pdFByaWNlOiBudW1iZXI7XG59XG5cbi8qKlxuICogUHVyZSB2ZXJzaW9uIG9mIE5ld09yZGVyU2NyZWVuLnRzeCdzIGB0b3RhbGAvYHRvdGFsSXRlbXNgIHVzZU1lbW8uIFNhbWUgaW5wdXRzLCBzYW1lXG4gKiBpdGVyYXRpb24gb3JkZXIsIHNhbWUgcm91bmRpbmcg4oCUIHRoZSBjb21wb25lbnQncyBtZW1vIHNob3VsZCByZWFkIGFzIGEgdGhpbiB3cmFwcGVyIG92ZXJcbiAqIHRoaXMsIG5vdCBhIHNlY29uZCBpbXBsZW1lbnRhdGlvbiBvZiBpdC5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIGNvbXB1dGVPcmRlclRvdGFsKFxuICBpdGVtczogUmVjb3JkPHN0cmluZywgTGluZVN0YXRlPixcbiAgcHJvZHVjdEJ5SWQ6IE1hcDxzdHJpbmcsIFByb2R1Y3Q+LFxuICB1bmxpc3RlZDogVW5saXN0ZWRUb3RhbExpbmVbXSxcbiAgdGllckZvclByb2R1Y3Q6IChwcm9kdWN0SWQ6IHN0cmluZykgPT4gbnVtYmVyLFxuKTogeyB0b3RhbDogbnVtYmVyOyB0b3RhbEl0ZW1zOiBudW1iZXIgfSB7XG4gIGxldCB0b3RhbCA9IDA7XG4gIGxldCB0b3RhbEl0ZW1zID0gMDtcbiAgZm9yIChjb25zdCBbaWQsIGxpbmVdIG9mIE9iamVjdC5lbnRyaWVzKGl0ZW1zKSkge1xuICAgIGNvbnN0IHAgPSBwcm9kdWN0QnlJZC5nZXQoaWQpO1xuICAgIGlmICghcCkgY29udGludWU7XG4gICAgY29uc3QgcXR5ID0gZWZmZWN0aXZlUXR5KGxpbmUsIHAudW5pdHNQZXJCb3gpO1xuICAgIGlmIChxdHkgPD0gMCkgY29udGludWU7XG4gICAgdG90YWxJdGVtcyArPSBxdHk7XG4gICAgdG90YWwgKz0gY29tcHV0ZUxpbmVTdWJ0b3RhbCh7XG4gICAgICB1bml0UHJpY2U6IGxpbmVVbml0Rm9yKGxpbmUsIHAsIHRpZXJGb3JQcm9kdWN0KGlkKSksXG4gICAgICBxdHksXG4gICAgICBib3hlczogbGluZS5ib3hlcyA/PyBudWxsLFxuICAgICAgcGllY2VzOiBsaW5lLnBpZWNlcyA/PyBudWxsLFxuICAgICAgdW5pdHNQZXJCb3g6IHAudW5pdHNQZXJCb3ggPz8gbnVsbCxcbiAgICB9KTtcbiAgfVxuICBmb3IgKGNvbnN0IHUgb2YgdW5saXN0ZWQpIHtcbiAgICBpZiAodS5xdHkgPD0gMCkgY29udGludWU7XG4gICAgdG90YWxJdGVtcyArPSB1LnF0eTtcbiAgICB0b3RhbCArPSBjb21wdXRlTGluZVN1YnRvdGFsKHsgdW5pdFByaWNlOiB1LnVuaXRQcmljZSwgcXR5OiB1LnF0eSB9KTtcbiAgfVxuICByZXR1cm4geyB0b3RhbDogcm91bmRNb25leSh0b3RhbCksIHRvdGFsSXRlbXMgfTtcbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

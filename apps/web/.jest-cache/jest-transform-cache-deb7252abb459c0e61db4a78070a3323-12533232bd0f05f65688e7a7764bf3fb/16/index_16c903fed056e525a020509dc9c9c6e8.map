@@ -1,0 +1,1 @@
+{"version":3,"sources":["/Users/najathakram/code/routeflow-2437/apps/web/components/brand/index.ts"],"sourcesContent":["export { Brand, BrandMark, BrandSignature, BRAND_MARK_SRC } from \"./BrandMark\";\n"],"names":["BRAND_MARK_SRC","Brand","BrandMark","BrandSignature"],"mappings":";;;;;;;;;;;QAA2CA;eAAAA,yBAAc;;QAAhDC;eAAAA,gBAAK;;QAAEC;eAAAA,oBAAS;;QAAEC;eAAAA,yBAAc;;;2BAAwB"}

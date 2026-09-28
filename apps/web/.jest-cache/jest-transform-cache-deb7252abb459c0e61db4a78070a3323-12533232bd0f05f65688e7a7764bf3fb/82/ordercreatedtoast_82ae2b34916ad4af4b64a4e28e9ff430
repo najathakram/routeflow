@@ -1,0 +1,45 @@
+3a1ac31d1a9b7bffa9b831f82b081a78
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+Object.defineProperty(exports, "orderCreatedToast", {
+    enumerable: true,
+    get: function() {
+        return orderCreatedToast;
+    }
+});
+/**
+ * The success toast for CreateOrderModal. The modal closes on success and the operator used to
+ * have no path from the confirmation to the order (order-ui-redesign-spec.md §8): a forced
+ * redirect would fight rapid multi-order entry, so this offers a one-click "View Order" action
+ * on the toast instead of navigating on its own.
+ */ /** Long enough to reach for the action (the provider default is 4s). */ const ACTION_TOAST_MS = 8000;
+function orderCreatedToast({ mergeChoice, asDraft, created, onViewOrder }) {
+    const merged = mergeChoice === "merge";
+    const orderId = created?.id ?? null;
+    const action = orderId && onViewOrder ? {
+        label: merged ? "View Merged Order" : "View Order",
+        onClick: ()=>onViewOrder(orderId)
+    } : undefined;
+    if (merged) {
+        return {
+            title: `Merged into order ${created?.orderNumber ?? "#" + created?.id?.slice(0, 6)}`,
+            variant: "success",
+            action,
+            ...action ? {
+                duration: ACTION_TOAST_MS
+            } : {}
+        };
+    }
+    return {
+        title: asDraft ? "Order saved as draft" : "Order created",
+        variant: "success",
+        action,
+        ...action ? {
+            duration: ACTION_TOAST_MS
+        } : {}
+    };
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS9vcmRlcnMvX2NvbXBvbmVudHMvb3JkZXItY3JlYXRlZC10b2FzdC50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgdHlwZSB7IFRvYXN0RGF0YSB9IGZyb20gXCJAcm91dGVmbG93L3VpL3dlYlwiO1xuXG5leHBvcnQgaW50ZXJmYWNlIE9yZGVyQ3JlYXRlZFRvYXN0SW5wdXQge1xuICAvKiogVGhlIG9wZXJhdG9yJ3MgYW5zd2VyIHRvIHRoZSBtZXJnZSBwcm9tcHQgKFwibWVyZ2VcIiBmb2xkcyB0aGUgbGluZXMgaW50byBhbiBvcGVuIG9yZGVyKS4gKi9cbiAgbWVyZ2VDaG9pY2U/OiBzdHJpbmcgfCBudWxsO1xuICAvKiogVHJ1ZSBmb3IgXCJTYXZlIGFzIERyYWZ0XCIuICovXG4gIGFzRHJhZnQ/OiBib29sZWFuIHwgbnVsbDtcbiAgLyoqIFRoZSBBUEkgcmVzcG9uc2Ug4oCUIG9ubHkgYGlkYCAvIGBvcmRlck51bWJlcmAgYXJlIHJlYWQ7IHRoZSBtZXJnZSBjYXNlIHJldHVybnMgdGhlIG1lcmdlZCBvcmRlci4gKi9cbiAgY3JlYXRlZD86IHsgaWQ/OiBzdHJpbmcgfCBudWxsOyBvcmRlck51bWJlcj86IHN0cmluZyB8IG51bGwgfSB8IG51bGw7XG4gIC8qKiBOYXZpZ2F0ZXMgdG8gYW4gb3JkZXIuIE9wdGlvbmFsOiB3aXRoIG5vIGhhbmRsZXIgdGhlIHRvYXN0IGhhcyBubyBhY3Rpb24gKHRoZSBvbGQgYmVoYXZpb3VyKS4gKi9cbiAgb25WaWV3T3JkZXI/OiAob3JkZXJJZDogc3RyaW5nKSA9PiB2b2lkO1xufVxuXG4vKipcbiAqIFRoZSBzdWNjZXNzIHRvYXN0IGZvciBDcmVhdGVPcmRlck1vZGFsLiBUaGUgbW9kYWwgY2xvc2VzIG9uIHN1Y2Nlc3MgYW5kIHRoZSBvcGVyYXRvciB1c2VkIHRvXG4gKiBoYXZlIG5vIHBhdGggZnJvbSB0aGUgY29uZmlybWF0aW9uIHRvIHRoZSBvcmRlciAob3JkZXItdWktcmVkZXNpZ24tc3BlYy5tZCDCpzgpOiBhIGZvcmNlZFxuICogcmVkaXJlY3Qgd291bGQgZmlnaHQgcmFwaWQgbXVsdGktb3JkZXIgZW50cnksIHNvIHRoaXMgb2ZmZXJzIGEgb25lLWNsaWNrIFwiVmlldyBPcmRlclwiIGFjdGlvblxuICogb24gdGhlIHRvYXN0IGluc3RlYWQgb2YgbmF2aWdhdGluZyBvbiBpdHMgb3duLlxuICovXG4vKiogTG9uZyBlbm91Z2ggdG8gcmVhY2ggZm9yIHRoZSBhY3Rpb24gKHRoZSBwcm92aWRlciBkZWZhdWx0IGlzIDRzKS4gKi9cbmNvbnN0IEFDVElPTl9UT0FTVF9NUyA9IDgwMDA7XG5cbmV4cG9ydCBmdW5jdGlvbiBvcmRlckNyZWF0ZWRUb2FzdCh7XG4gIG1lcmdlQ2hvaWNlLFxuICBhc0RyYWZ0LFxuICBjcmVhdGVkLFxuICBvblZpZXdPcmRlcixcbn06IE9yZGVyQ3JlYXRlZFRvYXN0SW5wdXQpOiBPbWl0PFRvYXN0RGF0YSwgXCJpZFwiPiB7XG4gIGNvbnN0IG1lcmdlZCA9IG1lcmdlQ2hvaWNlID09PSBcIm1lcmdlXCI7XG4gIGNvbnN0IG9yZGVySWQgPSBjcmVhdGVkPy5pZCA/PyBudWxsO1xuICBjb25zdCBhY3Rpb24gPVxuICAgIG9yZGVySWQgJiYgb25WaWV3T3JkZXJcbiAgICAgID8ge1xuICAgICAgICAgIGxhYmVsOiBtZXJnZWQgPyBcIlZpZXcgTWVyZ2VkIE9yZGVyXCIgOiBcIlZpZXcgT3JkZXJcIixcbiAgICAgICAgICBvbkNsaWNrOiAoKSA9PiBvblZpZXdPcmRlcihvcmRlcklkKSxcbiAgICAgICAgfVxuICAgICAgOiB1bmRlZmluZWQ7XG5cbiAgaWYgKG1lcmdlZCkge1xuICAgIHJldHVybiB7XG4gICAgICB0aXRsZTogYE1lcmdlZCBpbnRvIG9yZGVyICR7Y3JlYXRlZD8ub3JkZXJOdW1iZXIgPz8gXCIjXCIgKyBjcmVhdGVkPy5pZD8uc2xpY2UoMCwgNil9YCxcbiAgICAgIHZhcmlhbnQ6IFwic3VjY2Vzc1wiLFxuICAgICAgYWN0aW9uLFxuICAgICAgLi4uKGFjdGlvbiA/IHsgZHVyYXRpb246IEFDVElPTl9UT0FTVF9NUyB9IDoge30pLFxuICAgIH07XG4gIH1cbiAgcmV0dXJuIHtcbiAgICB0aXRsZTogYXNEcmFmdCA/IFwiT3JkZXIgc2F2ZWQgYXMgZHJhZnRcIiA6IFwiT3JkZXIgY3JlYXRlZFwiLFxuICAgIHZhcmlhbnQ6IFwic3VjY2Vzc1wiLFxuICAgIGFjdGlvbixcbiAgICAuLi4oYWN0aW9uID8geyBkdXJhdGlvbjogQUNUSU9OX1RPQVNUX01TIH0gOiB7fSksXG4gIH07XG59XG4iXSwibmFtZXMiOlsib3JkZXJDcmVhdGVkVG9hc3QiLCJBQ1RJT05fVE9BU1RfTVMiLCJtZXJnZUNob2ljZSIsImFzRHJhZnQiLCJjcmVhdGVkIiwib25WaWV3T3JkZXIiLCJtZXJnZWQiLCJvcmRlcklkIiwiaWQiLCJhY3Rpb24iLCJsYWJlbCIsIm9uQ2xpY2siLCJ1bmRlZmluZWQiLCJ0aXRsZSIsIm9yZGVyTnVtYmVyIiwic2xpY2UiLCJ2YXJpYW50IiwiZHVyYXRpb24iXSwibWFwcGluZ3MiOiI7Ozs7K0JBc0JnQkE7OztlQUFBQTs7O0FBVGhCOzs7OztDQUtDLEdBQ0Qsc0VBQXNFLEdBQ3RFLE1BQU1DLGtCQUFrQjtBQUVqQixTQUFTRCxrQkFBa0IsRUFDaENFLFdBQVcsRUFDWEMsT0FBTyxFQUNQQyxPQUFPLEVBQ1BDLFdBQVcsRUFDWTtJQUN2QixNQUFNQyxTQUFTSixnQkFBZ0I7SUFDL0IsTUFBTUssVUFBVUgsU0FBU0ksTUFBTTtJQUMvQixNQUFNQyxTQUNKRixXQUFXRixjQUNQO1FBQ0VLLE9BQU9KLFNBQVMsc0JBQXNCO1FBQ3RDSyxTQUFTLElBQU1OLFlBQVlFO0lBQzdCLElBQ0FLO0lBRU4sSUFBSU4sUUFBUTtRQUNWLE9BQU87WUFDTE8sT0FBTyxDQUFDLGtCQUFrQixFQUFFVCxTQUFTVSxlQUFlLE1BQU1WLFNBQVNJLElBQUlPLE1BQU0sR0FBRyxJQUFJO1lBQ3BGQyxTQUFTO1lBQ1RQO1lBQ0EsR0FBSUEsU0FBUztnQkFBRVEsVUFBVWhCO1lBQWdCLElBQUksQ0FBQyxDQUFDO1FBQ2pEO0lBQ0Y7SUFDQSxPQUFPO1FBQ0xZLE9BQU9WLFVBQVUseUJBQXlCO1FBQzFDYSxTQUFTO1FBQ1RQO1FBQ0EsR0FBSUEsU0FBUztZQUFFUSxVQUFVaEI7UUFBZ0IsSUFBSSxDQUFDLENBQUM7SUFDakQ7QUFDRiJ9

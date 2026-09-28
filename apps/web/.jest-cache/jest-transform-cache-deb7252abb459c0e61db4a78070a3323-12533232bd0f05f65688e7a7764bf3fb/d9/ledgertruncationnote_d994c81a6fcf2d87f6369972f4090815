@@ -1,0 +1,64 @@
+f1fa40e93591a3c14a181cea78187aa6
+"use client";
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+Object.defineProperty(exports, "LedgerTruncationNote", {
+    enumerable: true,
+    get: function() {
+        return LedgerTruncationNote;
+    }
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = /*#__PURE__*/ _interop_require_wildcard(require("react"));
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) {
+        return obj;
+    }
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") {
+        return {
+            default: obj
+        };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) {
+        return cache.get(obj);
+    }
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) {
+                Object.defineProperty(newObj, key, desc);
+            } else {
+                newObj[key] = obj[key];
+            }
+        }
+    }
+    newObj.default = obj;
+    if (cache) {
+        cache.set(obj, newObj);
+    }
+    return newObj;
+}
+function LedgerTruncationNote({ truncated }) {
+    if (truncated !== true) return null;
+    return /*#__PURE__*/ (0, _jsxruntime.jsx)("p", {
+        className: "mb-2 text-xs text-navy/70",
+        children: "Showing the most recent transactions only — older entries are not listed in this ledger."
+    });
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS9jdXN0b21lcnMvW2lkXS9sZWRnZXItdHJ1bmNhdGlvbi1ub3RlLnRzeCJdLCJzb3VyY2VzQ29udGVudCI6WyJcInVzZSBjbGllbnRcIjtcblxuaW1wb3J0ICogYXMgUmVhY3QgZnJvbSBcInJlYWN0XCI7XG5cbi8qKlxuICogQjExMCBkaXNjbG9zdXJlOiB0aGUgc3RhdGVtZW50IGxlZGdlciBpcyBhIGNhcHBlZCByZWFkICh0aGUgQVBJIHJldHVybnNcbiAqIGB0cmFuc2FjdGlvbnNUcnVuY2F0ZWRgIHdoZW4gaXRzIG93biByZWFkcyBoaXQgdGhlaXIgdGFrZSBjYXBzKSwgc28gYSBsb25nXG4gKiBoaXN0b3J5IHJlbmRlcnMgYXMgYSBwYXJ0aWFsIHZpZXcuIFdpdGhvdXQgdGhpcyBsaW5lIHRoZSBsZWRnZXIgcmVhZHMgYXMgdGhlXG4gKiBjb21wbGV0ZSBoaXN0b3J5LiBSZW5kZXJzIE5PVEhJTkcgdW5sZXNzIHRoZSBzZXJ2ZXIgYWN0dWFsbHkgc2FpZCBgdHJ1ZWAg4oCUXG4gKiBhbiBhYnNlbnQvZmFsc2UgZmxhZyBtdXN0IG5ldmVyIGFkZCBhIHNjYXJ5IGxhYmVsIHRvIGEgY29tcGxldGUgbGVkZ2VyLlxuICovXG5leHBvcnQgZnVuY3Rpb24gTGVkZ2VyVHJ1bmNhdGlvbk5vdGUoeyB0cnVuY2F0ZWQgfTogeyB0cnVuY2F0ZWQ/OiBib29sZWFuIH0pIHtcbiAgaWYgKHRydW5jYXRlZCAhPT0gdHJ1ZSkgcmV0dXJuIG51bGw7XG4gIHJldHVybiAoXG4gICAgPHAgY2xhc3NOYW1lPVwibWItMiB0ZXh0LXhzIHRleHQtbmF2eS83MFwiPlxuICAgICAgU2hvd2luZyB0aGUgbW9zdCByZWNlbnQgdHJhbnNhY3Rpb25zIG9ubHkg4oCUIG9sZGVyIGVudHJpZXMgYXJlIG5vdCBsaXN0ZWQgaW4gdGhpcyBsZWRnZXIuXG4gICAgPC9wPlxuICApO1xufVxuIl0sIm5hbWVzIjpbIkxlZGdlclRydW5jYXRpb25Ob3RlIiwidHJ1bmNhdGVkIiwicCIsImNsYXNzTmFtZSJdLCJtYXBwaW5ncyI6IkFBQUE7Ozs7OytCQVdnQkE7OztlQUFBQTs7OzsrREFUTzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7O0FBU2hCLFNBQVNBLHFCQUFxQixFQUFFQyxTQUFTLEVBQTJCO0lBQ3pFLElBQUlBLGNBQWMsTUFBTSxPQUFPO0lBQy9CLHFCQUNFLHFCQUFDQztRQUFFQyxXQUFVO2tCQUE0Qjs7QUFJN0MifQ==

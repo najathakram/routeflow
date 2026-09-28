@@ -1,0 +1,28 @@
+b3cbb4ea5cad02e252455f2d00c87c15
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _fs = /*#__PURE__*/ _interop_require_default(require("fs"));
+const _path = /*#__PURE__*/ _interop_require_default(require("path"));
+function _interop_require_default(obj) {
+    return obj && obj.__esModule ? obj : {
+        default: obj
+    };
+}
+/**
+ * #2211 (3): the estimates list table sat inside a bare `overflow-hidden` card, so from 320px to
+ * 430px it clipped instead of scrolling (+41 to +151px past the viewport). Same fix as the
+ * invoices list (B750): an inner `overflow-x-auto` wrapper around the `<table>`, with the outer
+ * card keeping `overflow-hidden` only for its rounded corners. This pins the wiring; the
+ * 320-430px proof is a Playwright capture.
+ */ const src = _fs.default.readFileSync(_path.default.join(__dirname, "page.tsx"), "utf8");
+describe("#2211 — estimates list table scrolls instead of clipping", ()=>{
+    it("wraps every <table> in an overflow-x-auto div directly inside the overflow-hidden card", ()=>{
+        const tables = src.match(/<table\b/g) ?? [];
+        expect(tables.length).toBeGreaterThan(0);
+        expect(src.match(/<div className="overflow-hidden rounded-lg border border-surface-border">\s*(?:\{\/\*[\s\S]*?\*\/\}\s*)?<div className="overflow-x-auto">\s*<table\b/g) ?? []).toHaveLength(tables.length);
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS9lc3RpbWF0ZXMvcGFnZS5vdmVyZmxvdy1iMjIxMS50ZXN0LnRzIl0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCBmcyBmcm9tIFwiZnNcIjtcbmltcG9ydCBwYXRoIGZyb20gXCJwYXRoXCI7XG5cbi8qKlxuICogIzIyMTEgKDMpOiB0aGUgZXN0aW1hdGVzIGxpc3QgdGFibGUgc2F0IGluc2lkZSBhIGJhcmUgYG92ZXJmbG93LWhpZGRlbmAgY2FyZCwgc28gZnJvbSAzMjBweCB0b1xuICogNDMwcHggaXQgY2xpcHBlZCBpbnN0ZWFkIG9mIHNjcm9sbGluZyAoKzQxIHRvICsxNTFweCBwYXN0IHRoZSB2aWV3cG9ydCkuIFNhbWUgZml4IGFzIHRoZVxuICogaW52b2ljZXMgbGlzdCAoQjc1MCk6IGFuIGlubmVyIGBvdmVyZmxvdy14LWF1dG9gIHdyYXBwZXIgYXJvdW5kIHRoZSBgPHRhYmxlPmAsIHdpdGggdGhlIG91dGVyXG4gKiBjYXJkIGtlZXBpbmcgYG92ZXJmbG93LWhpZGRlbmAgb25seSBmb3IgaXRzIHJvdW5kZWQgY29ybmVycy4gVGhpcyBwaW5zIHRoZSB3aXJpbmc7IHRoZVxuICogMzIwLTQzMHB4IHByb29mIGlzIGEgUGxheXdyaWdodCBjYXB0dXJlLlxuICovXG5jb25zdCBzcmMgPSBmcy5yZWFkRmlsZVN5bmMocGF0aC5qb2luKF9fZGlybmFtZSwgXCJwYWdlLnRzeFwiKSwgXCJ1dGY4XCIpO1xuXG5kZXNjcmliZShcIiMyMjExIOKAlCBlc3RpbWF0ZXMgbGlzdCB0YWJsZSBzY3JvbGxzIGluc3RlYWQgb2YgY2xpcHBpbmdcIiwgKCkgPT4ge1xuICBpdChcIndyYXBzIGV2ZXJ5IDx0YWJsZT4gaW4gYW4gb3ZlcmZsb3cteC1hdXRvIGRpdiBkaXJlY3RseSBpbnNpZGUgdGhlIG92ZXJmbG93LWhpZGRlbiBjYXJkXCIsICgpID0+IHtcbiAgICBjb25zdCB0YWJsZXMgPSBzcmMubWF0Y2goLzx0YWJsZVxcYi9nKSA/PyBbXTtcbiAgICBleHBlY3QodGFibGVzLmxlbmd0aCkudG9CZUdyZWF0ZXJUaGFuKDApO1xuICAgIGV4cGVjdChcbiAgICAgIHNyYy5tYXRjaChcbiAgICAgICAgLzxkaXYgY2xhc3NOYW1lPVwib3ZlcmZsb3ctaGlkZGVuIHJvdW5kZWQtbGcgYm9yZGVyIGJvcmRlci1zdXJmYWNlLWJvcmRlclwiPlxccyooPzpcXHtcXC9cXCpbXFxzXFxTXSo/XFwqXFwvXFx9XFxzKik/PGRpdiBjbGFzc05hbWU9XCJvdmVyZmxvdy14LWF1dG9cIj5cXHMqPHRhYmxlXFxiL2csXG4gICAgICApID8/IFtdLFxuICAgICkudG9IYXZlTGVuZ3RoKHRhYmxlcy5sZW5ndGgpO1xuICB9KTtcbn0pO1xuIl0sIm5hbWVzIjpbInNyYyIsImZzIiwicmVhZEZpbGVTeW5jIiwicGF0aCIsImpvaW4iLCJfX2Rpcm5hbWUiLCJkZXNjcmliZSIsIml0IiwidGFibGVzIiwibWF0Y2giLCJleHBlY3QiLCJsZW5ndGgiLCJ0b0JlR3JlYXRlclRoYW4iLCJ0b0hhdmVMZW5ndGgiXSwibWFwcGluZ3MiOiI7Ozs7MkRBQWU7NkRBQ0U7Ozs7OztBQUVqQjs7Ozs7O0NBTUMsR0FDRCxNQUFNQSxNQUFNQyxXQUFFLENBQUNDLFlBQVksQ0FBQ0MsYUFBSSxDQUFDQyxJQUFJLENBQUNDLFdBQVcsYUFBYTtBQUU5REMsU0FBUyw0REFBNEQ7SUFDbkVDLEdBQUcsMEZBQTBGO1FBQzNGLE1BQU1DLFNBQVNSLElBQUlTLEtBQUssQ0FBQyxnQkFBZ0IsRUFBRTtRQUMzQ0MsT0FBT0YsT0FBT0csTUFBTSxFQUFFQyxlQUFlLENBQUM7UUFDdENGLE9BQ0VWLElBQUlTLEtBQUssQ0FDUCw0SkFDRyxFQUFFLEVBQ1BJLFlBQVksQ0FBQ0wsT0FBT0csTUFBTTtJQUM5QjtBQUNGIn0=

@@ -1,0 +1,32 @@
+4c9ad19e868e1f6c7fb047400cdd6a2a
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _localurl = require("./local-url");
+describe("isLocalUrl (e2e buyer setup gate)", ()=>{
+    it.each([
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
+        "http://[::1]:3001/x",
+        "HTTP://LOCALHOST"
+    ])("is local: %s", (url)=>{
+        expect((0, _localurl.isLocalUrl)(url)).toBe(true);
+    });
+    it("is NOT local for an unset base URL, so the step skips and makes no request", ()=>{
+        expect((0, _localurl.isLocalUrl)(undefined)).toBe(false);
+        expect((0, _localurl.isLocalUrl)("")).toBe(false);
+    });
+    it.each([
+        // The value PLAYWRIGHT_BASE_URL resolves to when it is unset (playwright.config.ts).
+        "https://routeflowweb-production.up.railway.app",
+        "https://api.example.com",
+        "http://localhost.evil.com",
+        "http://localhost@evil.com",
+        "not a url"
+    ])("is NOT local: %s", (url)=>{
+        expect((0, _localurl.isLocalUrl)(url)).toBe(false);
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2xpYi9sb2NhbC11cmwudGVzdC50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgeyBpc0xvY2FsVXJsIH0gZnJvbSBcIi4vbG9jYWwtdXJsXCI7XG5cbmRlc2NyaWJlKFwiaXNMb2NhbFVybCAoZTJlIGJ1eWVyIHNldHVwIGdhdGUpXCIsICgpID0+IHtcbiAgaXQuZWFjaChbXG4gICAgXCJodHRwOi8vbG9jYWxob3N0OjMwMDFcIixcbiAgICBcImh0dHA6Ly8xMjcuMC4wLjE6MzAwMVwiLFxuICAgIFwiaHR0cDovL1s6OjFdOjMwMDEveFwiLFxuICAgIFwiSFRUUDovL0xPQ0FMSE9TVFwiLFxuICBdKShcImlzIGxvY2FsOiAlc1wiLCAodXJsKSA9PiB7XG4gICAgZXhwZWN0KGlzTG9jYWxVcmwodXJsKSkudG9CZSh0cnVlKTtcbiAgfSk7XG5cbiAgaXQoXCJpcyBOT1QgbG9jYWwgZm9yIGFuIHVuc2V0IGJhc2UgVVJMLCBzbyB0aGUgc3RlcCBza2lwcyBhbmQgbWFrZXMgbm8gcmVxdWVzdFwiLCAoKSA9PiB7XG4gICAgZXhwZWN0KGlzTG9jYWxVcmwodW5kZWZpbmVkKSkudG9CZShmYWxzZSk7XG4gICAgZXhwZWN0KGlzTG9jYWxVcmwoXCJcIikpLnRvQmUoZmFsc2UpO1xuICB9KTtcblxuICBpdC5lYWNoKFtcbiAgICAvLyBUaGUgdmFsdWUgUExBWVdSSUdIVF9CQVNFX1VSTCByZXNvbHZlcyB0byB3aGVuIGl0IGlzIHVuc2V0IChwbGF5d3JpZ2h0LmNvbmZpZy50cykuXG4gICAgXCJodHRwczovL3JvdXRlZmxvd3dlYi1wcm9kdWN0aW9uLnVwLnJhaWx3YXkuYXBwXCIsXG4gICAgXCJodHRwczovL2FwaS5leGFtcGxlLmNvbVwiLFxuICAgIFwiaHR0cDovL2xvY2FsaG9zdC5ldmlsLmNvbVwiLFxuICAgIFwiaHR0cDovL2xvY2FsaG9zdEBldmlsLmNvbVwiLFxuICAgIFwibm90IGEgdXJsXCIsXG4gIF0pKFwiaXMgTk9UIGxvY2FsOiAlc1wiLCAodXJsKSA9PiB7XG4gICAgZXhwZWN0KGlzTG9jYWxVcmwodXJsKSkudG9CZShmYWxzZSk7XG4gIH0pO1xufSk7XG4iXSwibmFtZXMiOlsiZGVzY3JpYmUiLCJpdCIsImVhY2giLCJ1cmwiLCJleHBlY3QiLCJpc0xvY2FsVXJsIiwidG9CZSIsInVuZGVmaW5lZCJdLCJtYXBwaW5ncyI6Ijs7OzswQkFBMkI7QUFFM0JBLFNBQVMscUNBQXFDO0lBQzVDQyxHQUFHQyxJQUFJLENBQUM7UUFDTjtRQUNBO1FBQ0E7UUFDQTtLQUNELEVBQUUsZ0JBQWdCLENBQUNDO1FBQ2xCQyxPQUFPQyxJQUFBQSxvQkFBVSxFQUFDRixNQUFNRyxJQUFJLENBQUM7SUFDL0I7SUFFQUwsR0FBRyw4RUFBOEU7UUFDL0VHLE9BQU9DLElBQUFBLG9CQUFVLEVBQUNFLFlBQVlELElBQUksQ0FBQztRQUNuQ0YsT0FBT0MsSUFBQUEsb0JBQVUsRUFBQyxLQUFLQyxJQUFJLENBQUM7SUFDOUI7SUFFQUwsR0FBR0MsSUFBSSxDQUFDO1FBQ04scUZBQXFGO1FBQ3JGO1FBQ0E7UUFDQTtRQUNBO1FBQ0E7S0FDRCxFQUFFLG9CQUFvQixDQUFDQztRQUN0QkMsT0FBT0MsSUFBQUEsb0JBQVUsRUFBQ0YsTUFBTUcsSUFBSSxDQUFDO0lBQy9CO0FBQ0YifQ==

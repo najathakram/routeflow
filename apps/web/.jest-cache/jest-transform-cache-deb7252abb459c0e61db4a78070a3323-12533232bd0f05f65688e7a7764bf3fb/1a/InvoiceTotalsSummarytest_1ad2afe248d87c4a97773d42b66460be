@@ -1,0 +1,86 @@
+b684af618255269427d31b36c28e1a33
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _jsxruntime = require("react/jsx-runtime");
+const _react = require("@testing-library/react");
+const _InvoiceTotalsSummary = require("./InvoiceTotalsSummary");
+/**
+ * The client's actual report (B421): a credit-note application rendered as
+ * "Paid to date -$638.00" / "Paid $638.00" although the customer never paid
+ * anything. These assertions pin the fixed wording directly against the
+ * rendered DOM — the money-correctness math itself is covered by
+ * `@routeflow/pricing`'s payment-confirmation.spec.ts; this file is only
+ * about what the operator actually reads.
+ */ const BASE = {
+    subtotal: 870,
+    discount: 0,
+    taxAmount: 0,
+    shippingFee: 0,
+    amountPaid: 0,
+    creditApplied: 0,
+    advanceApplied: 0,
+    balanceDue: 870
+};
+describe("InvoiceTotalsSummary wording (B421, REG-B421)", ()=>{
+    it("a credit-note-only invoice shows 'Payments received $0.00' and 'Credits applied', never a bare 'Paid'", ()=>{
+        (0, _react.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_InvoiceTotalsSummary.InvoiceTotalsSummary, {
+            ...BASE,
+            creditApplied: 638,
+            balanceDue: 232
+        }));
+        expect(_react.screen.getByText("Payments received")).toBeInTheDocument();
+        expect(_react.screen.getByText("-$0.00")).toBeInTheDocument();
+        expect(_react.screen.getByText("Credits applied")).toBeInTheDocument();
+        expect(_react.screen.getByText("-$638.00")).toBeInTheDocument();
+        expect(_react.screen.getByText("$232.00")).toBeInTheDocument();
+        // The pre-fix wording must be completely gone -- not relabeled, not still
+        // present alongside the new lines.
+        expect(_react.screen.queryByText("Paid to date")).not.toBeInTheDocument();
+        expect(_react.screen.queryByText(/^Paid$/)).not.toBeInTheDocument();
+    });
+    it("an advance-only invoice shows 'Payments received $0.00' and 'Advance applied'", ()=>{
+        (0, _react.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_InvoiceTotalsSummary.InvoiceTotalsSummary, {
+            ...BASE,
+            advanceApplied: 100,
+            balanceDue: 770
+        }));
+        expect(_react.screen.getByText("Payments received")).toBeInTheDocument();
+        expect(_react.screen.getByText("-$0.00")).toBeInTheDocument();
+        expect(_react.screen.getByText("Advance applied")).toBeInTheDocument();
+        expect(_react.screen.getByText("-$100.00")).toBeInTheDocument();
+    });
+    it("a cash + credit invoice shows both lines with their own correct figures", ()=>{
+        (0, _react.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_InvoiceTotalsSummary.InvoiceTotalsSummary, {
+            ...BASE,
+            amountPaid: 232,
+            creditApplied: 638,
+            balanceDue: 0
+        }));
+        expect(_react.screen.getByText("Payments received")).toBeInTheDocument();
+        expect(_react.screen.getByText("-$232.00")).toBeInTheDocument();
+        expect(_react.screen.getByText("Credits applied")).toBeInTheDocument();
+        expect(_react.screen.getByText("-$638.00")).toBeInTheDocument();
+    });
+    it("an all-cash invoice with no credit/advance shows only 'Payments received' -- no credit/advance line at all", ()=>{
+        (0, _react.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_InvoiceTotalsSummary.InvoiceTotalsSummary, {
+            ...BASE,
+            amountPaid: 870,
+            balanceDue: 0
+        }));
+        expect(_react.screen.getByText("Payments received")).toBeInTheDocument();
+        expect(_react.screen.queryByText("Credits applied")).not.toBeInTheDocument();
+        expect(_react.screen.queryByText("Advance applied")).not.toBeInTheDocument();
+    });
+    it("an unpaid invoice with no confirmed activity at all shows none of the three lines", ()=>{
+        (0, _react.render)(/*#__PURE__*/ (0, _jsxruntime.jsx)(_InvoiceTotalsSummary.InvoiceTotalsSummary, {
+            ...BASE
+        }));
+        expect(_react.screen.queryByText("Payments received")).not.toBeInTheDocument();
+        expect(_react.screen.queryByText("Credits applied")).not.toBeInTheDocument();
+        expect(_react.screen.queryByText("Advance applied")).not.toBeInTheDocument();
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS9pbnZvaWNlcy9baWRdL0ludm9pY2VUb3RhbHNTdW1tYXJ5LnRlc3QudHN4Il0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCB7IHJlbmRlciwgc2NyZWVuIH0gZnJvbSBcIkB0ZXN0aW5nLWxpYnJhcnkvcmVhY3RcIjtcbmltcG9ydCB7IEludm9pY2VUb3RhbHNTdW1tYXJ5LCB0eXBlIEludm9pY2VUb3RhbHNTdW1tYXJ5UHJvcHMgfSBmcm9tIFwiLi9JbnZvaWNlVG90YWxzU3VtbWFyeVwiO1xuXG4vKipcbiAqIFRoZSBjbGllbnQncyBhY3R1YWwgcmVwb3J0IChCNDIxKTogYSBjcmVkaXQtbm90ZSBhcHBsaWNhdGlvbiByZW5kZXJlZCBhc1xuICogXCJQYWlkIHRvIGRhdGUgLSQ2MzguMDBcIiAvIFwiUGFpZCAkNjM4LjAwXCIgYWx0aG91Z2ggdGhlIGN1c3RvbWVyIG5ldmVyIHBhaWRcbiAqIGFueXRoaW5nLiBUaGVzZSBhc3NlcnRpb25zIHBpbiB0aGUgZml4ZWQgd29yZGluZyBkaXJlY3RseSBhZ2FpbnN0IHRoZVxuICogcmVuZGVyZWQgRE9NIOKAlCB0aGUgbW9uZXktY29ycmVjdG5lc3MgbWF0aCBpdHNlbGYgaXMgY292ZXJlZCBieVxuICogYEByb3V0ZWZsb3cvcHJpY2luZ2AncyBwYXltZW50LWNvbmZpcm1hdGlvbi5zcGVjLnRzOyB0aGlzIGZpbGUgaXMgb25seVxuICogYWJvdXQgd2hhdCB0aGUgb3BlcmF0b3IgYWN0dWFsbHkgcmVhZHMuXG4gKi9cbmNvbnN0IEJBU0U6IEludm9pY2VUb3RhbHNTdW1tYXJ5UHJvcHMgPSB7XG4gIHN1YnRvdGFsOiA4NzAsXG4gIGRpc2NvdW50OiAwLFxuICB0YXhBbW91bnQ6IDAsXG4gIHNoaXBwaW5nRmVlOiAwLFxuICBhbW91bnRQYWlkOiAwLFxuICBjcmVkaXRBcHBsaWVkOiAwLFxuICBhZHZhbmNlQXBwbGllZDogMCxcbiAgYmFsYW5jZUR1ZTogODcwLFxufTtcblxuZGVzY3JpYmUoXCJJbnZvaWNlVG90YWxzU3VtbWFyeSB3b3JkaW5nIChCNDIxLCBSRUctQjQyMSlcIiwgKCkgPT4ge1xuICBpdChcImEgY3JlZGl0LW5vdGUtb25seSBpbnZvaWNlIHNob3dzICdQYXltZW50cyByZWNlaXZlZCAkMC4wMCcgYW5kICdDcmVkaXRzIGFwcGxpZWQnLCBuZXZlciBhIGJhcmUgJ1BhaWQnXCIsICgpID0+IHtcbiAgICByZW5kZXIoPEludm9pY2VUb3RhbHNTdW1tYXJ5IHsuLi5CQVNFfSBjcmVkaXRBcHBsaWVkPXs2Mzh9IGJhbGFuY2VEdWU9ezIzMn0gLz4pO1xuXG4gICAgZXhwZWN0KHNjcmVlbi5nZXRCeVRleHQoXCJQYXltZW50cyByZWNlaXZlZFwiKSkudG9CZUluVGhlRG9jdW1lbnQoKTtcbiAgICBleHBlY3Qoc2NyZWVuLmdldEJ5VGV4dChcIi0kMC4wMFwiKSkudG9CZUluVGhlRG9jdW1lbnQoKTtcbiAgICBleHBlY3Qoc2NyZWVuLmdldEJ5VGV4dChcIkNyZWRpdHMgYXBwbGllZFwiKSkudG9CZUluVGhlRG9jdW1lbnQoKTtcbiAgICBleHBlY3Qoc2NyZWVuLmdldEJ5VGV4dChcIi0kNjM4LjAwXCIpKS50b0JlSW5UaGVEb2N1bWVudCgpO1xuICAgIGV4cGVjdChzY3JlZW4uZ2V0QnlUZXh0KFwiJDIzMi4wMFwiKSkudG9CZUluVGhlRG9jdW1lbnQoKTtcbiAgICAvLyBUaGUgcHJlLWZpeCB3b3JkaW5nIG11c3QgYmUgY29tcGxldGVseSBnb25lIC0tIG5vdCByZWxhYmVsZWQsIG5vdCBzdGlsbFxuICAgIC8vIHByZXNlbnQgYWxvbmdzaWRlIHRoZSBuZXcgbGluZXMuXG4gICAgZXhwZWN0KHNjcmVlbi5xdWVyeUJ5VGV4dChcIlBhaWQgdG8gZGF0ZVwiKSkubm90LnRvQmVJblRoZURvY3VtZW50KCk7XG4gICAgZXhwZWN0KHNjcmVlbi5xdWVyeUJ5VGV4dCgvXlBhaWQkLykpLm5vdC50b0JlSW5UaGVEb2N1bWVudCgpO1xuICB9KTtcblxuICBpdChcImFuIGFkdmFuY2Utb25seSBpbnZvaWNlIHNob3dzICdQYXltZW50cyByZWNlaXZlZCAkMC4wMCcgYW5kICdBZHZhbmNlIGFwcGxpZWQnXCIsICgpID0+IHtcbiAgICByZW5kZXIoPEludm9pY2VUb3RhbHNTdW1tYXJ5IHsuLi5CQVNFfSBhZHZhbmNlQXBwbGllZD17MTAwfSBiYWxhbmNlRHVlPXs3NzB9IC8+KTtcblxuICAgIGV4cGVjdChzY3JlZW4uZ2V0QnlUZXh0KFwiUGF5bWVudHMgcmVjZWl2ZWRcIikpLnRvQmVJblRoZURvY3VtZW50KCk7XG4gICAgZXhwZWN0KHNjcmVlbi5nZXRCeVRleHQoXCItJDAuMDBcIikpLnRvQmVJblRoZURvY3VtZW50KCk7XG4gICAgZXhwZWN0KHNjcmVlbi5nZXRCeVRleHQoXCJBZHZhbmNlIGFwcGxpZWRcIikpLnRvQmVJblRoZURvY3VtZW50KCk7XG4gICAgZXhwZWN0KHNjcmVlbi5nZXRCeVRleHQoXCItJDEwMC4wMFwiKSkudG9CZUluVGhlRG9jdW1lbnQoKTtcbiAgfSk7XG5cbiAgaXQoXCJhIGNhc2ggKyBjcmVkaXQgaW52b2ljZSBzaG93cyBib3RoIGxpbmVzIHdpdGggdGhlaXIgb3duIGNvcnJlY3QgZmlndXJlc1wiLCAoKSA9PiB7XG4gICAgcmVuZGVyKDxJbnZvaWNlVG90YWxzU3VtbWFyeSB7Li4uQkFTRX0gYW1vdW50UGFpZD17MjMyfSBjcmVkaXRBcHBsaWVkPXs2Mzh9IGJhbGFuY2VEdWU9ezB9IC8+KTtcblxuICAgIGV4cGVjdChzY3JlZW4uZ2V0QnlUZXh0KFwiUGF5bWVudHMgcmVjZWl2ZWRcIikpLnRvQmVJblRoZURvY3VtZW50KCk7XG4gICAgZXhwZWN0KHNjcmVlbi5nZXRCeVRleHQoXCItJDIzMi4wMFwiKSkudG9CZUluVGhlRG9jdW1lbnQoKTtcbiAgICBleHBlY3Qoc2NyZWVuLmdldEJ5VGV4dChcIkNyZWRpdHMgYXBwbGllZFwiKSkudG9CZUluVGhlRG9jdW1lbnQoKTtcbiAgICBleHBlY3Qoc2NyZWVuLmdldEJ5VGV4dChcIi0kNjM4LjAwXCIpKS50b0JlSW5UaGVEb2N1bWVudCgpO1xuICB9KTtcblxuICBpdChcImFuIGFsbC1jYXNoIGludm9pY2Ugd2l0aCBubyBjcmVkaXQvYWR2YW5jZSBzaG93cyBvbmx5ICdQYXltZW50cyByZWNlaXZlZCcgLS0gbm8gY3JlZGl0L2FkdmFuY2UgbGluZSBhdCBhbGxcIiwgKCkgPT4ge1xuICAgIHJlbmRlcig8SW52b2ljZVRvdGFsc1N1bW1hcnkgey4uLkJBU0V9IGFtb3VudFBhaWQ9ezg3MH0gYmFsYW5jZUR1ZT17MH0gLz4pO1xuXG4gICAgZXhwZWN0KHNjcmVlbi5nZXRCeVRleHQoXCJQYXltZW50cyByZWNlaXZlZFwiKSkudG9CZUluVGhlRG9jdW1lbnQoKTtcbiAgICBleHBlY3Qoc2NyZWVuLnF1ZXJ5QnlUZXh0KFwiQ3JlZGl0cyBhcHBsaWVkXCIpKS5ub3QudG9CZUluVGhlRG9jdW1lbnQoKTtcbiAgICBleHBlY3Qoc2NyZWVuLnF1ZXJ5QnlUZXh0KFwiQWR2YW5jZSBhcHBsaWVkXCIpKS5ub3QudG9CZUluVGhlRG9jdW1lbnQoKTtcbiAgfSk7XG5cbiAgaXQoXCJhbiB1bnBhaWQgaW52b2ljZSB3aXRoIG5vIGNvbmZpcm1lZCBhY3Rpdml0eSBhdCBhbGwgc2hvd3Mgbm9uZSBvZiB0aGUgdGhyZWUgbGluZXNcIiwgKCkgPT4ge1xuICAgIHJlbmRlcig8SW52b2ljZVRvdGFsc1N1bW1hcnkgey4uLkJBU0V9IC8+KTtcblxuICAgIGV4cGVjdChzY3JlZW4ucXVlcnlCeVRleHQoXCJQYXltZW50cyByZWNlaXZlZFwiKSkubm90LnRvQmVJblRoZURvY3VtZW50KCk7XG4gICAgZXhwZWN0KHNjcmVlbi5xdWVyeUJ5VGV4dChcIkNyZWRpdHMgYXBwbGllZFwiKSkubm90LnRvQmVJblRoZURvY3VtZW50KCk7XG4gICAgZXhwZWN0KHNjcmVlbi5xdWVyeUJ5VGV4dChcIkFkdmFuY2UgYXBwbGllZFwiKSkubm90LnRvQmVJblRoZURvY3VtZW50KCk7XG4gIH0pO1xufSk7XG4iXSwibmFtZXMiOlsiQkFTRSIsInN1YnRvdGFsIiwiZGlzY291bnQiLCJ0YXhBbW91bnQiLCJzaGlwcGluZ0ZlZSIsImFtb3VudFBhaWQiLCJjcmVkaXRBcHBsaWVkIiwiYWR2YW5jZUFwcGxpZWQiLCJiYWxhbmNlRHVlIiwiZGVzY3JpYmUiLCJpdCIsInJlbmRlciIsIkludm9pY2VUb3RhbHNTdW1tYXJ5IiwiZXhwZWN0Iiwic2NyZWVuIiwiZ2V0QnlUZXh0IiwidG9CZUluVGhlRG9jdW1lbnQiLCJxdWVyeUJ5VGV4dCIsIm5vdCJdLCJtYXBwaW5ncyI6Ijs7Ozs7dUJBQStCO3NDQUNzQztBQUVyRTs7Ozs7OztDQU9DLEdBQ0QsTUFBTUEsT0FBa0M7SUFDdENDLFVBQVU7SUFDVkMsVUFBVTtJQUNWQyxXQUFXO0lBQ1hDLGFBQWE7SUFDYkMsWUFBWTtJQUNaQyxlQUFlO0lBQ2ZDLGdCQUFnQjtJQUNoQkMsWUFBWTtBQUNkO0FBRUFDLFNBQVMsaURBQWlEO0lBQ3hEQyxHQUFHLHlHQUF5RztRQUMxR0MsSUFBQUEsYUFBTSxnQkFBQyxxQkFBQ0MsMENBQW9CO1lBQUUsR0FBR1osSUFBSTtZQUFFTSxlQUFlO1lBQUtFLFlBQVk7O1FBRXZFSyxPQUFPQyxhQUFNLENBQUNDLFNBQVMsQ0FBQyxzQkFBc0JDLGlCQUFpQjtRQUMvREgsT0FBT0MsYUFBTSxDQUFDQyxTQUFTLENBQUMsV0FBV0MsaUJBQWlCO1FBQ3BESCxPQUFPQyxhQUFNLENBQUNDLFNBQVMsQ0FBQyxvQkFBb0JDLGlCQUFpQjtRQUM3REgsT0FBT0MsYUFBTSxDQUFDQyxTQUFTLENBQUMsYUFBYUMsaUJBQWlCO1FBQ3RESCxPQUFPQyxhQUFNLENBQUNDLFNBQVMsQ0FBQyxZQUFZQyxpQkFBaUI7UUFDckQsMEVBQTBFO1FBQzFFLG1DQUFtQztRQUNuQ0gsT0FBT0MsYUFBTSxDQUFDRyxXQUFXLENBQUMsaUJBQWlCQyxHQUFHLENBQUNGLGlCQUFpQjtRQUNoRUgsT0FBT0MsYUFBTSxDQUFDRyxXQUFXLENBQUMsV0FBV0MsR0FBRyxDQUFDRixpQkFBaUI7SUFDNUQ7SUFFQU4sR0FBRyxpRkFBaUY7UUFDbEZDLElBQUFBLGFBQU0sZ0JBQUMscUJBQUNDLDBDQUFvQjtZQUFFLEdBQUdaLElBQUk7WUFBRU8sZ0JBQWdCO1lBQUtDLFlBQVk7O1FBRXhFSyxPQUFPQyxhQUFNLENBQUNDLFNBQVMsQ0FBQyxzQkFBc0JDLGlCQUFpQjtRQUMvREgsT0FBT0MsYUFBTSxDQUFDQyxTQUFTLENBQUMsV0FBV0MsaUJBQWlCO1FBQ3BESCxPQUFPQyxhQUFNLENBQUNDLFNBQVMsQ0FBQyxvQkFBb0JDLGlCQUFpQjtRQUM3REgsT0FBT0MsYUFBTSxDQUFDQyxTQUFTLENBQUMsYUFBYUMsaUJBQWlCO0lBQ3hEO0lBRUFOLEdBQUcsMkVBQTJFO1FBQzVFQyxJQUFBQSxhQUFNLGdCQUFDLHFCQUFDQywwQ0FBb0I7WUFBRSxHQUFHWixJQUFJO1lBQUVLLFlBQVk7WUFBS0MsZUFBZTtZQUFLRSxZQUFZOztRQUV4RkssT0FBT0MsYUFBTSxDQUFDQyxTQUFTLENBQUMsc0JBQXNCQyxpQkFBaUI7UUFDL0RILE9BQU9DLGFBQU0sQ0FBQ0MsU0FBUyxDQUFDLGFBQWFDLGlCQUFpQjtRQUN0REgsT0FBT0MsYUFBTSxDQUFDQyxTQUFTLENBQUMsb0JBQW9CQyxpQkFBaUI7UUFDN0RILE9BQU9DLGFBQU0sQ0FBQ0MsU0FBUyxDQUFDLGFBQWFDLGlCQUFpQjtJQUN4RDtJQUVBTixHQUFHLDhHQUE4RztRQUMvR0MsSUFBQUEsYUFBTSxnQkFBQyxxQkFBQ0MsMENBQW9CO1lBQUUsR0FBR1osSUFBSTtZQUFFSyxZQUFZO1lBQUtHLFlBQVk7O1FBRXBFSyxPQUFPQyxhQUFNLENBQUNDLFNBQVMsQ0FBQyxzQkFBc0JDLGlCQUFpQjtRQUMvREgsT0FBT0MsYUFBTSxDQUFDRyxXQUFXLENBQUMsb0JBQW9CQyxHQUFHLENBQUNGLGlCQUFpQjtRQUNuRUgsT0FBT0MsYUFBTSxDQUFDRyxXQUFXLENBQUMsb0JBQW9CQyxHQUFHLENBQUNGLGlCQUFpQjtJQUNyRTtJQUVBTixHQUFHLHFGQUFxRjtRQUN0RkMsSUFBQUEsYUFBTSxnQkFBQyxxQkFBQ0MsMENBQW9CO1lBQUUsR0FBR1osSUFBSTs7UUFFckNhLE9BQU9DLGFBQU0sQ0FBQ0csV0FBVyxDQUFDLHNCQUFzQkMsR0FBRyxDQUFDRixpQkFBaUI7UUFDckVILE9BQU9DLGFBQU0sQ0FBQ0csV0FBVyxDQUFDLG9CQUFvQkMsR0FBRyxDQUFDRixpQkFBaUI7UUFDbkVILE9BQU9DLGFBQU0sQ0FBQ0csV0FBVyxDQUFDLG9CQUFvQkMsR0FBRyxDQUFDRixpQkFBaUI7SUFDckU7QUFDRiJ9

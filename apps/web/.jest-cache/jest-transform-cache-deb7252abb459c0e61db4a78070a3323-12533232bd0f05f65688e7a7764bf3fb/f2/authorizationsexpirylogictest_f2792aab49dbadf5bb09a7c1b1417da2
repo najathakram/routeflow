@@ -1,0 +1,32 @@
+dbfb594e415ce249ec2ec7d13ddf84c3
+/**
+ * B91-web — a stored UTC-midnight calendar date (`expiresAt`) must render as its OWN
+ * calendar day for every viewer. Nine web call sites currently render it through the
+ * LOCAL formatter (`fmtDate`), which shows the PREVIOUS day to any negative-UTC-offset
+ * viewer; `renderLicenceExpiry` is the extracted seam for the `AuthorizationsTab.tsx:274`
+ * call site.
+ *
+ * REPLACES the previous T6, which asserted on `fmtCalendarDate` — an export that is
+ * ALREADY UTC-anchored and already correct — plus a comparator asserting today's
+ * to-be-removed `fmtDate` behavior. That test could not distinguish pre-fix from
+ * post-fix in any zone (it passed on the host and failed on its comparator under UTC).
+ * This one asserts the thing B91-web actually changes: what a call site renders.
+ *
+ * This red bar is HOST-ZONE-DEPENDENT: the pre-fix `fmtDate` body only shows the wrong
+ * day west of UTC, so under `TZ=UTC` it would print "Nov 1, 2026" too (`process.env.TZ`
+ * is inert under Jest). The zone-driven proof is e2e spec 34 flow 2, which pins
+ * `timezoneId: "America/Los_Angeles"`; this test pins the call site's rendering.
+ */ "use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _authorizationsexpirylogic = require("./authorizations-expiry.logic");
+describe("renderLicenceExpiry", ()=>{
+    it("REG-B91 renders the calendar date, not one day early, for a negative-offset viewer", ()=>{
+        // 2026-11-01T00:00:00.000Z is the stored calendar day 2026-11-01. Today's local
+        // rendering shows "Oct 31, 2026" to an America/Los_Angeles viewer.
+        expect((0, _authorizationsexpirylogic.renderLicenceExpiry)("2026-11-01T00:00:00.000Z")).toBe("Nov 1, 2026");
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS9jdXN0b21lcnMvX2NvbXBvbmVudHMvYXV0aG9yaXphdGlvbnMtZXhwaXJ5LmxvZ2ljLnRlc3QudHMiXSwic291cmNlc0NvbnRlbnQiOlsiLyoqXG4gKiBCOTEtd2ViIOKAlCBhIHN0b3JlZCBVVEMtbWlkbmlnaHQgY2FsZW5kYXIgZGF0ZSAoYGV4cGlyZXNBdGApIG11c3QgcmVuZGVyIGFzIGl0cyBPV05cbiAqIGNhbGVuZGFyIGRheSBmb3IgZXZlcnkgdmlld2VyLiBOaW5lIHdlYiBjYWxsIHNpdGVzIGN1cnJlbnRseSByZW5kZXIgaXQgdGhyb3VnaCB0aGVcbiAqIExPQ0FMIGZvcm1hdHRlciAoYGZtdERhdGVgKSwgd2hpY2ggc2hvd3MgdGhlIFBSRVZJT1VTIGRheSB0byBhbnkgbmVnYXRpdmUtVVRDLW9mZnNldFxuICogdmlld2VyOyBgcmVuZGVyTGljZW5jZUV4cGlyeWAgaXMgdGhlIGV4dHJhY3RlZCBzZWFtIGZvciB0aGUgYEF1dGhvcml6YXRpb25zVGFiLnRzeDoyNzRgXG4gKiBjYWxsIHNpdGUuXG4gKlxuICogUkVQTEFDRVMgdGhlIHByZXZpb3VzIFQ2LCB3aGljaCBhc3NlcnRlZCBvbiBgZm10Q2FsZW5kYXJEYXRlYCDigJQgYW4gZXhwb3J0IHRoYXQgaXNcbiAqIEFMUkVBRFkgVVRDLWFuY2hvcmVkIGFuZCBhbHJlYWR5IGNvcnJlY3Qg4oCUIHBsdXMgYSBjb21wYXJhdG9yIGFzc2VydGluZyB0b2RheSdzXG4gKiB0by1iZS1yZW1vdmVkIGBmbXREYXRlYCBiZWhhdmlvci4gVGhhdCB0ZXN0IGNvdWxkIG5vdCBkaXN0aW5ndWlzaCBwcmUtZml4IGZyb21cbiAqIHBvc3QtZml4IGluIGFueSB6b25lIChpdCBwYXNzZWQgb24gdGhlIGhvc3QgYW5kIGZhaWxlZCBvbiBpdHMgY29tcGFyYXRvciB1bmRlciBVVEMpLlxuICogVGhpcyBvbmUgYXNzZXJ0cyB0aGUgdGhpbmcgQjkxLXdlYiBhY3R1YWxseSBjaGFuZ2VzOiB3aGF0IGEgY2FsbCBzaXRlIHJlbmRlcnMuXG4gKlxuICogVGhpcyByZWQgYmFyIGlzIEhPU1QtWk9ORS1ERVBFTkRFTlQ6IHRoZSBwcmUtZml4IGBmbXREYXRlYCBib2R5IG9ubHkgc2hvd3MgdGhlIHdyb25nXG4gKiBkYXkgd2VzdCBvZiBVVEMsIHNvIHVuZGVyIGBUWj1VVENgIGl0IHdvdWxkIHByaW50IFwiTm92IDEsIDIwMjZcIiB0b28gKGBwcm9jZXNzLmVudi5UWmBcbiAqIGlzIGluZXJ0IHVuZGVyIEplc3QpLiBUaGUgem9uZS1kcml2ZW4gcHJvb2YgaXMgZTJlIHNwZWMgMzQgZmxvdyAyLCB3aGljaCBwaW5zXG4gKiBgdGltZXpvbmVJZDogXCJBbWVyaWNhL0xvc19BbmdlbGVzXCJgOyB0aGlzIHRlc3QgcGlucyB0aGUgY2FsbCBzaXRlJ3MgcmVuZGVyaW5nLlxuICovXG5pbXBvcnQgeyByZW5kZXJMaWNlbmNlRXhwaXJ5IH0gZnJvbSBcIi4vYXV0aG9yaXphdGlvbnMtZXhwaXJ5LmxvZ2ljXCI7XG5cbmRlc2NyaWJlKFwicmVuZGVyTGljZW5jZUV4cGlyeVwiLCAoKSA9PiB7XG4gIGl0KFwiUkVHLUI5MSByZW5kZXJzIHRoZSBjYWxlbmRhciBkYXRlLCBub3Qgb25lIGRheSBlYXJseSwgZm9yIGEgbmVnYXRpdmUtb2Zmc2V0IHZpZXdlclwiLCAoKSA9PiB7XG4gICAgLy8gMjAyNi0xMS0wMVQwMDowMDowMC4wMDBaIGlzIHRoZSBzdG9yZWQgY2FsZW5kYXIgZGF5IDIwMjYtMTEtMDEuIFRvZGF5J3MgbG9jYWxcbiAgICAvLyByZW5kZXJpbmcgc2hvd3MgXCJPY3QgMzEsIDIwMjZcIiB0byBhbiBBbWVyaWNhL0xvc19BbmdlbGVzIHZpZXdlci5cbiAgICBleHBlY3QocmVuZGVyTGljZW5jZUV4cGlyeShcIjIwMjYtMTEtMDFUMDA6MDA6MDAuMDAwWlwiKSkudG9CZShcIk5vdiAxLCAyMDI2XCIpO1xuICB9KTtcbn0pO1xuIl0sIm5hbWVzIjpbImRlc2NyaWJlIiwiaXQiLCJleHBlY3QiLCJyZW5kZXJMaWNlbmNlRXhwaXJ5IiwidG9CZSJdLCJtYXBwaW5ncyI6IkFBQUE7Ozs7Ozs7Ozs7Ozs7Ozs7O0NBaUJDOzs7OzJDQUNtQztBQUVwQ0EsU0FBUyx1QkFBdUI7SUFDOUJDLEdBQUcsc0ZBQXNGO1FBQ3ZGLGdGQUFnRjtRQUNoRixtRUFBbUU7UUFDbkVDLE9BQU9DLElBQUFBLDhDQUFtQixFQUFDLDZCQUE2QkMsSUFBSSxDQUFDO0lBQy9EO0FBQ0YifQ==

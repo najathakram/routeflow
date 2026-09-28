@@ -1,0 +1,43 @@
+75e8149fd7c050f93b357cd204991b03
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _fs = /*#__PURE__*/ _interop_require_default(require("fs"));
+const _path = /*#__PURE__*/ _interop_require_default(require("path"));
+function _interop_require_default(obj) {
+    return obj && obj.__esModule ? obj : {
+        default: obj
+    };
+}
+/**
+ * B512 (C2 390px audit): the customer-detail Tabs.List holds 10 triggers with
+ * no wrap and no scroll affordance, so on a 390px viewport tabs from roughly
+ * "Special Prices" onward (Comments, Documents, Licenses) were pushed off
+ * the visible strip with no way to reach them. jsdom has no layout engine, so
+ * it can't prove the strip actually scrolls at 390px — that's the proof
+ * runner's job — but it can pin the source-level facts: the strip scrolls
+ * horizontally instead of wrapping, triggers don't shrink/wrap their labels
+ * before that scroll kicks in, and a tab selected via `?tab=` (or any
+ * programmatic change) is scrolled into view so a deep link never lands on
+ * an apparently-random strip.
+ */ function read() {
+    return _fs.default.readFileSync(_path.default.join(__dirname, "[id]", "page.tsx"), "utf8");
+}
+describe("B512 — customer-detail tab strip scrolls instead of hiding tabs", ()=>{
+    it("Tabs.List scrolls horizontally and is wired to a ref", ()=>{
+        const src = read();
+        expect(src).toMatch(/<Tabs\.List\s+ref=\{tabsListRef\}\s+className="flex overflow-x-auto border-b border-surface-border"/);
+    });
+    it("TabTrigger labels don't shrink or wrap before the strip scrolls", ()=>{
+        const src = read();
+        expect(src).toContain('"-mb-px shrink-0 whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition-colors"');
+    });
+    it("scrolls the active tab into view whenever activeTab changes", ()=>{
+        const src = read();
+        expect(src).toContain("const tabsListRef = React.useRef<HTMLDivElement>(null);");
+        expect(src).toMatch(/React\.useEffect\(\(\) => \{\s*const activeEl = tabsListRef\.current\?\.querySelector<HTMLElement>\('\[data-state="active"\]'\);\s*activeEl\?\.scrollIntoView\(\{ inline: "center", block: "nearest" \}\);\s*\}, \[activeTab\]\);/);
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS9jdXN0b21lcnMvdGFiLXN0cmlwLW92ZXJmbG93LWI1MTIudGVzdC50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgZnMgZnJvbSBcImZzXCI7XG5pbXBvcnQgcGF0aCBmcm9tIFwicGF0aFwiO1xuXG4vKipcbiAqIEI1MTIgKEMyIDM5MHB4IGF1ZGl0KTogdGhlIGN1c3RvbWVyLWRldGFpbCBUYWJzLkxpc3QgaG9sZHMgMTAgdHJpZ2dlcnMgd2l0aFxuICogbm8gd3JhcCBhbmQgbm8gc2Nyb2xsIGFmZm9yZGFuY2UsIHNvIG9uIGEgMzkwcHggdmlld3BvcnQgdGFicyBmcm9tIHJvdWdobHlcbiAqIFwiU3BlY2lhbCBQcmljZXNcIiBvbndhcmQgKENvbW1lbnRzLCBEb2N1bWVudHMsIExpY2Vuc2VzKSB3ZXJlIHB1c2hlZCBvZmZcbiAqIHRoZSB2aXNpYmxlIHN0cmlwIHdpdGggbm8gd2F5IHRvIHJlYWNoIHRoZW0uIGpzZG9tIGhhcyBubyBsYXlvdXQgZW5naW5lLCBzb1xuICogaXQgY2FuJ3QgcHJvdmUgdGhlIHN0cmlwIGFjdHVhbGx5IHNjcm9sbHMgYXQgMzkwcHgg4oCUIHRoYXQncyB0aGUgcHJvb2ZcbiAqIHJ1bm5lcidzIGpvYiDigJQgYnV0IGl0IGNhbiBwaW4gdGhlIHNvdXJjZS1sZXZlbCBmYWN0czogdGhlIHN0cmlwIHNjcm9sbHNcbiAqIGhvcml6b250YWxseSBpbnN0ZWFkIG9mIHdyYXBwaW5nLCB0cmlnZ2VycyBkb24ndCBzaHJpbmsvd3JhcCB0aGVpciBsYWJlbHNcbiAqIGJlZm9yZSB0aGF0IHNjcm9sbCBraWNrcyBpbiwgYW5kIGEgdGFiIHNlbGVjdGVkIHZpYSBgP3RhYj1gIChvciBhbnlcbiAqIHByb2dyYW1tYXRpYyBjaGFuZ2UpIGlzIHNjcm9sbGVkIGludG8gdmlldyBzbyBhIGRlZXAgbGluayBuZXZlciBsYW5kcyBvblxuICogYW4gYXBwYXJlbnRseS1yYW5kb20gc3RyaXAuXG4gKi9cbmZ1bmN0aW9uIHJlYWQoKTogc3RyaW5nIHtcbiAgcmV0dXJuIGZzLnJlYWRGaWxlU3luYyhwYXRoLmpvaW4oX19kaXJuYW1lLCBcIltpZF1cIiwgXCJwYWdlLnRzeFwiKSwgXCJ1dGY4XCIpO1xufVxuXG5kZXNjcmliZShcIkI1MTIg4oCUIGN1c3RvbWVyLWRldGFpbCB0YWIgc3RyaXAgc2Nyb2xscyBpbnN0ZWFkIG9mIGhpZGluZyB0YWJzXCIsICgpID0+IHtcbiAgaXQoXCJUYWJzLkxpc3Qgc2Nyb2xscyBob3Jpem9udGFsbHkgYW5kIGlzIHdpcmVkIHRvIGEgcmVmXCIsICgpID0+IHtcbiAgICBjb25zdCBzcmMgPSByZWFkKCk7XG4gICAgZXhwZWN0KHNyYykudG9NYXRjaChcbiAgICAgIC88VGFic1xcLkxpc3RcXHMrcmVmPVxce3RhYnNMaXN0UmVmXFx9XFxzK2NsYXNzTmFtZT1cImZsZXggb3ZlcmZsb3cteC1hdXRvIGJvcmRlci1iIGJvcmRlci1zdXJmYWNlLWJvcmRlclwiLyxcbiAgICApO1xuICB9KTtcblxuICBpdChcIlRhYlRyaWdnZXIgbGFiZWxzIGRvbid0IHNocmluayBvciB3cmFwIGJlZm9yZSB0aGUgc3RyaXAgc2Nyb2xsc1wiLCAoKSA9PiB7XG4gICAgY29uc3Qgc3JjID0gcmVhZCgpO1xuICAgIGV4cGVjdChzcmMpLnRvQ29udGFpbihcbiAgICAgICdcIi1tYi1weCBzaHJpbmstMCB3aGl0ZXNwYWNlLW5vd3JhcCBib3JkZXItYi0yIHB4LTQgcHktMyB0ZXh0LXNtIGZvbnQtbWVkaXVtIHRyYW5zaXRpb24tY29sb3JzXCInLFxuICAgICk7XG4gIH0pO1xuXG4gIGl0KFwic2Nyb2xscyB0aGUgYWN0aXZlIHRhYiBpbnRvIHZpZXcgd2hlbmV2ZXIgYWN0aXZlVGFiIGNoYW5nZXNcIiwgKCkgPT4ge1xuICAgIGNvbnN0IHNyYyA9IHJlYWQoKTtcbiAgICBleHBlY3Qoc3JjKS50b0NvbnRhaW4oXCJjb25zdCB0YWJzTGlzdFJlZiA9IFJlYWN0LnVzZVJlZjxIVE1MRGl2RWxlbWVudD4obnVsbCk7XCIpO1xuICAgIGV4cGVjdChzcmMpLnRvTWF0Y2goXG4gICAgICAvUmVhY3RcXC51c2VFZmZlY3RcXChcXChcXCkgPT4gXFx7XFxzKmNvbnN0IGFjdGl2ZUVsID0gdGFic0xpc3RSZWZcXC5jdXJyZW50XFw/XFwucXVlcnlTZWxlY3RvcjxIVE1MRWxlbWVudD5cXCgnXFxbZGF0YS1zdGF0ZT1cImFjdGl2ZVwiXFxdJ1xcKTtcXHMqYWN0aXZlRWxcXD9cXC5zY3JvbGxJbnRvVmlld1xcKFxceyBpbmxpbmU6IFwiY2VudGVyXCIsIGJsb2NrOiBcIm5lYXJlc3RcIiBcXH1cXCk7XFxzKlxcfSwgXFxbYWN0aXZlVGFiXFxdXFwpOy8sXG4gICAgKTtcbiAgfSk7XG59KTtcbiJdLCJuYW1lcyI6WyJyZWFkIiwiZnMiLCJyZWFkRmlsZVN5bmMiLCJwYXRoIiwiam9pbiIsIl9fZGlybmFtZSIsImRlc2NyaWJlIiwiaXQiLCJzcmMiLCJleHBlY3QiLCJ0b01hdGNoIiwidG9Db250YWluIl0sIm1hcHBpbmdzIjoiOzs7OzJEQUFlOzZEQUNFOzs7Ozs7QUFFakI7Ozs7Ozs7Ozs7O0NBV0MsR0FDRCxTQUFTQTtJQUNQLE9BQU9DLFdBQUUsQ0FBQ0MsWUFBWSxDQUFDQyxhQUFJLENBQUNDLElBQUksQ0FBQ0MsV0FBVyxRQUFRLGFBQWE7QUFDbkU7QUFFQUMsU0FBUyxtRUFBbUU7SUFDMUVDLEdBQUcsd0RBQXdEO1FBQ3pELE1BQU1DLE1BQU1SO1FBQ1pTLE9BQU9ELEtBQUtFLE9BQU8sQ0FDakI7SUFFSjtJQUVBSCxHQUFHLG1FQUFtRTtRQUNwRSxNQUFNQyxNQUFNUjtRQUNaUyxPQUFPRCxLQUFLRyxTQUFTLENBQ25CO0lBRUo7SUFFQUosR0FBRywrREFBK0Q7UUFDaEUsTUFBTUMsTUFBTVI7UUFDWlMsT0FBT0QsS0FBS0csU0FBUyxDQUFDO1FBQ3RCRixPQUFPRCxLQUFLRSxPQUFPLENBQ2pCO0lBRUo7QUFDRiJ9

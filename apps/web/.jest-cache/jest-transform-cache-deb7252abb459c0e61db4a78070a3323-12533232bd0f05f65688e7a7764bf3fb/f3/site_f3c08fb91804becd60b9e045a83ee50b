@@ -1,0 +1,144 @@
+1eb50908ff7d7cc182bc68bf51083ead
+// Single source of truth for marketing-site identity and per-route SEO
+// metadata. One `routes` table drives the header/footer nav, the sitemap,
+// and every route's <title>/description — never hand-mirror this shape
+// elsewhere (lesson L-072: a hand-typed mirror is how bugs ship).
+// Titles/descriptions are verbatim from the redesign's lib/site.ts
+// (M1 §2 / marketing-inventory-redesign.md), except the two legal rows
+// (privacy/terms), whose <title>/description match the published legal
+// pages' own copy instead of the redesign's preview-only text.
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, {
+        enumerable: true,
+        get: Object.getOwnPropertyDescriptor(all, name).get
+    });
+}
+_export(exports, {
+    get NAV_SLUGS () {
+        return NAV_SLUGS;
+    },
+    get PLANS () {
+        return PLANS;
+    },
+    get SITEMAP_EXCLUDED_SLUGS () {
+        return SITEMAP_EXCLUDED_SLUGS;
+    },
+    get demoEmail () {
+        return demoEmail;
+    },
+    get routes () {
+        return routes;
+    },
+    get site () {
+        return site;
+    }
+});
+const _lucidereact = require("lucide-react");
+const site = {
+    name: "RouteFlow",
+    origin: "https://www.routeflow.info",
+    email: "hello@routeflow.info"
+};
+const routes = [
+    {
+        slug: "product",
+        label: "Platform",
+        title: "Wholesale operations, connected",
+        description: "See how RouteFlow connects ordering, dispatch, proof of delivery, and customer accounts."
+    },
+    {
+        slug: "wholesalers",
+        label: "Distributors",
+        title: "A clearer day for your distribution team",
+        description: "Manage wholesale orders and delivery routes with shared context for the office, warehouse, and drivers."
+    },
+    {
+        slug: "retailers",
+        label: "Retailers",
+        title: "Restock with less back and forth",
+        description: "Browse your connected suppliers, place orders, and keep track of purchases in the RouteFlow retailer portal."
+    },
+    {
+        slug: "pricing",
+        label: "Pricing",
+        title: "Find the right RouteFlow plan",
+        description: "Talk through your order volume, team, and delivery workflow to choose a RouteFlow plan."
+    },
+    {
+        slug: "company",
+        label: "Company",
+        title: "For the people who keep shelves stocked",
+        description: "Learn about the wholesale workflows and people at the center of RouteFlow."
+    },
+    {
+        slug: "contact",
+        label: "Contact",
+        title: "See RouteFlow in action",
+        description: "Request a focused walkthrough of wholesale orders, routes, and customer accounts."
+    },
+    {
+        slug: "privacy",
+        label: "Privacy",
+        title: "Privacy Policy",
+        description: "How RouteFlow collects, uses, and protects the information you share with us."
+    },
+    {
+        slug: "terms",
+        label: "Terms",
+        title: "Terms of Service",
+        description: "The terms that apply to accessing and using the RouteFlow platform."
+    }
+];
+const NAV_SLUGS = [
+    "product",
+    "wholesalers",
+    "retailers",
+    "pricing",
+    "company"
+];
+const SITEMAP_EXCLUDED_SLUGS = [];
+const PLANS = [
+    {
+        name: "Starter",
+        tag: "GET YOUR WORKFLOW ORGANIZED",
+        text: "For a smaller team bringing customer orders into one place.",
+        icon: _lucidereact.Package,
+        items: [
+            "Customer and product records",
+            "Order management",
+            "Retailer ordering portal"
+        ]
+    },
+    {
+        name: "Growth",
+        tag: "CONNECT YOUR DELIVERY OPERATION",
+        text: "For teams coordinating orders, drivers, and regular delivery runs.",
+        icon: _lucidereact.Route,
+        items: [
+            "Order-to-delivery workflow",
+            "Route planning and dispatch",
+            "Delivery status and customer accounts"
+        ]
+    },
+    {
+        name: "Scale",
+        tag: "DISCUSS A BROADER ROLLOUT",
+        text: "For more complex operations with specific rollout and access needs.",
+        icon: _lucidereact.Warehouse,
+        items: [
+            "Review multiple locations",
+            "Discuss team and access requirements",
+            "Plan imports and implementation"
+        ]
+    }
+];
+function demoEmail(values) {
+    const body = `Hello RouteFlow,\n\nI'd like a demo for ${values.company}.\n\nName: ${values.name}\nWork email: ${values.email}\nCompany: ${values.company}\n\nWorkflow to discuss:\n${values.notes || "Orders, delivery routes, and customer accounts."}\n\nPlease get in touch to arrange a walkthrough.`;
+    return `mailto:${site.email}?subject=${encodeURIComponent("RouteFlow demo request — " + values.company)}&body=${encodeURIComponent(body)}`;
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8obWFya2V0aW5nKS9saWIvc2l0ZS50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvLyBTaW5nbGUgc291cmNlIG9mIHRydXRoIGZvciBtYXJrZXRpbmctc2l0ZSBpZGVudGl0eSBhbmQgcGVyLXJvdXRlIFNFT1xuLy8gbWV0YWRhdGEuIE9uZSBgcm91dGVzYCB0YWJsZSBkcml2ZXMgdGhlIGhlYWRlci9mb290ZXIgbmF2LCB0aGUgc2l0ZW1hcCxcbi8vIGFuZCBldmVyeSByb3V0ZSdzIDx0aXRsZT4vZGVzY3JpcHRpb24g4oCUIG5ldmVyIGhhbmQtbWlycm9yIHRoaXMgc2hhcGVcbi8vIGVsc2V3aGVyZSAobGVzc29uIEwtMDcyOiBhIGhhbmQtdHlwZWQgbWlycm9yIGlzIGhvdyBidWdzIHNoaXApLlxuLy8gVGl0bGVzL2Rlc2NyaXB0aW9ucyBhcmUgdmVyYmF0aW0gZnJvbSB0aGUgcmVkZXNpZ24ncyBsaWIvc2l0ZS50c1xuLy8gKE0xIMKnMiAvIG1hcmtldGluZy1pbnZlbnRvcnktcmVkZXNpZ24ubWQpLCBleGNlcHQgdGhlIHR3byBsZWdhbCByb3dzXG4vLyAocHJpdmFjeS90ZXJtcyksIHdob3NlIDx0aXRsZT4vZGVzY3JpcHRpb24gbWF0Y2ggdGhlIHB1Ymxpc2hlZCBsZWdhbFxuLy8gcGFnZXMnIG93biBjb3B5IGluc3RlYWQgb2YgdGhlIHJlZGVzaWduJ3MgcHJldmlldy1vbmx5IHRleHQuXG5cbmltcG9ydCB7IFBhY2thZ2UsIFJvdXRlLCBXYXJlaG91c2UsIHR5cGUgTHVjaWRlSWNvbiB9IGZyb20gXCJsdWNpZGUtcmVhY3RcIjtcblxuZXhwb3J0IGNvbnN0IHNpdGUgPSB7XG4gIG5hbWU6IFwiUm91dGVGbG93XCIsXG4gIG9yaWdpbjogXCJodHRwczovL3d3dy5yb3V0ZWZsb3cuaW5mb1wiLFxuICBlbWFpbDogXCJoZWxsb0Byb3V0ZWZsb3cuaW5mb1wiLFxufTtcblxuZXhwb3J0IGludGVyZmFjZSBNYXJrZXRpbmdSb3V0ZSB7XG4gIHNsdWc6IHN0cmluZztcbiAgbGFiZWw6IHN0cmluZztcbiAgdGl0bGU6IHN0cmluZztcbiAgZGVzY3JpcHRpb246IHN0cmluZztcbn1cblxuZXhwb3J0IGNvbnN0IHJvdXRlczogTWFya2V0aW5nUm91dGVbXSA9IFtcbiAge1xuICAgIHNsdWc6IFwicHJvZHVjdFwiLFxuICAgIGxhYmVsOiBcIlBsYXRmb3JtXCIsXG4gICAgdGl0bGU6IFwiV2hvbGVzYWxlIG9wZXJhdGlvbnMsIGNvbm5lY3RlZFwiLFxuICAgIGRlc2NyaXB0aW9uOlxuICAgICAgXCJTZWUgaG93IFJvdXRlRmxvdyBjb25uZWN0cyBvcmRlcmluZywgZGlzcGF0Y2gsIHByb29mIG9mIGRlbGl2ZXJ5LCBhbmQgY3VzdG9tZXIgYWNjb3VudHMuXCIsXG4gIH0sXG4gIHtcbiAgICBzbHVnOiBcIndob2xlc2FsZXJzXCIsXG4gICAgbGFiZWw6IFwiRGlzdHJpYnV0b3JzXCIsXG4gICAgdGl0bGU6IFwiQSBjbGVhcmVyIGRheSBmb3IgeW91ciBkaXN0cmlidXRpb24gdGVhbVwiLFxuICAgIGRlc2NyaXB0aW9uOlxuICAgICAgXCJNYW5hZ2Ugd2hvbGVzYWxlIG9yZGVycyBhbmQgZGVsaXZlcnkgcm91dGVzIHdpdGggc2hhcmVkIGNvbnRleHQgZm9yIHRoZSBvZmZpY2UsIHdhcmVob3VzZSwgYW5kIGRyaXZlcnMuXCIsXG4gIH0sXG4gIHtcbiAgICBzbHVnOiBcInJldGFpbGVyc1wiLFxuICAgIGxhYmVsOiBcIlJldGFpbGVyc1wiLFxuICAgIHRpdGxlOiBcIlJlc3RvY2sgd2l0aCBsZXNzIGJhY2sgYW5kIGZvcnRoXCIsXG4gICAgZGVzY3JpcHRpb246XG4gICAgICBcIkJyb3dzZSB5b3VyIGNvbm5lY3RlZCBzdXBwbGllcnMsIHBsYWNlIG9yZGVycywgYW5kIGtlZXAgdHJhY2sgb2YgcHVyY2hhc2VzIGluIHRoZSBSb3V0ZUZsb3cgcmV0YWlsZXIgcG9ydGFsLlwiLFxuICB9LFxuICB7XG4gICAgc2x1ZzogXCJwcmljaW5nXCIsXG4gICAgbGFiZWw6IFwiUHJpY2luZ1wiLFxuICAgIHRpdGxlOiBcIkZpbmQgdGhlIHJpZ2h0IFJvdXRlRmxvdyBwbGFuXCIsXG4gICAgZGVzY3JpcHRpb246XG4gICAgICBcIlRhbGsgdGhyb3VnaCB5b3VyIG9yZGVyIHZvbHVtZSwgdGVhbSwgYW5kIGRlbGl2ZXJ5IHdvcmtmbG93IHRvIGNob29zZSBhIFJvdXRlRmxvdyBwbGFuLlwiLFxuICB9LFxuICB7XG4gICAgc2x1ZzogXCJjb21wYW55XCIsXG4gICAgbGFiZWw6IFwiQ29tcGFueVwiLFxuICAgIHRpdGxlOiBcIkZvciB0aGUgcGVvcGxlIHdobyBrZWVwIHNoZWx2ZXMgc3RvY2tlZFwiLFxuICAgIGRlc2NyaXB0aW9uOiBcIkxlYXJuIGFib3V0IHRoZSB3aG9sZXNhbGUgd29ya2Zsb3dzIGFuZCBwZW9wbGUgYXQgdGhlIGNlbnRlciBvZiBSb3V0ZUZsb3cuXCIsXG4gIH0sXG4gIHtcbiAgICBzbHVnOiBcImNvbnRhY3RcIixcbiAgICBsYWJlbDogXCJDb250YWN0XCIsXG4gICAgdGl0bGU6IFwiU2VlIFJvdXRlRmxvdyBpbiBhY3Rpb25cIixcbiAgICBkZXNjcmlwdGlvbjpcbiAgICAgIFwiUmVxdWVzdCBhIGZvY3VzZWQgd2Fsa3Rocm91Z2ggb2Ygd2hvbGVzYWxlIG9yZGVycywgcm91dGVzLCBhbmQgY3VzdG9tZXIgYWNjb3VudHMuXCIsXG4gIH0sXG4gIHtcbiAgICBzbHVnOiBcInByaXZhY3lcIixcbiAgICBsYWJlbDogXCJQcml2YWN5XCIsXG4gICAgdGl0bGU6IFwiUHJpdmFjeSBQb2xpY3lcIixcbiAgICBkZXNjcmlwdGlvbjogXCJIb3cgUm91dGVGbG93IGNvbGxlY3RzLCB1c2VzLCBhbmQgcHJvdGVjdHMgdGhlIGluZm9ybWF0aW9uIHlvdSBzaGFyZSB3aXRoIHVzLlwiLFxuICB9LFxuICB7XG4gICAgc2x1ZzogXCJ0ZXJtc1wiLFxuICAgIGxhYmVsOiBcIlRlcm1zXCIsXG4gICAgdGl0bGU6IFwiVGVybXMgb2YgU2VydmljZVwiLFxuICAgIGRlc2NyaXB0aW9uOiBcIlRoZSB0ZXJtcyB0aGF0IGFwcGx5IHRvIGFjY2Vzc2luZyBhbmQgdXNpbmcgdGhlIFJvdXRlRmxvdyBwbGF0Zm9ybS5cIixcbiAgfSxcbl07XG5cbi8qKiBUaGUgZml2ZSBwcmltYXJ5LW5hdiByb3V0ZXMsIGluIGhlYWRlci9mb290ZXIgb3JkZXIuICovXG5leHBvcnQgY29uc3QgTkFWX1NMVUdTID0gW1wicHJvZHVjdFwiLCBcIndob2xlc2FsZXJzXCIsIFwicmV0YWlsZXJzXCIsIFwicHJpY2luZ1wiLCBcImNvbXBhbnlcIl0gYXMgY29uc3Q7XG5cbi8qKiBTbHVncyBleGNsdWRlZCBmcm9tIHRoZSBzaXRlbWFwIChsZWdhbCBzaGVsbHMsIFI5L1Q5KS4gKi9cbi8vIHByaXZhY3kvdGVybXMgd2VyZSBleGNsdWRlZCB3aGlsZSB0aGV5IHdlcmUgcGxhY2Vob2xkZXIgc2hlbGxzOyBub3cgdGhhdCB0aGV5IGNhcnJ5IHRoZVxuLy8gcmVhbCBwdWJsaXNoZWQgcG9saWN5IHRoZXkgYXJlIG9yZGluYXJ5IGluZGV4YWJsZSBwYWdlcyBsaWtlIHRoZSByZXN0IG9mIHRoZSBzaXRlLlxuZXhwb3J0IGNvbnN0IFNJVEVNQVBfRVhDTFVERURfU0xVR1MgPSBbXSBhcyBjb25zdDtcblxuZXhwb3J0IGludGVyZmFjZSBQcmljaW5nUGxhbiB7XG4gIG5hbWU6IHN0cmluZztcbiAgdGFnOiBzdHJpbmc7XG4gIHRleHQ6IHN0cmluZztcbiAgaWNvbjogTHVjaWRlSWNvbjtcbiAgaXRlbXM6IHN0cmluZ1tdO1xufVxuXG4vKipcbiAqIFRoZSB0aHJlZSBwcmljaW5nIHBsYW5zIOKAlCBzaGFyZWQgYmV0d2VlbiAvcHJpY2luZyAodGhlIGZ1bGwgcGFnZSkgYW5kIHRoZVxuICogaG9tZSBwYWdlJ3MgcHJpY2luZyB0ZWFzZXIgKG93bmVyIGxheW91dCBydWxpbmcsIDIwMjYtMDktMTYsIFBSLTM6IFwiMyByZWFsXG4gKiBjYXJkcyBmcm9tIHRoZSByZWFsIHByaWNpbmcgZGF0YVwiKS4gU2luZ2xlIHNvdXJjZSBzbyB0aGUgdHdvIG5ldmVyIGRyaWZ0LlxuICovXG5leHBvcnQgY29uc3QgUExBTlM6IFByaWNpbmdQbGFuW10gPSBbXG4gIHtcbiAgICBuYW1lOiBcIlN0YXJ0ZXJcIixcbiAgICB0YWc6IFwiR0VUIFlPVVIgV09SS0ZMT1cgT1JHQU5JWkVEXCIsXG4gICAgdGV4dDogXCJGb3IgYSBzbWFsbGVyIHRlYW0gYnJpbmdpbmcgY3VzdG9tZXIgb3JkZXJzIGludG8gb25lIHBsYWNlLlwiLFxuICAgIGljb246IFBhY2thZ2UsXG4gICAgaXRlbXM6IFtcIkN1c3RvbWVyIGFuZCBwcm9kdWN0IHJlY29yZHNcIiwgXCJPcmRlciBtYW5hZ2VtZW50XCIsIFwiUmV0YWlsZXIgb3JkZXJpbmcgcG9ydGFsXCJdLFxuICB9LFxuICB7XG4gICAgbmFtZTogXCJHcm93dGhcIixcbiAgICB0YWc6IFwiQ09OTkVDVCBZT1VSIERFTElWRVJZIE9QRVJBVElPTlwiLFxuICAgIHRleHQ6IFwiRm9yIHRlYW1zIGNvb3JkaW5hdGluZyBvcmRlcnMsIGRyaXZlcnMsIGFuZCByZWd1bGFyIGRlbGl2ZXJ5IHJ1bnMuXCIsXG4gICAgaWNvbjogUm91dGUsXG4gICAgaXRlbXM6IFtcbiAgICAgIFwiT3JkZXItdG8tZGVsaXZlcnkgd29ya2Zsb3dcIixcbiAgICAgIFwiUm91dGUgcGxhbm5pbmcgYW5kIGRpc3BhdGNoXCIsXG4gICAgICBcIkRlbGl2ZXJ5IHN0YXR1cyBhbmQgY3VzdG9tZXIgYWNjb3VudHNcIixcbiAgICBdLFxuICB9LFxuICB7XG4gICAgbmFtZTogXCJTY2FsZVwiLFxuICAgIHRhZzogXCJESVNDVVNTIEEgQlJPQURFUiBST0xMT1VUXCIsXG4gICAgdGV4dDogXCJGb3IgbW9yZSBjb21wbGV4IG9wZXJhdGlvbnMgd2l0aCBzcGVjaWZpYyByb2xsb3V0IGFuZCBhY2Nlc3MgbmVlZHMuXCIsXG4gICAgaWNvbjogV2FyZWhvdXNlLFxuICAgIGl0ZW1zOiBbXG4gICAgICBcIlJldmlldyBtdWx0aXBsZSBsb2NhdGlvbnNcIixcbiAgICAgIFwiRGlzY3VzcyB0ZWFtIGFuZCBhY2Nlc3MgcmVxdWlyZW1lbnRzXCIsXG4gICAgICBcIlBsYW4gaW1wb3J0cyBhbmQgaW1wbGVtZW50YXRpb25cIixcbiAgICBdLFxuICB9LFxuXTtcblxuZXhwb3J0IGludGVyZmFjZSBEZW1vRm9ybVZhbHVlcyB7XG4gIG5hbWU6IHN0cmluZztcbiAgZW1haWw6IHN0cmluZztcbiAgY29tcGFueTogc3RyaW5nO1xuICBub3Rlczogc3RyaW5nO1xufVxuXG4vKiogQnVpbGRzIHRoZSBgbWFpbHRvOmAgZHJhZnQgdGhlIERlbW9Gb3JtIGhhbmRzIG9mZiB0byB0aGUgdmlzaXRvcidzIG1haWwgYXBwLiAqL1xuZXhwb3J0IGZ1bmN0aW9uIGRlbW9FbWFpbCh2YWx1ZXM6IERlbW9Gb3JtVmFsdWVzKTogc3RyaW5nIHtcbiAgY29uc3QgYm9keSA9IGBIZWxsbyBSb3V0ZUZsb3csXFxuXFxuSSdkIGxpa2UgYSBkZW1vIGZvciAke3ZhbHVlcy5jb21wYW55fS5cXG5cXG5OYW1lOiAke3ZhbHVlcy5uYW1lfVxcbldvcmsgZW1haWw6ICR7dmFsdWVzLmVtYWlsfVxcbkNvbXBhbnk6ICR7dmFsdWVzLmNvbXBhbnl9XFxuXFxuV29ya2Zsb3cgdG8gZGlzY3VzczpcXG4ke1xuICAgIHZhbHVlcy5ub3RlcyB8fCBcIk9yZGVycywgZGVsaXZlcnkgcm91dGVzLCBhbmQgY3VzdG9tZXIgYWNjb3VudHMuXCJcbiAgfVxcblxcblBsZWFzZSBnZXQgaW4gdG91Y2ggdG8gYXJyYW5nZSBhIHdhbGt0aHJvdWdoLmA7XG4gIHJldHVybiBgbWFpbHRvOiR7c2l0ZS5lbWFpbH0/c3ViamVjdD0ke2VuY29kZVVSSUNvbXBvbmVudChcbiAgICBcIlJvdXRlRmxvdyBkZW1vIHJlcXVlc3Qg4oCUIFwiICsgdmFsdWVzLmNvbXBhbnksXG4gICl9JmJvZHk9JHtlbmNvZGVVUklDb21wb25lbnQoYm9keSl9YDtcbn1cbiJdLCJuYW1lcyI6WyJOQVZfU0xVR1MiLCJQTEFOUyIsIlNJVEVNQVBfRVhDTFVERURfU0xVR1MiLCJkZW1vRW1haWwiLCJyb3V0ZXMiLCJzaXRlIiwibmFtZSIsIm9yaWdpbiIsImVtYWlsIiwic2x1ZyIsImxhYmVsIiwidGl0bGUiLCJkZXNjcmlwdGlvbiIsInRhZyIsInRleHQiLCJpY29uIiwiUGFja2FnZSIsIml0ZW1zIiwiUm91dGUiLCJXYXJlaG91c2UiLCJ2YWx1ZXMiLCJib2R5IiwiY29tcGFueSIsIm5vdGVzIiwiZW5jb2RlVVJJQ29tcG9uZW50Il0sIm1hcHBpbmdzIjoiQUFBQSx1RUFBdUU7QUFDdkUsMEVBQTBFO0FBQzFFLHVFQUF1RTtBQUN2RSxrRUFBa0U7QUFDbEUsbUVBQW1FO0FBQ25FLHVFQUF1RTtBQUN2RSx1RUFBdUU7QUFDdkUsK0RBQStEOzs7Ozs7Ozs7Ozs7UUEwRWxEQTtlQUFBQTs7UUFvQkFDO2VBQUFBOztRQWZBQztlQUFBQTs7UUF1REdDO2VBQUFBOztRQXJISEM7ZUFBQUE7O1FBYkFDO2VBQUFBOzs7NkJBRjhDO0FBRXBELE1BQU1BLE9BQU87SUFDbEJDLE1BQU07SUFDTkMsUUFBUTtJQUNSQyxPQUFPO0FBQ1Q7QUFTTyxNQUFNSixTQUEyQjtJQUN0QztRQUNFSyxNQUFNO1FBQ05DLE9BQU87UUFDUEMsT0FBTztRQUNQQyxhQUNFO0lBQ0o7SUFDQTtRQUNFSCxNQUFNO1FBQ05DLE9BQU87UUFDUEMsT0FBTztRQUNQQyxhQUNFO0lBQ0o7SUFDQTtRQUNFSCxNQUFNO1FBQ05DLE9BQU87UUFDUEMsT0FBTztRQUNQQyxhQUNFO0lBQ0o7SUFDQTtRQUNFSCxNQUFNO1FBQ05DLE9BQU87UUFDUEMsT0FBTztRQUNQQyxhQUNFO0lBQ0o7SUFDQTtRQUNFSCxNQUFNO1FBQ05DLE9BQU87UUFDUEMsT0FBTztRQUNQQyxhQUFhO0lBQ2Y7SUFDQTtRQUNFSCxNQUFNO1FBQ05DLE9BQU87UUFDUEMsT0FBTztRQUNQQyxhQUNFO0lBQ0o7SUFDQTtRQUNFSCxNQUFNO1FBQ05DLE9BQU87UUFDUEMsT0FBTztRQUNQQyxhQUFhO0lBQ2Y7SUFDQTtRQUNFSCxNQUFNO1FBQ05DLE9BQU87UUFDUEMsT0FBTztRQUNQQyxhQUFhO0lBQ2Y7Q0FDRDtBQUdNLE1BQU1aLFlBQVk7SUFBQztJQUFXO0lBQWU7SUFBYTtJQUFXO0NBQVU7QUFLL0UsTUFBTUUseUJBQXlCLEVBQUU7QUFlakMsTUFBTUQsUUFBdUI7SUFDbEM7UUFDRUssTUFBTTtRQUNOTyxLQUFLO1FBQ0xDLE1BQU07UUFDTkMsTUFBTUMsb0JBQU87UUFDYkMsT0FBTztZQUFDO1lBQWdDO1lBQW9CO1NBQTJCO0lBQ3pGO0lBQ0E7UUFDRVgsTUFBTTtRQUNOTyxLQUFLO1FBQ0xDLE1BQU07UUFDTkMsTUFBTUcsa0JBQUs7UUFDWEQsT0FBTztZQUNMO1lBQ0E7WUFDQTtTQUNEO0lBQ0g7SUFDQTtRQUNFWCxNQUFNO1FBQ05PLEtBQUs7UUFDTEMsTUFBTTtRQUNOQyxNQUFNSSxzQkFBUztRQUNmRixPQUFPO1lBQ0w7WUFDQTtZQUNBO1NBQ0Q7SUFDSDtDQUNEO0FBVU0sU0FBU2QsVUFBVWlCLE1BQXNCO0lBQzlDLE1BQU1DLE9BQU8sQ0FBQyx3Q0FBd0MsRUFBRUQsT0FBT0UsT0FBTyxDQUFDLFdBQVcsRUFBRUYsT0FBT2QsSUFBSSxDQUFDLGNBQWMsRUFBRWMsT0FBT1osS0FBSyxDQUFDLFdBQVcsRUFBRVksT0FBT0UsT0FBTyxDQUFDLDBCQUEwQixFQUNqTEYsT0FBT0csS0FBSyxJQUFJLGtEQUNqQixpREFBaUQsQ0FBQztJQUNuRCxPQUFPLENBQUMsT0FBTyxFQUFFbEIsS0FBS0csS0FBSyxDQUFDLFNBQVMsRUFBRWdCLG1CQUNyQyw4QkFBOEJKLE9BQU9FLE9BQU8sRUFDNUMsTUFBTSxFQUFFRSxtQkFBbUJILE9BQU87QUFDdEMifQ==

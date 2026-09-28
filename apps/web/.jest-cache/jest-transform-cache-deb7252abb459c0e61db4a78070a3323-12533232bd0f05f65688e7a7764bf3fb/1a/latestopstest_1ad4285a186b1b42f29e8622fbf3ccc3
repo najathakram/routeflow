@@ -1,0 +1,82 @@
+26b94b2c509627df5ac9a33838c6ba30
+/**
+ * Shared late-stop derivation used by BOTH dispatch modals (B161).
+ *
+ * The helpers live here rather than in a `page.tsx` so neither route module exports
+ * anything but its default component and recognised segment config, and so the two
+ * modals cannot drift apart on the warning's wording.
+ */ "use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+const _latestops = require("./late-stops");
+const eta = (over)=>({
+        stopId: "s1",
+        stopNumber: 1,
+        customerName: "Acme Grocers",
+        arrivalTime: "10:30",
+        departureTime: "10:45",
+        travelTimeMinutes: 12,
+        deliveryWindowStart: "08:00",
+        deliveryWindowEnd: "10:00",
+        withinWindow: false,
+        ...over
+    });
+describe("lateStopsFromAnalysis", ()=>{
+    it("keeps only the ETAs the analyzer marked outside their window", ()=>{
+        const result = (0, _latestops.lateStopsFromAnalysis)({
+            configured: true,
+            etas: [
+                eta({
+                    stopId: "late",
+                    withinWindow: false
+                }),
+                eta({
+                    stopId: "ontime",
+                    withinWindow: true
+                }),
+                // `null` = the stop has no window at all — not a violation.
+                eta({
+                    stopId: "nowindow",
+                    withinWindow: null,
+                    deliveryWindowEnd: null
+                })
+            ]
+        });
+        expect(result.map((s)=>s.stopId)).toEqual([
+            "late"
+        ]);
+    });
+    it("labels a late stop with its customer, ETA and window end", ()=>{
+        const [late] = (0, _latestops.lateStopsFromAnalysis)({
+            configured: true,
+            etas: [
+                eta({
+                    customerName: "Acme Grocers",
+                    arrivalTime: "10:30",
+                    deliveryWindowEnd: "10:00"
+                })
+            ]
+        });
+        expect(late.label).toBe("Acme Grocers — ETA 10:30 misses window (ends 10:00)");
+    });
+    it("falls back to '?' when the late stop has no window end", ()=>{
+        const [late] = (0, _latestops.lateStopsFromAnalysis)({
+            configured: true,
+            etas: [
+                eta({
+                    deliveryWindowEnd: null
+                })
+            ]
+        });
+        expect(late.label).toBe("Acme Grocers — ETA 10:30 misses window (ends ?)");
+    });
+    it("returns nothing when the analyzer produced no ETAs", ()=>{
+        expect((0, _latestops.lateStopsFromAnalysis)({
+            configured: false,
+            etas: []
+        })).toEqual([]);
+    });
+});
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8oZGFzaGJvYXJkKS9yb3V0ZXMvX2NvbXBvbmVudHMvbGF0ZS1zdG9wcy50ZXN0LnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogU2hhcmVkIGxhdGUtc3RvcCBkZXJpdmF0aW9uIHVzZWQgYnkgQk9USCBkaXNwYXRjaCBtb2RhbHMgKEIxNjEpLlxuICpcbiAqIFRoZSBoZWxwZXJzIGxpdmUgaGVyZSByYXRoZXIgdGhhbiBpbiBhIGBwYWdlLnRzeGAgc28gbmVpdGhlciByb3V0ZSBtb2R1bGUgZXhwb3J0c1xuICogYW55dGhpbmcgYnV0IGl0cyBkZWZhdWx0IGNvbXBvbmVudCBhbmQgcmVjb2duaXNlZCBzZWdtZW50IGNvbmZpZywgYW5kIHNvIHRoZSB0d29cbiAqIG1vZGFscyBjYW5ub3QgZHJpZnQgYXBhcnQgb24gdGhlIHdhcm5pbmcncyB3b3JkaW5nLlxuICovXG5pbXBvcnQgeyBsYXRlU3RvcHNGcm9tQW5hbHlzaXMgfSBmcm9tIFwiLi9sYXRlLXN0b3BzXCI7XG5pbXBvcnQgdHlwZSB7IFJvdXRlQW5hbHlzaXNSZXN1bHQgfSBmcm9tIFwiQC9saWIvYXBpL3JvdXRlc1wiO1xuXG5jb25zdCBldGEgPSAob3ZlcjogUGFydGlhbDxSb3V0ZUFuYWx5c2lzUmVzdWx0W1wiZXRhc1wiXVtudW1iZXJdPikgPT4gKHtcbiAgc3RvcElkOiBcInMxXCIsXG4gIHN0b3BOdW1iZXI6IDEsXG4gIGN1c3RvbWVyTmFtZTogXCJBY21lIEdyb2NlcnNcIixcbiAgYXJyaXZhbFRpbWU6IFwiMTA6MzBcIixcbiAgZGVwYXJ0dXJlVGltZTogXCIxMDo0NVwiLFxuICB0cmF2ZWxUaW1lTWludXRlczogMTIsXG4gIGRlbGl2ZXJ5V2luZG93U3RhcnQ6IFwiMDg6MDBcIixcbiAgZGVsaXZlcnlXaW5kb3dFbmQ6IFwiMTA6MDBcIixcbiAgd2l0aGluV2luZG93OiBmYWxzZSxcbiAgLi4ub3Zlcixcbn0pO1xuXG5kZXNjcmliZShcImxhdGVTdG9wc0Zyb21BbmFseXNpc1wiLCAoKSA9PiB7XG4gIGl0KFwia2VlcHMgb25seSB0aGUgRVRBcyB0aGUgYW5hbHl6ZXIgbWFya2VkIG91dHNpZGUgdGhlaXIgd2luZG93XCIsICgpID0+IHtcbiAgICBjb25zdCByZXN1bHQgPSBsYXRlU3RvcHNGcm9tQW5hbHlzaXMoe1xuICAgICAgY29uZmlndXJlZDogdHJ1ZSxcbiAgICAgIGV0YXM6IFtcbiAgICAgICAgZXRhKHsgc3RvcElkOiBcImxhdGVcIiwgd2l0aGluV2luZG93OiBmYWxzZSB9KSxcbiAgICAgICAgZXRhKHsgc3RvcElkOiBcIm9udGltZVwiLCB3aXRoaW5XaW5kb3c6IHRydWUgfSksXG4gICAgICAgIC8vIGBudWxsYCA9IHRoZSBzdG9wIGhhcyBubyB3aW5kb3cgYXQgYWxsIOKAlCBub3QgYSB2aW9sYXRpb24uXG4gICAgICAgIGV0YSh7IHN0b3BJZDogXCJub3dpbmRvd1wiLCB3aXRoaW5XaW5kb3c6IG51bGwsIGRlbGl2ZXJ5V2luZG93RW5kOiBudWxsIH0pLFxuICAgICAgXSxcbiAgICB9KTtcblxuICAgIGV4cGVjdChyZXN1bHQubWFwKChzKSA9PiBzLnN0b3BJZCkpLnRvRXF1YWwoW1wibGF0ZVwiXSk7XG4gIH0pO1xuXG4gIGl0KFwibGFiZWxzIGEgbGF0ZSBzdG9wIHdpdGggaXRzIGN1c3RvbWVyLCBFVEEgYW5kIHdpbmRvdyBlbmRcIiwgKCkgPT4ge1xuICAgIGNvbnN0IFtsYXRlXSA9IGxhdGVTdG9wc0Zyb21BbmFseXNpcyh7XG4gICAgICBjb25maWd1cmVkOiB0cnVlLFxuICAgICAgZXRhczogW1xuICAgICAgICBldGEoeyBjdXN0b21lck5hbWU6IFwiQWNtZSBHcm9jZXJzXCIsIGFycml2YWxUaW1lOiBcIjEwOjMwXCIsIGRlbGl2ZXJ5V2luZG93RW5kOiBcIjEwOjAwXCIgfSksXG4gICAgICBdLFxuICAgIH0pO1xuXG4gICAgZXhwZWN0KGxhdGUubGFiZWwpLnRvQmUoXCJBY21lIEdyb2NlcnMg4oCUIEVUQSAxMDozMCBtaXNzZXMgd2luZG93IChlbmRzIDEwOjAwKVwiKTtcbiAgfSk7XG5cbiAgaXQoXCJmYWxscyBiYWNrIHRvICc/JyB3aGVuIHRoZSBsYXRlIHN0b3AgaGFzIG5vIHdpbmRvdyBlbmRcIiwgKCkgPT4ge1xuICAgIGNvbnN0IFtsYXRlXSA9IGxhdGVTdG9wc0Zyb21BbmFseXNpcyh7XG4gICAgICBjb25maWd1cmVkOiB0cnVlLFxuICAgICAgZXRhczogW2V0YSh7IGRlbGl2ZXJ5V2luZG93RW5kOiBudWxsIH0pXSxcbiAgICB9KTtcblxuICAgIGV4cGVjdChsYXRlLmxhYmVsKS50b0JlKFwiQWNtZSBHcm9jZXJzIOKAlCBFVEEgMTA6MzAgbWlzc2VzIHdpbmRvdyAoZW5kcyA/KVwiKTtcbiAgfSk7XG5cbiAgaXQoXCJyZXR1cm5zIG5vdGhpbmcgd2hlbiB0aGUgYW5hbHl6ZXIgcHJvZHVjZWQgbm8gRVRBc1wiLCAoKSA9PiB7XG4gICAgZXhwZWN0KGxhdGVTdG9wc0Zyb21BbmFseXNpcyh7IGNvbmZpZ3VyZWQ6IGZhbHNlLCBldGFzOiBbXSB9KSkudG9FcXVhbChbXSk7XG4gIH0pO1xufSk7XG4iXSwibmFtZXMiOlsiZXRhIiwib3ZlciIsInN0b3BJZCIsInN0b3BOdW1iZXIiLCJjdXN0b21lck5hbWUiLCJhcnJpdmFsVGltZSIsImRlcGFydHVyZVRpbWUiLCJ0cmF2ZWxUaW1lTWludXRlcyIsImRlbGl2ZXJ5V2luZG93U3RhcnQiLCJkZWxpdmVyeVdpbmRvd0VuZCIsIndpdGhpbldpbmRvdyIsImRlc2NyaWJlIiwiaXQiLCJyZXN1bHQiLCJsYXRlU3RvcHNGcm9tQW5hbHlzaXMiLCJjb25maWd1cmVkIiwiZXRhcyIsImV4cGVjdCIsIm1hcCIsInMiLCJ0b0VxdWFsIiwibGF0ZSIsImxhYmVsIiwidG9CZSJdLCJtYXBwaW5ncyI6IkFBQUE7Ozs7OztDQU1DOzs7OzJCQUNxQztBQUd0QyxNQUFNQSxNQUFNLENBQUNDLE9BQXdELENBQUE7UUFDbkVDLFFBQVE7UUFDUkMsWUFBWTtRQUNaQyxjQUFjO1FBQ2RDLGFBQWE7UUFDYkMsZUFBZTtRQUNmQyxtQkFBbUI7UUFDbkJDLHFCQUFxQjtRQUNyQkMsbUJBQW1CO1FBQ25CQyxjQUFjO1FBQ2QsR0FBR1QsSUFBSTtJQUNULENBQUE7QUFFQVUsU0FBUyx5QkFBeUI7SUFDaENDLEdBQUcsZ0VBQWdFO1FBQ2pFLE1BQU1DLFNBQVNDLElBQUFBLGdDQUFxQixFQUFDO1lBQ25DQyxZQUFZO1lBQ1pDLE1BQU07Z0JBQ0poQixJQUFJO29CQUFFRSxRQUFRO29CQUFRUSxjQUFjO2dCQUFNO2dCQUMxQ1YsSUFBSTtvQkFBRUUsUUFBUTtvQkFBVVEsY0FBYztnQkFBSztnQkFDM0MsNERBQTREO2dCQUM1RFYsSUFBSTtvQkFBRUUsUUFBUTtvQkFBWVEsY0FBYztvQkFBTUQsbUJBQW1CO2dCQUFLO2FBQ3ZFO1FBQ0g7UUFFQVEsT0FBT0osT0FBT0ssR0FBRyxDQUFDLENBQUNDLElBQU1BLEVBQUVqQixNQUFNLEdBQUdrQixPQUFPLENBQUM7WUFBQztTQUFPO0lBQ3REO0lBRUFSLEdBQUcsNERBQTREO1FBQzdELE1BQU0sQ0FBQ1MsS0FBSyxHQUFHUCxJQUFBQSxnQ0FBcUIsRUFBQztZQUNuQ0MsWUFBWTtZQUNaQyxNQUFNO2dCQUNKaEIsSUFBSTtvQkFBRUksY0FBYztvQkFBZ0JDLGFBQWE7b0JBQVNJLG1CQUFtQjtnQkFBUTthQUN0RjtRQUNIO1FBRUFRLE9BQU9JLEtBQUtDLEtBQUssRUFBRUMsSUFBSSxDQUFDO0lBQzFCO0lBRUFYLEdBQUcsMERBQTBEO1FBQzNELE1BQU0sQ0FBQ1MsS0FBSyxHQUFHUCxJQUFBQSxnQ0FBcUIsRUFBQztZQUNuQ0MsWUFBWTtZQUNaQyxNQUFNO2dCQUFDaEIsSUFBSTtvQkFBRVMsbUJBQW1CO2dCQUFLO2FBQUc7UUFDMUM7UUFFQVEsT0FBT0ksS0FBS0MsS0FBSyxFQUFFQyxJQUFJLENBQUM7SUFDMUI7SUFFQVgsR0FBRyxzREFBc0Q7UUFDdkRLLE9BQU9ILElBQUFBLGdDQUFxQixFQUFDO1lBQUVDLFlBQVk7WUFBT0MsTUFBTSxFQUFFO1FBQUMsSUFBSUksT0FBTyxDQUFDLEVBQUU7SUFDM0U7QUFDRiJ9

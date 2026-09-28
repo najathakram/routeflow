@@ -1,0 +1,63 @@
+b2295c3857d1c759e64c1b3fd4d5624c
+"use client";
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+Object.defineProperty(exports, "EditorialMotion", {
+    enumerable: true,
+    get: function() {
+        return EditorialMotion;
+    }
+});
+const _react = require("react");
+const _navigation = require("next/navigation");
+// Scroll-reveal for section headings/cards. Renders nothing; content stays
+// fully visible without JavaScript and under prefers-reduced-motion — it
+// only ever REMOVES the `.reveal-pending` class that marketing.css's
+// `.editorial-reveal` rules key off (ported near-verbatim from the
+// redesign's components/editorial-motion.tsx; spec.md R7/R14).
+const REVEAL_SELECTOR = ".section-heading,.split-heading,.capability-card,.wholesale-extras,.problem-grid article,.audience-card,.buying-confidence,.cta-block,.story-section";
+function EditorialMotion() {
+    const pathname = (0, _navigation.usePathname)();
+    (0, _react.useEffect)(()=>{
+        const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
+        if (reduced.matches) return;
+        // Progressive enhancement: no IntersectionObserver support means no classes are
+        // ever added below, so content is left in its default (fully visible) state
+        // instead of being marked reveal-pending with nothing able to clear it.
+        if (typeof IntersectionObserver === "undefined") return;
+        const nodes = Array.from(document.querySelectorAll(REVEAL_SELECTOR));
+        const observer = new IntersectionObserver((entries)=>{
+            entries.forEach((entry)=>{
+                if (!entry.isIntersecting) return;
+                entry.target.classList.remove("reveal-pending");
+                observer.unobserve(entry.target);
+            });
+        }, {
+            threshold: 0.07,
+            rootMargin: "0px 0px -24px 0px"
+        });
+        nodes.forEach((node)=>{
+            node.classList.add("editorial-reveal");
+            if (node.getBoundingClientRect().top > window.innerHeight) {
+                node.classList.add("reveal-pending");
+                observer.observe(node);
+            }
+        });
+        const revealAll = ()=>{
+            if (reduced.matches) nodes.forEach((node)=>node.classList.remove("reveal-pending"));
+        };
+        reduced.addEventListener("change", revealAll);
+        return ()=>{
+            observer.disconnect();
+            reduced.removeEventListener("change", revealAll);
+            nodes.forEach((node)=>node.classList.remove("reveal-pending", "editorial-reveal"));
+        };
+    }, [
+        pathname
+    ]);
+    return null;
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi9Vc2Vycy9uYWphdGhha3JhbS9jb2RlL3JvdXRlZmxvdy0yNDM3L2FwcHMvd2ViL2FwcC8obWFya2V0aW5nKS9jb21wb25lbnRzL2VkaXRvcmlhbC1tb3Rpb24udHN4Il0sInNvdXJjZXNDb250ZW50IjpbIlwidXNlIGNsaWVudFwiO1xuXG5pbXBvcnQgeyB1c2VFZmZlY3QgfSBmcm9tIFwicmVhY3RcIjtcbmltcG9ydCB7IHVzZVBhdGhuYW1lIH0gZnJvbSBcIm5leHQvbmF2aWdhdGlvblwiO1xuXG4vLyBTY3JvbGwtcmV2ZWFsIGZvciBzZWN0aW9uIGhlYWRpbmdzL2NhcmRzLiBSZW5kZXJzIG5vdGhpbmc7IGNvbnRlbnQgc3RheXNcbi8vIGZ1bGx5IHZpc2libGUgd2l0aG91dCBKYXZhU2NyaXB0IGFuZCB1bmRlciBwcmVmZXJzLXJlZHVjZWQtbW90aW9uIOKAlCBpdFxuLy8gb25seSBldmVyIFJFTU9WRVMgdGhlIGAucmV2ZWFsLXBlbmRpbmdgIGNsYXNzIHRoYXQgbWFya2V0aW5nLmNzcydzXG4vLyBgLmVkaXRvcmlhbC1yZXZlYWxgIHJ1bGVzIGtleSBvZmYgKHBvcnRlZCBuZWFyLXZlcmJhdGltIGZyb20gdGhlXG4vLyByZWRlc2lnbidzIGNvbXBvbmVudHMvZWRpdG9yaWFsLW1vdGlvbi50c3g7IHNwZWMubWQgUjcvUjE0KS5cbmNvbnN0IFJFVkVBTF9TRUxFQ1RPUiA9XG4gIFwiLnNlY3Rpb24taGVhZGluZywuc3BsaXQtaGVhZGluZywuY2FwYWJpbGl0eS1jYXJkLC53aG9sZXNhbGUtZXh0cmFzLC5wcm9ibGVtLWdyaWQgYXJ0aWNsZSwuYXVkaWVuY2UtY2FyZCwuYnV5aW5nLWNvbmZpZGVuY2UsLmN0YS1ibG9jaywuc3Rvcnktc2VjdGlvblwiO1xuXG5leHBvcnQgZnVuY3Rpb24gRWRpdG9yaWFsTW90aW9uKCkge1xuICBjb25zdCBwYXRobmFtZSA9IHVzZVBhdGhuYW1lKCk7XG5cbiAgdXNlRWZmZWN0KCgpID0+IHtcbiAgICBjb25zdCByZWR1Y2VkID0gd2luZG93Lm1hdGNoTWVkaWEoXCIocHJlZmVycy1yZWR1Y2VkLW1vdGlvbjogcmVkdWNlKVwiKTtcbiAgICBpZiAocmVkdWNlZC5tYXRjaGVzKSByZXR1cm47XG4gICAgLy8gUHJvZ3Jlc3NpdmUgZW5oYW5jZW1lbnQ6IG5vIEludGVyc2VjdGlvbk9ic2VydmVyIHN1cHBvcnQgbWVhbnMgbm8gY2xhc3NlcyBhcmVcbiAgICAvLyBldmVyIGFkZGVkIGJlbG93LCBzbyBjb250ZW50IGlzIGxlZnQgaW4gaXRzIGRlZmF1bHQgKGZ1bGx5IHZpc2libGUpIHN0YXRlXG4gICAgLy8gaW5zdGVhZCBvZiBiZWluZyBtYXJrZWQgcmV2ZWFsLXBlbmRpbmcgd2l0aCBub3RoaW5nIGFibGUgdG8gY2xlYXIgaXQuXG4gICAgaWYgKHR5cGVvZiBJbnRlcnNlY3Rpb25PYnNlcnZlciA9PT0gXCJ1bmRlZmluZWRcIikgcmV0dXJuO1xuXG4gICAgY29uc3Qgbm9kZXMgPSBBcnJheS5mcm9tKGRvY3VtZW50LnF1ZXJ5U2VsZWN0b3JBbGw8SFRNTEVsZW1lbnQ+KFJFVkVBTF9TRUxFQ1RPUikpO1xuICAgIGNvbnN0IG9ic2VydmVyID0gbmV3IEludGVyc2VjdGlvbk9ic2VydmVyKFxuICAgICAgKGVudHJpZXMpID0+IHtcbiAgICAgICAgZW50cmllcy5mb3JFYWNoKChlbnRyeSkgPT4ge1xuICAgICAgICAgIGlmICghZW50cnkuaXNJbnRlcnNlY3RpbmcpIHJldHVybjtcbiAgICAgICAgICAoZW50cnkudGFyZ2V0IGFzIEhUTUxFbGVtZW50KS5jbGFzc0xpc3QucmVtb3ZlKFwicmV2ZWFsLXBlbmRpbmdcIik7XG4gICAgICAgICAgb2JzZXJ2ZXIudW5vYnNlcnZlKGVudHJ5LnRhcmdldCk7XG4gICAgICAgIH0pO1xuICAgICAgfSxcbiAgICAgIHsgdGhyZXNob2xkOiAwLjA3LCByb290TWFyZ2luOiBcIjBweCAwcHggLTI0cHggMHB4XCIgfSxcbiAgICApO1xuXG4gICAgbm9kZXMuZm9yRWFjaCgobm9kZSkgPT4ge1xuICAgICAgbm9kZS5jbGFzc0xpc3QuYWRkKFwiZWRpdG9yaWFsLXJldmVhbFwiKTtcbiAgICAgIGlmIChub2RlLmdldEJvdW5kaW5nQ2xpZW50UmVjdCgpLnRvcCA+IHdpbmRvdy5pbm5lckhlaWdodCkge1xuICAgICAgICBub2RlLmNsYXNzTGlzdC5hZGQoXCJyZXZlYWwtcGVuZGluZ1wiKTtcbiAgICAgICAgb2JzZXJ2ZXIub2JzZXJ2ZShub2RlKTtcbiAgICAgIH1cbiAgICB9KTtcblxuICAgIGNvbnN0IHJldmVhbEFsbCA9ICgpID0+IHtcbiAgICAgIGlmIChyZWR1Y2VkLm1hdGNoZXMpIG5vZGVzLmZvckVhY2goKG5vZGUpID0+IG5vZGUuY2xhc3NMaXN0LnJlbW92ZShcInJldmVhbC1wZW5kaW5nXCIpKTtcbiAgICB9O1xuICAgIHJlZHVjZWQuYWRkRXZlbnRMaXN0ZW5lcihcImNoYW5nZVwiLCByZXZlYWxBbGwpO1xuXG4gICAgcmV0dXJuICgpID0+IHtcbiAgICAgIG9ic2VydmVyLmRpc2Nvbm5lY3QoKTtcbiAgICAgIHJlZHVjZWQucmVtb3ZlRXZlbnRMaXN0ZW5lcihcImNoYW5nZVwiLCByZXZlYWxBbGwpO1xuICAgICAgbm9kZXMuZm9yRWFjaCgobm9kZSkgPT4gbm9kZS5jbGFzc0xpc3QucmVtb3ZlKFwicmV2ZWFsLXBlbmRpbmdcIiwgXCJlZGl0b3JpYWwtcmV2ZWFsXCIpKTtcbiAgICB9O1xuICB9LCBbcGF0aG5hbWVdKTtcblxuICByZXR1cm4gbnVsbDtcbn1cbiJdLCJuYW1lcyI6WyJFZGl0b3JpYWxNb3Rpb24iLCJSRVZFQUxfU0VMRUNUT1IiLCJwYXRobmFtZSIsInVzZVBhdGhuYW1lIiwidXNlRWZmZWN0IiwicmVkdWNlZCIsIndpbmRvdyIsIm1hdGNoTWVkaWEiLCJtYXRjaGVzIiwiSW50ZXJzZWN0aW9uT2JzZXJ2ZXIiLCJub2RlcyIsIkFycmF5IiwiZnJvbSIsImRvY3VtZW50IiwicXVlcnlTZWxlY3RvckFsbCIsIm9ic2VydmVyIiwiZW50cmllcyIsImZvckVhY2giLCJlbnRyeSIsImlzSW50ZXJzZWN0aW5nIiwidGFyZ2V0IiwiY2xhc3NMaXN0IiwicmVtb3ZlIiwidW5vYnNlcnZlIiwidGhyZXNob2xkIiwicm9vdE1hcmdpbiIsIm5vZGUiLCJhZGQiLCJnZXRCb3VuZGluZ0NsaWVudFJlY3QiLCJ0b3AiLCJpbm5lckhlaWdodCIsIm9ic2VydmUiLCJyZXZlYWxBbGwiLCJhZGRFdmVudExpc3RlbmVyIiwiZGlzY29ubmVjdCIsInJlbW92ZUV2ZW50TGlzdGVuZXIiXSwibWFwcGluZ3MiOiJBQUFBOzs7OzsrQkFhZ0JBOzs7ZUFBQUE7Ozt1QkFYVTs0QkFDRTtBQUU1QiwyRUFBMkU7QUFDM0UseUVBQXlFO0FBQ3pFLHFFQUFxRTtBQUNyRSxtRUFBbUU7QUFDbkUsK0RBQStEO0FBQy9ELE1BQU1DLGtCQUNKO0FBRUssU0FBU0Q7SUFDZCxNQUFNRSxXQUFXQyxJQUFBQSx1QkFBVztJQUU1QkMsSUFBQUEsZ0JBQVMsRUFBQztRQUNSLE1BQU1DLFVBQVVDLE9BQU9DLFVBQVUsQ0FBQztRQUNsQyxJQUFJRixRQUFRRyxPQUFPLEVBQUU7UUFDckIsZ0ZBQWdGO1FBQ2hGLDRFQUE0RTtRQUM1RSx3RUFBd0U7UUFDeEUsSUFBSSxPQUFPQyx5QkFBeUIsYUFBYTtRQUVqRCxNQUFNQyxRQUFRQyxNQUFNQyxJQUFJLENBQUNDLFNBQVNDLGdCQUFnQixDQUFjYjtRQUNoRSxNQUFNYyxXQUFXLElBQUlOLHFCQUNuQixDQUFDTztZQUNDQSxRQUFRQyxPQUFPLENBQUMsQ0FBQ0M7Z0JBQ2YsSUFBSSxDQUFDQSxNQUFNQyxjQUFjLEVBQUU7Z0JBQzFCRCxNQUFNRSxNQUFNLENBQWlCQyxTQUFTLENBQUNDLE1BQU0sQ0FBQztnQkFDL0NQLFNBQVNRLFNBQVMsQ0FBQ0wsTUFBTUUsTUFBTTtZQUNqQztRQUNGLEdBQ0E7WUFBRUksV0FBVztZQUFNQyxZQUFZO1FBQW9CO1FBR3JEZixNQUFNTyxPQUFPLENBQUMsQ0FBQ1M7WUFDYkEsS0FBS0wsU0FBUyxDQUFDTSxHQUFHLENBQUM7WUFDbkIsSUFBSUQsS0FBS0UscUJBQXFCLEdBQUdDLEdBQUcsR0FBR3ZCLE9BQU93QixXQUFXLEVBQUU7Z0JBQ3pESixLQUFLTCxTQUFTLENBQUNNLEdBQUcsQ0FBQztnQkFDbkJaLFNBQVNnQixPQUFPLENBQUNMO1lBQ25CO1FBQ0Y7UUFFQSxNQUFNTSxZQUFZO1lBQ2hCLElBQUkzQixRQUFRRyxPQUFPLEVBQUVFLE1BQU1PLE9BQU8sQ0FBQyxDQUFDUyxPQUFTQSxLQUFLTCxTQUFTLENBQUNDLE1BQU0sQ0FBQztRQUNyRTtRQUNBakIsUUFBUTRCLGdCQUFnQixDQUFDLFVBQVVEO1FBRW5DLE9BQU87WUFDTGpCLFNBQVNtQixVQUFVO1lBQ25CN0IsUUFBUThCLG1CQUFtQixDQUFDLFVBQVVIO1lBQ3RDdEIsTUFBTU8sT0FBTyxDQUFDLENBQUNTLE9BQVNBLEtBQUtMLFNBQVMsQ0FBQ0MsTUFBTSxDQUFDLGtCQUFrQjtRQUNsRTtJQUNGLEdBQUc7UUFBQ3BCO0tBQVM7SUFFYixPQUFPO0FBQ1QifQ==

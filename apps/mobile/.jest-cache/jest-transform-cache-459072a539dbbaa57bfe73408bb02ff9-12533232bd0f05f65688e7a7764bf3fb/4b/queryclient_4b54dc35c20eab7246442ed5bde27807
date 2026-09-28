@@ -1,0 +1,40 @@
+d5df0fb1215dd180945f9486be8c1184
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.queryClient = void 0;
+exports.onAppStateChange = onAppStateChange;
+const react_query_1 = require("@tanstack/react-query");
+const react_native_1 = require("react-native");
+/**
+ * TanStack's own `focusManager` only listens for the DOM `visibilitychange`
+ * event (see `@tanstack/query-core`'s `FocusManager#setup` — it checks for
+ * `window.addEventListener`, which React Native never fires), so on native a
+ * query that went stale while the app sat backgrounded just keeps serving
+ * that stale cache forever: nothing ever tells TanStack "the app is back,
+ * check your queries". Wiring `AppState` in is the documented React Native
+ * recipe for this gap. Exported (not just registered) so the mapping itself
+ * is pinned as pure logic, independent of whether AppState.addEventListener
+ * ever actually fires in a test.
+ */
+function onAppStateChange(status) {
+    if (react_native_1.Platform.OS !== "web") {
+        react_query_1.focusManager.setFocused(status === "active");
+    }
+}
+// Guarded: some existing "react-native" test doubles (e.g.
+// session-teardown.test.ts's `jest.mock("react-native", () => ({ Platform:
+// { OS: "ios" } }))`, which predates this file caring about AppState) stub
+// only `Platform`. Wiring a foreground listener must never throw for a module
+// graph that doesn't care about it.
+if (typeof react_native_1.AppState?.addEventListener === "function") {
+    react_native_1.AppState.addEventListener("change", onAppStateChange);
+}
+/**
+ * The single QueryClient instance shared by the root layout's
+ * `QueryClientProvider` (app/_layout.tsx) and `lib/session-teardown.ts`
+ * (B140/D1, cause-ruling.md §3). Sign-out cancels in-flight queries then
+ * clears the cache on THIS instance — a client the layout allocated for
+ * itself would leave a stale, unclearable cache behind after logout.
+ */
+exports.queryClient = new react_query_1.QueryClient();
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3F1ZXJ5LWNsaWVudC50cyIsIm1hcHBpbmdzIjoiOzs7QUFjQSw0Q0FJQztBQWxCRCx1REFBa0U7QUFDbEUsK0NBQXVFO0FBRXZFOzs7Ozs7Ozs7O0dBVUc7QUFDSCxTQUFnQixnQkFBZ0IsQ0FBQyxNQUFzQjtJQUNyRCxJQUFJLHVCQUFRLENBQUMsRUFBRSxLQUFLLEtBQUssRUFBRSxDQUFDO1FBQzFCLDBCQUFZLENBQUMsVUFBVSxDQUFDLE1BQU0sS0FBSyxRQUFRLENBQUMsQ0FBQztJQUMvQyxDQUFDO0FBQ0gsQ0FBQztBQUVELDJEQUEyRDtBQUMzRCwyRUFBMkU7QUFDM0UsMkVBQTJFO0FBQzNFLDhFQUE4RTtBQUM5RSxvQ0FBb0M7QUFDcEMsSUFBSSxPQUFPLHVCQUFRLEVBQUUsZ0JBQWdCLEtBQUssVUFBVSxFQUFFLENBQUM7SUFDckQsdUJBQVEsQ0FBQyxnQkFBZ0IsQ0FBQyxRQUFRLEVBQUUsZ0JBQWdCLENBQUMsQ0FBQztBQUN4RCxDQUFDO0FBRUQ7Ozs7OztHQU1HO0FBQ1UsUUFBQSxXQUFXLEdBQUcsSUFBSSx5QkFBVyxFQUFFLENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3F1ZXJ5LWNsaWVudC50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgeyBRdWVyeUNsaWVudCwgZm9jdXNNYW5hZ2VyIH0gZnJvbSBcIkB0YW5zdGFjay9yZWFjdC1xdWVyeVwiO1xuaW1wb3J0IHsgQXBwU3RhdGUsIHR5cGUgQXBwU3RhdGVTdGF0dXMsIFBsYXRmb3JtIH0gZnJvbSBcInJlYWN0LW5hdGl2ZVwiO1xuXG4vKipcbiAqIFRhblN0YWNrJ3Mgb3duIGBmb2N1c01hbmFnZXJgIG9ubHkgbGlzdGVucyBmb3IgdGhlIERPTSBgdmlzaWJpbGl0eWNoYW5nZWBcbiAqIGV2ZW50IChzZWUgYEB0YW5zdGFjay9xdWVyeS1jb3JlYCdzIGBGb2N1c01hbmFnZXIjc2V0dXBgIOKAlCBpdCBjaGVja3MgZm9yXG4gKiBgd2luZG93LmFkZEV2ZW50TGlzdGVuZXJgLCB3aGljaCBSZWFjdCBOYXRpdmUgbmV2ZXIgZmlyZXMpLCBzbyBvbiBuYXRpdmUgYVxuICogcXVlcnkgdGhhdCB3ZW50IHN0YWxlIHdoaWxlIHRoZSBhcHAgc2F0IGJhY2tncm91bmRlZCBqdXN0IGtlZXBzIHNlcnZpbmdcbiAqIHRoYXQgc3RhbGUgY2FjaGUgZm9yZXZlcjogbm90aGluZyBldmVyIHRlbGxzIFRhblN0YWNrIFwidGhlIGFwcCBpcyBiYWNrLFxuICogY2hlY2sgeW91ciBxdWVyaWVzXCIuIFdpcmluZyBgQXBwU3RhdGVgIGluIGlzIHRoZSBkb2N1bWVudGVkIFJlYWN0IE5hdGl2ZVxuICogcmVjaXBlIGZvciB0aGlzIGdhcC4gRXhwb3J0ZWQgKG5vdCBqdXN0IHJlZ2lzdGVyZWQpIHNvIHRoZSBtYXBwaW5nIGl0c2VsZlxuICogaXMgcGlubmVkIGFzIHB1cmUgbG9naWMsIGluZGVwZW5kZW50IG9mIHdoZXRoZXIgQXBwU3RhdGUuYWRkRXZlbnRMaXN0ZW5lclxuICogZXZlciBhY3R1YWxseSBmaXJlcyBpbiBhIHRlc3QuXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiBvbkFwcFN0YXRlQ2hhbmdlKHN0YXR1czogQXBwU3RhdGVTdGF0dXMpOiB2b2lkIHtcbiAgaWYgKFBsYXRmb3JtLk9TICE9PSBcIndlYlwiKSB7XG4gICAgZm9jdXNNYW5hZ2VyLnNldEZvY3VzZWQoc3RhdHVzID09PSBcImFjdGl2ZVwiKTtcbiAgfVxufVxuXG4vLyBHdWFyZGVkOiBzb21lIGV4aXN0aW5nIFwicmVhY3QtbmF0aXZlXCIgdGVzdCBkb3VibGVzIChlLmcuXG4vLyBzZXNzaW9uLXRlYXJkb3duLnRlc3QudHMncyBgamVzdC5tb2NrKFwicmVhY3QtbmF0aXZlXCIsICgpID0+ICh7IFBsYXRmb3JtOlxuLy8geyBPUzogXCJpb3NcIiB9IH0pKWAsIHdoaWNoIHByZWRhdGVzIHRoaXMgZmlsZSBjYXJpbmcgYWJvdXQgQXBwU3RhdGUpIHN0dWJcbi8vIG9ubHkgYFBsYXRmb3JtYC4gV2lyaW5nIGEgZm9yZWdyb3VuZCBsaXN0ZW5lciBtdXN0IG5ldmVyIHRocm93IGZvciBhIG1vZHVsZVxuLy8gZ3JhcGggdGhhdCBkb2Vzbid0IGNhcmUgYWJvdXQgaXQuXG5pZiAodHlwZW9mIEFwcFN0YXRlPy5hZGRFdmVudExpc3RlbmVyID09PSBcImZ1bmN0aW9uXCIpIHtcbiAgQXBwU3RhdGUuYWRkRXZlbnRMaXN0ZW5lcihcImNoYW5nZVwiLCBvbkFwcFN0YXRlQ2hhbmdlKTtcbn1cblxuLyoqXG4gKiBUaGUgc2luZ2xlIFF1ZXJ5Q2xpZW50IGluc3RhbmNlIHNoYXJlZCBieSB0aGUgcm9vdCBsYXlvdXQnc1xuICogYFF1ZXJ5Q2xpZW50UHJvdmlkZXJgIChhcHAvX2xheW91dC50c3gpIGFuZCBgbGliL3Nlc3Npb24tdGVhcmRvd24udHNgXG4gKiAoQjE0MC9EMSwgY2F1c2UtcnVsaW5nLm1kIMKnMykuIFNpZ24tb3V0IGNhbmNlbHMgaW4tZmxpZ2h0IHF1ZXJpZXMgdGhlblxuICogY2xlYXJzIHRoZSBjYWNoZSBvbiBUSElTIGluc3RhbmNlIOKAlCBhIGNsaWVudCB0aGUgbGF5b3V0IGFsbG9jYXRlZCBmb3JcbiAqIGl0c2VsZiB3b3VsZCBsZWF2ZSBhIHN0YWxlLCB1bmNsZWFyYWJsZSBjYWNoZSBiZWhpbmQgYWZ0ZXIgbG9nb3V0LlxuICovXG5leHBvcnQgY29uc3QgcXVlcnlDbGllbnQgPSBuZXcgUXVlcnlDbGllbnQoKTtcbiJdLCJ2ZXJzaW9uIjozfQ==

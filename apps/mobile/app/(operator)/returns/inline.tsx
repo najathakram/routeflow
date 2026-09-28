@@ -24,7 +24,9 @@ import {
   applyReturnScan,
   buildQuoteRequest,
   canReturnOnlyPurchased,
-  dropExcessAndRequote,
+  CREDIT_OVERRIDE_REASON_MAX,
+  creditOverrideNote,
+  creditOverrideProblem,
   extractRefusalMessage,
   groupQuoteChunks,
   isBoxedProduct,
@@ -49,12 +51,14 @@ import {
   canConfirmInlineReturn,
   canGetInlineReturnQuote,
   canLeaveInlineReturn,
+  canOverrideInlineReturnCredit,
   captureFailureMessage,
   formatRefundAmount,
   initialInlineReturnScreen,
   inlineReturnScreenReducer,
   inlineReturnsGate,
   linesFromOrder,
+  onlyPurchasedRequote,
   type PrefilledReturnLine,
 } from "../../../lib/inline-return-screen";
 import { useAuthStore } from "../../../lib/auth-store";
@@ -166,6 +170,9 @@ export default function InlineReturnScreen() {
   // Lock EVERY removal path while a capture is in flight (Android back, this stack's swipe, a
   // parent-stack swipe): usePreventRemove, not a raw beforeRemove (see the hook).
   const signedOut = useAuthStore((s) => !s.user);
+  // #2695: staff only — the server refuses the override fields from anyone else with a 400.
+  const canOverrideCredit = canOverrideInlineReturnCredit(useAuthStore((s) => s.user));
+  const overrideProblem = creditOverrideProblem(lines);
   useInlineReturnRemoveGuard(screen, {
     signedOut,
     onSignedOutRedirect: () => router.replace("/(auth)/login" as any),
@@ -196,7 +203,7 @@ export default function InlineReturnScreen() {
     }
     // #2693: nothing matched to an invoice ⇒ the re-quote would be EMPTY; never send it.
     if (!canReturnOnlyPurchased(screen.quote)) return;
-    requote(dropExcessAndRequote(customerId, screen.quote), (quote) => {
+    requote(onlyPurchasedRequote(customerId, screen.quote, screen.quotedLines), (quote) => {
       // Capture reads the quoted snapshot, so the reduced amount goes into the snapshot too.
       const reduced = applyCoveredPiecesToLines(screen.quotedLines, quote);
       setLines((prev) => applyCoveredPiecesToLines(prev, quote) as PrefilledReturnLine[]);
@@ -347,8 +354,42 @@ export default function InlineReturnScreen() {
                     <Text style={styles.link}>Remove</Text>
                   </Pressable>
                 </View>
+                {canOverrideCredit && (
+                  <View style={styles.overrideRow}>
+                    <View>
+                      <Text style={styles.hint}>
+                        {isBoxedProduct(l) ? "Credit / box" : "Credit price"}
+                      </Text>
+                      <TextInput
+                        style={styles.qty}
+                        value={l.creditUnitPrice ?? ""}
+                        accessibilityLabel={`Credit price, ${l.productName}`}
+                        onChangeText={(v) => setLine(l.productId, { creditUnitPrice: v })}
+                        placeholder="Quoted"
+                        placeholderTextColor={ios.label3}
+                        keyboardType="decimal-pad"
+                      />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.hint}>Why the lower price</Text>
+                      <TextInput
+                        style={styles.reasonInput}
+                        value={l.overrideReason ?? ""}
+                        accessibilityLabel={`Why the lower price, ${l.productName}`}
+                        onChangeText={(v) => setLine(l.productId, { overrideReason: v })}
+                        maxLength={CREDIT_OVERRIDE_REASON_MAX}
+                        placeholderTextColor={ios.label3}
+                      />
+                    </View>
+                  </View>
+                )}
               </View>
             ))}
+            {overrideProblem ? (
+              <Text style={styles.error} accessibilityRole="alert">
+                {overrideProblem}
+              </Text>
+            ) : null}
             {!orderId ? (
               <Text style={styles.error}>Pick which order this credit applies to first.</Text>
             ) : null}
@@ -487,6 +528,9 @@ function QuoteView(props: {
             Net {money(c.subtotal)} · Tax {money(c.taxAmount)}
             {c.categoryTax > 0 ? ` · Levy ${money(c.categoryTax)}` : ""}
           </Text>
+          {creditOverrideNote(c, money) ? (
+            <Text style={styles.hint}>{creditOverrideNote(c, money)}</Text>
+          ) : null}
         </View>
       ))}
       {excess.length > 0 && (
@@ -496,6 +540,13 @@ function QuoteView(props: {
             {excess.reduce((s, c) => s + c.pieces, 0)} pc at current price · Net{" "}
             {money(excessTotals.subtotal)} · Tax {money(excessTotals.taxAmount)}
           </Text>
+          {excess.map((c, i) =>
+            creditOverrideNote(c, money) ? (
+              <Text key={`excess-override-${i}`} style={styles.hint}>
+                {creditOverrideNote(c, money)}
+              </Text>
+            ) : null,
+          )}
           {(
             [
               ["CREDIT_AT_CURRENT_PRICE", "Credit at current price"],
@@ -642,6 +693,16 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_600SemiBold",
     color: ios.label,
     textAlign: "center",
+  },
+  overrideRow: { flexDirection: "row", alignItems: "flex-end", gap: 12 },
+  reasonInput: {
+    minHeight: MIN_TARGET,
+    backgroundColor: ios.fill3,
+    borderRadius: 10,
+    padding: 10,
+    fontSize: 15,
+    fontFamily: "Inter_500Medium",
+    color: ios.label,
   },
   remove: { minHeight: MIN_TARGET, minWidth: MIN_TARGET, justifyContent: "center" },
   link: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.brand, paddingBottom: 12 },

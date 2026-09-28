@@ -1,0 +1,60 @@
+6f852fc3581037c0734c7ad6f30b27bd
+"use strict";
+/**
+ * Integer quantity input hygiene for order / invoice line entry.
+ *
+ * Quantities are always whole units (or whole boxes/pieces). On Android the
+ * `number-pad` keyboard can still surface a decimal/minus key, and a raw text
+ * field happily keeps a typed leading zero ("05"). Both produce surprising
+ * totals downstream, so every qty/boxes/pieces TextInput in the create + edit
+ * flows routes its `onChangeText` through {@link sanitizeIntInput}.
+ *
+ * Pairs with `normalizeBoxesPieces` (`@routeflow/pricing`)
+ * which is authoritative — this just keeps what the operator SEES integer-clean.
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.sanitizeIntInput = sanitizeIntInput;
+exports.parseIntQty = parseIntQty;
+exports.commitQtyDraft = commitQtyDraft;
+/**
+ * Coerce free-typed text into a clean non-negative integer string:
+ * - drops anything from a decimal separator onward ("1.5" → "1"),
+ * - strips every non-digit,
+ * - removes leading zeros ("05" → "5", "007" → "7"), keeping a lone "0",
+ * - returns "" for empty input so the field can show a blank while editing.
+ */
+function sanitizeIntInput(text) {
+    if (text == null)
+        return "";
+    const intPart = String(text).split(/[.,]/)[0];
+    const digits = intPart.replace(/\D+/g, "");
+    if (digits === "")
+        return "";
+    return digits.replace(/^0+(?=\d)/, "");
+}
+/** Parse free-typed text to a non-negative integer, falling back when blank. */
+function parseIntQty(text, fallback = 0) {
+    const s = sanitizeIntInput(text);
+    if (s === "")
+        return fallback;
+    const n = parseInt(s, 10);
+    return Number.isFinite(n) ? n : fallback;
+}
+/**
+ * Resolve a qty draft at commit time (blur). Returns the number to commit, or
+ * null → revert to the current value.
+ * - empty draft: 0 when emptyMeansZero (line-removal semantics), else revert.
+ * - below min (e.g. typed "0" on a min-1 surface): revert.
+ * - above max: clamp (matches the cart sheet's pieces field — no rollover).
+ */
+function commitQtyDraft(draft, opts = {}) {
+    const { min = 0, max, emptyMeansZero = true } = opts;
+    const clean = sanitizeIntInput(draft);
+    if (clean === "")
+        return emptyMeansZero ? Math.max(0, min) : null;
+    const n = parseInt(clean, 10);
+    if (!Number.isFinite(n) || n < min)
+        return null;
+    return max != null ? Math.min(max, n) : n;
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3F0eS50cyIsIm1hcHBpbmdzIjoiO0FBQUE7Ozs7Ozs7Ozs7O0dBV0c7O0FBU0gsNENBTUM7QUFHRCxrQ0FLQztBQVNELHdDQVVDO0FBeENEOzs7Ozs7R0FNRztBQUNILFNBQWdCLGdCQUFnQixDQUFDLElBQStCO0lBQzlELElBQUksSUFBSSxJQUFJLElBQUk7UUFBRSxPQUFPLEVBQUUsQ0FBQztJQUM1QixNQUFNLE9BQU8sR0FBRyxNQUFNLENBQUMsSUFBSSxDQUFDLENBQUMsS0FBSyxDQUFDLE1BQU0sQ0FBQyxDQUFDLENBQUMsQ0FBQyxDQUFDO0lBQzlDLE1BQU0sTUFBTSxHQUFHLE9BQU8sQ0FBQyxPQUFPLENBQUMsTUFBTSxFQUFFLEVBQUUsQ0FBQyxDQUFDO0lBQzNDLElBQUksTUFBTSxLQUFLLEVBQUU7UUFBRSxPQUFPLEVBQUUsQ0FBQztJQUM3QixPQUFPLE1BQU0sQ0FBQyxPQUFPLENBQUMsV0FBVyxFQUFFLEVBQUUsQ0FBQyxDQUFDO0FBQ3pDLENBQUM7QUFFRCxnRkFBZ0Y7QUFDaEYsU0FBZ0IsV0FBVyxDQUFDLElBQStCLEVBQUUsUUFBUSxHQUFHLENBQUM7SUFDdkUsTUFBTSxDQUFDLEdBQUcsZ0JBQWdCLENBQUMsSUFBSSxDQUFDLENBQUM7SUFDakMsSUFBSSxDQUFDLEtBQUssRUFBRTtRQUFFLE9BQU8sUUFBUSxDQUFDO0lBQzlCLE1BQU0sQ0FBQyxHQUFHLFFBQVEsQ0FBQyxDQUFDLEVBQUUsRUFBRSxDQUFDLENBQUM7SUFDMUIsT0FBTyxNQUFNLENBQUMsUUFBUSxDQUFDLENBQUMsQ0FBQyxDQUFDLENBQUMsQ0FBQyxDQUFDLENBQUMsQ0FBQyxDQUFDLFFBQVEsQ0FBQztBQUMzQyxDQUFDO0FBRUQ7Ozs7OztHQU1HO0FBQ0gsU0FBZ0IsY0FBYyxDQUM1QixLQUFnQyxFQUNoQyxPQUFpRSxFQUFFO0lBRW5FLE1BQU0sRUFBRSxHQUFHLEdBQUcsQ0FBQyxFQUFFLEdBQUcsRUFBRSxjQUFjLEdBQUcsSUFBSSxFQUFFLEdBQUcsSUFBSSxDQUFDO0lBQ3JELE1BQU0sS0FBSyxHQUFHLGdCQUFnQixDQUFDLEtBQUssQ0FBQyxDQUFDO0lBQ3RDLElBQUksS0FBSyxLQUFLLEVBQUU7UUFBRSxPQUFPLGNBQWMsQ0FBQyxDQUFDLENBQUMsSUFBSSxDQUFDLEdBQUcsQ0FBQyxDQUFDLEVBQUUsR0FBRyxDQUFDLENBQUMsQ0FBQyxDQUFDLElBQUksQ0FBQztJQUNsRSxNQUFNLENBQUMsR0FBRyxRQUFRLENBQUMsS0FBSyxFQUFFLEVBQUUsQ0FBQyxDQUFDO0lBQzlCLElBQUksQ0FBQyxNQUFNLENBQUMsUUFBUSxDQUFDLENBQUMsQ0FBQyxJQUFJLENBQUMsR0FBRyxHQUFHO1FBQUUsT0FBTyxJQUFJLENBQUM7SUFDaEQsT0FBTyxHQUFHLElBQUksSUFBSSxDQUFDLENBQUMsQ0FBQyxJQUFJLENBQUMsR0FBRyxDQUFDLEdBQUcsRUFBRSxDQUFDLENBQUMsQ0FBQyxDQUFDLENBQUMsQ0FBQyxDQUFDO0FBQzVDLENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL1VzZXJzL25hamF0aGFrcmFtL2NvZGUvcm91dGVmbG93LTI0MzcvYXBwcy9tb2JpbGUvbGliL3F0eS50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqIEludGVnZXIgcXVhbnRpdHkgaW5wdXQgaHlnaWVuZSBmb3Igb3JkZXIgLyBpbnZvaWNlIGxpbmUgZW50cnkuXG4gKlxuICogUXVhbnRpdGllcyBhcmUgYWx3YXlzIHdob2xlIHVuaXRzIChvciB3aG9sZSBib3hlcy9waWVjZXMpLiBPbiBBbmRyb2lkIHRoZVxuICogYG51bWJlci1wYWRgIGtleWJvYXJkIGNhbiBzdGlsbCBzdXJmYWNlIGEgZGVjaW1hbC9taW51cyBrZXksIGFuZCBhIHJhdyB0ZXh0XG4gKiBmaWVsZCBoYXBwaWx5IGtlZXBzIGEgdHlwZWQgbGVhZGluZyB6ZXJvIChcIjA1XCIpLiBCb3RoIHByb2R1Y2Ugc3VycHJpc2luZ1xuICogdG90YWxzIGRvd25zdHJlYW0sIHNvIGV2ZXJ5IHF0eS9ib3hlcy9waWVjZXMgVGV4dElucHV0IGluIHRoZSBjcmVhdGUgKyBlZGl0XG4gKiBmbG93cyByb3V0ZXMgaXRzIGBvbkNoYW5nZVRleHRgIHRocm91Z2gge0BsaW5rIHNhbml0aXplSW50SW5wdXR9LlxuICpcbiAqIFBhaXJzIHdpdGggYG5vcm1hbGl6ZUJveGVzUGllY2VzYCAoYEByb3V0ZWZsb3cvcHJpY2luZ2ApXG4gKiB3aGljaCBpcyBhdXRob3JpdGF0aXZlIOKAlCB0aGlzIGp1c3Qga2VlcHMgd2hhdCB0aGUgb3BlcmF0b3IgU0VFUyBpbnRlZ2VyLWNsZWFuLlxuICovXG5cbi8qKlxuICogQ29lcmNlIGZyZWUtdHlwZWQgdGV4dCBpbnRvIGEgY2xlYW4gbm9uLW5lZ2F0aXZlIGludGVnZXIgc3RyaW5nOlxuICogLSBkcm9wcyBhbnl0aGluZyBmcm9tIGEgZGVjaW1hbCBzZXBhcmF0b3Igb253YXJkIChcIjEuNVwiIOKGkiBcIjFcIiksXG4gKiAtIHN0cmlwcyBldmVyeSBub24tZGlnaXQsXG4gKiAtIHJlbW92ZXMgbGVhZGluZyB6ZXJvcyAoXCIwNVwiIOKGkiBcIjVcIiwgXCIwMDdcIiDihpIgXCI3XCIpLCBrZWVwaW5nIGEgbG9uZSBcIjBcIixcbiAqIC0gcmV0dXJucyBcIlwiIGZvciBlbXB0eSBpbnB1dCBzbyB0aGUgZmllbGQgY2FuIHNob3cgYSBibGFuayB3aGlsZSBlZGl0aW5nLlxuICovXG5leHBvcnQgZnVuY3Rpb24gc2FuaXRpemVJbnRJbnB1dCh0ZXh0OiBzdHJpbmcgfCBudWxsIHwgdW5kZWZpbmVkKTogc3RyaW5nIHtcbiAgaWYgKHRleHQgPT0gbnVsbCkgcmV0dXJuIFwiXCI7XG4gIGNvbnN0IGludFBhcnQgPSBTdHJpbmcodGV4dCkuc3BsaXQoL1suLF0vKVswXTtcbiAgY29uc3QgZGlnaXRzID0gaW50UGFydC5yZXBsYWNlKC9cXEQrL2csIFwiXCIpO1xuICBpZiAoZGlnaXRzID09PSBcIlwiKSByZXR1cm4gXCJcIjtcbiAgcmV0dXJuIGRpZ2l0cy5yZXBsYWNlKC9eMCsoPz1cXGQpLywgXCJcIik7XG59XG5cbi8qKiBQYXJzZSBmcmVlLXR5cGVkIHRleHQgdG8gYSBub24tbmVnYXRpdmUgaW50ZWdlciwgZmFsbGluZyBiYWNrIHdoZW4gYmxhbmsuICovXG5leHBvcnQgZnVuY3Rpb24gcGFyc2VJbnRRdHkodGV4dDogc3RyaW5nIHwgbnVsbCB8IHVuZGVmaW5lZCwgZmFsbGJhY2sgPSAwKTogbnVtYmVyIHtcbiAgY29uc3QgcyA9IHNhbml0aXplSW50SW5wdXQodGV4dCk7XG4gIGlmIChzID09PSBcIlwiKSByZXR1cm4gZmFsbGJhY2s7XG4gIGNvbnN0IG4gPSBwYXJzZUludChzLCAxMCk7XG4gIHJldHVybiBOdW1iZXIuaXNGaW5pdGUobikgPyBuIDogZmFsbGJhY2s7XG59XG5cbi8qKlxuICogUmVzb2x2ZSBhIHF0eSBkcmFmdCBhdCBjb21taXQgdGltZSAoYmx1cikuIFJldHVybnMgdGhlIG51bWJlciB0byBjb21taXQsIG9yXG4gKiBudWxsIOKGkiByZXZlcnQgdG8gdGhlIGN1cnJlbnQgdmFsdWUuXG4gKiAtIGVtcHR5IGRyYWZ0OiAwIHdoZW4gZW1wdHlNZWFuc1plcm8gKGxpbmUtcmVtb3ZhbCBzZW1hbnRpY3MpLCBlbHNlIHJldmVydC5cbiAqIC0gYmVsb3cgbWluIChlLmcuIHR5cGVkIFwiMFwiIG9uIGEgbWluLTEgc3VyZmFjZSk6IHJldmVydC5cbiAqIC0gYWJvdmUgbWF4OiBjbGFtcCAobWF0Y2hlcyB0aGUgY2FydCBzaGVldCdzIHBpZWNlcyBmaWVsZCDigJQgbm8gcm9sbG92ZXIpLlxuICovXG5leHBvcnQgZnVuY3Rpb24gY29tbWl0UXR5RHJhZnQoXG4gIGRyYWZ0OiBzdHJpbmcgfCBudWxsIHwgdW5kZWZpbmVkLFxuICBvcHRzOiB7IG1pbj86IG51bWJlcjsgbWF4PzogbnVtYmVyOyBlbXB0eU1lYW5zWmVybz86IGJvb2xlYW4gfSA9IHt9LFxuKTogbnVtYmVyIHwgbnVsbCB7XG4gIGNvbnN0IHsgbWluID0gMCwgbWF4LCBlbXB0eU1lYW5zWmVybyA9IHRydWUgfSA9IG9wdHM7XG4gIGNvbnN0IGNsZWFuID0gc2FuaXRpemVJbnRJbnB1dChkcmFmdCk7XG4gIGlmIChjbGVhbiA9PT0gXCJcIikgcmV0dXJuIGVtcHR5TWVhbnNaZXJvID8gTWF0aC5tYXgoMCwgbWluKSA6IG51bGw7XG4gIGNvbnN0IG4gPSBwYXJzZUludChjbGVhbiwgMTApO1xuICBpZiAoIU51bWJlci5pc0Zpbml0ZShuKSB8fCBuIDwgbWluKSByZXR1cm4gbnVsbDtcbiAgcmV0dXJuIG1heCAhPSBudWxsID8gTWF0aC5taW4obWF4LCBuKSA6IG47XG59XG4iXSwidmVyc2lvbiI6M30=
