@@ -10,7 +10,7 @@ import { AuthService } from "./auth.service";
 import { BuyerAuthService } from "../buyer/buyer-auth.service";
 import { isBuyerLoginEligible, isLoginEligible } from "./login-eligibility";
 
-const FUTURE = new Date(Date.now() + 3_600_000);
+const FUTURE = new Date(Date.now() + 7 * 86_400_000); // a week: never a collection-time fuse (B793)
 const PAST = new Date(Date.now() - 3_600_000);
 const STATES: Array<[string, Record<string, unknown>]> = [
   ["active", {}],

@@ -113,7 +113,7 @@ describe("#2653 staff realm", () => {
     ["moved to another tenant", { tenantId: "t2" }],
     ["deactivated", { status: "INACTIVE" }],
     ["deleted", { deletedAt: new Date() }],
-    ["locked", { lockedUntil: new Date(Date.now() + 60_000) }],
+    ["locked", { lockedUntil: new Date(Date.now() + 7 * 86_400_000) }],
     ["demoted to DRIVER", { role: UserRole.DRIVER }],
   ])("a user %s since the mint is the same 401", async (_why, over) => {
     const { svc, auth, users } = staff();
@@ -210,7 +210,7 @@ describe("#2653 buyer realm", () => {
   it.each([
     ["suspended", { status: "SUSPENDED" }],
     ["deleted", { deletedAt: new Date() }],
-    ["locked", { lockedUntil: new Date(Date.now() + 60_000) }],
+    ["locked", { lockedUntil: new Date(Date.now() + 7 * 86_400_000) }],
   ])("a %s account is the same 401", async (_why, over) => {
     const { svc, buyerAuth } = buyer(over);
     const { code } = await svc.mint({ sub: "b1", type: "BUYER" } as never, "d1");
