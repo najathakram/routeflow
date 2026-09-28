@@ -2734,7 +2734,7 @@ export class CustomersService {
 
     await this.prisma.tenantTransaction(
       async (tx) => {
-        // Invoices (DRAFT/VOID only by now: any blocking one is a 409 and a rollback here)
+        // Invoices (DRAFT only by now: any blocking one is a 409 and a rollback here)
         const invoices = await readInvoicesAssertingNoneBlocking(tx, ids);
         await assertNoMoneyRecordsInTx(tx, ids); // #2587/SA-516
         await assertNoDeliveryHistory(tx, ids); // #2591/SA-516b: the in-tx twin

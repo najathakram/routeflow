@@ -121,18 +121,18 @@ describe("CustomersService.deleteImportedCustomers — invoice guard (#2569)", (
     });
   });
 
-  it("DRAFT/VOID-only ⇒ proceeds, deleting exactly the invoices it read", async () => {
+  it("DRAFT-only ⇒ proceeds, deleting exactly the invoices it read (a VOID blocks, SA-530)", async () => {
     (prisma.invoice.groupBy as jest.Mock).mockResolvedValue([]);
     prisma.invoice.findMany.mockResolvedValue([
       { id: "inv-1", customerId: "cust-1", status: "DRAFT" },
-      { id: "inv-2", customerId: "cust-2", status: "VOID" },
+      { id: "inv-2", customerId: "cust-2", status: "DRAFT" },
     ]);
     prisma.invoice.deleteMany.mockResolvedValue({ count: 2 });
     const res = await service.runImportedCustomersCleanup();
     expect(res).toEqual({ deleted: 2, preserved: 1 });
     expect(prisma.invoice.deleteMany.mock.calls[0][0].where).toEqual({
       customerId: { in: ["cust-1", "cust-2"] },
-      status: { notIn: ["SENT", "VIEWED", "PARTIAL", "PAID", "OVERDUE", "WRITTEN_OFF"] },
+      status: { notIn: ["SENT", "VIEWED", "PARTIAL", "PAID", "OVERDUE", "VOID", "WRITTEN_OFF"] },
     });
   });
 
