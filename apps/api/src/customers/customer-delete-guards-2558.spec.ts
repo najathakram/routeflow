@@ -119,7 +119,7 @@ describe("CustomersService — in-tx delete guards (#2558, SA-510a)", () => {
       prisma.invoice.groupBy.mockResolvedValue([]);
       prisma.invoice.findMany.mockResolvedValue([
         { id: "inv-1", customerId: "cust-1", status: "DRAFT" },
-        { id: "inv-2", customerId: "cust-2", status: "VOID" },
+        { id: "inv-2", customerId: "cust-2", status: "DRAFT" },
       ]);
       prisma.invoice.deleteMany.mockResolvedValue({ count: 1 });
       const caught: any = await service.deleteAllCustomers().catch((e) => e);
@@ -127,7 +127,7 @@ describe("CustomersService — in-tx delete guards (#2558, SA-510a)", () => {
       expect(caught.message).toMatch(/changed while they were being deleted/);
       expect(prisma.invoice.deleteMany.mock.calls[0][0].where).toEqual({
         customerId: { in: ["cust-1", "cust-2"] },
-        status: { notIn: ["SENT", "VIEWED", "PARTIAL", "PAID", "OVERDUE", "WRITTEN_OFF"] },
+        status: { notIn: ["SENT", "VIEWED", "PARTIAL", "PAID", "OVERDUE", "VOID", "WRITTEN_OFF"] },
       });
       expect(prisma.customer.deleteMany).not.toHaveBeenCalled();
     });
@@ -194,12 +194,12 @@ describe("CustomersService — in-tx delete guards (#2558, SA-510a)", () => {
       expect(full.message).toMatch(/c11: 1 invoice\(s\)\.$/);
     });
 
-    it("readInvoicesAssertingNoneBlocking returns the ids when only DRAFT/VOID remain", async () => {
+    it("readInvoicesAssertingNoneBlocking returns the ids when only DRAFTs remain (a VOID blocks, SA-530)", async () => {
       const tx = {
         invoice: {
           findMany: jest.fn().mockResolvedValue([
             { id: "a", customerId: "c", status: "DRAFT" },
-            { id: "b", customerId: "c", status: "VOID" },
+            { id: "b", customerId: "c", status: "DRAFT" },
           ]),
         },
       };

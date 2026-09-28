@@ -301,6 +301,57 @@ describeDb(
       },
     );
 
+    // #2577 (sibling of #2563): a SUBSTITUTE rewrites a line — scoped to THIS order like a removal.
+    it.each([
+      ["OPERATOR", "pack"],
+      ["DRIVER", "pack"],
+      ["OPERATOR", "Case"],
+    ] as const)(
+      "%s %s substitute naming ANOTHER order's line is a 404; both orders byte-identical",
+      async (role, unit) => {
+        const cola = await product(`sub-${role}-${unit}`);
+        const chips = await product(`sub2-${role}-${unit}`);
+        const { who, stop } = await as(role);
+        const mine = await order(packLine(cola), stop);
+        const other = await order(packLine(cola));
+        const [mineBefore, otherBefore] = [await snapshot(mine.id), await snapshot(other.id)];
+        const item = {
+          id: other.lineItems[0].id,
+          substituteProductId: chips,
+          qty: 12,
+          ...(unit === "Case" ? { unitLabel: "Case" } : {}),
+        };
+        await expect(
+          edit(mine.id, { replaceAll: false, items: [item] }, who),
+        ).rejects.toMatchObject({
+          status: 404,
+        });
+        expect(await snapshot(other.id)).toEqual(otherBefore);
+        expect(await snapshot(mine.id)).toEqual(mineBefore);
+      },
+    );
+
+    it("an id-less substitute is a 400 and writes nothing", async () => {
+      const cola = await product("sub-idless");
+      const chips = await product("sub-idless2");
+      const o = await order([packLine(cola), packLine(chips)]);
+      const before = await snapshot(o.id);
+      await expect(
+        edit(o.id, { replaceAll: false, items: [{ substituteProductId: chips, qty: 6 }] }),
+      ).rejects.toMatchObject({ status: 400 });
+      expect(await snapshot(o.id)).toEqual(before);
+    });
+
+    it("an id-less item with NO action is an ADD, not a removal: staff still creates the line", async () => {
+      const cola = await product("add");
+      const chips = await product("add2");
+      const o = await order(packLine(cola));
+      await edit(o.id, { replaceAll: false, items: [{ productId: chips, qty: 6 }] });
+      const after = await rows(o.id);
+      expect(after).toHaveLength(2);
+      expect(after.map((r) => r.productId)).toEqual(expect.arrayContaining([cola, chips]));
+    });
+
     it("control: a CANCEL / DELETE of this order's own line still works", async () => {
       const cola = await product("own");
       const o = await order(packLine(cola));

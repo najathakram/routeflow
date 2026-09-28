@@ -96,7 +96,7 @@ const TABLE: Record<string, Row> = {
   // ── deletes elsewhere ──────────────────────────────────────────────────────────────────────
   [cust("deleteCustomer")]: X("customer purge"),
   [cust("deleteAllCustomers")]: X("customer purge"),
-  [cust("deleteImportedCustomers")]: X("customer purge"),
+  [cust("runImportedCustomersCleanup")]: X("customer purge"), // #2629: the kept body
   "products/products.service.ts::ProductsService.bulkDelete": X("product purge"),
   "system-config/settings.controller.ts::SettingsController.clearFinancialData":
     X("financial reset"),

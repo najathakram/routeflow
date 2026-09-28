@@ -4,6 +4,7 @@ import * as React from "react";
 import { getSessionTenantSlug } from "@/lib/auth";
 import { setTenantCookie } from "@/lib/tenant-cookie";
 import { subscribeImpersonation } from "@/lib/impersonation";
+import { shadeHex, TENANT_SHADE } from "@routeflow/ui/accent";
 
 export interface TenantBranding {
   slug: string;
@@ -66,29 +67,6 @@ function hexToRgb(hex: string): string {
 }
 
 /**
- * Mix a hex color toward black (amount < 0) or white (amount > 0) by |amount|.
- * Used to derive the accent ramp (strong/deep/soft) from a tenant's brand color
- * so primary buttons, stat tiles, and links re-brand together.
- */
-function shade(hex: string, amount: number): string {
-  const clean = hex.replace("#", "");
-  const ch = [clean.slice(0, 2), clean.slice(2, 4), clean.slice(4, 6)].map((h) => parseInt(h, 16));
-  if (ch.some((n) => isNaN(n))) return hex;
-  const target = amount < 0 ? 0 : 255;
-  const t = Math.abs(amount);
-  return (
-    "#" +
-    ch
-      .map((c) =>
-        Math.round(c + (target - c) * t)
-          .toString(16)
-          .padStart(2, "0"),
-      )
-      .join("")
-  );
-}
-
-/**
  * Fetches the tenant's branding from the public API and injects it as CSS
  * custom properties on <html>.  Wrap this around Providers in layout.tsx.
  */
@@ -139,9 +117,9 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
       // so setting these re-brands the primary button, stat tiles, and links
       // together with the DEFAULT accent (which drives the focus ring).
       if (data.primaryColor) {
-        root.style.setProperty("--primary-strong", shade(primary, -0.14));
-        root.style.setProperty("--primary-deep", shade(primary, -0.28));
-        root.style.setProperty("--primary-soft", shade(primary, 0.9));
+        root.style.setProperty("--primary-strong", shadeHex(primary, TENANT_SHADE.strong));
+        root.style.setProperty("--primary-deep", shadeHex(primary, TENANT_SHADE.deep));
+        root.style.setProperty("--primary-soft", shadeHex(primary, TENANT_SHADE.soft));
       }
     } catch {
       // Branding fetch failure is non-fatal; app works without it

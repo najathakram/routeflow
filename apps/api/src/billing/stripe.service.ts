@@ -114,22 +114,6 @@ export class StripeService implements OnModuleInit {
     });
   }
 
-  // ─── Price lookup ─────────────────────────────────────────────────────────
-
-  getPriceIdForPlan(plan: string): string {
-    const stripeConfig = this.config.get<AppConfig["stripe"]>("stripe")!;
-    switch (plan) {
-      case "STARTER":
-        return stripeConfig.priceStarter;
-      case "PROFESSIONAL":
-        return stripeConfig.priceProfessional;
-      case "ENTERPRISE":
-        return stripeConfig.priceEnterprise;
-      default:
-        throw new Error(`Unknown plan: ${plan}`);
-    }
-  }
-
   // ─── Webhook signature verification ───────────────────────────────────────
 
   constructWebhookEvent(payload: Buffer, signature: string): any {
