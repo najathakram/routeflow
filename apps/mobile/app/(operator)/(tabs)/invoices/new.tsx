@@ -31,6 +31,7 @@ import { useProductCategories } from "../../../../lib/api/products";
 import { useProductSearch } from "../../../../lib/use-product-search";
 import { mergeProductIndex } from "../../../../lib/paged-rows";
 import { useCreateInvoice, type CreateInvoiceItem } from "../../../../lib/api/invoices";
+import { depositErrors, depositPayload } from "../../../../lib/invoice-deposit";
 import { useCreateSale, type CreateSaleItemInput } from "../../../../lib/api/orders";
 import { useTrackedCategories } from "../../../../lib/api/tracked-categories";
 import { saleModeGate } from "../../../../lib/sale-mode";
@@ -394,6 +395,11 @@ function InvoiceComposer({
   const [shippingFee, setShippingFee] = useState<number | null>(null);
   const [referenceNumber, setReferenceNumber] = useState("");
   const [subject, setSubject] = useState("");
+  // #1529 (SA-517 PR-B): web's opt-in deposit schedule — standalone invoices only (the van-sale
+  // DTO has no deposit fields, as on web). No tenant/customer default is prefilled.
+  const [depositOpen, setDepositOpen] = useState(false);
+  const [depositPercent, setDepositPercent] = useState<number | null>(null);
+  const [depositDueDate, setDepositDueDate] = useState("");
 
   // ── Van-sale mode (WP4, PR-4) ─────────────────────────────────────────────
   // "Delivered today?" — default YES, the common van-sale case. Whether this
@@ -1283,6 +1289,15 @@ function InvoiceComposer({
       alertInfo("Bad due date", "Use the format YYYY-MM-DD.");
       return;
     }
+    const depErr = depositErrors(depositOpen, depositPercent, depositDueDate.trim());
+    if (depErr.depositDueDate || depErr.depositPercent) {
+      alertInfo("Deposit incomplete", depErr.depositDueDate ?? depErr.depositPercent ?? "");
+      return;
+    }
+    if (depositOpen && depositDueDate.trim() && !ISO_DATE.test(depositDueDate.trim())) {
+      alertInfo("Bad deposit due date", "Use the format YYYY-MM-DD.");
+      return;
+    }
     const payload: CreateInvoiceItem[] = [];
     for (const [productId, line] of Object.entries(items)) {
       const p = productById.get(productId);
@@ -1329,6 +1344,7 @@ function InvoiceComposer({
         ...(shippingFee && shippingFee > 0 ? { shippingFee } : {}),
         ...(referenceNumber.trim() ? { referenceNumber: referenceNumber.trim() } : {}),
         ...(subject.trim() ? { subject: subject.trim() } : {}),
+        ...depositPayload(depositOpen, depositPercent, depositDueDate.trim()),
       },
       {
         onSuccess: (inv) => {
@@ -1606,6 +1622,13 @@ function InvoiceComposer({
           onChangeReferenceNumber: onReferenceNumberChange,
           subject,
           onChangeSubject: onSubjectChange,
+          showDeposit: !saleMode.eligible,
+          depositOpen,
+          onToggleDeposit: () => setDepositOpen((o) => !o),
+          depositPercent,
+          onChangeDepositPercent: setDepositPercent,
+          depositDueDate,
+          onChangeDepositDueDate: setDepositDueDate,
           invoiceDiscount: invDiscount,
           onChangeInvoiceDiscount: setInvDiscount,
           shippingFee,
@@ -1678,6 +1701,14 @@ interface InvoiceDetails {
   onChangeReferenceNumber: (v: string) => void;
   subject: string;
   onChangeSubject: (v: string) => void;
+  /** #1529: the opt-in deposit schedule — hidden on the van-sale path (no deposit fields there). */
+  showDeposit: boolean;
+  depositOpen: boolean;
+  onToggleDeposit: () => void;
+  depositPercent: number | null;
+  onChangeDepositPercent: (v: number | null) => void;
+  depositDueDate: string;
+  onChangeDepositDueDate: (v: string) => void;
   /** Invoice-level $ discount — applied AFTER tax. Null = unset. */
   invoiceDiscount: number | null;
   onChangeInvoiceDiscount: (v: number | null) => void;
@@ -2303,6 +2334,60 @@ function InvoiceDetailsCard({ details: d }: { details: InvoiceDetails }) {
         />
       </View>
 
+      {/* #1529 (SA-517 PR-B): web's deposit schedule — a percent of the total due by its own date.
+          The dollar amount is derived server-side, never stored. Standalone invoices only. */}
+      {d.showDeposit &&
+        (d.depositOpen ? (
+          <View style={styles.detailField} testID="deposit-fields">
+            <View style={styles.detailMoneyRow}>
+              <View style={styles.detailMoneyCol}>
+                <Text style={styles.detailLabel}>Deposit %</Text>
+                <TextInput
+                  testID="deposit-percent"
+                  value={d.depositPercent == null ? "" : String(d.depositPercent)}
+                  onChangeText={(t) => {
+                    const v = t.replace(/[^0-9.]/g, "");
+                    d.onChangeDepositPercent(
+                      v === "" || Number.isNaN(Number(v)) ? null : Number(v),
+                    );
+                  }}
+                  placeholder="e.g. 50"
+                  placeholderTextColor={ios.label3}
+                  keyboardType="decimal-pad"
+                  style={styles.detailInput}
+                />
+              </View>
+              <View style={styles.detailMoneyCol}>
+                <Text style={styles.detailLabel}>Deposit due date</Text>
+                <TextInput
+                  testID="deposit-due-date"
+                  value={d.depositDueDate}
+                  onChangeText={d.onChangeDepositDueDate}
+                  placeholder="YYYY-MM-DD"
+                  placeholderTextColor={ios.label3}
+                  keyboardType="numbers-and-punctuation"
+                  style={styles.detailInput}
+                />
+              </View>
+            </View>
+            <Text style={styles.detailHelp}>
+              The deposit amount is this percent of the invoice total, due by its own date.
+            </Text>
+            <Pressable onPress={d.onToggleDeposit} accessibilityRole="button" hitSlop={8}>
+              <Text style={styles.depositLink}>Remove deposit</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <Pressable
+            onPress={d.onToggleDeposit}
+            accessibilityRole="button"
+            hitSlop={8}
+            testID="add-deposit"
+          >
+            <Text style={styles.depositLink}>+ Add deposit</Text>
+          </Pressable>
+        ))}
+
       <View style={styles.detailField}>
         <Text style={styles.detailLabel}>Reference number</Text>
         <TextInput
@@ -2831,6 +2916,7 @@ const styles = StyleSheet.create({
     color: ios.label,
   },
   detailHelp: { fontSize: 11, fontFamily: "Inter_400Regular", color: ios.label3 },
+  depositLink: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.brand },
   detailMoneyRow: { flexDirection: "row", gap: 10 },
   // flex-basis split, not flex:1 — RNW TextInputs carry an intrinsic width that
   // otherwise pushes the second column off a 320px sheet (see lib/row-layout.ts).
