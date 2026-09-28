@@ -182,7 +182,7 @@ export function checkExcludedTenants({ exclude, found, tenant }) {
  * flag, `--execute` additionally needs the operator to type `WIPE PAYING <slug>` after the slug
  * type-back. `tenant`/`sub` are the rows read from the SAME resolved database the wipe will hit.
  * @param tenant { id, slug, name, status, class, deletedAt }
- * @param sub    { planKey, stripeSubscriptionId } | null — the tenant's TenantSubscription row
+ * @param sub    { planKey, stripeSubId } | null — the tenant's TenantSubscription row
  * @returns {{ ok: false, reason: string } | { ok: true, phrase: string | null, line: string | null }}
  */
 export function checkProtectedTarget({ tenant, sub, allowPayingTenant }) {

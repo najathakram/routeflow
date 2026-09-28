@@ -12,7 +12,7 @@ import { pathToFileURL } from "node:url";
  *     --allow-paying-tenant AND --confirm-paying "APPLY TO PAYING <sorted slugs>";
  *   - the plan file and every log line carry tenant IDS and counts, never slugs.
  * Pure gates evaluated in a child node (the script is ESM); fixtures are qa-* slugs with a FAKE
- * stripeSubscriptionId. The executed dry-run/apply against a real database is F2's.
+ * stripeSubId. The executed dry-run/apply against a real database is F2's.
  */
 const SCRIPT = path.resolve(__dirname, "../../scripts/backfill-b294-order-line-taxrate.mjs");
 const HREF = pathToFileURL(SCRIPT).href;
@@ -20,12 +20,12 @@ const HREF = pathToFileURL(SCRIPT).href;
 const CASES = `
 import * as b from "${HREF}";
 const row = (id, slug, over = {}) => ({ id, slug, status: "ACTIVE", class: "PRODUCTION", deletedAt: null,
-  planKey: "STARTER", stripeSubscriptionId: null, ...over });
+  planKey: "STARTER", stripeSubId: null, ...over });
 const prot = b.protectedTenants([
   row("t-paying", "qa-2639-paying"),
-  row("t-stripe", "qa-2639-stripe", { class: "TEST", status: "READ_ONLY", planKey: null, stripeSubscriptionId: "sub_fake_qa" }),
+  row("t-stripe", "qa-2639-stripe", { class: "TEST", status: "READ_ONLY", planKey: null, stripeSubId: "sub_fake_qa" }),
   row("t-plain", "qa-2639-plain", { class: "TEST" }),
-  row("t-deleted", "qa-2639-deleted", { class: "TEST", planKey: null, stripeSubscriptionId: "sub_fake_qa", deletedAt: "2026-01-01" }),
+  row("t-deleted", "qa-2639-deleted", { class: "TEST", planKey: null, stripeSubId: "sub_fake_qa", deletedAt: "2026-01-01" }),
 ]);
 const cands = ["t-paying", "t-stripe", "t-plain"].map((tenantId, i) => ({ invoiceId: "inv-" + i, tenantId }));
 const now = (ids) => new Map(ids.map((id) => [id, { arm: "paying", slug: "qa-2639-" + id.slice(2) }]));

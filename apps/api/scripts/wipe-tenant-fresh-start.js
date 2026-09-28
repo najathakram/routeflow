@@ -337,7 +337,7 @@ async function nuke(tenantId) {
   // --allow-paying-tenant — read from THIS database (same client), before any count or write.
   const sub = await prisma.tenantSubscription.findUnique({
     where: { tenantId: tenant.id },
-    select: { planKey: true, stripeSubscriptionId: true },
+    select: { planKey: true, stripeSubId: true },
   });
   const guard = checkProtectedTarget({ tenant, sub, allowPayingTenant: args.allowPayingTenant });
   if (!guard.ok) {

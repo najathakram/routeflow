@@ -36,16 +36,16 @@ function isPayingTenant(tenant, planKey) {
  * (any class, any status). Returns which arm fired, so the refusal can name it; null = unprotected.
  *
  * @param {{ status: string, deletedAt: Date | null | undefined, class: string }} tenant
- * @param {{ planKey?: string | null, stripeSubscriptionId?: string | null } | null | undefined} sub
+ * @param {{ planKey?: string | null, stripeSubId?: string | null } | null | undefined} sub
  * @returns {"paying" | "stripe-linked" | null}
  */
 function protectedArm(tenant, sub) {
   if (isPayingTenant(tenant, sub?.planKey ?? null)) return "paying";
-  if (sub?.stripeSubscriptionId != null && tenant.deletedAt == null) return "stripe-linked";
+  if (sub?.stripeSubId != null && tenant.deletedAt == null) return "stripe-linked";
   return null;
 }
 
-/** SA-547: isPayingTenant ∨ (stripeSubscriptionId ≠ null ∧ not deleted). */
+/** SA-547: isPayingTenant ∨ (stripeSubId ≠ null ∧ not deleted). */
 function isProtectedTenant(tenant, sub) {
   return protectedArm(tenant, sub) !== null;
 }

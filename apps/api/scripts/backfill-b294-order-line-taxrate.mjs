@@ -120,7 +120,7 @@ const { protectedArm } = payingTenant;
 
 /** #2639: each tenant's protection inputs (same client as the backfill; read in its transaction). */
 const PROTECTION_SQL = `
-  SELECT t.id, t.slug, t.status, t.class, t."deletedAt", s."planKey", s."stripeSubscriptionId"
+  SELECT t.id, t.slug, t.status, t.class, t."deletedAt", s."planKey", s."stripeSubId"
   FROM "Tenant" t LEFT JOIN "TenantSubscription" s ON s."tenantId" = t.id
   WHERE t.id = ANY($1::text[])`;
 
@@ -130,7 +130,7 @@ export function protectedTenants(rows) {
   for (const r of rows) {
     const arm = protectedArm(
       { status: r.status, class: r.class, deletedAt: r.deletedAt },
-      { planKey: r.planKey, stripeSubscriptionId: r.stripeSubscriptionId },
+      { planKey: r.planKey, stripeSubId: r.stripeSubId },
     );
     if (arm) out.set(r.id, arm);
   }
