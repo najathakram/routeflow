@@ -1,6 +1,6 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
-import { assertRemovalsNameALine, writeLineRemoval } from "./order-line-removal";
+import { assertRemovalsNameALine, writeLineRemoval, writeLineUpdate } from "./order-line-removal";
 import { OrdersService } from "./orders.service";
 
 /**
@@ -99,4 +99,48 @@ describe("assertRemovalsNameALine (#2563 fold)", () => {
       }
     },
   );
+});
+
+describe("writeLineUpdate (#2577)", () => {
+  const txWith = (update: jest.Mock) => ({ orderItem: { update } });
+
+  it("rewrites only a line of this order: where { id, orderId }", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    await writeLineUpdate(txWith(update), "ord-1", "li-1", { qty: 3 });
+    expect(update).toHaveBeenCalledWith({
+      where: { id: "li-1", orderId: "ord-1" },
+      data: { qty: 3 },
+    });
+  });
+
+  it("another order's line (Prisma P2025) is a 404; any other error is rethrown", async () => {
+    const p2025 = Object.assign(new Error("not found"), { code: "P2025" });
+    await expect(
+      writeLineUpdate(txWith(jest.fn().mockRejectedValue(p2025)), "ord-1", "li-x", {}),
+    ).rejects.toThrow(NotFoundException);
+    const boom = new Error("db down");
+    await expect(
+      writeLineUpdate(txWith(jest.fn().mockRejectedValue(boom)), "ord-1", "li-x", {}),
+    ).rejects.toBe(boom);
+  });
+
+  it.each([undefined, null, ""])(
+    "a missing line id (%p) is a 400 and writes nothing",
+    async (id) => {
+      const update = jest.fn();
+      await expect(writeLineUpdate(txWith(update), "ord-1", id as any, {})).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(update).not.toHaveBeenCalled();
+    },
+  );
+
+  it("assertRemovalsNameALine: an id-less substitute is a 400; a named one passes", () => {
+    expect(() => assertRemovalsNameALine([{ substituteProductId: "p2" }])).toThrow(
+      "A substitution must name the line it replaces",
+    );
+    expect(() =>
+      assertRemovalsNameALine([{ id: "li-1", substituteProductId: "p2" }]),
+    ).not.toThrow();
+  });
 });

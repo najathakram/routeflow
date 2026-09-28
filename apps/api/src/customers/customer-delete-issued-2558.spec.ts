@@ -121,15 +121,16 @@ describe("CustomersService — delete pre-flight blocks every issued or paid inv
     },
   );
 
-  it("SA-510: the blocking set is the whole enum minus DRAFT and VOID (a new status blocks by default)", () => {
+  it("SA-510 / SA-530: the blocking set is the whole enum minus DRAFT (a new status blocks by default)", () => {
     const all = Object.values(InvoiceStatus).sort();
     expect([...CUSTOMER_DELETE_BLOCKING, ...CUSTOMER_DELETE_NON_BLOCKING].sort()).toEqual(all);
-    expect([...CUSTOMER_DELETE_NON_BLOCKING].sort()).toEqual(["DRAFT", "VOID"]);
+    expect([...CUSTOMER_DELETE_NON_BLOCKING]).toEqual(["DRAFT"]);
     expect(CUSTOMER_DELETE_BLOCKING).toContain("WRITTEN_OFF");
+    expect(CUSTOMER_DELETE_BLOCKING).toContain("VOID"); // #2628 / SA-530 (owner policy 4b)
     expect(new Set(CUSTOMER_DELETE_BLOCKING).size).toBe(CUSTOMER_DELETE_BLOCKING.length);
   });
 
-  it.each(["DRAFT", "VOID"])(
+  it.each(["DRAFT"])(
     "no over-correction: a %s invoice alone does not block (deleteAllCustomers still runs)",
     async (status) => {
       (prisma.invoice.groupBy as jest.Mock).mockImplementation(blockOnStatus(status, "cust-1", 1));
