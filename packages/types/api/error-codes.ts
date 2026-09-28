@@ -12,6 +12,8 @@
 //   MAILBOX_*        — the ForbiddenException MESSAGE (`body.message`), mailbox connect/confirm.
 //   ADDON_GATE       — `body.code` of AddonGuard's 403.
 //   UNLINKED_ITEMS, PACK_SIZE_UNKNOWN, DUPLICATE_VENDOR_BILL — `body.code` of vendor-bill 409s.
+//   CLEANUP_IMPORTED_DISABLED — `body.code` of the customers cleanup-preview / cleanup-imported
+//                    409 (#2629, disabled until a real import marker exists).
 //   ORDER_LINE_CHANGED — `body.code` of the order-line CAS 409 (invoice-from-order paths:
 //                    qty/price/tax/pack changed mid-create; nothing billed, retriable).
 
@@ -22,6 +24,7 @@ export const API_ERROR_CODES = {
   UNLINKED_ITEMS: "UNLINKED_ITEMS",
   PACK_SIZE_UNKNOWN: "PACK_SIZE_UNKNOWN",
   DUPLICATE_VENDOR_BILL: "DUPLICATE_VENDOR_BILL",
+  CLEANUP_IMPORTED_DISABLED: "CLEANUP_IMPORTED_DISABLED",
   ORDER_LINE_CHANGED: "ORDER_LINE_CHANGED",
 } as const;
 
