@@ -44,6 +44,34 @@ describe("#2694 returnTrayRows", () => {
   });
 });
 
+// SA-561 (#2704): a tray edit on a BOXED line goes back through the pack split
+// (normalizeBoxesPieces), never "boxes '' + N pieces" — the case semantics survive the edit.
+describe("#2694 SA-561 tray edits keep the pack split", () => {
+  const cased = line({ productId: "cs", unitsPerBox: 24, boxes: "2", pieces: "3" });
+
+  it("'2 cs + 3' stepped +1 ⇒ '2 cs + 4'", () => {
+    const next = stepReturnLine([cased], "cs", +1);
+    expect(next[0]).toMatchObject({ boxes: "2", pieces: "4" });
+    expect(returnTrayRows(next, [])[0].qtySummary).toBe("2 cs + 4");
+  });
+
+  it("a typed 48 ⇒ '2 cs'", () => {
+    const next = setReturnLineQty([cased], "cs", 48);
+    expect(next[0]).toMatchObject({ boxes: "2", pieces: "" });
+    expect(returnTrayRows(next, [])[0].qtySummary).toBe("2 cs");
+  });
+
+  it("stepping down across a case boundary ('2 cs' − 1 ⇒ '1 cs + 23')", () => {
+    const two = line({ productId: "cs", unitsPerBox: 24, boxes: "2", pieces: "" });
+    expect(stepReturnLine([two], "cs", -1)[0]).toMatchObject({ boxes: "1", pieces: "23" });
+  });
+
+  it("a non-boxed line is unchanged: plain pieces", () => {
+    const plain = line({ productId: "p1", pieces: "4" });
+    expect(setReturnLineQty([plain], "p1", 7)[0]).toMatchObject({ boxes: "", pieces: "7" });
+  });
+});
+
 describe("#2694 tray edits", () => {
   it("setReturnLineQty sets the total in pieces; 0 or less removes the line", () => {
     const lines = [line({ productId: "cs", unitsPerBox: 24, boxes: "2", pieces: "3" })];
