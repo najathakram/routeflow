@@ -28,6 +28,7 @@ import {
   backfillProductCatalogRows,
   BackfillRefused,
 } from "../../prisma/backfill-product-catalog-rows";
+import { syncProductBarcodesFromLegacy } from "../products/product-catalog-sync";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs") as {
@@ -251,6 +252,50 @@ describeDb("backfill-product-catalog-rows backfillProductCatalogRows() (db)", ()
       }),
     };
     expect(after).toEqual(before);
+  });
+
+  // F2/F3 (#2728 M1 follow-up, pre-merge BLOCK): a product synced by the app's OWN dual-write
+  // writer (the same syncProductBarcodesFromLegacy call products.service.ts update() makes, in its
+  // own transaction) between the backfill's page read and this product's per-product transaction
+  // must be left exactly as the app wrote it — the fresh re-read inside the lock, not the stale
+  // page-read snapshot, is what makes this safe (0 extra inserted, rows still equal the plan).
+  it("apply: a product synced by a concurrent app-writer before backfill's per-product tx reaches it is left untouched (0 extra inserts)", async () => {
+    const codeG = await seedCode();
+    const g = await prisma.product.create({
+      data: {
+        tenantId: testTenantId,
+        unit: "case",
+        pricePerUnit: 10,
+        name: `G ${run}`,
+        barcode: codeG,
+        unitsPerBox: 1,
+      },
+    });
+    productIds.G = g.id;
+
+    // Simulate the app's own dual-write sync (products.service.ts update()'s pattern) racing ahead
+    // of the backfill for this one product.
+    await prisma.$transaction(async (tx) => {
+      await syncProductBarcodesFromLegacy(tx, {
+        tenantId: testTenantId,
+        productId: g.id,
+        barcode: codeG,
+        unitsPerBox: 1,
+      });
+    });
+    const before = await prisma.productBarcode.count({ where: { productId: g.id } });
+    expect(before).toBe(1); // UNIT ENTERED (upb 1)
+
+    await backfillProductCatalogRows(prisma, { tenantSlug: testSlug, apply: true });
+
+    const rows = await prisma.productBarcode.findMany({ where: { productId: g.id } });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      level: "UNIT",
+      origin: "ENTERED",
+      primaryFor: "UNIT",
+      code: codeG,
+    });
   });
 
   it("refuses a non-test (LIVE) tenant before any row is written", async () => {

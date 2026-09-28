@@ -1,5 +1,12 @@
+/**
+ * #2728 M1 follow-up (d, pre-merge BLOCK): the const-array + derived-type pattern the rest of the
+ * repo pins its Prisma-mirrored enums with (see apps/api/src/common/enum-parity.spec.ts) — nothing
+ * enforced these two values stayed in lockstep with the generated `PackagingLevel` enum until now.
+ */
+export const SELL_LEVEL_VALUES = ["BOX", "UNIT"] as const;
+
 /** #2717 M1: the packaging level a barcode scan resolves to when it isn't tied to an existing line. */
-export type SellLevel = "BOX" | "UNIT";
+export type SellLevel = (typeof SELL_LEVEL_VALUES)[number];
 
 /**
  * #2717 M1 (SA-572b Q8, SA-572c QB): the level a scan resolves to when it lands on no existing line — the product's

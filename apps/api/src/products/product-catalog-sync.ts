@@ -61,6 +61,26 @@ export async function lockBarcodeCodes(
 }
 
 /**
+ * #2728 M1 follow-up (F2/F3, pre-merge BLOCK): row lock on `Product`, used by the backfill script
+ * so it can take locks in the SAME ORDER the app's own writers do (code lock via lockBarcodeCodes
+ * first, then this row lock) before re-reading fresh values under both locks. Lives here — not in
+ * the backfill file — so `backfill-product-catalog-rows.ts` never contains raw SQL (the T12 source
+ * pin asserts that file has no `$executeRaw`/`$queryRaw`/UPDATE/DELETE text).
+ */
+export async function lockProductRow(
+  tx: CatalogTx,
+  tenantId: string,
+  productId: string,
+): Promise<void> {
+  if (!tenantId || !productId) {
+    throw new Error(
+      "lockProductRow: tenantId and productId are required (an empty id would lock nothing, silently defeating the guard)",
+    );
+  }
+  await tx.$queryRaw`SELECT "id" FROM "Product" WHERE "id" = ${productId} AND "tenantId" = ${tenantId} FOR UPDATE`;
+}
+
+/**
  * SA-572b Q3/Q4: called AFTER the lock — does another product of this tenant already hold `code`?
  * A holder is either a `ProductBarcode` row at (tenantId, code) whose productId differs, OR (a
  * product not yet backfilled onto rows) a `Product` row with (tenantId, barcode = code) whose id

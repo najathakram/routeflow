@@ -130,3 +130,62 @@ describe("catalog-dual-write-tripwire (T10, SA-572b Q6)", () => {
     expect(hitsByFile.has("import/migration.service.ts")).toBe(false);
   });
 });
+
+/**
+ * F1 (#2728 M1 follow-up, pre-merge BLOCK): `planBarcodeRows` depends on BOTH `barcode` AND
+ * `unitsPerBox` — the tripwire above only watches `barcode`/`imageKeys` writes, so a writer that
+ * changes `unitsPerBox` on a product that already has a barcode (and therefore ProductBarcode
+ * rows) can drift those rows without ever touching `barcode` itself. `.product.updateMany(` is
+ * FORBIDDEN outright when it writes `unitsPerBox` — it can't re-sync per affected row. `.product.
+ * update(`/`upsert(` writing `unitsPerBox` must be allow-listed AND its file must call
+ * `syncProductBarcodesFromLegacy`. `.product.create`/`createMany` are deliberately excluded: a
+ * create with no barcode has no rows to drift, and a create writing both keys is already covered
+ * by the barcode tripwire above.
+ */
+const UNITS_PER_BOX_METHODS = ["update", "upsert", "updateMany"];
+const UNITS_PER_BOX_ALLOW_LIST = new Set([
+  "products/products.service.ts",
+  "import/variant-resolution.service.ts",
+]);
+
+describe("catalog-dual-write-tripwire: unitsPerBox writers must sync barcode rows (F1)", () => {
+  const files = listTsFiles(SRC_ROOT);
+  const upbHitsByFile = new Map<string, string[]>();
+
+  for (const file of files) {
+    const text = readFileSync(file, "utf8");
+    const calls = findProductWriteCalls(text).filter((c) =>
+      UNITS_PER_BOX_METHODS.includes(c.method),
+    );
+    const methods = calls.filter((c) => writesKey(c.block, "unitsPerBox")).map((c) => c.method);
+    if (methods.length === 0) continue;
+    const rel = relative(SRC_ROOT, file).split("\\").join("/");
+    upbHitsByFile.set(rel, methods);
+  }
+
+  it("is non-vacuous: finds at least one unitsPerBox update/upsert/updateMany site", () => {
+    const total = [...upbHitsByFile.values()].reduce((n, methods) => n + methods.length, 0);
+    expect(total).toBeGreaterThan(0);
+  });
+
+  it("no `.product.updateMany(` call writes unitsPerBox (can't re-sync per row)", () => {
+    const offenders = [...upbHitsByFile.entries()]
+      .filter(([, methods]) => methods.includes("updateMany"))
+      .map(([file]) => file);
+    expect(offenders).toEqual([]);
+  });
+
+  it("every unitsPerBox update/upsert site is allow-listed and its file calls syncProductBarcodesFromLegacy", () => {
+    const offenders: string[] = [];
+    for (const [file, methods] of upbHitsByFile) {
+      if (!methods.some((m) => m === "update" || m === "upsert")) continue;
+      if (!UNITS_PER_BOX_ALLOW_LIST.has(file)) {
+        offenders.push(file);
+        continue;
+      }
+      const text = readFileSync(join(SRC_ROOT, file), "utf8");
+      if (!text.includes("syncProductBarcodesFromLegacy")) offenders.push(`${file} (no sync call)`);
+    }
+    expect(offenders).toEqual([]);
+  });
+});

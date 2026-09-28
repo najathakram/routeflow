@@ -14,9 +14,34 @@ import * as path from "path";
 import {
   backfillProductCatalogRows,
   BackfillRefused,
+  formatErrorForStderr,
 } from "../../prisma/backfill-product-catalog-rows";
+import { lockBarcodeCodes, lockProductRow } from "../products/product-catalog-sync";
 
+// F2/F3 (#2728 M1 follow-up, pre-merge BLOCK): apply mode now takes its locks through these two
+// helpers (the same ones the app's own writers use) — mocked here so the unit spec can pin call
+// ORDER without a real Postgres advisory-lock/row-lock round trip (that proof is the db spec).
+jest.mock("../products/product-catalog-sync", () => ({
+  lockBarcodeCodes: jest.fn().mockResolvedValue(undefined),
+  lockProductRow: jest.fn().mockResolvedValue(undefined),
+}));
+
+beforeEach(() => {
+  (lockBarcodeCodes as jest.Mock).mockReset().mockResolvedValue(undefined);
+  (lockProductRow as jest.Mock).mockReset().mockResolvedValue(undefined);
+});
+
+/**
+ * `__tx` is the per-product interactive-transaction client apply mode now opens via
+ * `prisma.$transaction(async (tx) => ...)` — exposed on the returned mock so a test can stub/assert
+ * against it directly (e.g. `prisma.__tx.product.findUnique.mockResolvedValue(...)`).
+ */
 function mockPrisma(overrides: Record<string, unknown> = {}) {
+  const tx = {
+    product: { findUnique: jest.fn() },
+    productBarcode: { createMany: jest.fn().mockResolvedValue({ count: 0 }) },
+    productImage: { createMany: jest.fn().mockResolvedValue({ count: 0 }) },
+  };
   return {
     tenant: {
       findUnique: jest.fn(),
@@ -34,6 +59,8 @@ function mockPrisma(overrides: Record<string, unknown> = {}) {
     productImage: {
       createMany: jest.fn(),
     },
+    $transaction: jest.fn((fn: any) => fn(tx)),
+    __tx: tx,
     ...overrides,
   } as any;
 }
@@ -212,7 +239,7 @@ describe("backfillProductCatalogRows — planned counts over a mixed product set
     expect(counts.imageRowsPlanned).toBe(2);
   });
 
-  it("apply inserts the planned rows via createMany with skipDuplicates, summing .count", async () => {
+  it("apply inserts the planned rows via createMany (skipDuplicates) inside a per-product transaction, summing .count", async () => {
     const prisma = mockPrisma();
     prisma.tenant.findUnique.mockResolvedValue({ id: "t1", slug: "test" });
     prisma.product.findMany.mockResolvedValueOnce([
@@ -225,20 +252,118 @@ describe("backfillProductCatalogRows — planned counts over a mixed product set
       },
     ]);
     prisma.product.findMany.mockResolvedValueOnce([]);
-    prisma.productBarcode.createMany.mockResolvedValue({ count: 2 });
-    prisma.productImage.createMany.mockResolvedValue({ count: 1 });
+    prisma.__tx.product.findUnique.mockResolvedValue({
+      barcode: "036000291452",
+      unitsPerBox: 12,
+      imageKeys: ["products/A/k1-fp30x70.jpg"],
+      tenantId: "t1",
+      _count: { barcodes: 0, images: 0 },
+    });
+    prisma.__tx.productBarcode.createMany.mockResolvedValue({ count: 2 });
+    prisma.__tx.productImage.createMany.mockResolvedValue({ count: 1 });
 
     const counts = await backfillProductCatalogRows(prisma, { tenantSlug: "test", apply: true });
 
     expect(counts.mode).toBe("apply");
-    expect(prisma.productBarcode.createMany).toHaveBeenCalledWith(
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.__tx.productBarcode.createMany).toHaveBeenCalledWith(
       expect.objectContaining({ skipDuplicates: true }),
     );
-    expect(prisma.productImage.createMany).toHaveBeenCalledWith(
+    expect(prisma.__tx.productImage.createMany).toHaveBeenCalledWith(
       expect.objectContaining({ skipDuplicates: true }),
     );
     expect(counts.barcodeRowsInserted).toBe(2);
     expect(counts.imageRowsInserted).toBe(1);
+    // Never inserted through the outer, unlocked (non-tx) client.
+    expect(prisma.productBarcode.createMany).not.toHaveBeenCalled();
+    expect(prisma.productImage.createMany).not.toHaveBeenCalled();
+  });
+
+  it("a barcode changed between the page read and the row lock: its barcode rows are skipped this run (no lock-order inversion), images still mirror", async () => {
+    const prisma = mockPrisma();
+    prisma.tenant.findUnique.mockResolvedValue({ id: "t1", slug: "test" });
+    prisma.product.findMany.mockResolvedValueOnce([
+      {
+        id: "A",
+        barcode: "036000291452",
+        unitsPerBox: 12,
+        imageKeys: ["products/A/k1.jpg"],
+        _count: { barcodes: 0, images: 0 },
+      },
+    ]);
+    prisma.product.findMany.mockResolvedValueOnce([]);
+    prisma.__tx.product.findUnique.mockResolvedValue({
+      barcode: "4006381333931",
+      unitsPerBox: 12,
+      imageKeys: ["products/A/k1.jpg"],
+      tenantId: "t1",
+      _count: { barcodes: 0, images: 0 },
+    });
+    prisma.__tx.productImage.createMany.mockResolvedValue({ count: 1 });
+
+    const counts = await backfillProductCatalogRows(prisma, { tenantSlug: "test", apply: true });
+
+    expect(prisma.__tx.productBarcode.createMany).not.toHaveBeenCalled();
+    expect(counts.barcodeRowsInserted).toBe(0);
+    expect(counts.imageRowsInserted).toBe(1);
+  });
+
+  it("F2/F3: locks in the app's order — code lock, row lock, THEN the fresh read, THEN createMany", async () => {
+    const order: string[] = [];
+    (lockBarcodeCodes as jest.Mock).mockImplementation(async () => {
+      order.push("lockBarcodeCodes");
+    });
+    (lockProductRow as jest.Mock).mockImplementation(async () => {
+      order.push("lockProductRow");
+    });
+    const prisma = mockPrisma();
+    prisma.tenant.findUnique.mockResolvedValue({ id: "t1", slug: "test" });
+    prisma.product.findMany.mockResolvedValueOnce([
+      { id: "A", barcode: "X", unitsPerBox: 1, imageKeys: [], _count: { barcodes: 0, images: 0 } },
+    ]);
+    prisma.product.findMany.mockResolvedValueOnce([]);
+    prisma.__tx.product.findUnique.mockImplementation(async () => {
+      order.push("findUnique");
+      return {
+        barcode: "X",
+        unitsPerBox: 1,
+        imageKeys: [],
+        tenantId: "t1",
+        _count: { barcodes: 0, images: 0 },
+      };
+    });
+    prisma.__tx.productBarcode.createMany.mockImplementation(async () => {
+      order.push("createMany");
+      return { count: 1 };
+    });
+
+    await backfillProductCatalogRows(prisma, { tenantSlug: "test", apply: true });
+
+    expect(order).toEqual(["lockBarcodeCodes", "lockProductRow", "findUnique", "createMany"]);
+  });
+
+  it("F2/F3: a product whose FRESH read shows barcode rows already present (concurrent writer) inserts nothing", async () => {
+    const prisma = mockPrisma();
+    prisma.tenant.findUnique.mockResolvedValue({ id: "t1", slug: "test" });
+    prisma.product.findMany.mockResolvedValueOnce([
+      { id: "A", barcode: "X", unitsPerBox: 1, imageKeys: [], _count: { barcodes: 0, images: 0 } },
+    ]);
+    prisma.product.findMany.mockResolvedValueOnce([]);
+    // Between the page read and this product's own transaction, the app's own dual-write sync
+    // already inserted rows for it (e.g. a concurrent products.service.ts update()).
+    prisma.__tx.product.findUnique.mockResolvedValue({
+      barcode: "X",
+      unitsPerBox: 1,
+      imageKeys: [],
+      tenantId: "t1",
+      _count: { barcodes: 1, images: 0 },
+    });
+
+    const counts = await backfillProductCatalogRows(prisma, { tenantSlug: "test", apply: true });
+
+    expect(prisma.__tx.productBarcode.createMany).not.toHaveBeenCalled();
+    expect(counts.barcodeRowsPlanned).toBe(0);
+    expect(counts.barcodeRowsInserted).toBe(0);
   });
 
   it("a non-test tenant WITH a matching override still proceeds, warns via stderr when protected", async () => {
@@ -287,5 +412,26 @@ describe("backfill-product-catalog-rows.ts — T12 source pin (INSERT-ONLY)", ()
     }
     expect(src).not.toMatch(/\bUPDATE\s/);
     expect(src).not.toMatch(/\bDELETE\s/);
+  });
+});
+
+// (g) #2728 M1 follow-up, pre-merge BLOCK: main()'s catch must never print a raw error
+// object/message (it can carry a tenant slug, product name, or barcode value) — only name (+code).
+describe("formatErrorForStderr — never leaks the raw error message/meta/stack", () => {
+  it("formats a plain Error as just its name, no message", () => {
+    expect(formatErrorForStderr(new Error("tenant acme-live has barcode 0000000000012"))).toBe(
+      "Error",
+    );
+  });
+
+  it("appends the code when the error carries one (e.g. a Prisma error)", () => {
+    const err = Object.assign(new Error("Unique constraint failed on tenant acme-live"), {
+      code: "P2002",
+    });
+    expect(formatErrorForStderr(err)).toBe("Error P2002");
+  });
+
+  it("falls back to a generic label for a non-Error throw", () => {
+    expect(formatErrorForStderr("tenant acme-live: barcode taken")).toBe("Error");
   });
 });

@@ -3,7 +3,10 @@
  * counter `countBarcodeConflicts(rows, products)`. Read-only; no DB spec needed for the pure fn (a
  * `main()` smoke covers wiring only, exercised by hand).
  */
-import { countBarcodeConflicts } from "../../prisma/report-product-barcode-conflicts";
+import {
+  countBarcodeConflicts,
+  formatErrorForStderr,
+} from "../../prisma/report-product-barcode-conflicts";
 
 describe("countBarcodeConflicts", () => {
   it("counts a code held by more than one product (per tenant) exactly once", () => {
@@ -76,5 +79,26 @@ describe("countBarcodeConflicts", () => {
     ];
     const result = countBarcodeConflicts([], products);
     expect(result.productsDriftedFromLegacy).toBe(0);
+  });
+});
+
+// (g) #2728 M1 follow-up, pre-merge BLOCK: main()'s catch must never print a raw error
+// object/message (it can carry a tenant slug, product name, or barcode value) — only name (+code).
+describe("formatErrorForStderr — never leaks the raw error message/meta/stack", () => {
+  it("formats a plain Error as just its name, no message", () => {
+    expect(formatErrorForStderr(new Error("tenant acme-live has barcode 0000000000012"))).toBe(
+      "Error",
+    );
+  });
+
+  it("appends the code when the error carries one (e.g. a Prisma error)", () => {
+    const err = Object.assign(new Error("Unique constraint failed on tenant acme-live"), {
+      code: "P2002",
+    });
+    expect(formatErrorForStderr(err)).toBe("Error P2002");
+  });
+
+  it("falls back to a generic label for a non-Error throw", () => {
+    expect(formatErrorForStderr("tenant acme-live: barcode taken")).toBe("Error");
   });
 });

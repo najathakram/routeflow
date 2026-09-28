@@ -188,9 +188,22 @@ async function main() {
   }
 }
 
+/**
+ * (g) #2728 M1 follow-up, pre-merge BLOCK: this script's own header promises stderr never prints a
+ * tenant slug/name/id, product name/id, or barcode value — a raw error object/message can carry
+ * one (e.g. a Postgres error quoting the row). Print only the error's name and (if present) its
+ * `code`, never `.message`, `.meta`, or the stack.
+ */
+export function formatErrorForStderr(e: unknown): string {
+  const name = e instanceof Error ? e.name : "Error";
+  const rawCode = (e as { code?: unknown } | null)?.code;
+  const code = typeof rawCode === "string" || typeof rawCode === "number" ? String(rawCode) : "";
+  return `${name}${code ? ` ${code}` : ""}`;
+}
+
 if (require.main === module) {
   main().catch((e) => {
-    console.error(e);
+    console.error(formatErrorForStderr(e));
     process.exit(1);
   });
 }

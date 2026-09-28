@@ -5,6 +5,7 @@ import {
   PLAN_KEYS as API_PLAN_KEYS,
   FLAG_KEYS as API_FLAG_KEYS,
 } from "../billing/plan-catalog.constants";
+import { SELL_LEVEL_VALUES } from "@routeflow/pricing";
 
 /**
  * Guards the class of bug found by the Wave E DTO sweep (imp-10b): web and
@@ -497,6 +498,20 @@ describe("WP1 T3: tenant-plan-lite migration is additive-only", () => {
     expect(raw).not.toMatch(/\bDROP\b/i);
     expect(raw).not.toMatch(/\bRENAME\b/i);
     expect(raw).not.toMatch(/ALTER\s+COLUMN/i);
+  });
+});
+
+// ─── (d) #2728 M1 follow-up, pre-merge BLOCK: sell-level values were a bare literal union with no
+// parity pin against the generated PackagingLevel enum — pin it directly (a subset check, since
+// PackagingLevel also has values SELL_LEVEL_VALUES deliberately excludes, e.g. any future level). ──
+
+describe("d: SELL_LEVEL_VALUES ⊂ Prisma PackagingLevel", () => {
+  it("every @routeflow/pricing SELL_LEVEL_VALUES member is a real Prisma PackagingLevel value", () => {
+    const packagingLevelValues = Object.values(PrismaEnums.PackagingLevel);
+    for (const level of SELL_LEVEL_VALUES) {
+      expect(packagingLevelValues).toContain(level);
+    }
+    expect(SELL_LEVEL_VALUES.length).toBeGreaterThan(0);
   });
 });
 

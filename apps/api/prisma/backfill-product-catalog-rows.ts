@@ -34,6 +34,7 @@ import { Pool } from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { parseFocalFromKey, planBarcodeRows } from "../src/products/product-barcode-rules";
+import { lockBarcodeCodes, lockProductRow } from "../src/products/product-catalog-sync";
 import { isTestTenant } from "../../../scripts/lib/test-tenants.cjs";
 // paying-tenant.cjs has no .d.cts declaration file (unlike test-tenants.cjs), so it is required
 // rather than imported — informational-only use here (see the tenant guard below).
@@ -189,65 +190,119 @@ export async function backfillProductCatalogRows(
       });
       if (batch.length === 0) break;
 
-      const barcodeData: Prisma.ProductBarcodeCreateManyInput[] = [];
-      const imageData: Prisma.ProductImageCreateManyInput[] = [];
-
       for (const p of batch) {
         counts.products += 1;
 
-        if (p._count.barcodes > 0) {
-          counts.productsWithBarcodeRowsAlready += 1;
-        } else {
-          const rows = planBarcodeRows({ barcode: p.barcode, unitsPerBox: p.unitsPerBox });
-          for (const row of rows) {
-            counts.barcodeRowsPlanned += 1;
-            barcodeData.push({
-              tenantId: tenant.id,
-              productId: p.id,
-              code: row.code,
-              symbology: row.symbology,
-              level: row.level,
-              origin: row.origin,
-              copiedFromLevel: row.copiedFromLevel,
-              primaryFor: row.primaryFor,
-            });
+        if (!apply) {
+          // Dry-run stays read-only, unlocked, and planned entirely off THIS page read — no tx,
+          // no lock, and nothing is ever written, so a concurrent writer changing the product
+          // between this read and now can't corrupt a count that is discarded either way.
+          if (p._count.barcodes > 0) {
+            counts.productsWithBarcodeRowsAlready += 1;
+          } else {
+            counts.barcodeRowsPlanned += planBarcodeRows({
+              barcode: p.barcode,
+              unitsPerBox: p.unitsPerBox,
+            }).length;
           }
+          if (p._count.images > 0) {
+            counts.productsWithImageRowsAlready += 1;
+          } else {
+            counts.imageRowsPlanned += p.imageKeys.length;
+          }
+          continue;
         }
 
-        if (p._count.images > 0) {
-          counts.productsWithImageRowsAlready += 1;
-        } else {
-          p.imageKeys.forEach((key, index) => {
-            counts.imageRowsPlanned += 1;
-            const focal = parseFocalFromKey(key);
-            imageData.push({
-              tenantId: tenant.id,
-              productId: p.id,
-              storageKey: key,
-              sortOrder: index,
-              isPrimary: index === 0,
-              focalX: focal?.x ?? null,
-              focalY: focal?.y ?? null,
+        // Apply: F2/F3 (#2728 M1 follow-up, pre-merge BLOCK) — the page read above is a plain,
+        // unlocked SELECT, so by the time this product's turn comes up a concurrent app writer
+        // (products.service.ts update(), variant-resolution.service.ts completeSetup()) may have
+        // already synced its ProductBarcode/ProductImage rows, or changed which barcode it holds.
+        // Racing the app's own dual-write with an unlocked raw insert risks either a raw P2002
+        // (500) or stale rows planned from data that's already moved on. So: skip products this
+        // page already shows as fully done (no tx needed — nothing to insert either way), then for
+        // the rest open ONE short interactive transaction per product, taking locks in the EXACT
+        // SAME ORDER the app does — the barcode code lock first (lockBarcodeCodes), then the
+        // Product row lock (lockProductRow, the same row an app write statement would lock) — so
+        // this can never deadlock against a concurrent app writer (image-only paths take just the
+        // row lock, a strict subset of this order). Only after BOTH locks are held does it re-read
+        // the product fresh: that re-read is what makes a concurrent barcode change (X → Y) safe —
+        // this planner reacts to the CURRENT barcode, not the one the page read saw, and a
+        // concurrent row insert (already-has-rows) is caught by the fresh `_count` and skipped.
+        const needsBarcodeRows = p._count.barcodes === 0;
+        const needsImageRows = p._count.images === 0;
+        if (!needsBarcodeRows) counts.productsWithBarcodeRowsAlready += 1;
+        if (!needsImageRows) counts.productsWithImageRowsAlready += 1;
+        if (!needsBarcodeRows && !needsImageRows) continue;
+
+        await prisma.$transaction(async (tx) => {
+          await lockBarcodeCodes(tx, tenant.id, [p.barcode]);
+          await lockProductRow(tx, tenant.id, p.id);
+          const fresh = await tx.product.findUnique({
+            where: { id: p.id },
+            select: {
+              barcode: true,
+              unitsPerBox: true,
+              imageKeys: true,
+              tenantId: true,
+              _count: { select: { barcodes: true, images: true } },
+            },
+          });
+          if (!fresh || fresh.tenantId !== tenant.id) return;
+
+          // The barcode lock above is the PAGE-READ code. If the code changed before we got the row
+          // lock, we hold the wrong code's lock, and taking the new one now (after the row lock) would
+          // invert the app's order (code → row) and could deadlock. Skip its barcode rows this run;
+          // the next run mirrors it (it is still row-less only if no app sync ran).
+          if (needsBarcodeRows && fresh._count.barcodes === 0 && fresh.barcode === p.barcode) {
+            const rows = planBarcodeRows({
+              barcode: fresh.barcode,
+              unitsPerBox: fresh.unitsPerBox,
             });
-          });
-        }
-      }
+            counts.barcodeRowsPlanned += rows.length;
+            if (rows.length > 0) {
+              const barcodeData: Prisma.ProductBarcodeCreateManyInput[] = rows.map((row) => ({
+                tenantId: tenant.id,
+                productId: p.id,
+                code: row.code,
+                symbology: row.symbology,
+                level: row.level,
+                origin: row.origin,
+                copiedFromLevel: row.copiedFromLevel,
+                primaryFor: row.primaryFor,
+              }));
+              const res = await tx.productBarcode.createMany({
+                data: barcodeData,
+                skipDuplicates: true,
+              });
+              counts.barcodeRowsInserted += res.count;
+            }
+          }
 
-      if (apply) {
-        if (barcodeData.length > 0) {
-          const res = await prisma.productBarcode.createMany({
-            data: barcodeData,
-            skipDuplicates: true,
-          });
-          counts.barcodeRowsInserted += res.count;
-        }
-        if (imageData.length > 0) {
-          const res = await prisma.productImage.createMany({
-            data: imageData,
-            skipDuplicates: true,
-          });
-          counts.imageRowsInserted += res.count;
-        }
+          if (needsImageRows && fresh._count.images === 0) {
+            const imageData: Prisma.ProductImageCreateManyInput[] = fresh.imageKeys.map(
+              (key, index) => {
+                const focal = parseFocalFromKey(key);
+                return {
+                  tenantId: tenant.id,
+                  productId: p.id,
+                  storageKey: key,
+                  sortOrder: index,
+                  isPrimary: index === 0,
+                  focalX: focal?.x ?? null,
+                  focalY: focal?.y ?? null,
+                };
+              },
+            );
+            counts.imageRowsPlanned += imageData.length;
+            if (imageData.length > 0) {
+              const res = await tx.productImage.createMany({
+                data: imageData,
+                skipDuplicates: true,
+              });
+              counts.imageRowsInserted += res.count;
+            }
+          }
+        });
       }
 
       cursor = batch[batch.length - 1].id;
@@ -295,11 +350,24 @@ async function main() {
   }
 }
 
+/**
+ * (g) #2728 M1 follow-up, pre-merge BLOCK: a raw error object/message can carry a tenant slug,
+ * product name, or barcode value (e.g. a Postgres constraint-violation message quoting the row) —
+ * this script's own header promises stderr NEVER echoes one. Print only the error's name and (if
+ * present) its `code`, never `.message`, `.meta`, or the stack.
+ */
+export function formatErrorForStderr(e: unknown): string {
+  const name = e instanceof Error ? e.name : "Error";
+  const rawCode = (e as { code?: unknown } | null)?.code;
+  const code = typeof rawCode === "string" || typeof rawCode === "number" ? String(rawCode) : "";
+  return `${name}${code ? ` ${code}` : ""}`;
+}
+
 // Only run main() when this file is executed directly — never on import, so a spec can import
 // `backfillProductCatalogRows` without triggering a real DB connection at module load.
 if (require.main === module) {
   main().catch((e) => {
-    console.error(e);
+    console.error(formatErrorForStderr(e));
     process.exit(1);
   });
 }
