@@ -18,7 +18,7 @@ describe("buyer favorites (#2703): typed as BuyerFavoriteProduct, keyed on produ
 
   it("the idOf / priceOf workarounds and the dead basePrice/price fallbacks are gone", () => {
     expect(screen).not.toMatch(/\bidOf\(|\bpriceOf\(/);
-    expect(screen).not.toMatch(/basePrice|\.price\b/);
+    expect(screen).not.toMatch(/basePrice|\bp\.price\b/); // the row's dead fallback (styles.price is a style)
   });
 
   it("un-favorite and add-to-cart use productId and the server's buyerPrice", () => {
