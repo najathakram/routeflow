@@ -188,6 +188,29 @@ function findPlanDefinition(definitions, planKey) {
   return definitions.find((d) => (normalizePlanKey(d.planKey) ?? d.planKey) === want);
 }
 
+/**
+ * Mirrors effectivePlanFlags (plan-catalog.constants.ts, #2700 / SA-559(2)): FEATURE FLAGS GAIN
+ * FORWARD — the pinned definition's featureFlags ∪ the PUBLISHED version's definition for the same
+ * normalized plan key; no union when pinned === published, nothing is published, or the published
+ * version has no such plan; never removes a flag. The ONE mirror every standalone script uses
+ * (audit-tenant-entitlements.mjs, report-addon-default-grant-flip.mjs, publish-and-repin.mjs);
+ * feature-registry-mirror.parity.spec.ts pins it to the TypeScript predicate.
+ */
+function effectivePlanFlagsMirror(pinnedDef, pinnedVersionId, published) {
+  const flags = [...new Set(pinnedDef.featureFlags)];
+  if (!published || published.id === pinnedVersionId) return flags;
+  const forward = findPlanDefinition(published.definitions, pinnedDef.planKey);
+  if (!forward) return flags;
+  const have = new Set(flags);
+  for (const flag of forward.featureFlags) {
+    if (!have.has(flag)) {
+      have.add(flag);
+      flags.push(flag);
+    }
+  }
+  return flags;
+}
+
 /** Mirrors planKeyFromEnum. */
 function planKeyFromEnum(plan) {
   switch (plan) {
@@ -371,6 +394,7 @@ module.exports = {
   LEGACY_PLAN_KEY_ALIASES,
   normalizePlanKey,
   findPlanDefinition,
+  effectivePlanFlagsMirror,
   planKeyFromEnum,
   LEGACY_ADDON_KEY_TO_SKU,
   addonSkuCode,
