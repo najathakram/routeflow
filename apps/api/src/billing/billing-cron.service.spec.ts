@@ -25,15 +25,51 @@ function make(
     cancellations?: any[];
     cancelAddons?: any[];
     activeTeam?: number;
+    /** #2641: the Tenant row as re-read UNDER lockTenantForLedger (default: ACTIVE PRODUCTION). */
+    lockedTenant?: { status?: string; class?: string; deletedAt?: Date | null };
+    /** #2641: per-tenant overrides of the subscription row re-read under the lock. */
+    lockedSubs?: Record<string, Record<string, unknown>>;
   } = {},
 ) {
+  // #2641: the scanned row IS the committed row unless a test overrides it (a mid-sweep change).
+  // A scanned row matched the scan's filter, so it is ARMED: default the schedule fields it implies.
+  const past = new Date("2026-01-01T00:00:00.000Z");
+  const scanned = new Map<string, any>([
+    ...(data.downgrades ?? []).map((r: any): [string, any] => [
+      r.tenantId,
+      { downgradeEffectiveAt: past, ...r },
+    ]),
+    ...(data.cancellations ?? []).map((r: any): [string, any] => [
+      r.tenantId,
+      { cancelAtPeriodEnd: true, periodEnd: past, ...r },
+    ]),
+  ]);
   const tx = {
     $queryRaw: jest.fn().mockResolvedValue([]),
-    tenantSubscription: { update: jest.fn().mockResolvedValue({}) },
-    tenant: { update: jest.fn().mockResolvedValue({}) },
+    tenantSubscription: {
+      update: jest.fn().mockResolvedValue({}),
+      findUnique: jest.fn(async ({ where }: any) => {
+        const row = scanned.get(where.tenantId);
+        return row ? { ...row, ...(data.lockedSubs?.[where.tenantId] ?? {}) } : null;
+      }),
+    },
+    tenant: {
+      update: jest.fn().mockResolvedValue({}),
+      findUnique: jest.fn().mockResolvedValue({
+        status: "ACTIVE",
+        class: "PRODUCTION",
+        deletedAt: null,
+        ...data.lockedTenant,
+      }),
+    },
     user: {
       updateMany: jest.fn().mockResolvedValue({ count: 2 }),
       count: jest.fn().mockResolvedValue(data.activeTeam ?? 5),
+    },
+    // #2641: the cancellation sweep reads and deactivates add-ons on its locked tx.
+    tenantAddon: {
+      findMany: jest.fn().mockResolvedValue(data.cancelAddons ?? []),
+      updateMany: jest.fn().mockResolvedValue({ count: data.cancelAddons?.length ?? 0 }),
     },
   };
   const prisma = {
@@ -894,11 +930,13 @@ describe("BillingCronService", () => {
   });
 
   it("applyScheduledCancellations flips cancelled+expired subs to READ_ONLY + emits a NEGATIVE churn delta", async () => {
-    const { svc, prisma, events, tenantStatus } = make({
-      cancellations: [{ tenantId: "t1", basePriceSnapshot: 349, discount: 10 }],
+    const { svc, tx, events, tenantStatus } = make({
+      cancellations: [
+        { tenantId: "t1", planKey: "BUSINESS", basePriceSnapshot: 349, discount: 10 },
+      ],
     });
     await svc.applyScheduledCancellations();
-    expect(prisma.tenant.update.mock.calls[0][0].data).toMatchObject({
+    expect(tx.tenant.update.mock.calls[0][0].data).toMatchObject({
       status: "READ_ONLY",
       readOnlyReason: "subscription_cancelled",
     });
@@ -909,8 +947,10 @@ describe("BillingCronService", () => {
   });
 
   it("applyScheduledCancellations churn delta includes active add-ons + deactivates the add-on rows", async () => {
-    const { svc, prisma, events } = make({
-      cancellations: [{ tenantId: "t1", basePriceSnapshot: 349, discount: 10 }],
+    const { svc, tx, events } = make({
+      cancellations: [
+        { tenantId: "t1", planKey: "BUSINESS", basePriceSnapshot: 349, discount: 10 },
+      ],
       cancelAddons: [{ priceSnapshot: 12, quantity: 2 }],
     });
     await svc.applyScheduledCancellations();
@@ -918,7 +958,7 @@ describe("BillingCronService", () => {
     expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toBe(-363);
     // Rows follow the ledger: the removed add-ons are deactivated so a later reactivation
     // re-adds their delta symmetrically (no ledger drift).
-    expect(prisma.tenantAddon.updateMany).toHaveBeenCalledWith({
+    expect(tx.tenantAddon.updateMany).toHaveBeenCalledWith({
       where: { tenantId: "t1", active: true },
       data: { active: false },
     });
@@ -1061,5 +1101,252 @@ describe("BillingCronService", () => {
     await svc.rollCycles();
     const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
     expect(data.periodEnd.toISOString()).toBe("2026-02-01T00:00:00.000Z");
+  });
+});
+
+// #2641 (#2638 follow-up): both scheduled sweeps decide "paying" with the shared isPayingRow on
+// the Tenant + subscription rows re-read UNDER lockTenantForLedger — never on the pre-tx scan, which
+// a suspension, a disarmed schedule or a resumed cancellation can overtake before the lock.
+describe("#2641 scheduled sweeps book on the paying predicate, re-read under the lock", () => {
+  const downgrade = {
+    tenantId: "t1",
+    planKey: "BUSINESS",
+    planVersionId: "v7",
+    downgradeToPlanKey: "STARTER",
+    downgradeEffectiveAt: new Date("2026-09-01T00:00:00.000Z"),
+    retainedUserIds: ["u1"],
+    basePriceSnapshot: 349,
+  };
+  const cancellation = {
+    tenantId: "t1",
+    planKey: "BUSINESS",
+    cancelAtPeriodEnd: true,
+    periodEnd: new Date("2026-09-01T00:00:00.000Z"),
+    basePriceSnapshot: 349,
+    discount: 10,
+  };
+
+  it("downgrade: the Tenant + subscription re-reads come AFTER the Tenant row lock, on the tx", async () => {
+    const { svc, tx } = make({ downgrades: [downgrade] });
+    await svc.applyScheduledDowngrades();
+    const lockAt = tx.$queryRaw.mock.invocationCallOrder[0];
+    expect(lockAt).toBeDefined();
+    expect(tx.tenant.findUnique.mock.invocationCallOrder[0]).toBeGreaterThan(lockAt);
+    expect(tx.tenantSubscription.findUnique.mock.invocationCallOrder[0]).toBeGreaterThan(lockAt);
+    expect(tx.tenantSubscription.update.mock.invocationCallOrder[0]).toBeGreaterThan(
+      tx.tenant.findUnique.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("downgrade: a tenant SUSPENDED between the scan and the lock is skipped — no write, no PLAN_CHANGED", async () => {
+    const { svc, tx, events, entitlements } = make({
+      downgrades: [downgrade],
+      lockedTenant: { status: "SUSPENDED" },
+    });
+    await expect(svc.applyScheduledDowngrades()).resolves.toBeUndefined();
+    expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
+    expect(emitted(events)).not.toContain(BILLING_EVENTS.PLAN_CHANGED);
+    expect(entitlements.invalidate).not.toHaveBeenCalled();
+  });
+
+  it("downgrade: a tenant soft-deleted between the scan and the lock is skipped", async () => {
+    const { svc, tx, events } = make({
+      downgrades: [downgrade],
+      lockedTenant: { deletedAt: new Date() },
+    });
+    await svc.applyScheduledDowngrades();
+    expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
+    expect(emitted(events)).not.toContain(BILLING_EVENTS.PLAN_CHANGED);
+  });
+
+  it("downgrade: a schedule disarmed (or retargeted) before the lock is not applied", async () => {
+    for (const lockedSub of [
+      { downgradeToPlanKey: null, downgradeEffectiveAt: null },
+      { downgradeToPlanKey: "BUSINESS" },
+    ]) {
+      const { svc, tx, events } = make({ downgrades: [downgrade], lockedSubs: { t1: lockedSub } });
+      await svc.applyScheduledDowngrades();
+      expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
+      expect(emitted(events)).not.toContain(BILLING_EVENTS.PLAN_CHANGED);
+    }
+  });
+
+  it("downgrade: one skipped tenant never stops the sweep — the next tenant still applies", async () => {
+    const { svc, tx, events } = make({
+      downgrades: [downgrade, { ...downgrade, tenantId: "t2" }],
+    });
+    tx.tenant.findUnique
+      .mockResolvedValueOnce({ status: "SUSPENDED", class: "PRODUCTION", deletedAt: null })
+      .mockResolvedValueOnce({ status: "ACTIVE", class: "PRODUCTION", deletedAt: null });
+    await svc.applyScheduledDowngrades();
+    expect(tx.tenantSubscription.update).toHaveBeenCalledTimes(1);
+    expect(tx.tenantSubscription.update.mock.calls[0][0].where).toEqual({ tenantId: "t2" });
+    expect(emitted(events).filter((t: string) => t === BILLING_EVENTS.PLAN_CHANGED)).toHaveLength(
+      1,
+    );
+  });
+
+  it("downgrade: Δ nets against the snapshot re-read UNDER the lock, not the scanned one", async () => {
+    const { svc, events } = make({
+      downgrades: [downgrade],
+      lockedSubs: { t1: { basePriceSnapshot: 300 } },
+    });
+    await svc.applyScheduledDowngrades();
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(59 - 300);
+  });
+
+  it("downgrade: a TEST-class tenant is still downgraded but books Δ0 (never in the paying set)", async () => {
+    const { svc, tx, events } = make({
+      downgrades: [downgrade],
+      lockedTenant: { class: "TEST" },
+    });
+    await svc.applyScheduledDowngrades();
+    expect(tx.tenantSubscription.update).toHaveBeenCalledTimes(1);
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(0);
+  });
+
+  it("downgrade: a planKey-NULL (pre-plans-as-data) row enters the paying set at the new plan — books +newBase", async () => {
+    const { svc, events } = make({
+      downgrades: [{ ...downgrade, planKey: null, basePriceSnapshot: null }],
+    });
+    await svc.applyScheduledDowngrades();
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(59);
+  });
+
+  it("cancellation: runs in ONE transaction — Tenant row lock first, then the re-reads, then every write on the tx", async () => {
+    const { svc, prisma, tx, events } = make({ cancellations: [cancellation] });
+    await svc.applyScheduledCancellations();
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    const lockAt = tx.$queryRaw.mock.invocationCallOrder[0];
+    expect(lockAt).toBeDefined();
+    expect(tx.tenant.findUnique.mock.invocationCallOrder[0]).toBeGreaterThan(lockAt);
+    expect(tx.tenantSubscription.findUnique.mock.invocationCallOrder[0]).toBeGreaterThan(lockAt);
+    expect(tx.tenant.update).toHaveBeenCalledTimes(1);
+    expect(prisma.tenant.update).not.toHaveBeenCalled();
+    expect(prisma.tenantAddon.updateMany).not.toHaveBeenCalled();
+    const call = events.emit.mock.calls.find(
+      (c: any[]) => c[1] === BILLING_EVENTS.SUBSCRIPTION_CANCELED,
+    );
+    expect(call[3].tx).toBe(tx);
+  });
+
+  it("cancellation: a tenant SUSPENDED between the scan and the lock books nothing and is not made READ_ONLY", async () => {
+    const { svc, tx, events, tenantStatus } = make({
+      cancellations: [cancellation],
+      cancelAddons: [{ priceSnapshot: 12, quantity: 2 }],
+      lockedTenant: { status: "SUSPENDED" },
+    });
+    await svc.applyScheduledCancellations();
+    expect(tx.tenant.update).not.toHaveBeenCalled();
+    expect(tx.tenantAddon.updateMany).not.toHaveBeenCalled();
+    expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_CANCELED);
+    expect(tenantStatus.invalidate).not.toHaveBeenCalled();
+  });
+
+  it("cancellation: a cancellation RESUMED before the lock (cancelAtPeriodEnd cleared) is not applied", async () => {
+    const { svc, tx, events } = make({
+      cancellations: [cancellation],
+      lockedSubs: { t1: { cancelAtPeriodEnd: false } },
+    });
+    await svc.applyScheduledCancellations();
+    expect(tx.tenant.update).not.toHaveBeenCalled();
+    expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_CANCELED);
+  });
+
+  it("cancellation: a period extended past now before the lock is not applied", async () => {
+    const { svc, tx, events } = make({
+      cancellations: [cancellation],
+      lockedSubs: { t1: { periodEnd: new Date(Date.now() + 86_400_000) } },
+    });
+    await svc.applyScheduledCancellations();
+    expect(tx.tenant.update).not.toHaveBeenCalled();
+    expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_CANCELED);
+  });
+
+  it("cancellation: a TEST-class tenant still goes READ_ONLY but books Δ0", async () => {
+    const { svc, tx, events } = make({
+      cancellations: [cancellation],
+      cancelAddons: [{ priceSnapshot: 12, quantity: 2 }],
+      lockedTenant: { class: "TEST" },
+    });
+    await svc.applyScheduledCancellations();
+    expect(tx.tenant.update.mock.calls[0][0].data).toMatchObject({ status: "READ_ONLY" });
+    expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toBe(0);
+  });
+
+  it("cancellation: the churn Δ is priced from the rows re-read UNDER the lock", async () => {
+    const { svc, events } = make({
+      cancellations: [cancellation],
+      lockedSubs: { t1: { basePriceSnapshot: 300, discount: 0 } },
+    });
+    await svc.applyScheduledCancellations();
+    expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toBe(-300);
+  });
+
+  it("downgrade: an overtaken tenant never counts toward the snapshot-failure breaker", async () => {
+    // Three overtaken rows (== MAX_CONSECUTIVE_SNAPSHOT_FAILURES) then one real snapshot failure:
+    // the sweep must NOT abort — an overtaken skip is not a systemic fault.
+    const errorSpy = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+    const rows = ["a", "b", "c", "d"].map((id) => ({ ...downgrade, tenantId: id }));
+    const { svc, tx, planTransition } = make({ downgrades: rows });
+    tx.tenant.findUnique
+      .mockResolvedValueOnce({ status: "SUSPENDED", class: "PRODUCTION", deletedAt: null })
+      .mockResolvedValueOnce({ status: "SUSPENDED", class: "PRODUCTION", deletedAt: null })
+      .mockResolvedValueOnce({ status: "SUSPENDED", class: "PRODUCTION", deletedAt: null });
+    planTransition.onPlanChange
+      .mockResolvedValueOnce({ action: "none" })
+      .mockResolvedValueOnce({ action: "none" })
+      .mockResolvedValueOnce({ action: "none" })
+      .mockRejectedValueOnce(new SnapshotFailedError("d", new Error("boom")));
+    await expect(svc.applyScheduledDowngrades()).resolves.toBeUndefined();
+    expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it("cancellation: a tenant soft-deleted between the scan and the lock is not applied", async () => {
+    const { svc, tx, events } = make({
+      cancellations: [cancellation],
+      lockedTenant: { deletedAt: new Date() },
+    });
+    await svc.applyScheduledCancellations();
+    expect(tx.tenant.update).not.toHaveBeenCalled();
+    expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_CANCELED);
+  });
+
+  it("cancellation: caches are invalidated only AFTER the transaction commits", async () => {
+    const { svc, prisma, entitlements, tenantStatus } = make({ cancellations: [cancellation] });
+    let invalidatedInsideTx = false;
+    prisma.$transaction.mockImplementationOnce(async (fn: any) => {
+      const tx = {
+        $queryRaw: jest.fn().mockResolvedValue([]),
+        tenant: {
+          findUnique: jest
+            .fn()
+            .mockResolvedValue({ status: "ACTIVE", class: "PRODUCTION", deletedAt: null }),
+          update: jest.fn().mockResolvedValue({}),
+        },
+        tenantSubscription: { findUnique: jest.fn().mockResolvedValue(cancellation) },
+        tenantAddon: {
+          findMany: jest.fn().mockResolvedValue([]),
+          updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        },
+      };
+      const out = await fn(tx);
+      invalidatedInsideTx =
+        entitlements.invalidate.mock.calls.length > 0 ||
+        tenantStatus.invalidate.mock.calls.length > 0;
+      return out;
+    });
+    await svc.applyScheduledCancellations();
+    expect(invalidatedInsideTx).toBe(false);
+    expect(entitlements.invalidate).toHaveBeenCalledWith("t1");
+    expect(tenantStatus.invalidate).toHaveBeenCalledWith("t1");
+  });
+
+  it("cancellation: a planKey-NULL row is outside the paying set — READ_ONLY with Δ0", async () => {
+    const { svc, tx, events } = make({ cancellations: [{ ...cancellation, planKey: null }] });
+    await svc.applyScheduledCancellations();
+    expect(tx.tenant.update).toHaveBeenCalledTimes(1);
+    expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toBe(0);
   });
 });
