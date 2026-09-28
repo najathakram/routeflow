@@ -112,8 +112,8 @@ describeDb("a VOID invoice blocks a customer hard delete (#2628, SA-530)", () =>
   it.each([
     ["deleteAllCustomers", (s: CustomersService) => s.deleteAllCustomers()],
     [
-      "deleteImportedCustomers (no buyer link ⇒ selected)",
-      (s: CustomersService) => s.deleteImportedCustomers(),
+      "runImportedCustomersCleanup (no buyer link ⇒ selected; #2629 keeps the body behind a 409 guard)",
+      (s: CustomersService) => s.runImportedCustomersCleanup(),
     ],
     ["batchDelete", (s: CustomersService, id: string) => s.batchDelete([id])],
   ])(

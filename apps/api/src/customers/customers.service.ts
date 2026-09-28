@@ -15,6 +15,7 @@ import { BuyerMergeRequestStatus, MergeInitiator } from "@prisma/client";
 import { ConfigService } from "@nestjs/config";
 import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
+import { assertCleanupImportedEnabled } from "./cleanup-imported-disabled";
 import {
   assertNoBlockingInvoices,
   assertNoDeliveryHistory,
@@ -2668,8 +2669,23 @@ export class CustomersService {
   }
 
   // ─── Cleanup Imported Customers ───────────────────────────────────────────────
+  // #2629: DISABLED until a real import marker exists — see cleanup-imported-disabled.ts.
 
   async previewImportedCleanup(): Promise<{
+    toDelete: number;
+    toKeep: number;
+    buyers: { id: string; businessName: string }[];
+  }> {
+    assertCleanupImportedEnabled();
+    return this.runImportedCleanupPreview();
+  }
+
+  async deleteImportedCustomers(): Promise<{ deleted: number; preserved: number }> {
+    assertCleanupImportedEnabled();
+    return this.runImportedCustomersCleanup();
+  }
+
+  async runImportedCleanupPreview(): Promise<{
     toDelete: number;
     toKeep: number;
     buyers: { id: string; businessName: string }[];
@@ -2690,7 +2706,8 @@ export class CustomersService {
     };
   }
 
-  async deleteImportedCustomers(): Promise<{ deleted: number; preserved: number }> {
+  /** #2629: the kept body, verbatim (its safety pins still run); no controller reaches it. */
+  async runImportedCustomersCleanup(): Promise<{ deleted: number; preserved: number }> {
     // #2569: a destructive bulk delete has no all-tenant mode (forTenant() is UNSCOPED without a
     // tenant); refuse a null tenant exactly as deleteAllCustomers does.
     if (!this.prisma.getTenantId())
