@@ -10,6 +10,13 @@ import { AuthService } from "./auth.service";
 import { BuyerAuthService } from "../buyer/buyer-auth.service";
 import { isBuyerLoginEligible, isLoginEligible } from "./login-eligibility";
 
+// bcrypt.compare stays REAL; the wrapper only records the calls, for SA-542c's order pins below.
+jest.mock("bcrypt", () => {
+  const actual = jest.requireActual("bcrypt");
+  return { ...actual, compare: jest.fn((...args: unknown[]) => actual.compare(...args)) };
+});
+const compareSpy = bcrypt.compare as unknown as jest.Mock;
+
 const FUTURE = new Date(Date.now() + 7 * 86_400_000); // a week: never a collection-time fuse (B793)
 const PAST = new Date(Date.now() - 3_600_000);
 const STATES: Array<[string, Record<string, unknown>]> = [
@@ -86,5 +93,107 @@ describe("isBuyerLoginEligible === BuyerAuthService.login's post-password rule (
         throw e;
       });
     expect(isBuyerLoginEligible(account as never)).toBe(viaLogin);
+  });
+});
+
+/**
+ * SA-542c: the helper decides eligibility, the CALLER keeps the order. deletedAt and the lockout
+ * refuse BEFORE bcrypt (no counter churn); status is consulted only AFTER bcrypt ran, so a
+ * non-ACTIVE account answers exactly like an active one given a wrong password (B213).
+ */
+describe("SA-542c: the login paths keep the timing-oracle order", () => {
+  let hash: string;
+  beforeAll(async () => {
+    hash = await bcrypt.hash("pw", 4);
+  });
+  beforeEach(() => compareSpy.mockClear());
+
+  function staff(over: Record<string, unknown>) {
+    const user = {
+      id: "u1",
+      username: "op",
+      password: hash,
+      status: "ACTIVE",
+      deletedAt: null,
+      lockedUntil: null,
+      failedLoginAttempts: 0,
+      ...over,
+    };
+    const svc = Object.create(AuthService.prototype) as AuthService;
+    Object.assign(svc, {
+      usersService: { findByUsername: jest.fn().mockResolvedValue(user) },
+      prisma: { user: { update: jest.fn().mockResolvedValue({}) } },
+      recordFailedLogin: jest.fn(),
+    });
+    return svc;
+  }
+
+  function buyer(over: Record<string, unknown>) {
+    const account = {
+      id: "b1",
+      email: "buyer@acme.test",
+      name: "Acme Buyer",
+      passwordHash: hash,
+      passwordSet: true,
+      status: "ACTIVE",
+      deletedAt: null,
+      lockedUntil: null,
+      failedLoginAttempts: 0,
+      ...over,
+    };
+    const svc = Object.create(BuyerAuthService.prototype) as BuyerAuthService;
+    Object.assign(svc, {
+      prisma: {
+        buyerAccount: {
+          findUnique: jest.fn().mockResolvedValue(account),
+          update: jest.fn().mockResolvedValue({}),
+        },
+      },
+      recordFailedLogin: jest.fn(),
+      issueBuyerTokenPair: jest.fn().mockResolvedValue({ accessToken: "a", refreshToken: "r" }),
+    });
+    return svc;
+  }
+  const buyerRefusal = (svc: BuyerAuthService, password: string) =>
+    svc.login({ email: "buyer@acme.test", password } as never).then(
+      () => "signed-in",
+      (e: Error) => `${e.constructor.name}: ${e.message}`,
+    );
+
+  it("staff: a wrong password on an INACTIVE user answers like one on an ACTIVE user, bcrypt ran in both", async () => {
+    const active = await staff({}).validateUser("op", "wrong", "t1");
+    const inactive = await staff({ status: "INACTIVE" }).validateUser("op", "wrong", "t1");
+    expect(active).toBeNull();
+    expect(inactive).toBeNull();
+    expect(compareSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("staff: the RIGHT password on an INACTIVE user still runs bcrypt before it is refused", async () => {
+    expect(await staff({ status: "INACTIVE" }).validateUser("op", "pw", "t1")).toBeNull();
+    expect(compareSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("staff: deleted and locked users are refused WITHOUT bcrypt (placement unchanged)", async () => {
+    expect(await staff({ deletedAt: new Date() }).validateUser("op", "pw", "t1")).toBeNull();
+    expect(await staff({ lockedUntil: FUTURE }).validateUser("op", "pw", "t1")).toBeNull();
+    expect(compareSpy).not.toHaveBeenCalled();
+  });
+
+  it("buyer: a wrong password on a SUSPENDED account is the same 401 as on an ACTIVE one, bcrypt ran in both", async () => {
+    const active = await buyerRefusal(buyer({}), "wrong");
+    const suspended = await buyerRefusal(buyer({ status: "SUSPENDED" }), "wrong");
+    expect(active).toBe("UnauthorizedException: Invalid credentials");
+    expect(suspended).toBe(active);
+    expect(compareSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("buyer: deleted and locked accounts are refused WITHOUT bcrypt (placement unchanged)", async () => {
+    expect(await buyerRefusal(buyer({ deletedAt: new Date() }), "pw")).toBe(
+      "UnauthorizedException: Invalid credentials",
+    );
+    expect(await buyerRefusal(buyer({ lockedUntil: FUTURE }), "pw")).toBe(
+      "UnauthorizedException: Invalid credentials",
+    );
+    expect(compareSpy).not.toHaveBeenCalled();
   });
 });
