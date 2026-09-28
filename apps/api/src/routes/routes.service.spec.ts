@@ -576,19 +576,22 @@ describe("RoutesService", () => {
     });
 
     it("reorderRunStops clears the PARENT route's polyline — it's what the run map draws", async () => {
-      prisma.routeRun.findUnique.mockResolvedValue({ ...MOCK_RUN, routeId: "route-1" });
+      prisma.routeRun.findFirst.mockResolvedValue({ ...MOCK_RUN, routeId: "route-1" });
       prisma.routeRunStop.findMany.mockResolvedValue([
-        { id: "runstop-1", stopNumber: 1 },
-        { id: "runstop-2", stopNumber: 2 },
+        { id: "runstop-1", stopNumber: 1, status: "PENDING" },
+        { id: "runstop-2", stopNumber: 2, status: "PENDING" },
       ]);
-      prisma.$transaction = jest.fn().mockResolvedValue([]);
+      prisma.routeRunStop.updateMany.mockResolvedValue({ count: 1 });
 
       await service.reorderRunStops("run-1", [
         { id: "runstop-2", stopNumber: 1 },
         { id: "runstop-1", stopNumber: 2 },
       ]);
 
-      expect(polylineCleared()).toBe(true);
+      expect(prisma.route.update).toHaveBeenCalledWith({
+        where: { id: "route-1" },
+        data: { plannedPolyline: null },
+      });
     });
   });
 

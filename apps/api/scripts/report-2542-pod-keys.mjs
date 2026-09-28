@@ -23,7 +23,10 @@
  * the shape, split by kind:
  *   OTHER_TENANT  names another tenant's pod prefix (a cross-tenant pointer);
  *   TRAVERSAL     contains `..`, a `.` or empty segment, a backslash or percent-encoding;
- *   OTHER_SHAPE   any other schemeless value that is not a canonical own pod key.
+ *   OTHER_SHAPE   any other schemeless value that is not a canonical own pod key;
+ *   SAME_TENANT_OTHER_STOP  (#2585) a canonical OWN-tenant pod key whose stop segment names a
+ *                 different stop: a relink stored before #2582's per-stop check. It passes the
+ *                 shape and the tenant check, so signing still serves it for the wrong stop.
  * The stored VALUES and tenant slugs are never printed; `--json` adds the affected stop ids.
  * Live and approved-test tenants are reported separately. Any cleanup is a separate,
  * dry-run-first ticket.
@@ -80,8 +83,12 @@ export function classify(value, tenantId) {
 export function failingValues(stop) {
   const out = [];
   const check = (field, value) => {
-    if (isKeyCandidate(value) && !isPodStorageKey(value.trim(), stop.tenantId))
+    if (!isKeyCandidate(value)) return;
+    const v = value.trim();
+    if (!isPodStorageKey(v, stop.tenantId))
       out.push({ field, kind: classify(value, stop.tenantId) });
+    // #2585: a well-formed own key for ANOTHER stop (segment 3 is the stop id).
+    else if (v.split("/")[3] !== stop.stopId) out.push({ field, kind: "SAME_TENANT_OTHER_STOP" });
   };
   check("signatureUrl", stop.signatureUrl);
   for (const p of stop.podPhotoUrls ?? []) check("podPhotoUrls", p);
@@ -105,6 +112,7 @@ export function summarize(rows, { withStopIds = false } = {}) {
       OTHER_TENANT: 0,
       TRAVERSAL: 0,
       OTHER_SHAPE: 0,
+      SAME_TENANT_OTHER_STOP: 0,
     };
     t.stops.add(r.stopId);
     t.values++;
@@ -118,6 +126,7 @@ export function summarize(rows, { withStopIds = false } = {}) {
     OTHER_TENANT: t.OTHER_TENANT,
     TRAVERSAL: t.TRAVERSAL,
     OTHER_SHAPE: t.OTHER_SHAPE,
+    SAME_TENANT_OTHER_STOP: t.SAME_TENANT_OTHER_STOP,
     ...(withStopIds ? { stopIds: [...t.stops] } : {}),
   }));
   return {
@@ -125,6 +134,7 @@ export function summarize(rows, { withStopIds = false } = {}) {
     stops: detail.reduce((n, d) => n + d.stops, 0),
     values: detail.reduce((n, d) => n + d.values, 0),
     crossTenant: detail.reduce((n, d) => n + d.OTHER_TENANT, 0),
+    otherStop: detail.reduce((n, d) => n + d.SAME_TENANT_OTHER_STOP, 0),
     detail,
   };
 }
@@ -147,12 +157,28 @@ export function selfTest() {
   eq(classify(`tenants/${T}/pod/./s/x.jpg`, T), "TRAVERSAL", "dot segment");
   eq(classify("tenants/t2/pod/s/x.jpg", T), "OTHER_TENANT", "other tenant");
   eq(classify("products/p1/x.jpg", T), "OTHER_SHAPE", "other shape");
+  const relinked = {
+    stopId: "stop-1",
+    tenantId: T,
+    signatureUrl: `tenants/${T}/pod/stop-1/signature-sig00001.jpg`,
+    podPhotoUrls: [`tenants/${T}/pod/stop-2/photo-abcd1234.jpg`],
+  };
+  eq(
+    failingValues(relinked),
+    [{ field: "podPhotoUrls", kind: "SAME_TENANT_OTHER_STOP" }],
+    "own key for another stop",
+  );
+  eq(
+    summarize([{ tenantId: T, stopId: "stop-1", kind: "SAME_TENANT_OTHER_STOP" }]).otherStop,
+    1,
+    "other-stop total",
+  );
   const stop = {
     stopId: "s1",
     tenantId: T,
     signatureUrl: `tenants/${T}/pod/../../t2/pod/s/sig.jpg`,
     podPhotoUrls: [
-      `tenants/${T}/pod/stop-1/photo-abcd1234.jpg`,
+      `tenants/${T}/pod/s1/photo-abcd1234.jpg`, // its own stop: passes
       "data:image/jpeg;base64,/9j",
       "tenants/t2/pod/s/p.jpg",
     ],
@@ -252,11 +278,11 @@ async function main() {
     for (const block of ["live", "test"]) {
       const s = report[block];
       console.log(
-        `${block}: ${s.values} POD value(s) failing the strict key shape on ${s.stops} stop(s) across ${s.tenants} tenant(s); ${s.crossTenant} point at ANOTHER tenant`,
+        `${block}: ${s.values} POD value(s) failing the strict key shape or naming another stop, on ${s.stops} stop(s) across ${s.tenants} tenant(s); ${s.crossTenant} point at ANOTHER tenant, ${s.otherStop} at another stop of the same tenant`,
       );
       for (const d of s.detail)
         console.log(
-          `  ${d.tenant}  ${d.stops} stop(s), ${d.values} value(s): other-tenant ${d.OTHER_TENANT}, traversal ${d.TRAVERSAL}, other shape ${d.OTHER_SHAPE}`,
+          `  ${d.tenant}  ${d.stops} stop(s), ${d.values} value(s): other-tenant ${d.OTHER_TENANT}, traversal ${d.TRAVERSAL}, other shape ${d.OTHER_SHAPE}, same-tenant other stop ${d.SAME_TENANT_OTHER_STOP}`,
         );
     }
   } finally {
