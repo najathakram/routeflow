@@ -1,6 +1,7 @@
 import { HttpStatus } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { BillingWebhookController } from "./billing-webhook.controller";
+import { DB_NOW_UTC } from "../common/webhook-ledger-claim";
 
 const T_INSERT = new Date("2026-09-28T05:00:00.000Z");
 const T_CLAIM = new Date("2026-09-28T05:07:00.000Z");
@@ -398,5 +399,32 @@ describe("#2476 BillingWebhookController — DB-clock claim and fenced outcome w
     await controller.handleWebhook(req as never, res as never);
     expect(billing.handleWebhookEvent).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(HttpStatus.INTERNAL_SERVER_ERROR);
+  });
+});
+
+// SA-472b: ONE spelling of the database clock in all three places — the INSERT value, the claim SET
+// and the lease compare — never a bare now() (timestamptz, cast by the session time zone).
+describe("#2476 SA-472b — one DB-clock fragment", () => {
+  it("the insert and the claim both use DB_NOW_UTC, and nothing spells now() any other way", async () => {
+    const { controller, prisma, req, res } = build({
+      construct: () => ({ type: "invoice.paid", id: "evt_tz", created: 1_700_000_000 }),
+      create: async () => {
+        throw new Prisma.PrismaClientKnownRequestError("dup", {
+          code: "P2002",
+          clientVersion: "t",
+        });
+      },
+      existing: { outcome: "processed" },
+    });
+    await controller.handleWebhook(req as never, res as never);
+    const insert = rawOf(prisma.$queryRaw, "INSERT")!.sql;
+    const claim = rawOf(prisma.$queryRaw, "UPDATE")!.sql;
+    const frag = DB_NOW_UTC.sql;
+    expect(frag).toBe("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')");
+    expect(insert.split(frag).length - 1).toBe(1); // the processedAt value
+    expect(claim.split(frag).length - 1).toBe(2); // the SET and the lease compare
+    for (const q of [insert, claim]) {
+      expect(q.replaceAll(frag, "").match(/now\(\)|CURRENT_TIMESTAMP|LOCALTIMESTAMP/gi)).toBeNull();
+    }
   });
 });

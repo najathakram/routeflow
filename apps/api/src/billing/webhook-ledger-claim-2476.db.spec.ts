@@ -212,6 +212,65 @@ describeDb("#2476 webhook ledger exclusive claim on redelivery (real Postgres, S
     });
   });
 
+  // SA-472b: on a session whose time zone is NOT UTC, a bare now() stored in the TIMESTAMP(3) column
+  // would be New York wall time (hours off the UTC convention). The one fragment keeps it UTC.
+  it("SA-472b: on a SET TIME ZONE 'America/New_York' session, insert → claim stays on UTC and the fence matches", async () => {
+    const nyPool = new Pool({ connectionString: requireLocalDatabaseUrl(), max: 2 });
+    nyPool.on("connect", (c) => {
+      void c.query("SET TIME ZONE 'America/New_York'");
+    });
+    const ny = new PrismaClient({ adapter: new PrismaPg(nyPool) });
+    try {
+      const [{ TimeZone: tz }] = await ny.$queryRaw<{ TimeZone: string }[]>(
+        Prisma.sql`SHOW TIME ZONE`,
+      );
+      expect(tz).toBe("America/New_York"); // ENTRY: the session really is non-UTC
+
+      /** The DB's UTC now, TZ-independent (epoch), not via the fragment under test. */
+      const utcNowMs = async () => {
+        const [r] = await ny.$queryRaw<{ e: number }[]>(
+          Prisma.sql`SELECT extract(epoch FROM CURRENT_TIMESTAMP)::float8 AS "e"`,
+        );
+        return r.e * 1000;
+      };
+
+      const id = `evt_2476_ny_${run}`;
+      billingIds.push(id);
+      let n = 0;
+      const stripe = {
+        isConfigured: true,
+        constructWebhookEvent: () => ({ id, type: "invoice.paid", created: 1_700_000_000 }),
+      };
+      const billing = {
+        handleWebhookEvent: async () => {
+          n += 1;
+          if (n === 1) throw new Error("first attempt fails"); // leaves an error: row to claim
+        },
+      };
+      const ctl = new BillingWebhookController(stripe as any, billing as any, ny as any);
+
+      const a = res();
+      await ctl.handleWebhook(req as any, a.r as any); // INSERT on the NY session
+      const inserted = await prisma.stripeBillingEvent.findUniqueOrThrow({ where: { id } });
+      expect(Math.abs(inserted.processedAt.getTime() - (await utcNowMs()))).toBeLessThan(2_000);
+      expect(inserted.outcome).toBe("error:first attempt fails"); // the fence matched on the insert token
+
+      const b = res();
+      await ctl.handleWebhook(req as any, b.r as any); // CLAIM on the NY session
+      const claimed = await prisma.stripeBillingEvent.findUniqueOrThrow({ where: { id } });
+      expect(Math.abs(claimed.processedAt.getTime() - (await utcNowMs()))).toBeLessThan(2_000);
+      expect({ a: a.out.status, b: b.out.status, runs: n, outcome: claimed.outcome }).toEqual({
+        a: HttpStatus.INTERNAL_SERVER_ERROR,
+        b: HttpStatus.OK,
+        runs: 2,
+        outcome: "processed", // the fenced write on the claim token matched 1 row
+      });
+    } finally {
+      await ny.$disconnect();
+      await nyPool.end();
+    }
+  });
+
   describe("Connect webhook — the same claim", () => {
     function connectController(eventId: string, settle: () => Promise<{ handled: boolean }>) {
       connectIds.push(eventId);

@@ -45,8 +45,13 @@ const TABLE_SQL: Record<WebhookLedgerTable, Prisma.Sql> = {
   StripeConnectEvent: Prisma.raw('"StripeConnectEvent"'),
 };
 
-/** The database clock as a UTC wall time — the convention Prisma reads TIMESTAMP(3) columns with. */
-const DB_NOW_UTC = Prisma.sql`(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')`;
+/**
+ * The database clock as a UTC wall time — the convention Prisma reads TIMESTAMP(3) columns with.
+ * SA-472b: the ONE spelling of "now" for the insert value, the claim SET and the lease compare. A bare
+ * now() is timestamptz; assigned to a TIMESTAMP(3) column it is cast by the SESSION time zone, so on a
+ * non-UTC session the stored claim would drift from the UTC convention and the lease/fence with it.
+ */
+export const DB_NOW_UTC = Prisma.sql`(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')`;
 
 /** A ledger row is done once it holds a non-null, non-"error:" outcome (NULL is never done). */
 export function isCompletedOutcome(outcome: string | null | undefined): boolean {
