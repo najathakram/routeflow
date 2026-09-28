@@ -45,6 +45,7 @@ import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { StorageService } from "../storage/storage.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EstimatesService } from "../estimates/estimates.service";
@@ -153,6 +154,7 @@ describeDb("#2562 run-stop reorder vs a concurrent run start — real Postgres",
           useValue: { upload: jest.fn(), presignedUrl: jest.fn(), delete: jest.fn() },
         },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
+        entitlementAuthorityFromEntitlements, // #2241: EntitlementAuthority
         {
           provide: CommissionEngineService,
           useValue: {
