@@ -16,6 +16,7 @@
 // them (hidden, never unmounted) across a refusal so a retry doesn't lose the operator's typed
 // lines/quote.
 import * as React from "react";
+import Link from "next/link";
 import { Button, Modal, Select, useToast } from "@routeflow/ui/web";
 import { useOrders } from "@/lib/api/orders";
 import { useCaptureInlineReturn } from "@/lib/api/inline-returns";
@@ -24,6 +25,7 @@ import {
   buildCaptureRequest,
   DEFAULT_EXCESS_OPTION,
   extractRefusalMessage,
+  keyReusedReturnOf,
   mintReturnKey,
   refundAmountOf,
 } from "@routeflow/returns";
@@ -62,6 +64,11 @@ export function RecordInlineReturnDialog({
   const [phase, setPhase] = React.useState<DialogPhase>("capture");
   const [carryingOrderId, setCarryingOrderId] = React.useState(orderId ?? "");
   const [refusalMessage, setRefusalMessage] = React.useState("");
+  // #2647: the return already recorded under this capture key (a key-reused 409), else null.
+  const [recordedReturn, setRecordedReturn] = React.useState<{
+    returnId: string;
+    returnNumber: string | null;
+  } | null>(null);
   const [result, setResult] = React.useState<InlineReturnRecord | null>(null);
   const [openSeq, setOpenSeq] = React.useState(0);
   const [sectionState, setSectionState] = React.useState<InlineReturnSectionState>({
@@ -88,6 +95,7 @@ export function RecordInlineReturnDialog({
     setCarryingOrderId(orderId ?? "");
     setResult(null);
     setRefusalMessage("");
+    setRecordedReturn(null);
     returnKeyRef.current = "";
   }, [open, orderId]);
 
@@ -112,6 +120,14 @@ export function RecordInlineReturnDialog({
         },
         onError: (err) => {
           setRefusalMessage(extractRefusalMessage(err));
+          // #2647: the earlier capture WAS recorded: link it and clear the draft (a fresh key and a
+          // re-seeded section), so the same goods are not re-entered and credited twice.
+          const recorded = keyReusedReturnOf(err);
+          setRecordedReturn(recorded);
+          if (recorded) {
+            returnKeyRef.current = "";
+            setOpenSeq((n) => n + 1);
+          }
           setPhase("refused");
         },
       },
@@ -240,6 +256,15 @@ export function RecordInlineReturnDialog({
       {phase === "refused" && (
         <div className="space-y-3">
           <p className="text-sm font-medium text-danger">{refusalMessage}</p>
+          {recordedReturn && (
+            <Link
+              data-testid="inline-return-recorded-link"
+              href={`/returns/${recordedReturn.returnId}`}
+              className="text-sm font-medium text-plum underline"
+            >
+              Open {recordedReturn.returnNumber ?? "the recorded return"}
+            </Link>
+          )}
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={onClose}>
               Close
