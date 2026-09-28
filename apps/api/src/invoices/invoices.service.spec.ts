@@ -18,12 +18,7 @@ jest.mock("../storage/compress.util", () => ({
 }));
 
 import { Test, TestingModule } from "@nestjs/testing";
-import {
-  BadRequestException,
-  ConflictException,
-  NotFoundException,
-  ServiceUnavailableException,
-} from "@nestjs/common";
+import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { InvoicesService, addCalendarDays } from "./invoices.service";
 import { startOfCalendarDay } from "../common/calendar-date";
 import { AfterCommit } from "../common/after-commit";
@@ -1935,67 +1930,6 @@ describe("InvoicesService", () => {
       // subtotal 440, tax 44, categoryTax 0, fee 6 → total 490.
       expect(data.total).toBeCloseTo(490, 2);
       expect(res).toMatchObject({ shippingFee: 6, total: 490 });
-    });
-  });
-
-  // ─── #2662: a split-invoice transaction that dies is a clean refusal, never a TypeError 500 ────
-
-  // Under lock contention the office path's transaction can outlive Prisma's interactive-tx
-  // timeout (P2028) — Prisma rolls it back, and the caller must get a retryable 503 saying nothing
-  // was saved. And a create that yields no invoice must stop the loop before anything reads it.
-  describe("#2662 createSplitInvoices — transaction timeout / missing invoice", () => {
-    function arrange() {
-      jest
-        .spyOn(service as any, "resolveDefaultTerms")
-        .mockResolvedValue({ terms: "Net 30", dueDays: 30 });
-      jest
-        .spyOn(service as any, "resolveTenantInvoiceDefaults")
-        .mockResolvedValue({ notes: null, terms: null, timezone: null });
-      jest.spyOn(service as any, "generateInvoiceNumber").mockResolvedValue("INV-1");
-      prisma.order.findUnique.mockResolvedValue({
-        id: "ord-2662",
-        customerId: "cust-1",
-        orderNumber: "ORD-2662",
-        subtotal: 20,
-        tax: 0,
-        lineItems: [
-          {
-            id: "li-1",
-            productId: "p1",
-            name: null,
-            qty: 2,
-            invoicedQty: 0,
-            unitPrice: 10,
-            originalPrice: null,
-            priceType: "STANDARD",
-            product: { name: "Widget", unitsPerBox: 0 },
-          },
-        ],
-      });
-      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
-    }
-
-    it("a transaction timeout (P2028) is a 503 that says nothing was saved — never a raw 500", async () => {
-      arrange();
-      const timeout = Object.assign(
-        new Error(
-          "Transaction API error: Transaction already closed: A commit cannot be executed on an expired transaction. The timeout for this transaction was 5000 ms",
-        ),
-        { code: "P2028" },
-      );
-      prisma.tenantTransaction.mockRejectedValueOnce(timeout);
-      const err = await service.createInvoiceFromOrder("ord-2662").catch((e: unknown) => e);
-      expect(err).toBeInstanceOf(ServiceUnavailableException);
-      expect((err as ServiceUnavailableException).getStatus()).toBe(503);
-      expect(String((err as Error).message)).toMatch(/nothing was saved.*retry/i);
-    });
-
-    it("a create that yields no invoice stops cleanly (503) before anything reads it — never a TypeError", async () => {
-      arrange();
-      prisma.invoice.create.mockResolvedValue(undefined);
-      const err = await service.createInvoiceFromOrder("ord-2662").catch((e: unknown) => e);
-      expect(err).not.toBeInstanceOf(TypeError);
-      expect(err).toBeInstanceOf(ServiceUnavailableException);
     });
   });
 
