@@ -54,6 +54,12 @@ if [ "$SKIP_VERIFY" = "1" ]; then
   export RF_HEAD="$(git rev-parse --short HEAD)"
   export RF_CHANGED_FILES="$changed"
   export RF_AUDIT_LOG="$(git rev-parse --git-dir)/skip-verify.log"
+  # B892: git's pre-push stdin names every ref actually being pushed (`<local ref> <local sha>
+  # <remote ref> <remote sha>` per line). The audit gates and logs THOSE — the HEAD values above
+  # are only its fallback. Never read a terminal (a hand-run hook would hang on cat).
+  if [ ! -t 0 ]; then
+    export RF_PUSH_REFS="$(cat)"
+  fi
   node scripts/skip-verify-audit.mjs || exit 1
   echo "⚠ SKIP_VERIFY=1 — skipping 'npm run verify'."
   echo "⚠ CI runs ONE consolidated job on the PR; it will re-check this on Linux,"
