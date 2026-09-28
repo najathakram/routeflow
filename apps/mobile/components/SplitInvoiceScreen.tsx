@@ -712,7 +712,9 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_700Bold",
     fontVariant: ["tabular-nums"],
   },
-  quickRow: { flexDirection: "row", flexWrap: "wrap", gap: 4 },
+  // #2084: bounded to the row so its OWN wrap engages — as a flex item of the wrapping itemRow it
+  // otherwise sized to all buttons on one line and a Case line's six clipped past the card at 390.
+  quickRow: { flexDirection: "row", flexWrap: "wrap", gap: 4, flexShrink: 1, maxWidth: "100%" },
   quickBtn: {
     paddingHorizontal: 8,
     paddingVertical: 5,
