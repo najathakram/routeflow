@@ -1,3 +1,4 @@
+import { priceOverrideOf } from "./price-override";
 import { Injectable, Logger } from "@nestjs/common";
 import { CronExpression } from "@nestjs/schedule";
 import { LeaderCron } from "../common/cron-lock";
@@ -19,6 +20,7 @@ import {
   UnknownPlanKeyError,
 } from "./plan-catalog.constants";
 import { addCycle } from "./billing-math";
+import { lockTenantForLedger } from "./addon-ledger";
 import { BillingNotificationService } from "./billing-notification.service";
 import { PlanTransitionConfigService, SnapshotFailedError } from "./plan-transition-config.service";
 
@@ -219,6 +221,10 @@ export class BillingCronService {
         tenantId: true,
         planKey: true,
         planVersionId: true,
+        // #2223 / SA-444c: the negotiated fee a downgrade keeps.
+        priceOverrideMonthly: true,
+        // #2460 / SA-464 (2): the ledger nets against the stored snapshot, never the catalog.
+        basePriceSnapshot: true,
         downgradeToPlanKey: true,
         downgradeEffectiveAt: true,
         retainedUserIds: true,
@@ -259,8 +265,14 @@ export class BillingCronService {
           }
           targetVersion = published;
         }
+        // #2223 / SA-444c (i) + #2460 / SA-464 (2), one invariant (snapshot = what the tenant pays):
+        // the new snapshot is the negotiated fee, else the target's price; the ledger books it minus
+        // what the MRR snapshot counted (the stored snapshot, NULL ⇒ 0) — never a catalog price for
+        // the plan being left. A consistent override row therefore books Δ0.
+        const override = priceOverrideOf(s);
+        const newBase = override ?? this.planMonthly(targetVersion, target);
         const amountDelta = roundMoney(
-          this.planMonthly(targetVersion, target) - this.planMonthly(fromVersion, s.planKey),
+          newBase - (s.planKey ? Number(s.basePriceSnapshot ?? 0) : 0),
         );
         const seatCap = targetDef.seatsIncluded ?? null;
 
@@ -284,6 +296,9 @@ export class BillingCronService {
           if (transition && preparedTransition) {
             await this.planTransition.onPlanChange(tx, transition, preparedTransition);
           }
+          // #2551 / SA-503a: the house order — Tenant row lock right after the hook, before the
+          // subscription write (reconcile/updatePlan/Pricing hold Tenant, then write this row).
+          await lockTenantForLedger(tx, s.tenantId);
           await tx.tenantSubscription.update({
             where: { tenantId: s.tenantId },
             data: {
@@ -295,7 +310,7 @@ export class BillingCronService {
               // bad row never stops the sweep from applying every other tenant's downgrade.
               currentPlan: planKeyToEnum(target),
               planVersionId: targetVersion.id,
-              basePriceSnapshot: targetDef.monthlyPrice ?? null,
+              basePriceSnapshot: override ?? targetDef.monthlyPrice ?? null,
               downgradeToPlanKey: null,
               downgradeEffectiveAt: null,
               retainedUserIds: [],

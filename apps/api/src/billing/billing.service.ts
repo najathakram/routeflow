@@ -1,3 +1,4 @@
+import { TX_CONFLICT_MAX_ATTEMPTS } from "../common/tx-retry";
 import {
   Injectable,
   Logger,
@@ -25,6 +26,8 @@ import {
 } from "./plan-catalog.constants";
 import { BillingNotificationService } from "./billing-notification.service";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
+import { lockTenantForLedger } from "./addon-ledger";
+import { retryOnTxConflict } from "../common/tx-retry";
 import {
   STRIPE_CHECKOUT_APPLIED_ACTION,
   STRIPE_CHECKOUT_ENTITY,
@@ -523,39 +526,67 @@ export class BillingService {
     planKey: string,
     sync: { synced: boolean; reason?: string },
   ): Promise<void> {
-    const sub = await this.prisma.tenantSubscription.findUnique({
-      where: { tenantId },
-      select: {
-        planKey: true,
-        basePriceSnapshot: true,
-        tenant: { select: { status: true, deletedAt: true, class: true } },
-      },
-    });
-    if (!sub || sub.planKey == null) return;
-
-    const oldMonthly = sub.basePriceSnapshot != null ? Number(sub.basePriceSnapshot) : 0;
     const newMonthly = roundMoney(resolvedMonthly);
-    if (oldMonthly === newMonthly) return;
+    // #2509: ONE transaction per attempt — read, compare-and-set the snapshot on the (planKey,
+    // basePriceSnapshot) just read, and emit in the same tx. A concurrent plan change or Pricing write
+    // that lands between the read and the write makes the CAS miss instead of being overwritten or
+    // double-booked. A miss re-reads: a plan change since the read ⇒ this resolved price is stale for
+    // the row, so stop (the plan path wrote its own snapshot); only the snapshot moved ⇒ retry.
+    // SA-503a: each attempt's tx is retried on a lock conflict (40P01/40001) — this runs AFTER the fee
+    // and the Stripe push committed, so a conflict must never surface as a 500 over a stale snapshot.
+    for (let attempt = 0; attempt < TX_CONFLICT_MAX_ATTEMPTS; attempt++) {
+      const outcome = await retryOnTxConflict("billing.reconcilePriceLedger", () =>
+        this.prisma.$transaction(async (tx) => {
+          // SA-485b (ii): the house Tenant row lock, FIRST — lock → read → CAS → emit, so a plan change or
+          // Pricing write (every writer takes this lock before the subscription row, #2551) serializes
+          // with this reconcile. The CAS below stays as the guard against any write it cannot see.
+          await tx.$queryRaw`SELECT id FROM "Tenant" WHERE id = ${tenantId} FOR UPDATE`;
+          const sub = await tx.tenantSubscription.findUnique({
+            where: { tenantId },
+            select: {
+              planKey: true,
+              basePriceSnapshot: true,
+              tenant: { select: { status: true, deletedAt: true, class: true } },
+            },
+          });
+          if (!sub || sub.planKey == null) return "done" as const;
+          if (normalizePlanKey(sub.planKey) !== normalizePlanKey(planKey)) {
+            this.logger.warn(
+              `#2509: tenant ${tenantId}'s plan changed during a price sync — the resolved price is stale; not reconciled`,
+            );
+            return "done" as const;
+          }
+          const oldMonthly = sub.basePriceSnapshot != null ? Number(sub.basePriceSnapshot) : 0;
+          if (oldMonthly === newMonthly) return "done" as const;
 
-    await this.prisma.tenantSubscription.update({
-      where: { tenantId },
-      data: { basePriceSnapshot: newMonthly },
-    });
+          const { count } = await tx.tenantSubscription.updateMany({
+            where: { tenantId, planKey: sub.planKey, basePriceSnapshot: sub.basePriceSnapshot },
+            data: { basePriceSnapshot: newMonthly },
+          });
+          if (count === 0) return "retry" as const;
 
-    if (!isPayingRow(sub.tenant, sub.planKey)) return;
-
-    await this.events.emit(
-      tenantId,
-      BILLING_EVENTS.PLAN_CHANGED,
-      {
-        source: "platform_pricing_sync",
-        planKey,
-        oldMonthly,
-        newMonthly,
-        stripeSynced: sync.synced,
-        stripeReason: sync.reason ?? null,
-      },
-      { amountDelta: roundMoney(newMonthly - oldMonthly) },
+          if (isPayingRow(sub.tenant, sub.planKey)) {
+            await this.events.emit(
+              tenantId,
+              BILLING_EVENTS.PLAN_CHANGED,
+              {
+                source: "platform_pricing_sync",
+                planKey,
+                oldMonthly,
+                newMonthly,
+                stripeSynced: sync.synced,
+                stripeReason: sync.reason ?? null,
+              },
+              { amountDelta: roundMoney(newMonthly - oldMonthly), tx },
+            );
+          }
+          return "done" as const;
+        }),
+      );
+      if (outcome === "done") return;
+    }
+    this.logger.warn(
+      `#2509: tenant ${tenantId}'s price reconcile kept losing its compare-and-set — left for the next sync`,
     );
   }
 
@@ -865,56 +896,66 @@ export class BillingService {
     let upserted: any;
     if (transition && preparedTransition?.enabled) {
       try {
-        upserted = await this.prisma.$transaction(
-          async (tx) => {
-            // One processor per checkout session at a time (the audit row below has no unique
-            // index, and adding one is a migration): a concurrent redelivery waits here, then sees
-            // the winner's committed row and does nothing.
-            if (session.id) {
-              await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"stripe-checkout"}), hashtext(${session.id}))`;
-              const done = await tx.auditLog.findFirst({
-                where: {
-                  tenantId,
-                  entityType: STRIPE_CHECKOUT_ENTITY,
-                  entityId: session.id,
-                  action: STRIPE_CHECKOUT_APPLIED_ACTION,
-                },
-                select: { id: true },
-              });
-              if (done) return ALREADY_APPLIED;
-            }
-            // A snapshot failure (a DOWNGRADE) throws -> the handler fails -> Stripe redelivers,
-            // so a downgrade is never applied without its snapshot (fail closed).
-            await this.planTransition.onPlanChange(tx, transition, preparedTransition);
-            // Compare-and-swap on the plan we judged the transition from (the same shape as
-            // upgrade()'s guard): if an in-app change moved it since we read it, this checkout is
-            // stale — throw so the tx (hook writes included) rolls back and Stripe redelivers,
-            // instead of silently reversing the newer change.
-            if (existingOverride) {
-              const held = await tx.tenantSubscription.updateMany({
-                where: { tenantId, planKey: existingOverride.planKey ?? null },
-                data: { stripeSubId: subscriptionId },
-              });
-              if (held.count === 0) {
-                throw new ConflictException("Plan changed concurrently — the checkout is retried.");
+        // #2560 / SA-508: a lock conflict (40P01/40001) is retried in-process — the advisory lock
+        // and the in-tx "already applied" check make a re-run idempotent; one that persists past the
+        // budget still rethrows below and Stripe redelivers.
+        upserted = await retryOnTxConflict("billing.onCheckoutCompleted", () =>
+          this.prisma.$transaction(
+            async (tx) => {
+              // One processor per checkout session at a time (the audit row below has no unique
+              // index, and adding one is a migration): a concurrent redelivery waits here, then sees
+              // the winner's committed row and does nothing.
+              if (session.id) {
+                await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"stripe-checkout"}), hashtext(${session.id}))`;
+                const done = await tx.auditLog.findFirst({
+                  where: {
+                    tenantId,
+                    entityType: STRIPE_CHECKOUT_ENTITY,
+                    entityId: session.id,
+                    action: STRIPE_CHECKOUT_APPLIED_ACTION,
+                  },
+                  select: { id: true },
+                });
+                if (done) return ALREADY_APPLIED;
               }
-            }
-            const row = await tx.tenantSubscription.upsert(upsertArgs);
-            if (session.id) {
-              await tx.auditLog.create({
-                data: {
-                  tenantId,
-                  action: STRIPE_CHECKOUT_APPLIED_ACTION,
-                  entityType: STRIPE_CHECKOUT_ENTITY,
-                  entityId: session.id,
-                  meta: { fromPlanKey: transition.fromPlanKey, toPlanKey: transition.toPlanKey },
-                },
-              });
-            }
-            return row;
-          },
-          // Explicit, bounded budget — see CHECKOUT_TX_OPTIONS for why these numbers.
-          CHECKOUT_TX_OPTIONS,
+              // A snapshot failure (a DOWNGRADE) throws -> the handler fails -> Stripe redelivers,
+              // so a downgrade is never applied without its snapshot (fail closed).
+              await this.planTransition.onPlanChange(tx, transition, preparedTransition);
+              // #2560 / SA-508: the house order — the Tenant row lock right after the hook, before the
+              // subscription writes and the AuditLog insert (its Tenant FK takes KEY SHARE).
+              await lockTenantForLedger(tx, tenantId);
+              // Compare-and-swap on the plan we judged the transition from (the same shape as
+              // upgrade()'s guard): if an in-app change moved it since we read it, this checkout is
+              // stale — throw so the tx (hook writes included) rolls back and Stripe redelivers,
+              // instead of silently reversing the newer change.
+              if (existingOverride) {
+                const held = await tx.tenantSubscription.updateMany({
+                  where: { tenantId, planKey: existingOverride.planKey ?? null },
+                  data: { stripeSubId: subscriptionId },
+                });
+                if (held.count === 0) {
+                  throw new ConflictException(
+                    "Plan changed concurrently — the checkout is retried.",
+                  );
+                }
+              }
+              const row = await tx.tenantSubscription.upsert(upsertArgs);
+              if (session.id) {
+                await tx.auditLog.create({
+                  data: {
+                    tenantId,
+                    action: STRIPE_CHECKOUT_APPLIED_ACTION,
+                    entityType: STRIPE_CHECKOUT_ENTITY,
+                    entityId: session.id,
+                    meta: { fromPlanKey: transition.fromPlanKey, toPlanKey: transition.toPlanKey },
+                  },
+                });
+              }
+              return row;
+            },
+            // Explicit, bounded budget — see CHECKOUT_TX_OPTIONS for why these numbers.
+            CHECKOUT_TX_OPTIONS,
+          ),
         );
       } catch (err) {
         if (!(err instanceof ConflictException) && !isDeadlockOrSerialization(err)) {

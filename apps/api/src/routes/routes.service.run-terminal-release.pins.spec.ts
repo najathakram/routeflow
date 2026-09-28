@@ -29,6 +29,7 @@ import { FeatureConfigService } from "../billing/feature-config.service";
 import { geocodeAddress } from "../common/geocode.util";
 import { compressImage } from "../storage/compress.util";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { AfterCommit } from "../common/after-commit";
 
 jest.mock("../common/geocode.util", () => ({ geocodeAddress: jest.fn() }));
 jest.mock("../storage/compress.util", () => ({
@@ -180,6 +181,7 @@ describe("RoutesService — F11 run cancel/skip pins (no REG- token; excluded fr
     // commit or roll back together.
     expect(invoicesService.recordDeliveryPaymentInTx).toHaveBeenCalledWith(
       txMock,
+      expect.any(AfterCommit), // #2175: the route tx's post-commit queue
       expect.any(Array),
       50,
       "CASH",
