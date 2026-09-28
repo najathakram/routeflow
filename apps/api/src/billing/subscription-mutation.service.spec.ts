@@ -858,6 +858,8 @@ describe("SubscriptionMutationService.upgrade", () => {
   // ledger MRR re-agree. The charge (proration) still nets against the catalog entitlement.
   it("#2460: an ACTIVE catalog row with a NULL snapshot books the FULL new price", async () => {
     const { svc, events } = make({
+      // #2583 / SA-513: a PAYING (ACTIVE) tenant — upgrade() now books on the shared predicate.
+      tenantStatus: "ACTIVE",
       sub: {
         planKey: "STARTER",
         cycle: "MONTHLY",
@@ -872,6 +874,8 @@ describe("SubscriptionMutationService.upgrade", () => {
 
   it("#2460: a consistent catalog row nets against its stored snapshot", async () => {
     const { svc, events } = make({
+      // #2583 / SA-513: a PAYING (ACTIVE) tenant — upgrade() now books on the shared predicate.
+      tenantStatus: "ACTIVE",
       sub: {
         planKey: "STARTER",
         cycle: "MONTHLY",
@@ -924,6 +928,8 @@ describe("SubscriptionMutationService.upgrade", () => {
 
   it("applies instantly (optimistic guard) with MRR delta = new − old", async () => {
     const { svc, tx, events } = make({
+      // #2583 / SA-513: a PAYING (ACTIVE) tenant — upgrade() now books on the shared predicate.
+      tenantStatus: "ACTIVE",
       sub: {
         planKey: "STARTER",
         cycle: "MONTHLY",
