@@ -173,3 +173,24 @@ describe("InlineReturnSection — hidden (#2406)", () => {
     expect(screen.queryByRole("button", { name: /get quote/i })).not.toBeInTheDocument();
   });
 });
+
+describe("InlineReturnSection — 'return only what was bought' with nothing bought (#2693)", () => {
+  it("an all-excess quote disables the option, says so in plain words, and never sends an empty re-quote", async () => {
+    renderSection();
+    await addProductAndQuote("6");
+    resolveNextQuote(
+      quoteResponse([
+        chunk({ sourceOrderId: null, sourceInvoiceItemId: null, pieces: 6, subtotal: 15 }),
+      ]),
+    );
+    await screen.findByText(/not on any invoice/i);
+    const onlyBought = screen.getByRole("radio", { name: /return only what was bought/i });
+    expect(onlyBought).toBeDisabled();
+    expect(screen.getByText(/hasn't bought these items before/i)).toBeInTheDocument();
+
+    fireEvent.click(onlyBought);
+    expect(quoteMutate).toHaveBeenCalledTimes(1); // only the original quote, never a re-quote
+    expect(screen.getByRole("radio", { name: /credit at current price/i })).toBeChecked();
+    expect(screen.queryByText(/must contain at least 1 elements/i)).not.toBeInTheDocument();
+  });
+});
