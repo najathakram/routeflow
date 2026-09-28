@@ -101,6 +101,42 @@ describe("routes lock order: STOP rows → RouteRun (#2631, SA-550)", () => {
     );
   });
 
+  // SA-550d belt: every writer of a run's STOP positions retries a lock conflict with a run transition
+  // (a cancel), and builds its batch INSIDE the retry callback (batch PrismaPromises are single-use).
+  // optimizeTemplate writes RouteStop (the route template), not RouteRunStop, so it is not listed.
+  it("(vi) reorderRunStops runs its tx under retryOnTxConflict", () => {
+    expect(methodBody("reorderRunStops")).toMatch(
+      /retryOnTxConflict\("routes\.reorderRunStops", \(\) =>\s*this\.prisma\.tenantTransaction\(/,
+    );
+  });
+
+  it.each([
+    [
+      "optimizeRoute",
+      /retryOnTxConflict\("routeOptimization\.optimizeRoute", \(\) =>\s*this\.prisma\.\$transaction\(\[/,
+    ],
+    [
+      "applyRouteVariant",
+      /retryOnTxConflict\("routeOptimization\.applyRouteVariant", \(\) =>\s*this\.prisma\.\$transaction\(buildOps\(\)\)/,
+    ],
+  ])(
+    "(vi) route-optimization %s builds its stop batch INSIDE a retryOnTxConflict callback",
+    (name, re) => {
+      const src = readFileSync(
+        join(__dirname, "..", "route-optimization", "route-optimization.service.ts"),
+        "utf8",
+      ).replace(/\/\/.*$/gm, "");
+      const m = new RegExp(`\\n  async ${name}\\(`).exec(src);
+      expect(m).not.toBeNull();
+      const from = m!.index;
+      const next = src.indexOf("\n  async ", from + 5);
+      const body = src.slice(from, next === -1 ? undefined : next);
+      expect(body).toMatch(re);
+      // No bare batch transaction left in the method (a stale, pre-built array reused on retry).
+      expect(body).not.toMatch(/await this\.prisma\.\$transaction\((\[|ops\))/);
+    },
+  );
+
   it("(iii) reopenStop resets its outer `reopened` list at the top of each attempt (a retry never duplicates)", () => {
     const cb = firstTxCallback(methodBody("reopenStop"));
     expect(cb.slice(1).trim().startsWith("reopened.length = 0;")).toBe(true);

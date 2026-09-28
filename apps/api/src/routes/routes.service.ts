@@ -592,7 +592,11 @@ export class RoutesService {
   }
 
   async reorderRunStops(runId: string, order: { id: string; stopNumber: number }[]) {
-    await this.prisma.tenantTransaction((tx: any) => reorderRunStopsInTx(tx, runId, order));
+    // #2631 (SA-550d): a cancel × reorder lock conflict retries, never a raw P2034 (500). Each attempt
+    // re-locks and re-reads inside reorderRunStopsInTx; the writes are absolute stop numbers.
+    await retryOnTxConflict("routes.reorderRunStops", () =>
+      this.prisma.tenantTransaction((tx: any) => reorderRunStopsInTx(tx, runId, order)),
+    );
     // #2095: post-commit — announce only after the reorder transaction has committed.
     await this.live.runProgress(runId);
     return { success: true };
