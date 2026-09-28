@@ -152,7 +152,7 @@ describeDb("#2476 webhook ledger exclusive claim on redelivery (real Postgres, S
     ['an "error:" row (claimable at once)', "error:boom", 1_000, 1, HttpStatus.OK],
     ['a "processed" row (a duplicate)', "processed", 1_000, 0, HttpStatus.OK],
   ])(
-    "billing redelivery onto %s ⇒ handler runs %i time(s), status %i",
+    "billing redelivery onto %s (outcome %s, age %i ms) ⇒ handler runs %i time(s), status %i",
     async (_l, outcome, age, runs, status) => {
       const id = `evt_2476_${String(outcome).replace(/[^a-z]/gi, "")}_${age}_${run}`;
       await seedBillingRow(id, outcome as string | null, age as number);
