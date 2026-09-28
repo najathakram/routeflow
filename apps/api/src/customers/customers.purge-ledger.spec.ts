@@ -20,7 +20,8 @@
  *   - `deleteAllCustomers` blocks only on issued or paid invoices (PAID or SENT at the time;
  *     SENT/VIEWED/PARTIAL/OVERDUE/PAID since #2558), then hard-deletes every remaining invoice —
  *     DRAFT included.
- *   - `deleteImportedCustomers` has **no invoice guard at all**.
+ *   - `deleteImportedCustomers` had **no invoice guard at all** (since #2569 it runs the same
+ *     pre-flight, in-tx re-check and CAS delete as deleteAllCustomers).
  *
  * The load-bearing fact that makes those real: a **DRAFT invoice already carries
  * ledger rows**. `createSplitInvoices` calls `ledger.writeSaleEntries` in the
@@ -146,7 +147,7 @@ describe("CustomersService — purge paths reverse the regulated ledger", () => 
     expect(calls.indexOf("reverse:inv-2")).toBeLessThan(calls.indexOf("deleteInvoices"));
   });
 
-  it("REG-LEDGER-PURGE: deleteImportedCustomers reverses them too — it has no invoice guard at all, so it can destroy PAID invoices", async () => {
+  it("REG-LEDGER-PURGE: deleteImportedCustomers reverses its (DRAFT/VOID-only, #2569) invoices' ledger entries too", async () => {
     prisma.customer.findMany.mockResolvedValue([
       { id: "cust-1", userId: "user-1", customerLink: { status: "PENDING" } },
     ]);

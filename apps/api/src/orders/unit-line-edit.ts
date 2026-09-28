@@ -10,6 +10,7 @@ import {
 } from "./unit-line-build";
 import type { ResolvedLineUnits } from "../products/line-units";
 import { liveLines } from "./order-edit-cancelled";
+import { writeLineUpdate } from "./order-line-removal";
 import type { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import type { OrdersService } from "./orders.service";
 
@@ -147,7 +148,11 @@ export function assertNoPackRedenomination(
 }
 
 export interface UnitWriteContext {
-  tx: { orderItem: { create(a: any): Promise<unknown>; update(a: any): Promise<unknown> } };
+  tx: {
+    orderItem: { create(a: any): Promise<unknown>; update(a: any): Promise<unknown> };
+  };
+  /** #2577: the order being edited — every line rewrite is scoped to it. */
+  orderId: string;
   ladders: Map<string, LadderUnit[]>;
   tenantId: string | null | undefined;
   tier: (productId: string) => number;
@@ -234,7 +239,7 @@ export async function updateUnitLine(
   const data = isSubstitute
     ? { ...rest, categoryTaxType, categoryTaxRate, categoryPriceIncludesTax }
     : rest;
-  await ctx.tx.orderItem.update({ where: { id: lineId }, data });
+  await writeLineUpdate(ctx.tx, ctx.orderId, lineId, data); // #2577: { id, orderId }, never bare
 }
 
 /**
