@@ -150,6 +150,7 @@ import {
   writeOffRefusal,
 } from "./invoice-send-guard";
 import { selectEditRevertedInvoices } from "./order-edit-revert-set";
+import { assertPartialRequestShape, bumpInvoicedQtyCas } from "./partial-invoice-cas";
 
 const TERM_DAYS: Record<string, number> = {
   "Due on Receipt": 0,
@@ -2631,6 +2632,7 @@ export class InvoicesService {
     const itemById = new Map(order.lineItems.map((li: any) => [li.id, li]));
 
     // Validate every requested item exists on the order and qty is within remaining.
+    assertPartialRequestShape(dto.items); // #2070 / SA-523: no duplicate lines, qty > 0
     const itemsData: any[] = [];
     let subtotal = 0;
     for (const req of dto.items) {
@@ -2787,13 +2789,8 @@ export class InvoicesService {
         throw err;
       }
 
-      // Increment invoicedQty on each chosen order item.
-      for (const req of dto.items) {
-        await tx.orderItem.update({
-          where: { id: req.orderItemId },
-          data: { invoicedQty: { increment: req.qty } },
-        });
-      }
+      // #2070 / SA-523: each line's bump is a CAS on what was read; any miss rolls back the partial.
+      await bumpInvoicedQtyCas(tx, dto.items, itemById);
 
       await this.creditNotes.settleOrderCreditsInTx(tx, order.id, tenantId);
       return created;
