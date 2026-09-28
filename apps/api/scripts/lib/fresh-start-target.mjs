@@ -19,10 +19,20 @@
 // Pure: no exit, no logging, no connection. The resolver, redaction and local classification are
 // injected, so the spec drives every branch.
 
+import payingTenant from "./paying-tenant.cjs";
+
+const { protectedArm } = payingTenant;
+
 export const BACKUP_COMMAND = (slug) =>
   `railway run --service postgres node apps/api/scripts/backup-production.mjs pre-fresh-start-${slug}`;
 
-const FLAGS = new Set(["--execute", "--local", "--live-tenant-override", "--backup-taken"]);
+const FLAGS = new Set([
+  "--execute",
+  "--local",
+  "--live-tenant-override",
+  "--backup-taken",
+  "--allow-paying-tenant",
+]);
 
 /** Strict argv: one positional slug, the known flags, `--exclude-tenant <slug,...>` (repeatable). */
 export function parseFreshStartArgs(argv) {
@@ -32,6 +42,7 @@ export function parseFreshStartArgs(argv) {
     local: false,
     live: false,
     backupTaken: false,
+    allowPayingTenant: false,
     exclude: [],
   };
   for (let i = 0; i < argv.length; i++) {
@@ -49,6 +60,7 @@ export function parseFreshStartArgs(argv) {
       if (a === "--local") out.local = true;
       if (a === "--live-tenant-override") out.live = true;
       if (a === "--backup-taken") out.backupTaken = true;
+      if (a === "--allow-paying-tenant") out.allowPayingTenant = true;
     } else if (a.startsWith("-")) {
       return { error: `unknown argument: ${a}` };
     } else if (out.slug === null) {
@@ -161,4 +173,34 @@ export function checkExcludedTenants({ exclude, found, tenant }) {
       reason: `${tenant.name} (${tenant.id}) is excluded: it is never wiped, in any mode`,
     };
   return { ok: true, lines: excluded.map((t) => `EXCLUDED (never wiped): ${t.name} (${t.id})`) };
+}
+
+/**
+ * #2639 / SA-547: a PROTECTED target — paying (mrr.service's isPayingRow) or linked to a Stripe
+ * subscription — is refused in EVERY mode (dry run included) unless `--allow-paying-tenant`. With the
+ * flag, `--execute` additionally needs the operator to type `WIPE PAYING <slug>` after the slug
+ * type-back. `tenant`/`sub` are the rows read from the SAME resolved database the wipe will hit.
+ * @param tenant { id, slug, name, status, class, deletedAt }
+ * @param sub    { planKey, stripeSubscriptionId } | null — the tenant's TenantSubscription row
+ * @returns {{ ok: false, reason: string } | { ok: true, phrase: string | null, line: string | null }}
+ */
+export function checkProtectedTarget({ tenant, sub, allowPayingTenant }) {
+  const arm = protectedArm(tenant, sub);
+  if (arm === null) return { ok: true, phrase: null, line: null };
+  const why =
+    arm === "paying"
+      ? "it is a PAYING tenant (ACTIVE, PRODUCTION, on a plan)"
+      : "its subscription is linked to Stripe";
+  if (!allowPayingTenant)
+    return {
+      ok: false,
+      reason:
+        `${tenant.name} (${tenant.id}) is protected: ${why}. Refused in every mode. ` +
+        "An owner-approved wipe of a protected tenant needs --allow-paying-tenant plus a typed confirmation.",
+    };
+  return {
+    ok: true,
+    phrase: `WIPE PAYING ${tenant.slug}`,
+    line: `PROTECTED (${arm}) — --allow-paying-tenant given; --execute will also ask for a typed confirmation.`,
+  };
 }

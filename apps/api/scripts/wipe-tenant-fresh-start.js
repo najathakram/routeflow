@@ -25,6 +25,10 @@
 // Dry run (row counts only) unless --execute. With --execute the operator types the slug back,
 // then every delete runs inside one Prisma $transaction.
 //
+// PROTECTED targets (#2639, SA-547): a paying tenant (the MRR paying set) or one whose subscription
+// is linked to Stripe is refused in EVERY mode unless --allow-paying-tenant; with the flag,
+// --execute also asks for the typed phrase `WIPE PAYING <slug>` after the slug type-back.
+//
 // ONE target: the database URL is resolved once (lib/fresh-start-target.mjs) and that same value
 // feeds the pg Pool, the redacted "DB:" banner (with its source) and the guard — the banner can
 // never name a different database than the one wiped. --local accepts only a provably-local target
@@ -44,7 +48,9 @@ const { classifyDbTarget } = require("./lib/production-guard");
 const USAGE =
   "Usage: node wipe-tenant-fresh-start.js <test-slug> --local [--execute]\n" +
   "   or (owner-run, under railway run): <slug> --live-tenant-override --exclude-tenant <slug,...> " +
-  "[--execute --backup-taken]";
+  "[--execute --backup-taken]\n" +
+  "   A paying or Stripe-linked target is refused in every mode unless --allow-paying-tenant\n" +
+  "   (and --execute then also asks for the typed phrase WIPE PAYING <slug>).";
 
 // Assigned once main() has resolved THE target; nothing dials before that.
 let prisma;
@@ -161,11 +167,11 @@ function printCounts(rows) {
   return total;
 }
 
-async function confirm(slugToType) {
+async function confirm(slugToType, what = "the tenant slug") {
   return new Promise((resolve) => {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     rl.question(
-      `\nType the tenant slug "${slugToType}" exactly to proceed (or anything else to abort): `,
+      `\nType ${what} "${slugToType}" exactly to proceed (or anything else to abort): `,
       (answer) => {
         rl.close();
         resolve(answer.trim() === slugToType);
@@ -277,7 +283,7 @@ async function nuke(tenantId) {
 }
 
 (async () => {
-  const { parseFreshStartArgs, planFreshStart, checkExcludedTenants } =
+  const { parseFreshStartArgs, planFreshStart, checkExcludedTenants, checkProtectedTarget } =
     await import("./lib/fresh-start-target.mjs");
   const { resolveDatabaseUrl, redactUrl } = await import("./lib/railway-db-url.mjs");
   const args = parseFreshStartArgs(process.argv.slice(2));
@@ -326,6 +332,20 @@ async function nuke(tenantId) {
   for (const line of exclusion.lines) console.log(line);
   if (exclusion.lines.length) console.log("");
 
+  // #2639 / SA-547: a paying or Stripe-linked target is refused in EVERY mode unless
+  // --allow-paying-tenant — read from THIS database (same client), before any count or write.
+  const sub = await prisma.tenantSubscription.findUnique({
+    where: { tenantId: tenant.id },
+    select: { planKey: true, stripeSubscriptionId: true },
+  });
+  const guard = checkProtectedTarget({ tenant, sub, allowPayingTenant: args.allowPayingTenant });
+  if (!guard.ok) {
+    console.error(guard.reason);
+    await prisma.$disconnect();
+    process.exit(1);
+  }
+  if (guard.line) console.log(`${guard.line}\n`);
+
   console.log("Row counts in nuke scope:");
   const rows = await countAll(tenant.id);
   const total = printCounts(rows);
@@ -345,6 +365,12 @@ async function nuke(tenantId) {
   const ok = await confirm(slug);
   if (!ok) {
     console.log("\nAborted.");
+    await prisma.$disconnect();
+    process.exit(3);
+  }
+  // #2639 / SA-547: a protected target (flag given) needs a SECOND, distinct typed phrase.
+  if (guard.phrase && !(await confirm(guard.phrase, "the phrase"))) {
+    console.log("\nAborted: the protected-tenant confirmation did not match.");
     await prisma.$disconnect();
     process.exit(3);
   }
