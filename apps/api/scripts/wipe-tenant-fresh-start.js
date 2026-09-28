@@ -313,7 +313,8 @@ async function nuke(tenantId) {
   console.log(`Mode:   ${execute ? "EXECUTE (DESTRUCTIVE)" : "DRY-RUN (counts only)"}\n`);
 
   const tenant = await getTenant();
-  console.log(`Resolved tenant: ${tenant.name} (id=${tenant.id})\n`);
+  // #2639 (lead's Opus HIGH-2): ids only in every output — a business name is a client identifier.
+  console.log(`Resolved tenant: id=${tenant.id}\n`);
 
   // #2508 F1: every excluded slug must name a tenant in THIS database (same client), and the
   // target is refused by id, all BEFORE any count or write.

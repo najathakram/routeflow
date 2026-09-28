@@ -75,6 +75,16 @@ describe("#2639 wipe-tenant-fresh-start refuses a protected target", () => {
     }
   });
 
+  it("HIGH-2 source: no output of the wipe script or its target module interpolates a tenant NAME", () => {
+    const lib = path.join(API_DIR, "scripts", "lib", "fresh-start-target.mjs");
+    for (const f of [SCRIPT, lib]) {
+      const src = readFileSync(f, "utf8")
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/\/\/.*$/gm, "");
+      expect({ f, hit: /\$\{[^}]*\b(?:tenant|t)\.name\b/.test(src) }).toEqual({ f, hit: false });
+    }
+  });
+
   it("the parser accepts --allow-paying-tenant and defaults it off", () => {
     expect(r.parse.allowPayingTenant).toBe(true);
     expect(r.parseDefault.allowPayingTenant).toBe(false);
