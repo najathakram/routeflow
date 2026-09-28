@@ -33,6 +33,9 @@ describe("InvoicesService — split restricted-lines flag (F-05 #2093)", () => {
   beforeEach(async () => {
     prisma = createMockPrisma();
     prisma.invoice.findFirst.mockResolvedValue({ items: [] });
+    // #2643: the split bumps each order line's invoicedQty through a CAS updateMany; a mock that
+    // matches nothing reads as a concurrent edit (409). Same stub as #2632/#2643's specs.
+    prisma.orderItem.updateMany.mockResolvedValue({ count: 1 } as any);
     const module = await Test.createTestingModule({
       providers: [
         InvoicesService,
