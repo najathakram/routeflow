@@ -132,6 +132,7 @@ export default function EditCreditNoteScreen() {
             {lines.map((l) => (
               <FormField key={l.invoiceItemId} label={describe(l.invoiceItemId)}>
                 <MoneyTextInput
+                  accessibilityLabel={describe(l.invoiceItemId)}
                   value={draft.lineAmounts[l.invoiceItemId] ?? null}
                   onChangeValue={(v) =>
                     set({ lineAmounts: { ...draft.lineAmounts, [l.invoiceItemId]: v } })
@@ -148,6 +149,7 @@ export default function EditCreditNoteScreen() {
         ) : (
           <FormField label="Credit amount">
             <MoneyTextInput
+              accessibilityLabel="Credit amount"
               value={draft.amount}
               onChangeValue={(v) => set({ amount: v })}
               placeholder="0.00"
@@ -187,14 +189,16 @@ export default function EditCreditNoteScreen() {
 
 const styles = StyleSheet.create({
   center: { padding: 40, alignItems: "center" },
+  // The same field look as FormTextInput (FormSheet's `input`), so the amount reads as editable.
   input: {
-    fontSize: 16,
-    fontFamily: "Inter_500Medium",
+    fontSize: 15,
+    fontFamily: "Inter_400Regular",
     color: ios.label,
-    backgroundColor: ios.bgElev,
+    backgroundColor: ios.fill3,
     borderRadius: 10,
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingVertical: 11,
+    minHeight: 44,
   },
   total: {
     fontSize: 15,
