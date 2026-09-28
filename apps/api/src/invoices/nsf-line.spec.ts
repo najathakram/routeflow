@@ -81,3 +81,17 @@ describe("buildNotNsfLineWhere / notNsfLineWhere (m2: the Prisma fragment mirror
     expect(JSON.stringify(where)).not.toContain(NSF_FEE_DESCRIPTION_PREFIX);
   });
 });
+
+// #2392 / SA-478: the API's HAS_TRANSITION_LEG and the clients' @routeflow/pricing
+// NSF_HAS_TRANSITION_LEG are one state — deleting the prefix leg flips BOTH together.
+describe("#2392 — the transition flag is shared with the clients", () => {
+  it("HAS_TRANSITION_LEG === @routeflow/pricing NSF_HAS_TRANSITION_LEG", () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { NSF_HAS_TRANSITION_LEG } = require("@routeflow/pricing") as {
+      NSF_HAS_TRANSITION_LEG: boolean;
+    };
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { HAS_TRANSITION_LEG } = require("./nsf-line") as { HAS_TRANSITION_LEG: boolean };
+    expect(HAS_TRANSITION_LEG).toBe(NSF_HAS_TRANSITION_LEG);
+  });
+});
