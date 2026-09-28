@@ -60,6 +60,43 @@ function makeScenarioRepo({ withMap, withLessons, branch, trailer }) {
   return dir;
 }
 
+// Committed-history scenarios for the per-commit trailer on the drift checks
+// (2b, 3b): a seed commit anchors the map/lessons, then `commits` land in
+// order with a CLEAN working tree, so only the committed-drift checks can
+// fire. Each commit touches its own file — a code file under apps/ when
+// `code` is set — and carries the trailer in its body when `trailer` is set.
+function makeHistoryRepo({ withMap, withLessons, commits }) {
+  const dir = mkdtempSync(join(tmpdir(), "stop-gates-spec-"));
+  git(dir, ["init", "-q"]);
+  git(dir, ["config", "user.email", "stop-gates-spec@example.com"]);
+  git(dir, ["config", "user.name", "stop-gates-spec"]);
+  if (withMap) {
+    mkdirSync(join(dir, ".claude", "code-map"), { recursive: true });
+    writeFileSync(join(dir, ".claude", "code-map", "_meta.json"), "{}\n");
+  }
+  if (withLessons) {
+    mkdirSync(join(dir, ".claude", "lessons"), { recursive: true });
+    writeFileSync(join(dir, ".claude", "lessons", "LESSONS.md"), "# Lessons\n");
+  }
+  writeFileSync(join(dir, "README.md"), "seed\n");
+  git(dir, ["add", "-A"]);
+  git(dir, ["commit", "-q", "-m", "chore: seed"]);
+
+  commits.forEach((c, i) => {
+    if (c.code) {
+      mkdirSync(join(dir, "apps", "api"), { recursive: true });
+      writeFileSync(join(dir, "apps", "api", `change-${i}.prisma`), `// change ${i}\n`);
+    } else {
+      writeFileSync(join(dir, `notes-${i}.md`), `change ${i}\n`);
+    }
+    git(dir, ["add", "-A"]);
+    const msg = ["commit", "-q", "-m", c.subject];
+    if (c.trailer) msg.push("-m", "Bookkeeping-Follow-Up: pending");
+    git(dir, msg);
+  });
+  return dir;
+}
+
 function runStopHook(dir) {
   return spawnSync(process.execPath, [STOP_HOOK], { cwd: dir, encoding: "utf8" });
 }
@@ -93,11 +130,94 @@ const cases = [
     check: (r) =>
       r.stderr.includes("Stop gate: bug-fix work on fix/stop-gates-spec without a recorded lesson"),
   },
+  // ── per-commit trailer on the committed-drift checks (2026-09-28) ──────
+  {
+    name: "Gate 3b — every fix commit carries its own trailer, trailerless HEAD → pass",
+    build: makeHistoryRepo,
+    repo: {
+      withMap: false,
+      withLessons: true,
+      commits: [
+        { subject: "fix(mobile): first deferred fix", trailer: true },
+        { subject: "fix(returns): second deferred fix", trailer: true },
+        { subject: "docs(bookkeeping): unrelated follow-up", trailer: false },
+      ],
+    },
+    expectStatus: 0,
+    check: (r) =>
+      r.stdout.includes("Gate 3: 2 fix commit(s) since the last lessons update carry") &&
+      !r.stderr.includes("Stop gate"),
+  },
+  {
+    name: "Gate 3b — one fix commit without its own trailer still blocks, and only it is listed",
+    build: makeHistoryRepo,
+    repo: {
+      withMap: false,
+      withLessons: true,
+      commits: [
+        { subject: "fix(mobile): deferred fix", trailer: true },
+        { subject: "fix(returns): undeferred fix", trailer: false },
+        { subject: "docs(bookkeeping): unrelated follow-up", trailer: false },
+      ],
+    },
+    expectStatus: 2,
+    check: (r) =>
+      r.stderr.includes(
+        "Stop gate: 1 fix commit(s) landed after the last .claude/lessons/ update",
+      ) &&
+      r.stderr.includes("fix(returns): undeferred fix") &&
+      !r.stderr.includes("fix(mobile): deferred fix"),
+  },
+  {
+    name: "Gate 3b — a trailered HEAD no longer hides an earlier undeferred fix commit",
+    build: makeHistoryRepo,
+    repo: {
+      withMap: false,
+      withLessons: true,
+      commits: [
+        { subject: "fix(api): undeferred fix", trailer: false },
+        { subject: "docs: trailered head", trailer: true },
+      ],
+    },
+    expectStatus: 2,
+    check: (r) => r.stderr.includes("fix(api): undeferred fix"),
+  },
+  {
+    name: "Gate 2b — code committed only by trailered commits, trailerless HEAD → pass",
+    build: makeHistoryRepo,
+    repo: {
+      withMap: true,
+      withLessons: false,
+      commits: [
+        { subject: "feat(api): deferred code change", trailer: true, code: true },
+        { subject: "docs(bookkeeping): unrelated follow-up", trailer: false },
+      ],
+    },
+    expectStatus: 0,
+    check: (r) => !r.stderr.includes("Stop gate"),
+  },
+  {
+    name: "Gate 2b — code committed without a trailer still blocks as stale",
+    build: makeHistoryRepo,
+    repo: {
+      withMap: true,
+      withLessons: false,
+      commits: [
+        { subject: "feat(api): deferred code change", trailer: true, code: true },
+        { subject: "feat(api): undeferred code change", trailer: false, code: true },
+      ],
+    },
+    expectStatus: 2,
+    check: (r) =>
+      r.stderr.includes("Stop gate: the code map is STALE") &&
+      r.stderr.includes("change-1.prisma") &&
+      !r.stderr.includes("change-0.prisma"),
+  },
 ];
 
 let failed = 0;
 for (const c of cases) {
-  const dir = makeScenarioRepo(c.repo);
+  const dir = (c.build ?? makeScenarioRepo)(c.repo);
   const res = runStopHook(dir);
   const statusOk = res.status === c.expectStatus;
   const checkOk = c.check(res);

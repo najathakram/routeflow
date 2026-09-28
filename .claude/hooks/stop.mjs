@@ -27,6 +27,14 @@
  * `.claude/lessons/` — including a bare `_meta.json` updatedAt bump, the
  * "no transferable lesson" acknowledgement — silences both.
  *
+ * Bookkeeping Option B trailer (`Bookkeeping-Follow-Up: pending`): the
+ * session-local checks (2a, 3a) honour it on HEAD, since HEAD is the commit
+ * the uncommitted work will land on. The committed-drift checks (2b, 3b)
+ * honour it PER COMMIT — each commit in the range is excused by its own
+ * trailer only, so a trailerless bookkeeping HEAD no longer resurrects debt
+ * that earlier trailered commits already deferred, and a trailered HEAD no
+ * longer hides an earlier commit that never deferred anything.
+ *
  * Derived counters (owner ruling 2026-09-14): both gates key on the FILE
  * PATH prefix (`.claude/code-map/…`, `.claude/lessons/…`), never on
  * `_meta.json`'s mtime or field values — an entry added to LESSONS.md or a
@@ -42,7 +50,7 @@
  * only runs per-workspace via `npm run lint` / Turbo. tsc is likewise excluded
  * (too slow/fragile per-file with Prisma); type-checks live in the pre-push hook.
  */
-import { execSync, spawnSync } from "node:child_process";
+import { execFileSync, execSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -97,9 +105,48 @@ function isMainCheckoutOnMaster() {
 // code-map/lessons update to a docs-only follow-up PR opened right after
 // merge, by carrying this trailer on its HEAD commit. Gates 2 and 3 both
 // treat the trailer as a satisfying condition instead of blocking.
-const bookkeepingDeferred = /^Bookkeeping-Follow-Up:\s*pending/im.test(
-  sh("git log -1 --format=%B").out,
-);
+const DEFERRED_RE = /^Bookkeeping-Follow-Up:\s*pending/im;
+const bookkeepingDeferred = DEFERRED_RE.test(sh("git log -1 --format=%B").out);
+
+// Every commit in `<anchor>..HEAD`, each carrying its OWN trailer verdict —
+// the committed-drift checks (2b, 3b) judge a commit by its own message, never
+// HEAD's (a trailerless docs(bookkeeping) HEAD sitting on top of trailered fix
+// commits falsely blocked Gate 3 on 2026-09-28). execFileSync, not the shell:
+// the NUL/RS separators in the format must reach git verbatim on Windows too.
+function commitsSince(anchor) {
+  let out;
+  try {
+    out = execFileSync("git", ["log", `${anchor}..HEAD`, "--format=%H%x00%B%x1e"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: 64 * 1024 * 1024,
+    });
+  } catch {
+    return [];
+  }
+  return out
+    .split("\x1e")
+    .map((rec) => rec.replace(/^\s+/, ""))
+    .filter(Boolean)
+    .map((rec) => {
+      const [sha, body = ""] = rec.split("\x00");
+      return {
+        sha: sha.trim(),
+        subject: body.split(/\r?\n/)[0].trim(),
+        deferred: DEFERRED_RE.test(body),
+      };
+    });
+}
+
+// Code paths a single commit touched (vs its first parent). A merge commit
+// reports nothing here — its content is enumerated through the commits it
+// brought in, each judged by its own trailer.
+function codeFilesOf(sha) {
+  return sh(`git diff-tree --no-commit-id --name-only -r ${sha} -- apps packages scripts`)
+    .out.split(/\r?\n/)
+    .map((f) => f.trim())
+    .filter(Boolean);
+}
 
 let changed = [];
 try {
@@ -170,13 +217,25 @@ if (hasMap && uncommittedCode.length > 0 && !changed.some(isMap) && !bookkeeping
 // fixing commit touches .claude/code-map/ and becomes the new anchor, and a
 // commit carrying code + map together is always clean. An uncommitted
 // code-map change counts as the fix in progress — don't re-block.
-if (hasMap && !changed.some(isMap) && !bookkeepingDeferred) {
+// Per-commit trailer: a file counts as drift only if some commit in the range
+// that did NOT carry its own trailer touched it (the net diff is kept, so a
+// range with no trailered commit blocks exactly as before).
+if (hasMap && !changed.some(isMap)) {
   const lastMap = sh("git log -1 --format=%H -- .claude/code-map").out.trim();
   if (/^[0-9a-f]{40}$/i.test(lastMap)) {
-    const codeDrift = sh(`git diff --name-only ${lastMap} HEAD -- apps packages scripts`)
+    let codeDrift = sh(`git diff --name-only ${lastMap} HEAD -- apps packages scripts`)
       .out.split(/\r?\n/)
       .map((f) => f.trim())
       .filter((f) => f && isCode(f));
+    if (codeDrift.length > 0) {
+      const owed = new Set(
+        commitsSince(lastMap)
+          .filter((c) => !c.deferred)
+          .flatMap((c) => codeFilesOf(c.sha))
+          .map(norm),
+      );
+      codeDrift = codeDrift.filter((f) => owed.has(norm(f)));
+    }
     if (codeDrift.length > 0) {
       const list = codeDrift.slice(0, 10).join("\n  ");
       process.stderr.write(
@@ -198,16 +257,16 @@ if (hasLessons && !changed.some(isLesson) && bookkeepingDeferred) {
   console.log("Gate 3: bookkeeping deferred to the follow-up PR (trailer present)");
 }
 
-if (hasLessons && !changed.some(isLesson) && !bookkeepingDeferred) {
-  const LESSON_FIX =
-    "Append an entry to .claude/lessons/LESSONS.md (Symptom / Root cause / Lesson / Guard) — " +
-    "that alone satisfies this gate. _meta.json's nextId/activeCount are derived/informational " +
-    "now (owner ruling 2026-09-14) and do NOT need a manual bump; " +
-    "`node scripts/validate-lessons.mjs --digest` re-stamps them and regenerates the digest in " +
-    "one step. If this fix genuinely carries no transferable lesson (typo-class), bump " +
-    "_meta.json.updatedAt alone to acknowledge.";
+const LESSON_FIX =
+  "Append an entry to .claude/lessons/LESSONS.md (Symptom / Root cause / Lesson / Guard) — " +
+  "that alone satisfies this gate. _meta.json's nextId/activeCount are derived/informational " +
+  "now (owner ruling 2026-09-14) and do NOT need a manual bump; " +
+  "`node scripts/validate-lessons.mjs --digest` re-stamps them and regenerates the digest in " +
+  "one step. If this fix genuinely carries no transferable lesson (typo-class), bump " +
+  "_meta.json.updatedAt alone to acknowledge.";
 
-  // (a) session-local: live work on a fix branch
+// (a) session-local: live work on a fix branch (HEAD's trailer excuses it)
+if (hasLessons && !changed.some(isLesson) && !bookkeepingDeferred) {
   const branch = sh("git rev-parse --abbrev-ref HEAD").out.trim();
   if (/^(fix|hotfix|bugfix)\//.test(branch) && uncommittedCode.length > 0) {
     process.stderr.write(
@@ -216,14 +275,23 @@ if (hasLessons && !changed.some(isLesson) && !bookkeepingDeferred) {
     );
     process.exit(2);
   }
+}
 
-  // (b) committed drift: fix commits landed after the last lessons update
+// (b) committed drift: fix commits landed after the last lessons update. Each
+// fix commit is excused only by its OWN trailer — its lesson is owed by the
+// coordinator's follow-up PR — never by HEAD's.
+if (hasLessons && !changed.some(isLesson)) {
   const lastLessons = sh("git log -1 --format=%H -- .claude/lessons").out.trim();
   if (/^[0-9a-f]{40}$/i.test(lastLessons)) {
-    const fixCommits = sh(`git log ${lastLessons}..HEAD --format=%s`)
-      .out.split(/\r?\n/)
-      .map((s) => s.trim())
-      .filter((s) => /^fix(\(.+\))?!?:/.test(s));
+    const allFixes = commitsSince(lastLessons).filter((c) => /^fix(\(.+\))?!?:/.test(c.subject));
+    const deferredCount = allFixes.filter((c) => c.deferred).length;
+    if (deferredCount > 0) {
+      console.log(
+        `Gate 3: ${deferredCount} fix commit(s) since the last lessons update carry ` +
+          `their own Bookkeeping-Follow-Up trailer (deferred)`,
+      );
+    }
+    const fixCommits = allFixes.filter((c) => !c.deferred).map((c) => c.subject);
     if (fixCommits.length > 0) {
       const list = fixCommits.slice(0, 5).join("\n  ");
       process.stderr.write(
