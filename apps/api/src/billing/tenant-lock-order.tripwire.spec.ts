@@ -353,6 +353,28 @@ describe("#2551 tripwire — no subscription write in a $transaction before the 
         "rawSelectForUpdate",
         '      await tx.$queryRaw`SELECT 1 FROM "TenantSubscription" WHERE "tenantId" = ${id} FOR UPDATE`;\n      await lockTenantForLedger(tx, tenantId);',
       ),
+      // #2614 (the lead's review of #2609): a tx passed as a NON-FIRST argument
+      nonFirstMethod:
+        wrap(
+          "nonFirstMethod",
+          "      await this.writeSubAt(tenantId, tx);\n      await lockTenantForLedger(tx, tenantId);",
+        ) +
+        "class W {\n  private async writeSubAt(id: string, client: any) {\n    await client.tenantSubscription.update({ where: { tenantId: id } });\n  }\n}\n",
+      nonFirstArrow:
+        wrap(
+          "nonFirstArrow",
+          "      await writeSubArrowAt(tenantId, tx);\n      await lockTenantForLedger(tx, tenantId);",
+        ) +
+        "const writeSubArrowAt = async (id: string, c: any) => {\n  await c.tenantSubscription.upsert({});\n};\n",
+      nonFirstGood: wrap(
+        "nonFirstGood",
+        "      await lockTenantForLedger(tx, tenantId);\n      await this.writeSubAt(tenantId, tx);",
+      ),
+      // precision: tx in a position the helper does NOT write through is not a subscription write
+      nonWritingPosition: wrap(
+        "nonWritingPosition",
+        "      await this.writeSubAt(tx, tenantId);\n      await lockTenantForLedger(tx, tenantId);",
+      ),
     };
     expect(findViolations(Object.entries(cases).map(([rel, src]) => ({ rel, src })))).toEqual([
       "bad#bad",
@@ -369,6 +391,8 @@ describe("#2551 tripwire — no subscription write in a $transaction before the 
       "lockInString#lockInString",
       "regexQuote#regexQuote",
       "rawSelectForUpdate#rawSelectForUpdate",
+      "nonFirstMethod#nonFirstMethod",
+      "nonFirstArrow#nonFirstArrow",
     ]);
   });
 });
