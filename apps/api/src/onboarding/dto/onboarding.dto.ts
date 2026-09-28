@@ -99,3 +99,8 @@ export class ListDemoBookingsQueryDto {
   @IsOptional() @IsISO8601() from?: string;
   @IsOptional() @IsISO8601() to?: string;
 }
+
+/** `POST /onboarding/me/sign-off` (#2159 S4). The service trims and re-checks the length. */
+export class OnboardingSignOffDto {
+  @IsString() @MinLength(2) @MaxLength(200) signedName!: string;
+}

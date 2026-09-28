@@ -508,3 +508,100 @@ export const INTAKE_ERROR_CODES = [
   "INTAKE_ANSWERS_INVALID",
 ] as const;
 export type IntakeErrorCode = (typeof INTAKE_ERROR_CODES)[number];
+
+// ─── Tenant side: "Getting started" (#2159 S4) ────────────────────────────────────
+
+/** The catalog key of the customer's written sign-off (VERIFY_TRAIN). */
+export const ONBOARDING_SIGN_OFF_STEP_KEY = "verify.signOff";
+
+/**
+ * One CUSTOMER-owned step as the workspace's own staff see it. Deliberately narrow: no
+ * back-office evidence, waiver reasons or admin ids ever reach the tenant.
+ */
+export interface TenantOnboardingStep {
+  key: string;
+  stage: OnboardingStage;
+  title: string;
+  required: boolean;
+  status: OnboardingStepStatus;
+  /** ISO timestamp, when DONE. */
+  doneAt: string | null;
+  /** The latest advisory auto-check on the workspace's own data, if the step has one. */
+  check: { ok: boolean; detail: string } | null;
+}
+
+export interface TenantOnboardingSignOff {
+  status: OnboardingStepStatus;
+  /** ISO timestamp, when signed. */
+  signedAt: string | null;
+  signedName: string | null;
+  /** True only while the case is OPEN, at VERIFY_TRAIN, and the step is still PENDING. */
+  available: boolean;
+}
+
+export interface TenantOnboardingView {
+  stage: OnboardingStage;
+  status: OnboardingCaseStatus;
+  /** YYYY-MM-DD. */
+  targetGoLiveOn: string | null;
+  /** CUSTOMER-owned steps, in checklist order. */
+  steps: TenantOnboardingStep[];
+  signOff: TenantOnboardingSignOff | null;
+}
+
+/** `GET /onboarding/me` — `onboarding` is null when the workspace has no (visible) case. */
+export interface TenantOnboardingResponse {
+  onboarding: TenantOnboardingView | null;
+}
+
+/** `POST /onboarding/me/sign-off` (TENANT_ADMIN, never under impersonation). */
+export interface OnboardingSignOffRequest {
+  /** The signer's full name, typed. */
+  signedName: string;
+}
+
+/** The only 409 code the tenant-side endpoints return. */
+export const TENANT_ONBOARDING_CONFLICT_CODES = ["ONBOARDING_SIGN_OFF_NOT_AVAILABLE"] as const;
+export type TenantOnboardingConflictCode = (typeof TENANT_ONBOARDING_CONFLICT_CODES)[number];
+
+/** Customer-facing stage names — web and mobile render the same words (#2159 S4). */
+export const ONBOARDING_STAGE_CUSTOMER_LABEL: Record<OnboardingStage, string> = {
+  FOLLOW_UP: "Getting in touch",
+  AGREE: "Agreement",
+  ACTIVATE: "Workspace activation",
+  COLLECT: "Your information",
+  CONFIGURE: "Setup",
+  VERIFY_TRAIN: "Training & sign-off",
+  GO_LIVE: "Go-live",
+  HYPERCARE: "First weeks",
+};
+
+/** True only while onboarding is actually in progress (the banner/card are hidden otherwise). */
+export function tenantOnboardingInProgress(o: TenantOnboardingView | null | undefined): boolean {
+  return !!o && (o.status === "OPEN" || o.status === "ON_HOLD");
+}
+
+/** The one-line banner/card summary, or null when nothing should show. */
+export function tenantOnboardingSummary(o: TenantOnboardingView | null | undefined): string | null {
+  if (!o || !tenantOnboardingInProgress(o)) return null;
+  if (o.status === "ON_HOLD") return "Onboarding is paused for now.";
+  if (o.signOff?.available) return "Sign-off is open for your workspace admin.";
+  const n = o.steps.filter((s) => s.stage === o.stage && s.status === "PENDING").length;
+  return n > 0
+    ? `${n} ${n === 1 ? "item needs" : "items need"} your team right now.`
+    : "Nothing needed from you right now.";
+}
+
+/** Fixed copy for a failed sign-off — never the server's raw message. */
+export function tenantOnboardingSignOffErrorCopy(err: unknown): string {
+  const res = (err as { response?: { status?: number; data?: { code?: string } } } | null)
+    ?.response;
+  if (res?.data?.code === "ONBOARDING_SIGN_OFF_NOT_AVAILABLE") {
+    return "Sign-off isn't open yet. Your onboarding lead will let you know when it is.";
+  }
+  if (res?.status === 403) {
+    return "Only the workspace admin, signed in as themselves, can give the sign-off.";
+  }
+  if (res?.status === 400) return "Type your full name to sign off.";
+  return "Couldn't record your sign-off. Please try again.";
+}
