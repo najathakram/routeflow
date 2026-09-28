@@ -123,6 +123,18 @@ describeDb("#2509 reconcilePriceLedger compare-and-set (real Postgres, two conne
     return q.rows as Waiter[];
   }
 
+  const dump = (x: unknown) => JSON.stringify(x, null, 2);
+
+  /** SA-503a / SA-548: the reconcile must be waiting on the TENANT row. A miss throws every blocked
+   *  waiter's query + pg_locks rows (a wait on TenantSubscription at HEAD goes to the SA). */
+  function expectTenantWait(race: { tenantLock: boolean; waitingOn: unknown }) {
+    if (!race.tenantLock) {
+      throw new Error(
+        `#2666 the reconcile is not waiting on the Tenant row; waitingOn: ${dump(race.waitingOn)}`,
+      );
+    }
+  }
+
   /** T2 runs `statements` (uncommitted) while the sync's reconcile blocks on T2; then commits.
    *  #2666: the ENTRY is condition-based, never timed. Poll (from the pool, a fresh stats snapshot per
    *  statement, as #2659) until a session is blocked on T2 OR the sync has settled; only a deadline
@@ -150,12 +162,14 @@ describeDb("#2509 reconcilePriceLedger compare-and-set (real Postgres, two conne
           await new Promise((x) => setTimeout(x, 25));
       }
       // ENTRY, before the release: the sync is blocked on T2 (it cannot finish while T2 holds a lock it
-      // needs — settling first would itself be the bug). On a miss: every waiter's query + pg_locks.
-      expect({
-        blocked: waiters.some((w) => w.waiting),
-        settledFirst: settled,
-        waiters,
-      }).toMatchObject({ blocked: true, settledFirst: false });
+      // needs — settling first would itself be the bug). SA-548 (3): a miss THROWS the full dump —
+      // every waiter's query and its pg_locks rows — never a matcher that elides it.
+      if (!waiters.some((w) => w.waiting) || settled) {
+        throw new Error(
+          `#2666 entry not reached (blocked=${waiters.some((w) => w.waiting)}, settledFirst=${settled}); ` +
+            `waiters on T2 pid ${pid}: ${dump(waiters)}`,
+        );
+      }
     } finally {
       await t2.query("COMMIT").catch(() => undefined);
       const err = sync ? await sync : undefined;
@@ -180,16 +194,15 @@ describeDb("#2509 reconcilePriceLedger compare-and-set (real Postgres, two conne
       `UPDATE "TenantSubscription" SET "planKey" = 'SCALE', "currentPlan" = 'SCALE', "basePriceSnapshot" = 499 WHERE "tenantId" = $1`,
       `UPDATE "Tenant" SET "plan" = 'SCALE' WHERE id = $1`,
     ]);
+    expectTenantWait(race); // structural (pg_locks); a miss throws the dump
     const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: id } });
     expect({
-      ...race,
+      blocked: race.blocked,
       planKey: sub.planKey,
       snapshot: Number(sub.basePriceSnapshot),
       events: (await syncEvents(id)).length,
     }).toEqual({
       blocked: true,
-      tenantLock: true, // pg_locks: waiting on the Tenant row (SA-548)
-      waitingOn: expect.any(Array), // printed in full on a miss
       planKey: "SCALE",
       snapshot: 499,
       events: 0,
@@ -223,16 +236,15 @@ describeDb("#2509 reconcilePriceLedger compare-and-set (real Postgres, two conne
       `UPDATE "TenantSubscription" SET "priceOverrideMonthly" = 200 WHERE "tenantId" = $1`,
       `UPDATE "TenantSubscription" SET "basePriceSnapshot" = 200 WHERE "tenantId" = $1`,
     ]);
+    expectTenantWait(race); // structural (pg_locks); a miss throws the dump
     const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: id } });
     const events = await syncEvents(id);
     expect({
-      ...race,
+      blocked: race.blocked,
       snapshot: Number(sub.basePriceSnapshot),
       deltas: events.map((e) => Number(e.amountDelta)),
     }).toEqual({
       blocked: true,
-      tenantLock: true, // pg_locks: waiting on the Tenant row (SA-548)
-      waitingOn: expect.any(Array), // printed in full on a miss
       snapshot: 150,
       deltas: [-50],
     });
