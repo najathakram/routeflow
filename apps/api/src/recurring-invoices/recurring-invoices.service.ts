@@ -336,6 +336,10 @@ export class RecurringInvoicesService {
   }
 
   private async generateInvoiceFromTemplate(ri: any, unattended = true) {
+    // #2656 / SA-549e: "Run now" is an operator deciding — a template whose NSF line carries a rate is
+    // refused (400 NSF_LINE_UNTAXED) before the cycle is claimed, so nothing is issued or written.
+    // Only the UNATTENDED run bills that line at 0 and logs it (B142: billing never pauses).
+    if (!unattended) assertNsfLinesUntaxed(ri.items ?? []);
     // F-05 (SA-205): a banned line refuses the whole document — it is never dropped so the rest issues, since
     // that would change the invoice's money with nobody deciding. "Run now" is an operator deciding (409, the
     // template is untouched); the unattended run skips the cycle BEFORE it is claimed, notifies once and
@@ -419,7 +423,7 @@ export class RecurringInvoicesService {
           qty: Number(item.qty),
           unitPrice: Number(item.unitPrice),
           discount: Number(item.discount),
-          taxRate: this.runLineTaxRate(ri, item),
+          taxRate: unattended ? this.runLineTaxRate(ri, item) : Number(item.taxRate),
           // B646: a boxed pack count carries its split, so qty is stored in PIECES (boxes x pack), and
           // SA-135: the pack it was split with rides along as packSnapshot (ONE read, never re-read).
           ...this.boxedSplitOrWarn(ri, item, packByProduct.get(item.productId)),
