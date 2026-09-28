@@ -7,7 +7,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { lineUnitFor, computeOrderTotal } from "../lib/cart-order-total";
 import type { Product } from "../lib/cart-line-state";
-import { decideTrayPrice } from "../lib/staff-price-override";
+import { decideTrayPrice, saleLinePriceFields } from "../lib/staff-price-override";
 import { fromOrderDraftPayload, toOrderDraftPayload } from "../lib/drafts-payload";
 import { resolveResumeLinePricing } from "../lib/order-draft-logic";
 
@@ -113,5 +113,51 @@ describe("#2696(c) source pins — NewOrderScreen + LinePriceModal", () => {
   });
   it("submit sends the reason with a special line's override", () => {
     expect(screen).toMatch(/overrideReason: line\.overrideReason\.trim\(\)/);
+  });
+});
+
+// SA-558e: the operator's New-sale screen posts to /orders/sell (the server's create(), rule A).
+describe("#2696(c) SA-558e saleLinePriceFields — a New-sale line's price fields", () => {
+  const special = { base: 2, listPrice: 2.5, isSpecial: true };
+  it("at the special price: just the price, no reason", () => {
+    expect(saleLinePriceFields({ ...special, effective: 2, reason: "x" })).toEqual({
+      unitPrice: 2,
+    });
+  });
+  it("off it with no reason: refused (the sale is blocked)", () => {
+    expect(saleLinePriceFields({ ...special, effective: 1.5, reason: " " })).toEqual({
+      refused: true,
+    });
+  });
+  it("off it with a reason: the price as shown + the trimmed reason", () => {
+    expect(saleLinePriceFields({ ...special, effective: 1.5, reason: " dented " })).toEqual({
+      unitPrice: 1.5,
+      overrideReason: "dented",
+    });
+  });
+  it("a non-special line never needs one", () => {
+    expect(
+      saleLinePriceFields({
+        base: 2.5,
+        listPrice: 2.5,
+        isSpecial: false,
+        effective: 2,
+        reason: "",
+      }),
+    ).toEqual({ unitPrice: 2 });
+  });
+});
+
+describe("#2696(c) SA-558e source pins — invoices/new (New sale)", () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, "..", "app/(operator)/(tabs)/invoices/new.tsx"),
+    "utf8",
+  );
+  it("the sale builds each catalog line's price through saleLinePriceFields and blocks a refused one", () => {
+    expect(src).toMatch(/saleLinePriceFields\(/);
+    expect(src).toMatch(/reasonRequiredMessage\(/);
+  });
+  it("the review row shows a required Reason field", () => {
+    expect(src).toMatch(/Reason \(required\)/);
   });
 });
