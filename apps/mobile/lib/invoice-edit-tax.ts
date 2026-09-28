@@ -33,7 +33,9 @@ export function hydratedLineTax(invoice: {
   const fill = inferred?.verified ? inferred.rate : 0;
   return items.map((it, i) => {
     const stored = Number(it.taxRate ?? 0);
-    const taxRate = stored > 0 ? stored : nsf[i] ? 0 : fill;
+    // #2656 / SA-549: the NSF line is NEVER taxed, even when a legacy row stored a rate — the API
+    // refuses > 0 on it, so it loads (and saves) at 0.
+    const taxRate = nsf[i] ? 0 : stored > 0 ? stored : fill;
     return { taxRate, taxable: taxRate > 0 };
   });
 }
