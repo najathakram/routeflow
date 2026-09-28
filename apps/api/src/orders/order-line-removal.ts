@@ -47,8 +47,40 @@ const REMOVAL_NEEDS_ID = "A removal must name the line"; // SA-511c
  * says nothing about the order). `writeLineRemoval` re-asserts it at the write.
  */
 export function assertRemovalsNameALine(
-  items: ReadonlyArray<{ id?: string | null; action?: string | null }> | undefined,
+  items:
+    | ReadonlyArray<{
+        id?: string | null;
+        action?: string | null;
+        substituteProductId?: string | null;
+      }>
+    | undefined,
 ): void {
   if ((items ?? []).some((i) => (i.action === "CANCEL" || i.action === "DELETE") && !i.id))
     throw new BadRequestException(REMOVAL_NEEDS_ID);
+  // #2577: a substitute rewrites an EXISTING line — it must name that line too.
+  if ((items ?? []).some((i) => i.substituteProductId != null && !i.id))
+    throw new BadRequestException("A substitution must name the line it replaces");
+}
+
+/**
+ * #2577 (sibling of #2563): a per-line diff that REWRITES a line (the pack substitute, the
+ * unit-line edit/substitute) writes only a line of the order being edited — `{ id, orderId }`,
+ * never a bare id; a miss (Prisma P2025) is a 404 inside the edit's transaction. A missing id is a 400
+ * before any write (Prisma drops an undefined key, which would widen the write to the order).
+ */
+export async function writeLineUpdate(
+  tx: { orderItem: { update(args: unknown): Promise<unknown> } },
+  orderId: string,
+  lineId: string | null | undefined,
+  data: Record<string, unknown>,
+): Promise<void> {
+  if (!lineId || !orderId) throw new BadRequestException(REMOVAL_NEEDS_ID);
+  try {
+    // `update` with a compound where (id is unique; orderId an extra filter): a line of ANOTHER
+    // order matches nothing, and Prisma raises P2025 instead of writing it.
+    await tx.orderItem.update({ where: { id: lineId, orderId }, data });
+  } catch (e: any) {
+    if (e?.code === "P2025") throw new NotFoundException("That line is not on this order");
+    throw e;
+  }
 }

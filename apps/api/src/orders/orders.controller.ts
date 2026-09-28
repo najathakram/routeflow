@@ -196,7 +196,7 @@ export class OrdersController {
                     idempotencyKey,
                     dto.customerId!,
                     requestHash,
-                    dto.inlineReturn?.returnKey,
+                    dto.inlineReturn, // #2424: the replay compares its items too
                   );
                   if (replayed) {
                     const replayedOrderId = replayed.orderId;
