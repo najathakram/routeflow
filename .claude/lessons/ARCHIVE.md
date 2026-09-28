@@ -3195,3 +3195,21 @@ citations, closed-out with its own post-init assertion guard).
 - **Guard:** `regulated-ledger.service.spec.ts`'s mixed-pack reconcile case pins the ratio source.
   Related: [[L-214]].
 
+### L-208 · 2026-09-19 · process · stacked PRs and `--delete-branch`
+
+- **Symptom:** squash-merging a stack parent with `gh pr merge --delete-branch` deleted its head
+  branch, which auto-CLOSED the child PR whose base was that branch; the child could not be
+  retargeted until the base branch was restored and the PR reopened. Separately, after the
+  parent's squash the child's branch still carried the parent's pre-squash commits, so it showed
+  DIRTY/CONFLICTING against master.
+- **Root cause:** GitHub closes (does not retarget) an open PR when its base branch is deleted,
+  and a squash rewrites the parent's commits so the child's history no longer matches master.
+- **Lesson:** **Merge stack parents WITHOUT `--delete-branch`. Retarget each child to master
+  (`gh pr edit N --base master`) BEFORE deleting anything, then have the child's owner merge
+  master in (taking master's side for the parent's files) and re-run CI on the fresh head.
+  Delete branches only after every child is retargeted.**
+- **Guard:** landing-coordinator checklist (no code guard); see [[L-190]] for the sibling
+  rebuild-after-squash trap.
+  (Archived 2026-09-27 to make room at cap for L-240: one outside citation, a handoff note that
+  still resolves here; guard = the landing-coordinator checklist, unchanged by archiving the
+  prose; the sibling trap stays active as L-190.)
