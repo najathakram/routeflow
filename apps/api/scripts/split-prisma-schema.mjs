@@ -255,6 +255,10 @@ const MODEL_DOMAIN = {
   OnboardingCase: "platform",
   OnboardingStep: "platform",
   OnboardingEvent: "platform",
+  IntakeSection: "platform",
+  IntakeFile: "platform",
+  IntakeAccessToken: "platform",
+  OrderAcceptance: "platform",
 
   // ─── compliance ────────────────────────────────────────────────────────────
   TobaccoReport: "compliance",
