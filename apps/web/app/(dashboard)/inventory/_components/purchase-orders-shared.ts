@@ -48,7 +48,12 @@ export interface PurchaseOrder {
   supplier: Supplier;
   status: POStatus;
   items: POItem[];
-  total: number;
+  /**
+   * The server-stored document total: the raw Prisma `PurchaseOrder.totalAmount` (`Decimal(10,2)`), so a
+   * numeric STRING. B719 (#1485): this type used to declare a `total` the API never sends, so the list's
+   * Total column read `undefined` and showed $0.00 on every row. Read it through `poDisplayTotal` (@routeflow/pricing).
+   */
+  totalAmount?: number | string | null;
   expectedDate: string;
   notes?: string;
   createdAt: string;

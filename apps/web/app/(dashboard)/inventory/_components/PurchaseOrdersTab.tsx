@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Plus, Eye, Pencil, Send, PackageCheck, ChevronDown, ChevronUp } from "lucide-react";
 import { Badge, Button, useToast } from "@routeflow/ui/web";
+import { poDisplayTotal } from "@routeflow/pricing";
 import { formatMoney } from "@/lib/format";
 import { unitsLabel } from "@/lib/stock-label";
 import { fmtCalendarDate } from "@/lib/formatting";
@@ -317,7 +318,7 @@ export function PurchaseOrdersTab({
                     <td className="px-4 py-3">{poStatusBadge(po.status)}</td>
                     <td className="px-4 py-3 text-navy/70">{po.items?.length ?? 0}</td>
                     <td className="px-4 py-3 font-medium text-navy">
-                      {formatMoney(po.total ?? 0)}
+                      {formatMoney(poDisplayTotal(po))}
                     </td>
                     <td className="px-4 py-3 text-navy/70">
                       {po.expectedDate ? fmtCalendarDate(po.expectedDate) : "—"}
