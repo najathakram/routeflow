@@ -113,7 +113,7 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
 import { InvoiceItemSystemKind, notNsfLineWhere } from "./nsf-line";
 import { preservedNsfLines } from "./nsf-preserve";
-import { partitionInvoiceLines, planResyncPairs } from "./resync-plan";
+import { partitionInvoiceLines, planResyncPairs, RESYNC_ITEM_SELECT } from "./resync-plan";
 import {
   issueDateStamp,
   overdueCutoff,
@@ -1993,7 +1993,7 @@ export class InvoicesService {
    *
    * Returns the updated invoices, or NULL when the order has no linked non-void
    * invoice, or when the partition is not clean/provable (a line shared across two
-   * invoices, or an invoice line with no orderItemId provenance) — in which case it
+   * invoices, or a non-NSF invoice line with no orderItemId provenance) — in which case it
    * BAILS rather than risk a double-bill, leaving the invoices as-is. Runs in its own
    * transaction when none is supplied (mirrors the post-commit reconcile call site).
    *
@@ -2023,7 +2023,7 @@ export class InvoicesService {
           discount: true,
           shippingFee: true,
           dueDate: true,
-          items: { select: { orderItemId: true, unitsPerBox: true } },
+          items: { select: RESYNC_ITEM_SELECT }, // #2268: + the NSF-line reads
           payments: { select: { amount: true, status: true } },
         },
       });
