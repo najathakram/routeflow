@@ -50,6 +50,7 @@ import { applyInvoiceStatusFilters } from "./invoice-list-query";
 import { markOverdueForTenant } from "./overdue-sweep.service";
 import * as fs from "fs";
 import * as path from "path";
+import { fillSparseCasBasis } from "./testing/sparse-line-fixtures";
 
 describe("InvoicesService — #2493 due dates under a negative-offset process zone", () => {
   let service: InvoicesService;
@@ -94,7 +95,10 @@ describe("InvoicesService — #2493 due dates under a negative-offset process zo
   const mockNumbering = { reserveNext: jest.fn().mockResolvedValue("INV-2026-0001") };
 
   beforeEach(async () => {
+    fillSparseCasBasis(); // #2645: sparse order fixtures vs the CAS basis pin
     prisma = createMockPrisma();
+    // #2070: createPartialFromOrder's invoicedQty bump is a CAS (updateMany); a clean read matches 1.
+    prisma.orderItem.updateMany.mockResolvedValue({ count: 1 } as any);
     prisma.invoice.findFirst.mockResolvedValue({ items: [] });
 
     const module: TestingModule = await Test.createTestingModule({
