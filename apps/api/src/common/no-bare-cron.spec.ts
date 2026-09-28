@@ -40,6 +40,7 @@ const EXPECTED_NAMES = [
   "onboarding.refreshAutoChecks",
   "onboarding.sendReminders",
   "onboarding.purgeIntakeFiles",
+  "mailbox-alert.sweepPending",
 ].sort();
 
 function collectSourceFiles(dir: string, out: string[] = [], includeSpecs = false): string[] {
@@ -117,7 +118,7 @@ describe("no bare @Cron in apps/api/src (T2, R2)", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("has exactly 23 `@LeaderCron(` sites, every one of them well-formed", () => {
+  it("has exactly 24 `@LeaderCron(` sites, every one of them well-formed", () => {
     const declared = sources.reduce((n, s) => n + countMatches(s.text, LEADER_CRON), 0);
     const wellFormed = sources.reduce((n, s) => n + countMatches(s.text, LEADER_CRON_SITE), 0);
 
@@ -127,7 +128,8 @@ describe("no bare @Cron in apps/api/src (T2, R2)", () => {
     // #2520 (SA-495a) scheduled invoices.markOverdue per tenant zone, 19 -> 20.
     // #2159 S1 added onboarding.refreshAutoChecks, 20 -> 21.
     // #2159 S5 added onboarding.sendReminders + onboarding.purgeIntakeFiles, 21 -> 23.
-    expect(declared).toBe(23);
+    // #2113 (SA-528) added mailbox-alert.sweepPending, 23 -> 24.
+    expect(declared).toBe(24);
     // A site that does not match the full `(expr, "name")` shape would be invisible to the name
     // assertions below, so pin the two counts together.
     expect(wellFormed).toBe(declared);
@@ -161,7 +163,7 @@ describe("no bare @Cron in apps/api/src (T2, R2)", () => {
     });
   });
 
-  it("registers the 23 expected job names, all unique", () => {
+  it("registers the 24 expected job names, all unique", () => {
     const names: string[] = [];
     for (const s of sources) {
       const re = new RegExp(LEADER_CRON_SITE.source, "g");
