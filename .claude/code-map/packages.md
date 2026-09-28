@@ -308,20 +308,6 @@ undefined`). `scripts/codemods/pricing-import-rewrite.mjs` is the codemod that r
   leave `tsc` with no inputs). `turbo.json`'s old `@routeflow/api#test` mirror-inputs block is
   replaced by a `@routeflow/pricing#test` entry whose inputs include the three apps the tripwire
   walks; `check-types`/`dev` `dependsOn` `^build` so the package builds first.
-- **`pricing.ts` gains `unitsLabel(units, unitsPerBox?, unit?)` and `linePack(line, livePack)`
-  (#2066 review round, 2026-09-25)** — moved here from web-local `lib/stock-label.ts`
-  (`unitsLabel`) and `app/(dashboard)/inventory/_components/purchase-orders-shared.ts`
-  (`linePack`), verbatim, after mobile's PO detail screen grew its own local `unitsLabel` copy
-  that read a boxed split straight off the LIVE product's `unitsPerBox`, skipping `linePack`'s
-  stored-`packSize`-wins rule (B699/B722) entirely — the same "drifting mirror" + "live instead
-  of stored" bug class B707/#1171 already fixed once for invoice/order lines. Both web files now
-  re-export under their original names (`export { unitsLabel } from "@routeflow/pricing"` /
-  `export { linePack };`) so no other import site changes; `apps/mobile/app/(operator)/
-  purchase-orders/[id].tsx` imports both directly. Wiring source-pinned (RN screens aren't
-  renderable in the mobile Jest lane): `apps/mobile/__tests__/po-detail-unit-display-wiring.test.ts`
-  (mirrors `invoice-detail-unit-display-wiring.test.ts`'s #1275 pattern); item-level `linePack`
-  resolution cases (stored wins over live, pack-of-1 not boxed, null-stored falls back) in
-  `apps/mobile/__tests__/po-detail-item-pack.test.ts`.
 
 ### `@routeflow/ui` (`packages/ui`)
 
