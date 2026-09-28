@@ -4286,7 +4286,7 @@ export class InvoicesService {
       qty: i.qty,
       unitPrice: i.unitPrice,
       discount: i.discount,
-      taxRate: i.taxRate,
+      taxRate: isNsfLine(i) ? 0 : i.taxRate, // #2656: the NSF line is never taxed, even when copied
       boxes: (i as any).boxes ?? null,
       pieces: (i as any).pieces ?? null,
       // The sale-time box size travels with the boxes/pieces: without it the copy depends on the LIVE

@@ -228,4 +228,43 @@ describe("InvoicesService — #2656 the NSF line is never taxed", () => {
     expect(prisma.customer.findUnique).not.toHaveBeenCalled();
     expect(prisma.invoice.create).not.toHaveBeenCalled();
   });
+
+  // SA-549a: duplicate() WRITES a per-line taxRate (copied, not accepted) — the same invariant. A
+  // legacy stored-taxed NSF line copies at 0, so the copy's header tax is Σ goods × rate only.
+  it("duplicate(): a legacy stored-taxed NSF line copies at 0; the header excludes it; goods keep their rate", async () => {
+    prisma.invoice.findUnique.mockResolvedValue({
+      ...draft,
+      items: [
+        { ...storedGoods, taxRate: 0.075, categoryTaxAmount: 0 },
+        { ...storedNsf, taxRate: 0.08, categoryTaxAmount: 0 },
+      ],
+    });
+    prisma.customer.findUnique.mockResolvedValue({ id: "cust-1", isTaxExempt: false });
+    prisma.invoice.create.mockImplementation(async (args: any) => ({
+      id: "inv-copy",
+      ...args.data,
+    }));
+
+    await service.duplicate("inv-nsf");
+
+    const data = prisma.invoice.create.mock.calls[0][0].data;
+    const findLines = (v: any): any[] | undefined => {
+      if (Array.isArray(v) && v.some((x) => x && typeof x === "object" && "taxRate" in x)) return v;
+      if (v && typeof v === "object")
+        for (const x of Object.values(v)) {
+          const f = findLines(x);
+          if (f) return f;
+        }
+      return undefined;
+    };
+    const lines = findLines(data) ?? findLines(prisma.invoiceItem.createMany.mock.calls[0]?.[0]);
+    expect(lines).toBeDefined();
+    const nsf = lines!.find((l: any) => l.description === NSF_DESC);
+    const goodsCopy = lines!.find((l: any) => l.description === "Cola 12pk");
+    expect(Number(nsf.taxRate)).toBe(0); // pre-fix: 0.08 copied verbatim
+    expect(Number(goodsCopy.taxRate)).toBe(0.075); // goods unchanged
+    expect(Number(data.subtotal)).toBe(125);
+    expect(Number(data.taxAmount)).toBe(7.5); // pre-fix: 7.5 + 25 × 0.08 = 9.5
+    expect(Number(data.total)).toBe(132.5);
+  });
 });
