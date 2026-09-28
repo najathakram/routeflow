@@ -44,6 +44,8 @@ export const QTY_INPUT_WIDTH = {
   edit: 56,
   /** #2727: the buyer cart's qty field (orders/cart.tsx). 14px semibold, no h-padding. */
   buyerCart: 44,
+  /** #2727: the buyer catalog tile's qty field ((tabs)/catalog.tsx). 14px semibold, no h-padding. */
+  buyerCatalog: 44,
 } as const;
 
 /**
