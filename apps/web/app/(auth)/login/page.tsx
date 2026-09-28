@@ -17,6 +17,7 @@ import { safeOperatorRedirect, landingForRole } from "@/lib/portal-routing";
 import { usePortalPresence } from "@/lib/hooks/usePortalPresence";
 import { AuthShell } from "@/components/auth";
 import { DRIVER_APP_LOGIN_URL } from "@/lib/driver-app-link";
+import { isInShell } from "@/lib/in-shell";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -142,6 +143,8 @@ export default function LoginPage() {
       : "http://localhost:3000/api/v1");
 
   const handleGoogleSignIn = async () => {
+    // #2653 / SA-542 Q3: never start Google inside the app shell (the CSS hides it; this guards it).
+    if (isInShell()) return;
     setGoogleLoading(true);
     setGoogleError(null);
     const result = await startGoogleSignIn({
@@ -295,34 +298,39 @@ export default function LoginPage() {
         </Button>
       </form>
 
-      {/* Divider */}
-      <div className="my-5 flex items-center gap-3">
-        <div className="h-px flex-1 bg-surface-border" />
-        <span className="text-xs text-navy/70 uppercase tracking-wider">or</span>
-        <div className="h-px flex-1 bg-surface-border" />
-      </div>
+      {/* #2653: the whole Google block hides inside the app shell (app/shell.css). */}
+      <div data-google-signin>
+        {/* Divider */}
+        <div className="my-5 flex items-center gap-3">
+          <div className="h-px flex-1 bg-surface-border" />
+          <span className="text-xs text-navy/70 uppercase tracking-wider">or</span>
+          <div className="h-px flex-1 bg-surface-border" />
+        </div>
 
-      {googleError && (
-        <p className="mb-3 rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">{googleError}</p>
-      )}
-      <button
-        type="button"
-        onClick={handleGoogleSignIn}
-        disabled={googleLoading || isLoading}
-        className="rf-btn secondary flex w-full items-center justify-center gap-3"
-      >
-        {googleLoading ? (
-          <>
-            <div className="h-4 w-4 animate-spin rounded-full border-2 border-navy/30 border-t-navy/70" />
-            <span>Redirecting to Google…</span>
-          </>
-        ) : (
-          <>
-            <GoogleIcon className="h-4 w-4" />
-            <span>Continue with Google</span>
-          </>
+        {googleError && (
+          <p className="mb-3 rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">
+            {googleError}
+          </p>
         )}
-      </button>
+        <button
+          type="button"
+          onClick={handleGoogleSignIn}
+          disabled={googleLoading || isLoading}
+          className="rf-btn secondary flex w-full items-center justify-center gap-3"
+        >
+          {googleLoading ? (
+            <>
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-navy/30 border-t-navy/70" />
+              <span>Redirecting to Google…</span>
+            </>
+          ) : (
+            <>
+              <GoogleIcon className="h-4 w-4" />
+              <span>Continue with Google</span>
+            </>
+          )}
+        </button>
+      </div>
 
       <p className="mt-5 text-center text-xs text-navy/70">
         First sign-in? You&apos;ll be prompted to change your password.
