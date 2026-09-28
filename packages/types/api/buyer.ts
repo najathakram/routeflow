@@ -169,6 +169,26 @@ export interface OrderTemplateItem {
  * diverge between apps (sweep §3: "D"); typing `type`/`scope` from the shared
  * enums resolves that — web and mobile now declare the identical shape.
  */
+/** GET /buyer/products/:id — one active variant (a catalog product in its own right). */
+export interface BuyerProductVariant {
+  id: string;
+  name: string;
+  sku: string | null;
+  buyerPrice: number;
+  unit: string;
+  /** Promo inputs — a variant row prices through the tile price path like any tile. */
+  category: string | null;
+  unitsPerBox: number | null;
+}
+
+/** GET /buyer/products/:id — the detail-only fields on top of the catalog list row. */
+export interface BuyerProductDetailExtras {
+  imageUrls: string[];
+  variants: BuyerProductVariant[];
+  /** P5-03: whether the caller has a PENDING restock alert on this product. */
+  alertSubscribed?: boolean;
+}
+
 export interface BuyerPromotion {
   id: string;
   name: string;

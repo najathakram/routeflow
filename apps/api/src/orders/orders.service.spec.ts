@@ -4741,7 +4741,7 @@ describe("OrdersService", () => {
 
       expect(prisma.orderItem.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "li-A" },
+          where: { id: "li-A", orderId: "ord-1" },
           data: expect.objectContaining({
             productId: "prod-tob",
             unitPrice: 20,
@@ -4840,7 +4840,7 @@ describe("OrdersService", () => {
 
       expect(prisma.orderItem.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "li-A" },
+          where: { id: "li-A", orderId: "ord-1" },
           data: expect.objectContaining({
             productId: "prod-tob",
             unitPrice: 8,
@@ -5160,7 +5160,7 @@ describe("OrdersService", () => {
 
       expect(prisma.orderItem.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "li-A" },
+          where: { id: "li-A", orderId: "ord-1" },
           data: expect.objectContaining({
             productId: "prod-loose",
             // 2 * (unitsPerBox ?? 0) would have been qty 0 / subtotal 0 — a free line.
@@ -6663,7 +6663,7 @@ describe("OrdersService", () => {
 
       expect(prisma.orderItem.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "li-A" },
+          where: { id: "li-A", orderId: "ord-1" },
           data: expect.objectContaining({
             productId: "prod-sub",
             unitPrice: 8,

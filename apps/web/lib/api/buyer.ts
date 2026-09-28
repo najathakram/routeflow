@@ -12,6 +12,7 @@ import type {
   BuyerAuthorizationRow,
   BuyerCreateChangeRequestInput,
   BuyerPayment,
+  BuyerProductDetailExtras,
   BuyerPromotion,
   BuyerRemittance,
   BuyerStatement,
@@ -64,21 +65,9 @@ export interface BuyerProduct {
   stockLeft?: number | null;
 }
 
-export interface BuyerProductDetail extends BuyerProduct {
-  imageUrls: string[];
-  variants: Array<{
-    id: string;
-    name: string;
-    sku: string | null;
-    buyerPrice: number;
-    unit: string;
-    /** Promo inputs — a variant row prices through `deriveTilePrice` like any tile. */
-    category: string | null;
-    unitsPerBox: number | null;
-  }>;
-  /** P5-03: whether the caller has a PENDING restock alert on this product. */
-  alertSubscribed?: boolean;
-}
+/** Detail-only fields are shared with mobile via @routeflow/types (#2345). */
+export interface BuyerProductDetail
+  extends Omit<BuyerProduct, "imageUrls">, BuyerProductDetailExtras {}
 
 export interface BuyerOrder {
   id: string;

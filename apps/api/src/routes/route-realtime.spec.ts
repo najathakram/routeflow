@@ -247,7 +247,28 @@ function makePrisma(store: Store) {
     return true;
   }
 
+  // #1534 / SA-515: the gateway re-validates staff sockets against their user row at connect.
+  // Exactly the shape it sends; anything else throws (L-081).
+  const staffUsers = [
+    { id: "u-op1", role: "OPERATOR", tenantId: "t-1", canActAsDriver: false },
+    { id: "u-op2", role: "OPERATOR", tenantId: "t-2", canActAsDriver: false },
+  ];
+
   return {
+    user: {
+      findMany: jest.fn(async (args: { where: Record<string, any> }) => {
+        const w = args.where;
+        if (
+          Object.keys(w).sort().join(",") !== "deletedAt,id,status" ||
+          w.status !== "ACTIVE" ||
+          w.deletedAt !== null ||
+          !Array.isArray(w.id?.in)
+        ) {
+          throw new Error(`stand-in: unsupported User filter ${JSON.stringify(w)}`);
+        }
+        return staffUsers.filter((u) => w.id.in.includes(u.id));
+      }),
+    },
     buyerAccount: {
       findMany: jest.fn(
         async (args: { where: Record<string, any>; select: Record<string, boolean> }) =>
