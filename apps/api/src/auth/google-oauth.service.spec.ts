@@ -302,6 +302,32 @@ describe("GoogleOAuthService device info threading (Phase 0 T6)", () => {
     expect(refreshTokenUpsert).toHaveBeenCalled(); // the session was still minted
   });
 
+  // #1534 fold (the lead's Opus on #2593): the staff socket re-check compares the token's
+  // canActAsDriver claim with the user row, so the Google-issued staff token must carry it too.
+  it("#1534: the Google-issued staff access token carries the user's canActAsDriver claim", async () => {
+    const { service, prisma } = buildService();
+    const sign = (service as any).jwtService.sign as jest.Mock;
+    prisma.user.findFirst.mockResolvedValue({
+      id: "admin-1",
+      username: "admin",
+      role: "SUPER_ADMIN",
+      status: "ACTIVE",
+      googleId: "g1",
+      forcePasswordChange: false,
+      tenantId: null,
+      password: null,
+      canActAsDriver: true,
+    });
+
+    await service.findOrCreateUser({
+      type: "platform",
+      googleId: "g1",
+      email: "admin@example.com",
+    } as any);
+
+    expect(sign.mock.calls[0][0]).toMatchObject({ sub: "admin-1", canActAsDriver: true });
+  });
+
   it("handlePlatformAuth omits device info when none is provided", async () => {
     const { service, prisma, refreshTokenUpsert } = buildService();
     prisma.user.findFirst.mockResolvedValue({

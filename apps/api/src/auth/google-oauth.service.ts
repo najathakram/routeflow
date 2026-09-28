@@ -825,6 +825,9 @@ export class GoogleOAuthService {
       tenantId: user.tenantId ?? null,
       tenantSlug: tenantSlug ?? null,
       hasPassword: !!user.password,
+      // #1534: the same capability claim password login and refresh mint (auth.service) — the
+      // staff socket re-check compares it with the user row.
+      canActAsDriver: user.canActAsDriver ?? false,
     };
     // Plans & Billing: embed the entitlement snapshot for Google-login users too.
     const claims = await this.entitlements.claimsFor(payload.tenantId);
