@@ -35,6 +35,7 @@ import { MessagingService } from "../messaging/messaging.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { INVOICE_LINE_CAS_FIELDS } from "./partial-invoice-cas";
 
 describe("split/full invoices: the invoicedQty bump is a compare-and-set (#2612, SA-523)", () => {
   let service: InvoicesService;
@@ -130,9 +131,23 @@ describe("split/full invoices: the invoicedQty bump is a compare-and-set (#2612,
     unitPrice: 10,
     subtotal: 960,
     status: "PENDING",
+    // #2645 / SA-523d: a real row carries every CAS basis column (the read is an `include`).
+    promoFreeUnits: null,
+    categoryTaxAmount: 0,
+    categoryTaxType: null,
+    categoryTaxRate: null,
+    categoryPriceIncludesTax: null,
+    unitLabel: null,
+    originalPrice: null,
+    priceType: "STANDARD",
+    name: null,
+    notes: null,
+    trackedCategoryId: null,
+    trackedSubcategoryId: null,
     product: { name: "Widget", unitsPerBox: 1 },
     ...over,
   });
+  const basisOf = (li: any) => Object.fromEntries(INVOICE_LINE_CAS_FIELDS.map((f) => [f, li[f]]));
   const order = (lines: any[] = [line()]) => ({
     id: "ord-1",
     customerId: "cust-1",
@@ -166,7 +181,8 @@ describe("split/full invoices: the invoicedQty bump is a compare-and-set (#2612,
     prisma.order.findUnique.mockResolvedValue(order([line({ invoicedQty: 40 })]) as any);
     await service.createInvoiceFromOrder("ord-1");
     expect(prisma.orderItem.updateMany).toHaveBeenCalledWith({
-      where: { id: "oi-1", invoicedQty: 40, qty: 96, status: { not: "CANCELLED" } },
+      // #2645 / SA-523d: the WHOLE billing basis as read, not just qty/invoicedQty.
+      where: { id: "oi-1", status: { not: "CANCELLED" }, ...basisOf(line({ invoicedQty: 40 })) },
       data: { invoicedQty: { increment: 56 } },
     });
     expect(prisma.orderItem.update).not.toHaveBeenCalled(); // never the unconditional bump
