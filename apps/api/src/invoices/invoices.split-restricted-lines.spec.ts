@@ -25,12 +25,14 @@ import { MessagingService } from "../messaging/messaging.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { fillSparseCasBasis } from "./testing/sparse-line-fixtures";
 
 describe("InvoicesService — split restricted-lines flag (F-05 #2093)", () => {
   let service: InvoicesService;
   let prisma: ReturnType<typeof createMockPrisma>;
 
   beforeEach(async () => {
+    fillSparseCasBasis(); // #2645: sparse order fixtures vs the CAS basis pin
     prisma = createMockPrisma();
     prisma.invoice.findFirst.mockResolvedValue({ items: [] });
     // #2643: the split bumps each order line's invoicedQty through a CAS updateMany; a mock that
