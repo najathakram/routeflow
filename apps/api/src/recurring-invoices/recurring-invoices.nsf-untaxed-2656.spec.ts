@@ -1,0 +1,81 @@
+/**
+ * #2656 / SA-549 — a recurring template is a server path that accepts a per-line taxRate, so its
+ * create and update refuse an NSF-described line with a rate > 0 (400 NSF_LINE_UNTAXED) before any
+ * read or write; the same line at 0 goes through.
+ */
+jest.mock("../common/db-locks", () => ({
+  withAdvisoryLock: async (_opts: unknown, fn: () => Promise<unknown>) => ({
+    acquired: true,
+    value: await fn(),
+  }),
+  LockTimeoutError: class extends Error {},
+  LockUnavailableError: class extends Error {},
+}));
+
+import { Test } from "@nestjs/testing";
+import { NSF_FEE_DESCRIPTION_PREFIX } from "@routeflow/pricing";
+import { RecurringInvoicesService } from "./recurring-invoices.service";
+import { PrismaService } from "../prisma/prisma.service";
+import { TenantContextService } from "../tenant/tenant-context.service";
+import { InvoicesService } from "../invoices/invoices.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { NotificationsService } from "../notifications/notifications.service";
+import { createMockPrisma } from "../testing/prisma-mock";
+
+describe("RecurringInvoicesService — #2656 an NSF-described template line is never taxed", () => {
+  let service: RecurringInvoicesService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    const mod = await Test.createTestingModule({
+      providers: [
+        RecurringInvoicesService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: TenantContextService, useValue: {} },
+        { provide: InvoicesService, useValue: { create: jest.fn() } },
+        {
+          provide: SellingRestrictionsService,
+          useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+        },
+        { provide: NotificationsService, useValue: { sendToUser: jest.fn() } },
+      ],
+    }).compile();
+    service = mod.get(RecurringInvoicesService);
+  });
+
+  const nsfLine = (taxRate: number) => ({
+    description: `${NSF_FEE_DESCRIPTION_PREFIX} #3`,
+    qty: 1,
+    unitPrice: 25,
+    taxRate,
+  });
+  const codeOf = (e: any) => (e?.getResponse?.() as any)?.code;
+
+  it("create(): rate > 0 ⇒ 400 NSF_LINE_UNTAXED before the customer is even read", async () => {
+    const caught: any = await service
+      .create({ customerId: "c-1", frequency: "MONTHLY", items: [nsfLine(0.08)] } as any)
+      .catch((e) => e);
+    expect(codeOf(caught)).toBe("NSF_LINE_UNTAXED");
+    expect(prisma.customer.findUnique).not.toHaveBeenCalled();
+    expect(prisma.recurringInvoice.create).not.toHaveBeenCalled();
+  });
+
+  it("update(): rate > 0 ⇒ 400 before any read", async () => {
+    const caught: any = await service
+      .update("ri-1", { items: [nsfLine(0.05)] } as any)
+      .catch((e) => e);
+    expect(codeOf(caught)).toBe("NSF_LINE_UNTAXED");
+    expect(prisma.recurringInvoice.findFirst).not.toHaveBeenCalled();
+    expect(prisma.recurringInvoice.update).not.toHaveBeenCalled();
+  });
+
+  it("create(): the same line at 0 passes the guard (reaches the customer read)", async () => {
+    prisma.customer.findUnique.mockResolvedValue(null); // then the normal 404 — past the guard
+    const caught: any = await service
+      .create({ customerId: "c-1", frequency: "MONTHLY", items: [nsfLine(0)] } as any)
+      .catch((e) => e);
+    expect(codeOf(caught)).toBeUndefined();
+    expect(prisma.customer.findUnique).toHaveBeenCalled();
+  });
+});

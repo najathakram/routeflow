@@ -104,6 +104,7 @@ import {
   loadPriceAdjustmentReference,
   lockInvoiceForPriceAdjustment,
 } from "./price-adjustment-ledger";
+import { assertNsfLinesUntaxed } from "./nsf-line-tax-guard";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { assertNoUnspentSourcedCredits } from "../credit-notes/sourced-credit-guard";
@@ -355,6 +356,7 @@ export class InvoicesService {
   async create(dto: Omit<CreateInvoiceDto, "items"> & { items: ManualLineItem[] }) {
     const issueDateInput = dto.issueDate ? issueDateStamp(dto.issueDate) : null; // #2197: 400 first
     const due = dueDateStamps(dto); // #2256: the due dates too, refused before any read or write
+    assertNsfLinesUntaxed(dto.items); // #2656: an NSF-described line is never taxed (400)
     const customer = await this.prisma
       .forTenant()
       .customer.findUnique({ where: { id: dto.customerId } });
@@ -3096,10 +3098,15 @@ export class InvoicesService {
         // productId), keep untouched rows verbatim and in place, re-price only changed lines. Rules
         // and reasoning: invoice-edit-plan.ts.
         const storedRows = await tx.invoiceItem.findMany({ where: { invoiceId: id } });
+        const matches = matchEditLines(items, storedRows);
+        assertNsfLinesUntaxed(
+          items,
+          matches.map((m) => m.row),
+        ); // #2656: 400 before any write
         const editLines = buildEditedLines({
           items: items,
           stored: storedRows,
-          matches: matchEditLines(items, storedRows),
+          matches,
           productMap,
           categoryMap,
           clampFreeUnits: (f, b, q) => this.clampLineFreeUnits(f, b, q),

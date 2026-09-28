@@ -13,6 +13,7 @@ import { CreateRecurringInvoiceDto } from "./dto/create-recurring-invoice.dto";
 import { UpdateRecurringInvoiceDto } from "./dto/update-recurring-invoice.dto";
 import { RecurringFrequency } from "@prisma/client";
 import { recurringLineSplit } from "./recurring-line-split";
+import { assertNsfLinesUntaxed } from "../invoices/nsf-line-tax-guard";
 
 /** REG-B106: RecurringInvoice.lastRunStatus values (schema comment: "SUCCESS" | "FAILED"). */
 export const RUN_STATUS_SUCCESS = "SUCCESS";
@@ -55,6 +56,7 @@ export class RecurringInvoicesService {
   // ─── CRUD ─────────────────────────────────────────────────────────────────
 
   async create(dto: CreateRecurringInvoiceDto) {
+    assertNsfLinesUntaxed(dto.items ?? []); // #2656: a template's NSF-described line is never taxed
     // REG-B131: a removed (soft-deleted) customer is not a recurring-invoice target — the sweep
     // already skips their schedules, so creating one would only schedule a silent no-op. Refuse
     // through the existing not-found branch so no customer state leaks.
@@ -109,6 +111,7 @@ export class RecurringInvoicesService {
   }
 
   async update(id: string, dto: UpdateRecurringInvoiceDto) {
+    assertNsfLinesUntaxed(dto.items ?? []); // #2656: 400 before any read or write
     await this.findOne(id);
     const include = { customer: { select: { id: true, businessName: true } }, items: true };
     const data = {
