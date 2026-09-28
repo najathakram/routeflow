@@ -20,6 +20,12 @@
 x-api-build: &api-build
   context: .
   dockerfile: apps/api/Dockerfile
+  # #2491: the commit the image was built from, stamped by `npm run local:up` / `local:build`
+  # (scripts/local-env.mjs --build-sha). `local-env.mjs --proof-stack` refuses a proof against an
+  # image whose build commit does not contain the commit under proof ("stale image").
+  labels: &build-sha-labels
+    org.routeflow.sha: ${ROUTEFLOW_BUILD_SHA:-unknown}
+    org.routeflow.dirty: ${ROUTEFLOW_BUILD_DIRTY:-unknown}
 
 services:
   # ─── PostgreSQL ─────────────────────────────────────────────────────────────
@@ -209,6 +215,7 @@ services:
       dockerfile: apps/web/Dockerfile
       args:
         NEXT_PUBLIC_API_URL: http://localhost:3000/api/v1
+      labels: *build-sha-labels
     image: routeflow-web:local
     container_name: routeflow_web
     restart: unless-stopped

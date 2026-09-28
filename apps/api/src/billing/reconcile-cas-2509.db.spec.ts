@@ -4,8 +4,8 @@
  * the (planKey, snapshot) it read, and emits PLAN_CHANGED in the SAME transaction.
  *
  * ENTRY (asserted, never timed): T2 holds the TenantSubscription row with an uncommitted write; the
- * reconcile has read the committed row and is BLOCKED on its compare-and-set (pg_blocking_pids; the
- * stats snapshot is cleared before each poll, since T2 polls inside its own open tx). T2 commits; under
+ * reconcile has read the committed row and is BLOCKED on its compare-and-set (pg_blocking_pids, polled
+ * from the pool until blocked or settled — #2666: condition-based, asserted before T2 is released). T2 commits; under
  * READ COMMITTED the blocked UPDATE re-checks its WHERE against the committed row.
  *   - A concurrent upgrade (planKey + snapshot moved) ⇒ the CAS misses, the re-read sees another plan
  *     ⇒ the reconcile writes NOTHING and books NOTHING (pre-#2509 it overwrote the upgrade's snapshot
@@ -13,7 +13,7 @@
  *   - A second Pricing write (snapshot only) ⇒ the CAS misses, the retry nets against the FRESH value.
  * SA-503a (#2528 fold): pin 1's T2 runs upgrade()'s real sequence and the Tenant-lock pin runs Pricing's
  * — both take the Tenant lock first, so the reconcile must be waiting on ITS Tenant lock (asserted from
- * pg_stat_activity: red if that lock is reverted), then complete on the fresh row. Plus a control. The real BillingService; the Stripe push is a natural no-op (no stripeSubId), and
+ * pg_locks, structurally — #2666/SA-548: red if that lock is reverted), then complete on the fresh row. Plus a control. The real BillingService; the Stripe push is a natural no-op (no stripeSubId), and
  * the resolved price is stubbed (the repricing under test). Throwaway `qa-*` tenants. DB lane (F2).
  */
 import { randomUUID } from "crypto";
@@ -93,34 +93,96 @@ describeDb("#2509 reconcilePriceLedger compare-and-set (real Postgres, two conne
       select: { amountDelta: true, payload: true },
     });
 
+  /** One session blocked on T2, read STRUCTURALLY from pg_locks (#2666 / SA-548 — never a regex on
+   *  query text). A row-lock waiter holds the heavyweight TUPLE lock on the row it waits for (its
+   *  ungranted lock is usually T2's transactionid, which names no table), so the relation it waits on is
+   *  the relation of its tuple lock. `query` is kept for the failure message only. */
+  type Waiter = {
+    pid: number;
+    query: string;
+    waiting: boolean;
+    onTenant: boolean;
+    onSubscription: boolean;
+    locks: unknown;
+  };
+
+  async function waitersOn(t2pid: number): Promise<Waiter[]> {
+    const q = await pool.query(
+      `SELECT a.pid, a.query,
+         EXISTS (SELECT 1 FROM pg_locks l WHERE l.pid = a.pid AND NOT l.granted) AS waiting,
+         EXISTS (SELECT 1 FROM pg_locks l WHERE l.pid = a.pid AND l.locktype = 'tuple'
+                   AND l.relation = '"Tenant"'::regclass) AS "onTenant",
+         EXISTS (SELECT 1 FROM pg_locks l WHERE l.pid = a.pid AND l.locktype = 'tuple'
+                   AND l.relation = '"TenantSubscription"'::regclass) AS "onSubscription",
+         (SELECT json_agg(json_build_object('locktype', l.locktype, 'relation', l.relation::regclass::text,
+                   'mode', l.mode, 'granted', l.granted))
+            FROM pg_locks l WHERE l.pid = a.pid) AS locks
+       FROM pg_stat_activity a WHERE $1 = ANY(pg_blocking_pids(a.pid))`,
+      [t2pid],
+    );
+    return q.rows as Waiter[];
+  }
+
+  const dump = (x: unknown) => JSON.stringify(x, null, 2);
+
+  /** SA-503a / SA-548: the reconcile must be waiting on the TENANT row. A miss throws every blocked
+   *  waiter's query + pg_locks rows (a wait on TenantSubscription at HEAD goes to the SA). */
+  function expectTenantWait(race: { tenantLock: boolean; waitingOn: unknown }) {
+    if (!race.tenantLock) {
+      throw new Error(
+        `#2666 the reconcile is not waiting on the Tenant row; waitingOn: ${dump(race.waitingOn)}`,
+      );
+    }
+  }
+
   /** T2 runs `statements` (uncommitted) while the sync's reconcile blocks on T2; then commits.
-   *  `waitingOn` = the statement the reconcile was blocked in (SA-503a: it must be the Tenant lock). */
+   *  #2666: the ENTRY is condition-based, never timed. Poll (from the pool, a fresh stats snapshot per
+   *  statement, as #2659) until a session is blocked on T2 OR the sync has settled; only a deadline
+   *  under the test timeout ends it otherwise, and then it FAILS with what it saw. The entry is asserted
+   *  BEFORE T2 is released. SA-503a: the reconcile must be waiting on the TENANT row (pg_locks). */
   async function raceSync(tenantId: string, statements: string[]) {
     const t2 = new Client({ connectionString: url });
     await t2.connect();
-    let blocked = false;
-    let waitingOn = "";
+    let waiters: Waiter[] = [];
+    let settled = false;
+    let sync: Promise<unknown> | undefined;
     try {
       await t2.query("BEGIN");
       for (const sql of statements) await t2.query(sql, [tenantId]);
       const pid = (await t2.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
-      const p1 = svc.syncStripeSubscriptionPrice(tenantId);
-      for (let i = 0; i < 400 && !blocked; i++) {
-        await t2.query("SELECT pg_stat_clear_snapshot()");
-        const q = await t2.query(
-          `SELECT query FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
-          [pid],
-        );
-        blocked = q.rows.length > 0;
-        if (blocked) waitingOn = q.rows[0].query;
-        if (!blocked) await new Promise((x) => setTimeout(x, 25));
+      sync = svc.syncStripeSubscriptionPrice(tenantId).then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      void sync.then(() => (settled = true));
+      const deadline = Date.now() + 25_000;
+      while (!waiters.some((w) => w.waiting) && !settled && Date.now() < deadline) {
+        waiters = await waitersOn(pid);
+        if (!waiters.some((w) => w.waiting) && !settled)
+          await new Promise((x) => setTimeout(x, 25));
       }
-      await t2.query("COMMIT");
-      await p1;
+      // ENTRY, before the release: the sync is blocked on T2 (it cannot finish while T2 holds a lock it
+      // needs — settling first would itself be the bug). SA-548 (3): a miss THROWS the full dump —
+      // every waiter's query and its pg_locks rows — never a matcher that elides it.
+      if (!waiters.some((w) => w.waiting) || settled) {
+        throw new Error(
+          `#2666 entry not reached (blocked=${waiters.some((w) => w.waiting)}, settledFirst=${settled}); ` +
+            `waiters on T2 pid ${pid}: ${dump(waiters)}`,
+        );
+      }
     } finally {
-      await t2.end();
+      await t2.query("COMMIT").catch(() => undefined);
+      const err = sync ? await sync : undefined;
+      await t2.end().catch(() => undefined);
+      if (err) throw err;
     }
-    return { blocked, tenantLock: /FROM "Tenant" WHERE .* FOR UPDATE/.test(waitingOn) };
+    const blocked = waiters.filter((w) => w.waiting);
+    return {
+      blocked: blocked.length > 0,
+      tenantLock: blocked.some((w) => w.onTenant),
+      /** Diagnostics for a miss (SA-548: a wait on TenantSubscription here goes to the SA). */
+      waitingOn: blocked.map((w) => ({ query: w.query, locks: w.locks })),
+    };
   }
 
   it("a concurrent upgrade (GROWTH 249 → SCALE 499) during the reconcile ⇒ the reconcile writes and books nothing", async () => {
@@ -132,13 +194,19 @@ describeDb("#2509 reconcilePriceLedger compare-and-set (real Postgres, two conne
       `UPDATE "TenantSubscription" SET "planKey" = 'SCALE', "currentPlan" = 'SCALE', "basePriceSnapshot" = 499 WHERE "tenantId" = $1`,
       `UPDATE "Tenant" SET "plan" = 'SCALE' WHERE id = $1`,
     ]);
+    expectTenantWait(race); // structural (pg_locks); a miss throws the dump
     const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: id } });
     expect({
-      ...race,
+      blocked: race.blocked,
       planKey: sub.planKey,
       snapshot: Number(sub.basePriceSnapshot),
       events: (await syncEvents(id)).length,
-    }).toEqual({ blocked: true, tenantLock: true, planKey: "SCALE", snapshot: 499, events: 0 });
+    }).toEqual({
+      blocked: true,
+      planKey: "SCALE",
+      snapshot: 499,
+      events: 0,
+    });
   }, 30_000);
 
   it("a second Pricing change (fee, then snapshot 249 → 200, same plan) during the reconcile ⇒ retried, booked once against 200", async () => {
@@ -168,13 +236,18 @@ describeDb("#2509 reconcilePriceLedger compare-and-set (real Postgres, two conne
       `UPDATE "TenantSubscription" SET "priceOverrideMonthly" = 200 WHERE "tenantId" = $1`,
       `UPDATE "TenantSubscription" SET "basePriceSnapshot" = 200 WHERE "tenantId" = $1`,
     ]);
+    expectTenantWait(race); // structural (pg_locks); a miss throws the dump
     const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: id } });
     const events = await syncEvents(id);
     expect({
-      ...race,
+      blocked: race.blocked,
       snapshot: Number(sub.basePriceSnapshot),
       deltas: events.map((e) => Number(e.amountDelta)),
-    }).toEqual({ blocked: true, tenantLock: true, snapshot: 150, deltas: [-50] });
+    }).toEqual({
+      blocked: true,
+      snapshot: 150,
+      deltas: [-50],
+    });
   }, 30_000);
 
   it("control: no concurrent write ⇒ snapshot 150, one −99 event", async () => {

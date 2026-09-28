@@ -264,7 +264,8 @@ describe("assertReplayCarriesReturn (#2094 R1)", () => {
     await expect(assertReplayCarriesReturn(d, p, "ord-1")).resolves.toBeUndefined();
     expect(d.return.findFirst).toHaveBeenCalledWith({
       where: { returnKey: "k1", orderId: "ord-1", kind: "INLINE" },
-      select: { id: true },
+      // #2424: the replay also compares the items against the stored capture fingerprint
+      select: { id: true, returnNumber: true, capturePayload: true },
     });
   });
 
@@ -348,9 +349,9 @@ describe("assertReplayCarriesReturnKey / edit reserve / retry (#2094 A2)", () =>
   });
 
   it("a returnKey the replayed order does not carry: 409", async () => {
-    await expect(assertReplayCarriesReturnKey(db(false), "k9", "o1")).rejects.toThrow(
-      ConflictException,
-    );
+    await expect(
+      assertReplayCarriesReturnKey(db(false), { returnKey: "k9" }, "o1"),
+    ).rejects.toThrow(ConflictException);
   });
 
   it("reserveEditReturnNumber skips ONLY a same-return replay (null): a $0 preflight still reserves (SA-292)", async () => {

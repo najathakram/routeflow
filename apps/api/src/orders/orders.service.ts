@@ -1323,9 +1323,9 @@ export class OrdersService implements OnApplicationBootstrap {
     idempotencyKey: string,
     customerId: string,
     requestHash?: string,
-    returnKey?: string,
+    inlineReturn?: { returnKey?: string; items?: any[]; reason?: string | null }, // #2424
   ): Promise<{ orderId: string; verified: boolean } | null> {
-    return findOrderIdByKey(this.idemDeps(), idempotencyKey, customerId, requestHash, returnKey);
+    return findOrderIdByKey(this.idemDeps(), idempotencyKey, customerId, requestHash, inlineReturn);
   }
 
   /** B215/F30: replay-key lookup + stamping live in merge-idempotency.ts (size ratchet). */
