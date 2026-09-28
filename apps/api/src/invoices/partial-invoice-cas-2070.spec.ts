@@ -37,7 +37,11 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
-import { assertPartialRequestShape, bumpInvoicedQtyCas } from "./partial-invoice-cas";
+import {
+  assertPartialRequestShape,
+  bumpInvoicedQtyCas,
+  INVOICE_LINE_CAS_FIELDS,
+} from "./partial-invoice-cas";
 
 describe("partial invoices: the invoicedQty bump is a compare-and-set (#2070, SA-523)", () => {
   let service: InvoicesService;
@@ -133,9 +137,23 @@ describe("partial invoices: the invoicedQty bump is a compare-and-set (#2070, SA
     unitPrice: 10,
     subtotal: 960,
     status: "PENDING",
+    // #2645 / SA-523d: a real row carries every CAS basis column (the read is an `include`).
+    promoFreeUnits: null,
+    categoryTaxAmount: 0,
+    categoryTaxType: null,
+    categoryTaxRate: null,
+    categoryPriceIncludesTax: null,
+    unitLabel: null,
+    originalPrice: null,
+    priceType: "STANDARD",
+    name: null,
+    notes: null,
+    trackedCategoryId: null,
+    trackedSubcategoryId: null,
     product: { name: "Widget", unitsPerBox: 1 },
     ...over,
   });
+  const basisOf = (li: any) => Object.fromEntries(INVOICE_LINE_CAS_FIELDS.map((f) => [f, li[f]]));
   const order = (lines: any[] = [line()]) => ({
     id: "ord-1",
     customerId: "cust-1",
@@ -162,7 +180,8 @@ describe("partial invoices: the invoicedQty bump is a compare-and-set (#2070, SA
         items: [{ orderItemId: "oi-1", qty: 56 }],
       } as any);
       expect(prisma.orderItem.updateMany).toHaveBeenCalledWith({
-        where: { id: "oi-1", invoicedQty: 40, qty: 96, status: { not: "CANCELLED" } },
+        // #2645 / SA-523d: the WHOLE billing basis as read, not just qty/invoicedQty.
+        where: { id: "oi-1", status: { not: "CANCELLED" }, ...basisOf(line({ invoicedQty: 40 })) },
         data: { invoicedQty: { increment: 56 } },
       });
       expect(prisma.orderItem.update).not.toHaveBeenCalled(); // never the unconditional bump
@@ -232,23 +251,64 @@ describe("partial invoices: the invoicedQty bump is a compare-and-set (#2070, SA
 
     // #2645 (1): the CAS miss is RETRIABLE (nothing was billed), so it carries a machine code the
     // mobile queue drain branches on, and neutral wording (it also guards the full/split path).
-    it("#2645: a CAS miss is a 409 with code INVOICED_QTY_CHANGED and neutral wording", async () => {
+    it("#2645: a CAS miss is a 409 with code ORDER_LINE_CHANGED and neutral wording", async () => {
       const tx = { orderItem: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) } };
       const caught: any = await bumpInvoicedQtyCas(
         tx,
         [{ orderItemId: "oi-1", qty: 1 }],
-        new Map([["oi-1", { id: "oi-1", qty: 96, invoicedQty: 0 }]]),
+        new Map([["oi-1", line()]]),
       ).catch((e) => e);
       expect(caught).toBeInstanceOf(ConflictException);
-      expect(caught.getResponse()).toMatchObject({ code: "INVOICED_QTY_CHANGED" });
+      expect(caught.getResponse()).toMatchObject({ code: "ORDER_LINE_CHANGED" });
       expect(String(caught.message)).not.toMatch(/partial/i);
     });
 
     // #2645 (2): lines are bumped in orderItemId order, whatever the caller's order — two
     // multi-line creations can then never lock {A,B} / {B,A} (40P01 / P2034 → 500).
+    // SA-523d: price, tax and pack are in the where literally (not only via the shared const), so
+    // a price-only edit between the read and the bump misses the CAS instead of billing stale.
+    it("#2645: the CAS where pins unitPrice, subtotal, the category tax and the pack as read", async () => {
+      const tx = { orderItem: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) } };
+      const li = line({
+        unitPrice: 12.5,
+        subtotal: 1200,
+        categoryTaxAmount: 3.4,
+        promoFreeUnits: 2,
+      });
+      await bumpInvoicedQtyCas(tx, [{ orderItemId: "oi-1", qty: 1 }], new Map([["oi-1", li]]));
+      expect(tx.orderItem.updateMany.mock.calls[0][0].where).toEqual(
+        expect.objectContaining({
+          id: "oi-1",
+          invoicedQty: 0,
+          qty: 96,
+          unitPrice: 12.5,
+          subtotal: 1200,
+          categoryTaxAmount: 3.4,
+          promoFreeUnits: 2,
+          boxes: 96,
+          unitsPerBox: 1,
+          status: { not: "CANCELLED" },
+        }),
+      );
+    });
+
+    it("#2645: SA-511c per field — ANY undefined basis field refuses the write; null is a legal pin", async () => {
+      const tx = { orderItem: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) } };
+      for (const f of INVOICE_LINE_CAS_FIELDS) {
+        const li: any = line();
+        delete li[f];
+        await expect(
+          bumpInvoicedQtyCas(tx, [{ orderItemId: "oi-1", qty: 1 }], new Map([["oi-1", li]])),
+        ).rejects.toThrow(new RegExp(`where-value missing.*${f}`));
+      }
+      expect(tx.orderItem.updateMany).not.toHaveBeenCalled();
+      await bumpInvoicedQtyCas(tx, [{ orderItemId: "oi-1", qty: 1 }], new Map([["oi-1", line()]]));
+      expect(tx.orderItem.updateMany.mock.calls[0][0].where.notes).toBeNull(); // IS NULL pin
+    });
+
     it("#2645: bumps in orderItemId order regardless of caller order", async () => {
       const tx = { orderItem: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) } };
-      const read = (id: string) => [id, { id, qty: 10, invoicedQty: 0 }] as [string, any];
+      const read = (id: string) => [id, line({ id, qty: 10 })] as [string, any];
       await bumpInvoicedQtyCas(
         tx,
         [
@@ -275,8 +335,8 @@ describe("partial invoices: the invoicedQty bump is a compare-and-set (#2070, SA
         tx,
         items,
         new Map([
-          ["oi-a", { id: "oi-a", qty: 10, invoicedQty: 0 }],
-          ["oi-b", { id: "oi-b", qty: 10, invoicedQty: 0 }],
+          ["oi-a", line({ id: "oi-a", qty: 10 })],
+          ["oi-b", line({ id: "oi-b", qty: 10 })],
         ]),
       );
       expect(items.map((i) => i.orderItemId)).toEqual(["oi-b", "oi-a"]);
@@ -292,13 +352,13 @@ describe("partial invoices: the invoicedQty bump is a compare-and-set (#2070, SA
             .mockResolvedValue({ count: 1 }),
         },
       };
-      const read = (id: string) => [id, { id, qty: 10, invoicedQty: 0 }] as [string, any];
+      const read = (id: string) => [id, line({ id, qty: 10 })] as [string, any];
       const caught: any = await bumpInvoicedQtyCas(
         tx,
         ["oi-a", "oi-b", "oi-c"].map((orderItemId) => ({ orderItemId, qty: 1 })),
         new Map([read("oi-a"), read("oi-b"), read("oi-c")]),
       ).catch((e) => e);
-      expect(caught.getResponse()).toMatchObject({ code: "INVOICED_QTY_CHANGED" });
+      expect(caught.getResponse()).toMatchObject({ code: "ORDER_LINE_CHANGED" });
       // Stops at the miss: the third line is never bumped, and the throw aborts the enclosing tx.
       expect(tx.orderItem.updateMany).toHaveBeenCalledTimes(2);
     });

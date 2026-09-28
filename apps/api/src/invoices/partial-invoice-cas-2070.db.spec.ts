@@ -296,7 +296,7 @@ describeDb("partial invoices: concurrent partials never over-bill a line (#2070,
   // #2645 (4): a multi-SIBLING partial. Lines are bumped in orderItemId order, so the first sibling
   // is bumped before the partial blocks on the second; T2 then moves the second's invoicedQty, its
   // CAS misses, and the whole partial rolls back — the FIRST sibling's bump included, no invoice.
-  it("#2645: the second sibling's CAS misses ⇒ 409 INVOICED_QTY_CHANGED, the first sibling's bump rolled back, no invoice", async () => {
+  it("#2645: the second sibling's CAS misses ⇒ 409 ORDER_LINE_CHANGED, the first sibling's bump rolled back, no invoice", async () => {
     const s = await seedLine();
     const second = await prisma.orderItem.create({
       data: {
@@ -328,12 +328,60 @@ describeDb("partial invoices: concurrent partials never over-bill a line (#2070,
     expect(results[0].ok).toBe(false);
     const e = (results[0] as { e: any }).e;
     expect(e).toBeInstanceOf(ConflictException);
-    expect(e.getResponse()).toMatchObject({ code: "INVOICED_QTY_CHANGED" });
+    expect(e.getResponse()).toMatchObject({ code: "ORDER_LINE_CHANGED" });
 
     const firstRow = await prisma.orderItem.findUniqueOrThrow({ where: { id: first } });
     const laterRow = await prisma.orderItem.findUniqueOrThrow({ where: { id: later } });
     expect(Number(firstRow.invoicedQty)).toBe(0); // its bump rolled back with the partial
     expect(Number(laterRow.invoicedQty)).toBe(1); // T2's write only
     expect(await prisma.invoice.count({ where: { orderId: s.orderId } })).toBe(0);
+  });
+
+  // #2645 / SA-523d: the CAS pins the whole billing basis, so a price or category-tax edit that lands
+  // while the partial waits is the same retriable 409 (nothing billed) — never an invoice priced from
+  // the stale read. An identical re-save (same values) does not trip it.
+  const partialOf =
+    (s: { tenantId: string; orderId: string; orderItemId: string }, qty: number) => () =>
+      tenantCtx.run(s.tenantId, () =>
+        invoicesService.createPartialFromOrder(s.orderId, {
+          items: [{ orderItemId: s.orderItemId, qty }],
+        } as any),
+      );
+
+  it.each([
+    ["a unitPrice edit", `"unitPrice" = 11`],
+    ["a category-tax edit", `"categoryTaxAmount" = 1.23`],
+  ])(
+    "#2645: %s under the held row ⇒ 409 ORDER_LINE_CHANGED, nothing billed, no invoice",
+    async (_n, set) => {
+      const s = await seedLine();
+      const { waiting, results } = await holdLine(s.orderItemId, [partialOf(s, 10)], async (t2) => {
+        await t2.query(`UPDATE "OrderItem" SET ${set} WHERE id = $1`, [s.orderItemId]);
+      });
+      expect(waiting).toBe(1);
+      expect(results[0].ok).toBe(false);
+      const e = (results[0] as { e: any }).e;
+      expect(e).toBeInstanceOf(ConflictException);
+      expect(e.getResponse()).toMatchObject({ code: "ORDER_LINE_CHANGED" });
+      const line = await prisma.orderItem.findUniqueOrThrow({ where: { id: s.orderItemId } });
+      expect(Number(line.invoicedQty)).toBe(0); // pre-fix: 10, billed at the stale price
+      expect(await prisma.invoice.count({ where: { orderId: s.orderId } })).toBe(0);
+    },
+  );
+
+  it("#2645: an IDENTICAL re-save under the held row does not trip the CAS — the partial bills", async () => {
+    const s = await seedLine();
+    const { waiting, results } = await holdLine(s.orderItemId, [partialOf(s, 10)], async (t2) => {
+      await t2.query(
+        `UPDATE "OrderItem" SET "unitPrice" = "unitPrice", subtotal = subtotal,
+           "categoryTaxAmount" = "categoryTaxAmount", notes = notes WHERE id = $1`,
+        [s.orderItemId],
+      );
+    });
+    expect(waiting).toBe(1);
+    if (!results[0].ok) throw (results[0] as { e: unknown }).e;
+    const line = await prisma.orderItem.findUniqueOrThrow({ where: { id: s.orderItemId } });
+    expect(Number(line.invoicedQty)).toBe(10);
+    expect(await prisma.invoice.count({ where: { orderId: s.orderId } })).toBe(1);
   });
 });

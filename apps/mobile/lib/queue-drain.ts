@@ -139,7 +139,7 @@ function isRetriableLockContention(err: unknown, status: number | undefined): bo
   if (status === 409 && code === "MERGE_IN_PROGRESS") return true;
   if (status === 503 && code === "LOCK_UNAVAILABLE") return true;
   // #2645: the invoicedQty CAS miss rolls the whole invoice back (nothing billed) — safe to retry.
-  if (status === 409 && code === API_ERROR_CODES.INVOICED_QTY_CHANGED) return true;
+  if (status === 409 && code === API_ERROR_CODES.ORDER_LINE_CHANGED) return true;
   return false;
 }
 

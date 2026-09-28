@@ -61,11 +61,11 @@ describe("drainQueue — order-merge lock contention is retriable (F-B1)", () =>
 
   // #2645: the invoicedQty CAS 409 is raised before anything is billed (the whole invoice rolls
   // back), so a queued stop completion that hits it is retried, never dead-lettered.
-  it("409 INVOICED_QTY_CHANGED is retried, not moved to failedActions", async () => {
+  it("409 ORDER_LINE_CHANGED is retried, not moved to failedActions", async () => {
     const entry = action({ id: "q-invoiced-qty-changed" });
     const request = jest.fn(async () => {
       throw httpError(409, {
-        code: "INVOICED_QTY_CHANGED",
+        code: "ORDER_LINE_CHANGED",
         message: "An order line changed while this invoice was being created.",
       });
     });
