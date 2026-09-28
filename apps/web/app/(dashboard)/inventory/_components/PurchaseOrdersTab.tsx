@@ -13,6 +13,7 @@ import {
   useClosePurchaseOrder,
 } from "@/lib/api/inventory";
 import {
+  poListTotal,
   resolveStoredPOLineAmounts,
   type POItem,
   type POStatus,
@@ -317,7 +318,7 @@ export function PurchaseOrdersTab({
                     <td className="px-4 py-3">{poStatusBadge(po.status)}</td>
                     <td className="px-4 py-3 text-navy/70">{po.items?.length ?? 0}</td>
                     <td className="px-4 py-3 font-medium text-navy">
-                      {formatMoney(po.total ?? 0)}
+                      {formatMoney(poListTotal(po))}
                     </td>
                     <td className="px-4 py-3 text-navy/70">
                       {po.expectedDate ? fmtCalendarDate(po.expectedDate) : "—"}
