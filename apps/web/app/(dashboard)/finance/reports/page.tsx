@@ -54,7 +54,8 @@ import {
   Download,
   Printer,
 } from "lucide-react";
-import { cn, useToast, type ToastVariant } from "@routeflow/ui/web";
+import { Badge, cn, useToast, type ToastVariant } from "@routeflow/ui/web";
+import { depositOverdueLine, groupArAgingByCustomer } from "@/lib/ar-aging-rows";
 import Link from "next/link";
 import { useTransactions, useRecordPayment, type Transaction } from "@/lib/api/bookkeeping";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
@@ -247,18 +248,10 @@ function ArAgingReport({
     },
     { key: `days${interval * 3}plus`, label: `${interval * 3 + 1}+ days` },
   ];
-  const customerMap: Record<string, { name: string; buckets: Record<string, number> }> = {};
-  for (const [bKey, items] of Object.entries(buckets)) {
-    for (const item of items as Array<{
-      customer: { id: string; businessName: string };
-      balance: number;
-    }>) {
-      if (!customerMap[item.customer.id])
-        customerMap[item.customer.id] = { name: item.customer.businessName, buckets: {} };
-      customerMap[item.customer.id].buckets[bKey] =
-        (customerMap[item.customer.id].buckets[bKey] ?? 0) + item.balance;
-    }
-  }
+  // #1529 (SA-517 PR-B): the same per-customer sums, plus a marker when any invoice carries an
+  // overdue deposit; the buckets and totals are unchanged.
+  const customerMap = groupArAgingByCustomer(buckets);
+  const depositLine = depositOverdueLine(data?.depositOverdue, fmt);
 
   return (
     <div>
@@ -279,6 +272,12 @@ function ArAgingReport({
           </button>
         ))}
       </div>
+      {depositLine && (
+        <p className="px-4 pb-3 text-sm text-navy/80" data-testid="ar-deposit-overdue-summary">
+          <Badge variant="warning" label="Deposits" className="mr-2" />
+          {depositLine}
+        </p>
+      )}
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-surface-border bg-gray-50 text-navy/70">
@@ -309,7 +308,16 @@ function ArAgingReport({
                   className={cn("hover:bg-surface-raised/50", onSelectReport && "cursor-pointer")}
                   onClick={() => onSelectReport?.("ar-aging-details", { customerId })}
                 >
-                  <td className="px-4 py-2.5 font-medium text-brand-600">{c.name}</td>
+                  <td className="px-4 py-2.5 font-medium text-brand-600">
+                    {c.name}
+                    {c.depositOverdue && (
+                      <Badge
+                        variant="warning"
+                        label="Deposit overdue"
+                        className="ml-2 align-middle"
+                      />
+                    )}
+                  </td>
                   {colDefs.map((col) => (
                     <td key={col.key} className="px-4 py-2.5 text-right text-navy">
                       {c.buckets[col.key] ? fmt(c.buckets[col.key]) : "\u2014"}
