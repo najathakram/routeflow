@@ -57,6 +57,9 @@ export function PriceEditor({
   onToggleCostRevealed,
   onClose,
 }: PriceEditorProps) {
+  // #2696 (d): the loose-units field is opt-in ("+ units"); shown whenever pieces > 0 regardless.
+  const [looseUnitsOpen, setLooseUnitsOpen] = React.useState(false);
+  const showLooseUnits = looseUnitsOpen || (li.pieces ?? 0) > 0;
   const boxed = !!li.unitsPerBox;
   // The row labels the price "Case price" only for a real pack (> 1), though it shows the case
   // qty controls for any unitsPerBox — mirror both.
@@ -159,18 +162,43 @@ export function PriceEditor({
                     className={cn(inputCls, "w-20")}
                     aria-label="Cases"
                   />
-                  cases +
-                  <input
-                    type="number"
-                    min={0}
-                    max={li.unitsPerBox! - 1}
-                    value={li.pieces ?? 0}
-                    onChange={(e) => onSetPieces(parseInt(e.target.value, 10) || 0)}
-                    onFocus={(e) => e.target.select()}
-                    className={cn(inputCls, "w-20")}
-                    aria-label="Extra units"
-                  />
-                  units
+                  cases
+                  {/* #2696 (d): loose units on top of cases are opt-in, as on the row. */}
+                  {showLooseUnits ? (
+                    <>
+                      +
+                      <input
+                        type="number"
+                        min={0}
+                        max={li.unitsPerBox! - 1}
+                        value={li.pieces ?? 0}
+                        onChange={(e) => onSetPieces(parseInt(e.target.value, 10) || 0)}
+                        onFocus={(e) => e.target.select()}
+                        className={cn(inputCls, "w-20")}
+                        aria-label="Extra units"
+                      />
+                      units
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onSetPieces(0);
+                          setLooseUnitsOpen(false);
+                        }}
+                        aria-label="Remove extra units"
+                        className="text-navy/50 hover:text-danger"
+                      >
+                        ×
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setLooseUnitsOpen(true)}
+                      className="rounded border border-dashed border-surface-border px-2 py-1 text-xs font-medium text-navy/60 hover:bg-surface-raised"
+                    >
+                      + units
+                    </button>
+                  )}
                 </div>
               )}
               <p className="text-xs text-navy/50">

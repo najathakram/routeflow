@@ -87,6 +87,9 @@ export interface LineItemRowProps {
    *  inline-editable exactly as it is today — this prop only adds a click target
    *  around the existing price display, it never removes the inline input. */
   onTapPrice?: () => void;
+  /** #2696 (b): a typed qty for a plain (non-case) line. When given, the qty between − / + is a
+   *  tap-to-type input; when omitted (other callers), it stays the read-only count it was. */
+  onSetQty?: (value: number) => void;
   /** Optional control rendered under the price block (the order modal's "Sell by" unit picker). */
   unitSlot?: React.ReactNode;
 
@@ -143,8 +146,14 @@ export function LineItemRow({
   onRemove,
   unitSlot,
   onTapPrice,
+  onSetQty,
   rowRef,
 }: LineItemRowProps) {
+  // #2696 (d): on a case-packed line in Case mode the loose-units field is OPT-IN ("+ units"), never
+  // shown by default — so a new line submits pieces = 0. Shown whenever pieces > 0 regardless (an
+  // edited line with boxes + pieces, or one switched back from Unit mode, never hides its units).
+  const [looseUnitsOpen, setLooseUnitsOpen] = React.useState(false);
+  const showLooseUnits = looseUnitsOpen || (li.pieces ?? 0) > 0;
   return (
     <li
       ref={rowRef}
@@ -391,20 +400,42 @@ export function LineItemRow({
                 />
                 <span className="text-xs text-navy/70">cases</span>
               </span>
-              <span className="flex items-center gap-1.5 whitespace-nowrap">
-                <span className="text-xs text-navy/30">+</span>
-                <input
-                  type="number"
-                  min={0}
-                  max={li.unitsPerBox - 1}
-                  value={li.pieces ?? 0}
-                  onChange={(e) => onSetPieces(parseInt(e.target.value, 10))}
-                  onFocus={(e) => e.target.select()}
-                  className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
-                  title="Extra loose units (less than a full case)"
-                />
-                <span className="text-xs text-navy/70">units</span>
-              </span>
+              {showLooseUnits ? (
+                <span className="flex items-center gap-1.5 whitespace-nowrap">
+                  <span className="text-xs text-navy/30">+</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={li.unitsPerBox - 1}
+                    value={li.pieces ?? 0}
+                    onChange={(e) => onSetPieces(parseInt(e.target.value, 10))}
+                    onFocus={(e) => e.target.select()}
+                    className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    title="Extra loose units (less than a full case)"
+                    aria-label="Extra loose units"
+                  />
+                  <span className="text-xs text-navy/70">units</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onSetPieces(0);
+                      setLooseUnitsOpen(false);
+                    }}
+                    aria-label="Remove extra units"
+                    className="text-xs text-navy/50 hover:text-danger"
+                  >
+                    ×
+                  </button>
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setLooseUnitsOpen(true)}
+                  className="whitespace-nowrap rounded border border-dashed border-surface-border px-1.5 py-0.5 text-[10px] font-medium text-navy/60 hover:bg-surface-raised"
+                >
+                  + units
+                </button>
+              )}
             </div>
           )}
           <span className="text-[10px] text-navy/30">
@@ -427,7 +458,20 @@ export function LineItemRow({
           >
             −
           </button>
-          <span className="w-8 text-center text-sm font-semibold text-navy">{li.qty}</span>
+          {onSetQty ? (
+            <input
+              type="number"
+              inputMode="numeric"
+              min={1}
+              value={li.qty}
+              onChange={(e) => onSetQty(parseInt(e.target.value, 10))}
+              onFocus={(e) => e.target.select()}
+              aria-label="Quantity"
+              className="h-6 w-10 rounded border border-surface-border bg-white px-1 text-center text-sm font-semibold text-navy [appearance:textfield] focus:outline-none focus:ring-1 focus:ring-brand-500 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            />
+          ) : (
+            <span className="w-8 text-center text-sm font-semibold text-navy">{li.qty}</span>
+          )}
           <button
             type="button"
             onClick={() => onQtyDelta(1)}

@@ -106,7 +106,8 @@ describe("LineItemRow layout contract (B565)", () => {
   // total. The row wraps, but each "[n] cases" / "+ [n] units" group stays whole, so the units
   // group drops to its own line instead of splitting mid-group. Pixels: e2e 56's content probe.
   it("wraps the cases/units row between two no-wrap groups (#2080)", () => {
-    renderRow(makeProps(boxedItem));
+    // pieces > 0: the opt-in loose-units group is shown (#2696 d).
+    renderRow(makeProps({ ...boxedItem, pieces: 2 }));
     const row = screen.getByTestId("line-qty-cases-row");
     expect(row).toHaveClass("flex", "flex-wrap");
     const cases = screen.getByTitle("Number of whole cases").parentElement!;
