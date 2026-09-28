@@ -342,6 +342,20 @@ model BillingEvent {
   @@index([type])
 }
 
+// #2442: the platform billing webhook's event ledger — one row per Stripe event id, inserted BEFORE
+// the event is handled (as StripeConnectEvent does for Connect). A redelivery collides on the id; it
+// is skipped only when `outcome` shows the first delivery completed (non-null, not "error:…").
+// Platform-level, not tenant-scoped: the tenant is resolved from the event inside the handler.
+model StripeBillingEvent {
+  id          String   @id
+  type        String
+  createdAt   DateTime
+  processedAt DateTime @default(now())
+  outcome     String?
+
+  @@index([type, createdAt])
+}
+
 // ─── RouteFlow's own invoices to the tenant (platform billing) ────────────────
 
 model RfInvoice {
