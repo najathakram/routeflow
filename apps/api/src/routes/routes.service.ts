@@ -12,7 +12,8 @@ import {
   assertDeliveriesFitStop,
   assertStopNotSkipped,
   claimStopCompletion,
-  claimStopStatusChange,
+  claimStopStatusChangeOnLiveRun,
+  assertRunInProgress,
 } from "./delivery-lines.util";
 import { PrismaService } from "../prisma/prisma.service";
 import { reorderRunStopsInTx } from "./run-stop-reorder";
@@ -1952,9 +1953,9 @@ export class RoutesService {
     if (dto.driverNote !== undefined) updates.driverNote = dto.driverNote;
     if (dto.status === "IN_PROGRESS" && !stop.arrivedAt) updates.arrivedAt = new Date();
 
-    // #2415: compare-and-swap — a completion that commits between the read above and this write
-    // must never be overwritten with SKIPPED (it would strand its delivery side effects).
-    await claimStopStatusChange(this.prisma.forTenant(), stopId, updates);
+    // #2415 CAS + #2514: under the RouteRun lock — a completion that commits after the reads above
+    // is never overwritten (stop CAS), and neither is a run that completes/cancels meanwhile.
+    await claimStopStatusChangeOnLiveRun(this.prisma, runId, stopId, updates);
     const updated = await this.prisma.forTenant().routeRunStop.findFirst({ where: { id: stopId } });
     await this.live.runProgress(runId);
     return updated;
@@ -2157,11 +2158,6 @@ export class RoutesService {
     // drivers mark deliveries done without ever dispatching the run.
     const run = await this.prisma.forTenant().routeRun.findUnique({ where: { id: runId } });
     if (!run) throw new NotFoundException("Route run not found");
-    if (run.status !== RouteRunStatus.IN_PROGRESS) {
-      throw new ForbiddenException(
-        `Cannot complete a stop on a run that is not in progress (current status: ${run.status}).`,
-      );
-    }
 
     const stop = await this.prisma.forTenant().routeRunStop.findFirst({
       where: { id: stopId, routeRunId: runId },
@@ -2183,6 +2179,7 @@ export class RoutesService {
     if (user.role === UserRole.DRIVER && (!driver || run.driverId !== driver.id)) {
       throw new ForbiddenException("You do not have access to this route run");
     }
+    assertRunInProgress(run.status); // #2514: RUN state only after ownership too
     // #2415: stop STATE only after the B72 ownership check, so a driver with no claim on this run
     // can't learn whether the stop is completed or skipped.
     if (stop.status === "COMPLETED") throw new BadRequestException("Stop is already completed");
@@ -2372,11 +2369,6 @@ export class RoutesService {
   ) {
     const run = await this.prisma.forTenant().routeRun.findUnique({ where: { id: runId } });
     if (!run) throw new NotFoundException("Route run not found");
-    if (run.status !== RouteRunStatus.IN_PROGRESS) {
-      throw new ForbiddenException(
-        `Cannot complete a stop on a run that is not in progress (current status: ${run.status}).`,
-      );
-    }
 
     const stop = await this.prisma.forTenant().routeRunStop.findFirst({
       where: { id: stopId, routeRunId: runId },
@@ -2398,6 +2390,7 @@ export class RoutesService {
     if (user.role === UserRole.DRIVER && (!driver || run.driverId !== driver.id)) {
       throw new ForbiddenException("You do not have access to this route run");
     }
+    assertRunInProgress(run.status); // #2514: RUN state only after ownership too
     // #2415: stop STATE only after the B72 ownership check, so a driver with no claim on this run
     // can't learn whether the stop is completed or skipped.
     if (stop.status === "COMPLETED") throw new BadRequestException("Stop is already completed");

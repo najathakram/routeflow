@@ -12,7 +12,7 @@ import * as fs from "fs";
 import * as ts from "typescript";
 import * as path from "path";
 import { BadRequestException, NotFoundException } from "@nestjs/common";
-import { assertDeliveriesFitStop } from "./delivery-lines.util";
+import { assertDeliveriesFitStop, claimStopStatusChangeOnLiveRun } from "./delivery-lines.util";
 import { attachDeliveredSoFar } from "./run-delivered-so-far";
 import { groupEvidenceRowsByLine, RawEvidenceRowWithStop } from "./delivered-so-far";
 
@@ -493,5 +493,50 @@ describe("assertDeliveriesFitStop — refusal counts in the line's unit (#2292)"
         1,
       ),
     ).rejects.toThrow("Crackers: 0 left, 24 delivered earlier — refresh the stop");
+  });
+});
+
+describe("claimStopStatusChangeOnLiveRun (#2514, SA-533)", () => {
+  const make = (runStatus: string | null) => {
+    const calls: string[] = [];
+    const tx = {
+      $executeRaw: jest.fn(async () => (calls.push("lock"), 1)),
+      routeRun: {
+        findFirst: jest.fn(
+          async () => (calls.push("read"), runStatus ? { status: runStatus } : null),
+        ),
+      },
+      routeRunStop: {
+        updateMany: jest.fn(async () => (calls.push("cas"), { count: 1 })),
+        findUnique: jest.fn(),
+      },
+    };
+    const prisma = { tenantTransaction: jest.fn(async (fn: any) => fn(tx)) };
+    return { prisma, tx, calls };
+  };
+
+  it("locks the run row FIRST, re-reads it, then the stop CAS — all on one tx", async () => {
+    const { prisma, calls } = make("IN_PROGRESS");
+    await claimStopStatusChangeOnLiveRun(prisma, "run-1", "stop-1", { status: "SKIPPED" });
+    expect(calls).toEqual(["lock", "read", "cas"]);
+    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["COMPLETED", "CANCELLED"])(
+    "a %s run (seen under the lock) is a 409 and the stop is never written",
+    async (status) => {
+      const { prisma, tx } = make(status);
+      await expect(
+        claimStopStatusChangeOnLiveRun(prisma, "run-1", "stop-1", { status: "SKIPPED" }),
+      ).rejects.toThrow(`Cannot change a stop on a ${status.toLowerCase()} run.`);
+      expect(tx.routeRunStop.updateMany).not.toHaveBeenCalled();
+    },
+  );
+
+  it("a run gone under the lock is a 404", async () => {
+    const { prisma } = make(null);
+    await expect(claimStopStatusChangeOnLiveRun(prisma, "run-1", "stop-1", {})).rejects.toThrow(
+      "Route run not found",
+    );
   });
 });

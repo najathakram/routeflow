@@ -1,4 +1,9 @@
-import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from "@nestjs/common";
 import {
   deliveredSoFarForLine,
   fetchEvidenceByLine,
@@ -68,6 +73,42 @@ export async function claimStopStatusChange(
 }
 
 /** #2409: the stop statuses a completion may claim from. */
+/**
+ * #2514 (SA-533): a stop status PATCH (IN_PROGRESS / SKIPPED) on a LIVE run only. One transaction:
+ * lock the RouteRun row FIRST, re-read its status under the lock, refuse a COMPLETED/CANCELLED run
+ * (409, same text as the pre-lock check), then the #2415 stop CAS on the SAME tx. The terminal
+ * transition (updateRunStatus → COMPLETED/CANCELLED) UPDATEs the run row inside its own tx, so the
+ * two serialize: a run that completes while this PATCH waits is seen, never overwritten after.
+ * Lock order is RouteRun → RouteRunStop, the same as the terminal path (no new edge).
+ */
+/** #2514: RF-003's run-status refusal, called AFTER the B72 ownership check (never before it). */
+export function assertRunInProgress(status: string): void {
+  if (status !== "IN_PROGRESS") {
+    throw new ForbiddenException(
+      `Cannot complete a stop on a run that is not in progress (current status: ${status}).`,
+    );
+  }
+}
+
+export async function claimStopStatusChangeOnLiveRun(
+  prisma: { tenantTransaction<T>(fn: (tx: any) => Promise<T>): Promise<T> },
+  runId: string,
+  stopId: string,
+  data: Record<string, unknown>,
+): Promise<void> {
+  await prisma.tenantTransaction(async (tx) => {
+    await tx.$executeRaw`SELECT id FROM "RouteRun" WHERE id = ${runId} FOR UPDATE`;
+    const run = await tx.routeRun.findFirst({ where: { id: runId }, select: { status: true } });
+    if (!run) throw new NotFoundException("Route run not found");
+    if (run.status === "COMPLETED" || run.status === "CANCELLED") {
+      throw new ConflictException(
+        `Cannot change a stop on a ${String(run.status).toLowerCase()} run.`,
+      );
+    }
+    await claimStopStatusChange(tx, stopId, data);
+  });
+}
+
 export const COMPLETABLE_STOP_STATUSES = ["PENDING", "IN_PROGRESS"];
 
 /**

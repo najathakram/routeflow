@@ -370,15 +370,87 @@ describeDb("#2409 a SKIPPED stop refuses a replayed completion — real Postgres
         "COMPLETED",
       );
       release();
-      await expect(skip).rejects.toMatchObject({
-        response: expect.objectContaining({ code: "STOP_ALREADY_COMPLETED" }),
-      });
+      // #2514: the skip now re-reads the RUN under its row lock too. This single-stop fixture's
+      // completion also completes the run, so the refusal may be the run guard's 409 ("completed
+      // run") rather than the stop CAS's STOP_ALREADY_COMPLETED — both refuse, and the pin that
+      // matters is below: the stop is never COMPLETED → SKIPPED.
+      await expect(skip).rejects.toMatchObject({ status: 409 });
       // The completion survives: never COMPLETED → SKIPPED.
       expect((await prisma.routeRunStop.findUnique({ where: { id: s.stopId } }))?.status).toBe(
         "COMPLETED",
       );
     } finally {
       release?.();
+      spy.mockRestore();
+    }
+  });
+
+  it("#2514 DETERMINISTIC: the run COMPLETES while a stop PATCH waits on the run lock → 409, the stop unchanged", async () => {
+    // updateStopStatus is paused after its pre-lock run read (IN_PROGRESS). A second transaction
+    // then marks the run COMPLETED and HOLDS the run row lock. The PATCH resumes and blocks on its
+    // own `RouteRun FOR UPDATE`; once the run transaction commits, the PATCH re-reads the run
+    // under the lock and refuses. RED on the pre-#2514 code: no run lock, so the stop was written.
+    const s = await seedSkippedStop("run-latch");
+    await setStopStatus(s.stopId, "PENDING");
+
+    let armed = true;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let reachedPause!: () => void;
+    const paused = new Promise<void>((r) => (reachedPause = r));
+    const realForTenant = prisma.forTenant.bind(prisma);
+    const spy = jest.spyOn(prisma, "forTenant").mockImplementation(() => {
+      const client = realForTenant();
+      return new Proxy(client, {
+        get(target, prop) {
+          const value = Reflect.get(target, prop);
+          if (prop !== "routeRun" || !armed) return value;
+          return new Proxy(value, {
+            get(delegate, method) {
+              const fn = Reflect.get(delegate, method);
+              if (method !== "findFirst" || !armed) return fn;
+              return async (...args: unknown[]) => {
+                armed = false;
+                const result = await Reflect.apply(fn, delegate, args);
+                reachedPause();
+                await gate;
+                return result;
+              };
+            },
+          });
+        },
+      });
+    });
+    let commitRun!: () => void;
+    const holdRun = new Promise<void>((r) => (commitRun = r));
+    let locked!: () => void;
+    const runLocked = new Promise<void>((r) => (locked = r));
+    try {
+      const patch = tenantCtx.run(s.tenantId, () =>
+        routesService.updateStopStatus(s.runId, s.stopId, { status: "SKIPPED" }, operator),
+      );
+      await paused; // the PATCH read the run as IN_PROGRESS and is held
+      const terminal = prisma.$transaction(
+        async (tx) => {
+          await tx.$executeRaw`UPDATE "RouteRun" SET status = 'COMPLETED' WHERE id = ${s.runId}`;
+          locked();
+          await holdRun;
+        },
+        { timeout: 30_000 },
+      );
+      await runLocked;
+      release(); // the PATCH resumes and must now wait on the run row lock
+      await new Promise((r) => setTimeout(r, 300));
+      commitRun();
+      await terminal;
+      await expect(patch).rejects.toMatchObject({ status: 409 });
+      await expect(patch).rejects.toThrow(/completed run/);
+      expect((await prisma.routeRunStop.findUnique({ where: { id: s.stopId } }))?.status).toBe(
+        "PENDING",
+      );
+    } finally {
+      release?.();
+      commitRun?.();
       spy.mockRestore();
     }
   });
