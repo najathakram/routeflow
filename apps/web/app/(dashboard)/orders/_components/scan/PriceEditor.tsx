@@ -177,17 +177,20 @@ export function PriceEditor({
                         aria-label="Extra loose units"
                       />
                       units
-                      <button
-                        type="button"
-                        onClick={() => {
-                          onSetPieces(0);
-                          closeLooseUnits();
-                        }}
-                        aria-label="Remove extra units"
-                        className="text-navy/50 hover:text-danger"
-                      >
-                        ×
-                      </button>
+                      {/* SA-563: hidden at 0 cases, as on the row. */}
+                      {(li.boxes ?? 0) >= 1 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onSetPieces(0);
+                            closeLooseUnits();
+                          }}
+                          aria-label="Remove extra units"
+                          className="text-navy/50 hover:text-danger"
+                        >
+                          ×
+                        </button>
+                      )}
                     </>
                   ) : (
                     <button

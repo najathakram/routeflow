@@ -153,6 +153,19 @@ describe("PriceEditor", () => {
       }
     });
 
+    it("SA-563: cases 0 + units n ⇒ no remove-extra-units control", () => {
+      setup(boxed({ boxes: 0, pieces: 3 }));
+      expect(screen.getByLabelText("Extra loose units")).toBeInTheDocument();
+      expect(screen.queryByLabelText("Remove extra units")).not.toBeInTheDocument();
+    });
+
+    it("SA-563: cases ≥ 1 + units n ⇒ remove sets units 0 and leaves cases alone", () => {
+      const props = setup(boxed({ boxes: 2, pieces: 3 }));
+      fireEvent.click(screen.getByLabelText("Remove extra units"));
+      expect(props.onSetPieces).toHaveBeenCalledWith(0);
+      expect(props.onSetBoxes).not.toHaveBeenCalled();
+    });
+
     it("extra units are capped below one case", () => {
       setup(boxed());
       fireEvent.click(screen.getByRole("button", { name: "+ units" }));

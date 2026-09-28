@@ -1,6 +1,6 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen, within } from "@/test-utils/render";
+import { fireEvent, renderWithProviders, screen, within } from "@/test-utils/render";
 import { LineItemRow, type LineItemRowItem, type LineItemRowProps } from "./LineItemRow";
 
 /**
@@ -220,5 +220,23 @@ describe("multi-line per-item notes", () => {
   it("a note already carrying multiple lines round-trips through the value prop intact", () => {
     const field = noteFieldFor({ ...plainItem, note: "line one\nline two\nline three" });
     expect(field.value).toBe("line one\nline two\nline three");
+  });
+});
+
+// SA-563 (#2696 d): "Remove extra units" is hidden at 0 cases — the units are then the whole line.
+describe("SA-563: the remove-extra-units control needs at least one case", () => {
+  it("cases 0 + units n ⇒ the control is absent", () => {
+    renderRow(makeProps({ ...boxedItem, boxes: 0, pieces: 3, qty: 3 }));
+    expect(screen.getByLabelText("Extra loose units")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Remove extra units")).not.toBeInTheDocument();
+  });
+
+  it("cases ≥ 1 + units n ⇒ present; tapping it sets units 0, leaves cases alone and keeps the line", () => {
+    const props = makeProps({ ...boxedItem, boxes: 2, pieces: 3, qty: 27 });
+    renderRow(props);
+    fireEvent.click(screen.getByLabelText("Remove extra units"));
+    expect(props.onSetPieces).toHaveBeenCalledWith(0);
+    expect(props.onSetBoxes).not.toHaveBeenCalled();
+    expect(props.onRemove).not.toHaveBeenCalled();
   });
 });
