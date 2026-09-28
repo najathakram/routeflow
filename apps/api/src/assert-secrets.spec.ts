@@ -1,0 +1,68 @@
+import { assertSecrets, type AssertSecretsIo } from "./assert-secrets";
+import { ONBOARDING_TOKEN_SECRET_MIN_LENGTH } from "./onboarding/onboarding-token-secret";
+
+// SA-456: the boot half of the ONBOARDING_TOKEN_SECRET contract. Production refuses to start
+// without a full-length secret; elsewhere an unset/short one boots but warns loudly.
+const GOOD = "o".repeat(ONBOARDING_TOKEN_SECRET_MIN_LENGTH);
+const SHORT = "o".repeat(ONBOARDING_TOKEN_SECRET_MIN_LENGTH - 1);
+
+function run(env: NodeJS.ProcessEnv) {
+  const io: jest.Mocked<AssertSecretsIo> = { exit: jest.fn(), error: jest.fn(), warn: jest.fn() };
+  assertSecrets({ JWT_SECRET: "j", JWT_REFRESH_SECRET: "r", ...env }, io);
+  return io;
+}
+
+const PROD = {
+  NODE_ENV: "production",
+  STORAGE_URL_SIGNING_SECRET: "s",
+  ENCRYPTION_KEY: "a".repeat(64),
+};
+
+describe("assertSecrets — ONBOARDING_TOKEN_SECRET (SA-456)", () => {
+  it("uses one 32-char threshold", () => {
+    expect(ONBOARDING_TOKEN_SECRET_MIN_LENGTH).toBe(32);
+  });
+
+  it.each([
+    ["unset", undefined],
+    ["short", SHORT],
+    ["whitespace-padded short", `  ${SHORT}  `],
+  ])("exits in production when it is %s", (_label, secret) => {
+    const io = run({ ...PROD, ONBOARDING_TOKEN_SECRET: secret });
+    expect(io.exit).toHaveBeenCalledWith(1);
+    expect(io.error.mock.calls.flat().join("\n")).toMatch(/ONBOARDING_TOKEN_SECRET \(32\+ chars\)/);
+  });
+
+  it("boots in production with a full-length secret, silently", () => {
+    const io = run({ ...PROD, ONBOARDING_TOKEN_SECRET: GOOD });
+    expect(io.exit).not.toHaveBeenCalled();
+    expect(io.warn).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["unset", undefined],
+    ["short", SHORT],
+  ])(
+    "does NOT exit in dev when it is %s, but warns loudly that intake links are disabled",
+    (_l, secret) => {
+      const io = run({ NODE_ENV: "development", ONBOARDING_TOKEN_SECRET: secret });
+      expect(io.exit).not.toHaveBeenCalled();
+      const warned = io.warn.mock.calls.flat().join("\n");
+      expect(warned).toMatch(/ONBOARDING_TOKEN_SECRET/);
+      expect(warned).toMatch(/intake links are DISABLED/);
+    },
+  );
+
+  it("stays quiet in dev with a full-length secret", () => {
+    const io = run({ NODE_ENV: "development", ONBOARDING_TOKEN_SECRET: GOOD });
+    expect(io.exit).not.toHaveBeenCalled();
+    expect(io.warn).not.toHaveBeenCalled();
+  });
+
+  it("still exits on the pre-existing required secrets", () => {
+    const io = jest.mocked<AssertSecretsIo>({ exit: jest.fn(), error: jest.fn(), warn: jest.fn() });
+    assertSecrets({ NODE_ENV: "development", ONBOARDING_TOKEN_SECRET: GOOD }, io);
+    expect(io.exit).toHaveBeenCalledWith(1);
+    expect(io.error.mock.calls.flat().join("\n")).toMatch(/JWT_SECRET, JWT_REFRESH_SECRET/);
+  });
+});
