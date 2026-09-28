@@ -13,7 +13,12 @@ import { FeatureResolverService } from "./feature-resolver.service";
 import { PlanCatalogService, PlanVersionWithCatalog } from "./plan-catalog.service";
 import { LEGACY_ADDON_KEY_TO_SKU, addonSkuCode } from "./plan-catalog.constants";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
-import { ADDON_KEY_TO_REGISTRY_KEY } from "./feature-registry";
+import {
+  ADDON_KEY_TO_REGISTRY_KEY,
+  DEFAULT_GRANTED_ADDON_FEATURES,
+  isDefaultGrantedAddon,
+} from "./feature-registry";
+import { FeatureOverrideService } from "./feature-override.service";
 import { EntitlementAuthority } from "./entitlement-authority.service";
 import { BillingEventService } from "./billing-event.service";
 import { emitAddonDelta, lockTenantForLedger } from "./addon-ledger";
@@ -56,6 +61,7 @@ export class AddonService {
     private readonly featureResolver: FeatureResolverService,
     private readonly authority: EntitlementAuthority,
     private readonly events: BillingEventService,
+    private readonly featureOverrides: FeatureOverrideService,
   ) {}
 
   // ─── Check access ─────────────────────────────────────────────────────────
@@ -72,18 +78,58 @@ export class AddonService {
   async hasAddon(tenantId: string, addonKey: string): Promise<boolean> {
     // #2188 / SA-385: resolves the add-on whichever way it was keyed (legacy key or SKU).
     const addon = await findAddonRow(this.prisma, tenantId, addonCodeOf(addonKey));
-    return addon?.active === true;
+    if (addon?.active === true) return true;
+    // Owner ruling 2026-09-28: a default-granted key is held with no row (isDefaultGrantedAddon).
+    if (!DEFAULT_GRANTED_ADDON_FEATURES.some((f) => f.key === addonKey)) return false;
+    const rowKeys = await this.activeRowKeys(tenantId);
+    return (await this.defaultGrantedKeys(tenantId, rowKeys)).includes(addonKey);
   }
 
   /**
-   * Get all active add-ons for a tenant.
+   * Get all active add-ons for a tenant: its active TenantAddon rows plus every default-granted
+   * key it qualifies for (owner ruling 2026-09-28, `isDefaultGrantedAddon`). This is what
+   * AddonGuard and GET /tenants/me/addons read, so both see the default grant the same way.
    */
   async getActiveAddons(tenantId: string): Promise<string[]> {
+    const rowKeys = await this.activeRowKeys(tenantId);
+    const defaults = await this.defaultGrantedKeys(tenantId, rowKeys);
+    return defaults.length === 0 ? rowKeys : [...rowKeys, ...defaults];
+  }
+
+  private async activeRowKeys(tenantId: string): Promise<string[]> {
     const addons = await this.prisma.tenantAddon.findMany({
       where: { tenantId, active: true },
       select: { addonKey: true },
     });
     return addons.map((a) => a.addonKey);
+  }
+
+  /**
+   * The default-granted add-on keys `tenantId` holds with no row: registry `defaultGranted`,
+   * `requires` met against its rows ∪ ent.flags, and no DENY override. Fails CLOSED (returns [])
+   * if entitlements or overrides cannot be read, so an outage never widens access; a held row is
+   * never affected. Keys the tenant already has a row for are left to the row.
+   */
+  private async defaultGrantedKeys(tenantId: string, rowKeys: string[]): Promise<string[]> {
+    const rows = new Set(rowKeys);
+    const pending = DEFAULT_GRANTED_ADDON_FEATURES.filter((f) => !rows.has(f.key));
+    if (pending.length === 0) return [];
+    try {
+      const ent = await this.entitlements.resolve(tenantId);
+      const eligible = pending.filter((f) => isDefaultGrantedAddon(f, rows, ent.flags));
+      if (eligible.length === 0) return [];
+      const overrides = await this.featureOverrides.getMany(
+        tenantId,
+        eligible.map((f) => f.key),
+      );
+      return eligible.map((f) => f.key).filter((k) => overrides.get(k) !== "DENY");
+    } catch (err) {
+      this.logger.warn(
+        `default-granted add-ons skipped for tenant ${tenantId} (fail closed): ` +
+          `${(err as Error)?.message ?? err}`,
+      );
+      return [];
+    }
   }
 
   /**

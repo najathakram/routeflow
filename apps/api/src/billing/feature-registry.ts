@@ -369,11 +369,19 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
         "POST /orders/:id/inline-returns (PR-1d)",
         "POST /returns/inline/:id/* (PR-1c/1d)",
       ],
-      grantPath: 'Platform Admin → Tenants → [tenant] → add-ons (addonKey "orders_inline_returns")',
-      backfill: "New feature 2026-09-16; zero existing users; nothing to backfill.",
+      grantPath:
+        "Default-granted to every tenant whose plan carries flag.returns (owner ruling " +
+        '2026-09-28); remove per tenant with a DENY override (addonKey "orders_inline_returns")',
+      backfill:
+        'New feature 2026-09-16; zero existing users. Owner ruling 2026-09-28 ("On for ' +
+        'everyone"): defaultGranted, so no TenantAddon row is needed and none is backfilled — ' +
+        "isDefaultGrantedAddon() grants it at runtime; flag.returns still gates it (requires).",
     },
     billing: { skus: [], selfService: false },
-    defaultGranted: false,
+    // Owner ruling 2026-09-28: "On for everyone". Honoured at runtime by
+    // isDefaultGrantedAddon() (AddonService → AddonGuard, /tenants/me/addons, hasAddon), not just
+    // the explain/preview resolver; `requires` below still gates it, and a DENY override removes it.
+    defaultGranted: true,
     requires: { allOf: ["flag.returns"] },
     config: {
       fallbackMode: "unset",
@@ -1206,6 +1214,39 @@ export function checkFeatureRequires(
     unmetAnyOf: anyOfSatisfied ? null : [...anyOf],
   };
 }
+
+/**
+ * Owner ruling 2026-09-28 ("On for everyone"): the ONE rule for an add-on-keyed feature
+ * (`gate.via` "RequireAddon" | "guard") that a tenant holds WITHOUT a TenantAddon row. It is held
+ * when its registry row is `defaultGranted: true` AND its `requires` are met against
+ * `rowKeys ∪ entFlags` (the tenant's active add-on rows and its ent.flags, i.e. plan flags plus
+ * add-on-granted flags). A DENY override still removes it; that is the caller's job, because it
+ * needs an override read (AddonService applies it; AddonGuard and /tenants/me/addons apply their
+ * own override pass on top, as they always have).
+ *
+ * Every runtime and report path that decides "does this tenant hold add-on X" calls THIS function
+ * (AddonService.getActiveAddons/hasAddon, EntitlementAuthority's old path, resolveOneKey); the
+ * publish/blast-radius scripts' mirror (`scripts/lib/feature-registry-mirror.cjs`) keeps a JS twin,
+ * pinned by `feature-registry-mirror.parity.spec.ts`. Never re-derive it inline. `defaultGranted`
+ * on a flag-keyed row is unrelated; resolveOneKey reads that one directly.
+ */
+export function isDefaultGrantedAddon(
+  feature: Pick<FeatureDef, "defaultGranted" | "requires"> & {
+    gate: Pick<FeatureDef["gate"], "via">;
+  },
+  rowKeys: Iterable<string>,
+  entFlags: Iterable<string>,
+): boolean {
+  if (!feature.defaultGranted) return false;
+  if (feature.gate.via !== "RequireAddon" && feature.gate.via !== "guard") return false;
+  const effective = new Set<string>([...rowKeys, ...entFlags]);
+  return checkFeatureRequires(feature.requires, effective).satisfied;
+}
+
+/** The add-on-keyed registry rows a tenant may hold with no row (see `isDefaultGrantedAddon`). */
+export const DEFAULT_GRANTED_ADDON_FEATURES: readonly FeatureDef[] = FEATURE_REGISTRY.filter(
+  (f) => f.defaultGranted && (f.gate.via === "RequireAddon" || f.gate.via === "guard"),
+);
 
 /** Human-readable phrase for what's unmet — mirrors `describeUnmetRequirement` in
  *  FeatureConsole.tsx, resolving registry keys to their `label`s. `undefined` when satisfied. */

@@ -6,8 +6,10 @@ import { FeatureResolverService, ResolvedKey } from "./feature-resolver.service"
 import { EntitlementsModeService } from "./entitlements-mode.service";
 import { FeatureDiffService } from "./feature-diff.service";
 import {
+  DEFAULT_GRANTED_ADDON_FEATURES,
   FEATURE_REGISTRY,
   checkFeatureRequires,
+  isDefaultGrantedAddon,
   describeUnmetFeatureRequirement,
 } from "./feature-registry";
 import { addonGateState } from "./addon-gate-registry";
@@ -299,6 +301,34 @@ export class EntitlementAuthority {
         select: { active: true },
       });
       if (addon?.active === true) return true;
+      // Owner ruling 2026-09-28: the guard now also holds a default-granted key with no row
+      // (AddonService → isDefaultGrantedAddon); the old path must reproduce that exactly. The
+      // DENY override was already handled above.
+      if (feature && DEFAULT_GRANTED_ADDON_FEATURES.includes(feature)) {
+        try {
+          const [rows, ent] = await Promise.all([
+            this.prisma.tenantAddon.findMany({
+              where: { tenantId, active: true },
+              select: { addonKey: true },
+            }),
+            this.entitlements.resolve(tenantId),
+          ]);
+          if (
+            isDefaultGrantedAddon(
+              feature,
+              rows.map((r) => r.addonKey),
+              ent.flags,
+            )
+          )
+            return true;
+        } catch (err) {
+          // Fail closed, exactly like AddonService.defaultGrantedKeys().
+          this.logger.warn(
+            `Old-path default grant for "${key}" skipped for tenant ${tenantId}: ` +
+              `${(err as Error)?.message ?? err}`,
+          );
+        }
+      }
       if (
         addonGateState(key) === "dark" &&
         !(await this.entitlements.isAlwaysEnforcedTenant(tenantId))

@@ -17,7 +17,12 @@
  * DB-backed, end-to-end CLI proof (--apply write/idempotency/refusal/no-PII) lives in
  * publish-and-repin.db.spec.ts.
  */
-import { FEATURE_REGISTRY, addonGateState } from "./feature-registry";
+import {
+  DEFAULT_GRANTED_ADDON_FEATURES,
+  FEATURE_REGISTRY,
+  addonGateState,
+  isDefaultGrantedAddon,
+} from "./feature-registry";
 import {
   DARK_PLAN_FLAGS,
   isPlanFlagEnforcementOn,
@@ -40,6 +45,12 @@ const mirror = require("../../scripts/lib/feature-registry-mirror.cjs") as {
     defaultGranted: boolean;
     billingSkus: string[];
   }>;
+  DEFAULT_GRANT_REQUIRES: Record<string, { allOf?: string[]; anyOf?: string[] }>;
+  isDefaultGrantedAddonMirror: (
+    feature: { key: string; via: string; defaultGranted: boolean },
+    activeAddonSet: Set<string>,
+    entFlags: string[],
+  ) => boolean;
   DARK_PLAN_FLAGS: Set<string>;
   ALWAYS_ENFORCED_PLAN_KEYS: Set<string>;
   ALWAYS_EFFECTIVE_TODAY: Set<string>;
@@ -69,6 +80,33 @@ const mirror = require("../../scripts/lib/feature-registry-mirror.cjs") as {
 };
 
 describe("feature-registry-mirror.cjs parity with the real TypeScript source", () => {
+  it("mirrors `requires` for every default-granted add-on key (owner ruling 2026-09-28)", () => {
+    expect(Object.keys(mirror.DEFAULT_GRANT_REQUIRES).sort()).toEqual(
+      DEFAULT_GRANTED_ADDON_FEATURES.map((f) => f.key).sort(),
+    );
+    for (const f of DEFAULT_GRANTED_ADDON_FEATURES) {
+      expect(mirror.DEFAULT_GRANT_REQUIRES[f.key]).toEqual(f.requires ?? {});
+    }
+  });
+
+  it("isDefaultGrantedAddonMirror === isDefaultGrantedAddon for every key across flag/row sets", () => {
+    const byKey = new Map(mirror.FEATURE_REGISTRY_MIRROR.map((f) => [f.key, f]));
+    const flagSets = [[], ["flag.returns"], ["flag.analytics"], ["flag.returns", "flag.reports"]];
+    const rowSets = [[], ["recurring_routes"], ["order_delivery", "orders_inline_returns"]];
+    for (const real of FEATURE_REGISTRY) {
+      for (const flags of flagSets) {
+        for (const rows of rowSets) {
+          expect([
+            real.key,
+            rows,
+            flags,
+            mirror.isDefaultGrantedAddonMirror(byKey.get(real.key)!, new Set(rows), flags),
+          ]).toEqual([real.key, rows, flags, isDefaultGrantedAddon(real, rows, flags)]);
+        }
+      }
+    }
+  });
+
   it("has exactly the same key set as FEATURE_REGISTRY", () => {
     const realKeys = new Set(FEATURE_REGISTRY.map((f) => f.key));
     const mirrorKeys = new Set(mirror.FEATURE_REGISTRY_MIRROR.map((f) => f.key));
