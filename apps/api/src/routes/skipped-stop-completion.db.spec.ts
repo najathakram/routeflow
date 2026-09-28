@@ -171,7 +171,9 @@ describeDb("#2409 a SKIPPED stop refuses a replayed completion — real Postgres
     await prisma.tenant.delete({ where: { id: tenantId } });
   }
 
-  async function seedSkippedStop(label: string) {
+  /** `secondStop` (SA-533a): a second PENDING stop keeps the run IN_PROGRESS after the first
+   *  stop completes, so a racing PATCH reaches the stop CAS instead of the run-status 409. */
+  async function seedSkippedStop(label: string, opts: { secondStop?: boolean } = {}) {
     const slug = freshTenantSlug(label);
     const tenant = await prisma.tenant.create({ data: { slug, name: `#2409 ${slug}` } });
     createdTenantIds.push(tenant.id);
@@ -211,6 +213,21 @@ describeDb("#2409 a SKIPPED stop refuses a replayed completion — real Postgres
         tenantId,
       },
     });
+    if (opts.secondStop) {
+      const routeStop2 = await prisma.routeStop.create({
+        data: { routeId: route.id, customerId: customer.id, stopNumber: 2, tenantId },
+      });
+      await prisma.routeRunStop.create({
+        data: {
+          routeRunId: run.id,
+          routeStopId: routeStop2.id,
+          customerId: customer.id,
+          stopNumber: 2,
+          status: "PENDING",
+          tenantId,
+        },
+      });
+    }
     return { tenantId, runId: run.id, stopId: runStop.id };
   }
 
@@ -323,7 +340,9 @@ describeDb("#2409 a SKIPPED stop refuses a replayed completion — real Postgres
     // it: updateStopStatus reads the stop (PENDING), then reads the run via
     // forTenant().routeRun.findFirst — the pause point (AFTER that read), identical in the pre-#2415 code, so this
     // pin is RED on the old check-then-update (the skip overwrites COMPLETED with SKIPPED).
-    const s = await seedSkippedStop("latch");
+    // SA-533a: a TWO-stop run, so completing this stop leaves the run IN_PROGRESS and the paused
+    // skip reaches the #2415 stop CAS (on one stop, #2514's run re-check would refuse first).
+    const s = await seedSkippedStop("latch", { secondStop: true });
     await setStopStatus(s.stopId, "PENDING");
 
     let armed = true;
@@ -370,11 +389,9 @@ describeDb("#2409 a SKIPPED stop refuses a replayed completion — real Postgres
         "COMPLETED",
       );
       release();
-      // #2514: the skip now re-reads the RUN under its row lock too. This single-stop fixture's
-      // completion also completes the run, so the refusal may be the run guard's 409 ("completed
-      // run") rather than the stop CAS's STOP_ALREADY_COMPLETED — both refuse, and the pin that
-      // matters is below: the stop is never COMPLETED → SKIPPED.
-      await expect(skip).rejects.toMatchObject({ status: 409 });
+      await expect(skip).rejects.toMatchObject({
+        response: expect.objectContaining({ code: "STOP_ALREADY_COMPLETED" }),
+      });
       // The completion survives: never COMPLETED → SKIPPED.
       expect((await prisma.routeRunStop.findUnique({ where: { id: s.stopId } }))?.status).toBe(
         "COMPLETED",
