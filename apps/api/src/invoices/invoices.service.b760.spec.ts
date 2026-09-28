@@ -151,6 +151,8 @@ describe("InvoicesService — B760", () => {
       prisma.invoice.aggregate.mockResolvedValue({ _sum: { shippingFee: 0 } });
       prisma.invoice.findMany.mockResolvedValue([]);
       prisma.order.findUnique.mockResolvedValue(orderB760);
+      // #2632: bumpInvoicedQtyCas needs its updateMany to report the one row it bumped.
+      prisma.orderItem.updateMany.mockResolvedValue({ count: 1 } as any);
     });
 
     const partial6of10 = [{ orderItemId: "oi-b760", type: "PARTIAL", quantityDelivered: 6 }];
@@ -161,7 +163,7 @@ describe("InvoicesService — B760", () => {
         service.createPartialFromOrder("ord-b760", {
           items: [{ orderItemId: "oi-b760", qty: 10 }],
         } as any),
-      ).rejects.toThrow(/exceeds remaining 6/);
+      ).rejects.toThrow(/exceeds remaining 6 for .*\(delivered 6\)/);
       const invoice = (await service.createPartialFromOrder("ord-b760", {
         items: [{ orderItemId: "oi-b760", qty: 6 }],
       } as any)) as any;
