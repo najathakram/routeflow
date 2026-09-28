@@ -145,4 +145,20 @@ describe("ProductsService — cross-tenant image keys (#2533)", () => {
     await service.deleteImage(P, own(1));
     expect(storage.delete).toHaveBeenCalledWith(own(1));
   });
+
+  it("#2717 M1: image rows sync from the value the UPDATE wrote, not the earlier read (a concurrent upload is kept)", async () => {
+    // The PATCH carries no imageKeys; between update()'s read ([own(1)]) and its write, a concurrent
+    // upload pushed own(2). The UPDATE returns the post-write row, so the rows must follow it.
+    prisma.product.findUnique.mockResolvedValue(row([own(1)]));
+    prisma.product.findFirst.mockResolvedValue(null);
+    prisma.product.update.mockResolvedValue({
+      ...row([own(1), own(2)]),
+      barcode: null,
+      unitsPerBox: null,
+    });
+    prisma.productImage.findMany.mockResolvedValue([]);
+    await service.update(P, { name: "Widget 2" } as any);
+    const created = prisma.productImage.create.mock.calls.map((c: any[]) => c[0].data.storageKey);
+    expect(created).toEqual([own(1), own(2)]);
+  });
 });
