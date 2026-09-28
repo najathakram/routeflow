@@ -30,3 +30,19 @@ export function assertNsfLinesUntaxed(
       });
   });
 }
+
+/**
+ * #2656 / B142 ("billing must never pause"): the UNATTENDED recurring run never refuses. A legacy
+ * template line that IS the NSF fee line (by its description) and still carries a rate is billed at
+ * 0 instead — the caller logs it. Interactive writes keep the 400 (assertNsfLinesUntaxed).
+ * @returns the rate to bill and whether it was zeroed
+ */
+export function nsfSafeTaxRate(item: { taxRate?: unknown; description?: string | null }): {
+  taxRate: number;
+  zeroed: boolean;
+} {
+  const rate = Number(item.taxRate ?? 0) || 0;
+  if (rate > 0 && isNsfLine({ systemKind: null, description: item.description ?? null }))
+    return { taxRate: 0, zeroed: true };
+  return { taxRate: rate, zeroed: false };
+}

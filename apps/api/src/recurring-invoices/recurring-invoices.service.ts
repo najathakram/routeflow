@@ -13,7 +13,7 @@ import { CreateRecurringInvoiceDto } from "./dto/create-recurring-invoice.dto";
 import { UpdateRecurringInvoiceDto } from "./dto/update-recurring-invoice.dto";
 import { RecurringFrequency } from "@prisma/client";
 import { recurringLineSplit } from "./recurring-line-split";
-import { assertNsfLinesUntaxed } from "../invoices/nsf-line-tax-guard";
+import { assertNsfLinesUntaxed, nsfSafeTaxRate } from "../invoices/nsf-line-tax-guard";
 
 /** REG-B106: RecurringInvoice.lastRunStatus values (schema comment: "SUCCESS" | "FAILED"). */
 export const RUN_STATUS_SUCCESS = "SUCCESS";
@@ -325,6 +325,16 @@ export class RecurringInvoicesService {
     return split;
   }
 
+  /** #2656 / B142: billing never pauses — a legacy NSF template line's rate is billed at 0 and logged. */
+  private runLineTaxRate(ri: any, item: any): number {
+    const { taxRate, zeroed } = nsfSafeTaxRate(item);
+    if (zeroed)
+      this.logger.warn(
+        `Recurring invoice ${ri.id}: NSF fee line carried taxRate ${String(item.taxRate)}; billed at 0 (#2656)`,
+      );
+    return taxRate;
+  }
+
   private async generateInvoiceFromTemplate(ri: any, unattended = true) {
     // F-05 (SA-205): a banned line refuses the whole document — it is never dropped so the rest issues, since
     // that would change the invoice's money with nobody deciding. "Run now" is an operator deciding (409, the
@@ -409,7 +419,7 @@ export class RecurringInvoicesService {
           qty: Number(item.qty),
           unitPrice: Number(item.unitPrice),
           discount: Number(item.discount),
-          taxRate: Number(item.taxRate),
+          taxRate: this.runLineTaxRate(ri, item),
           // B646: a boxed pack count carries its split, so qty is stored in PIECES (boxes x pack), and
           // SA-135: the pack it was split with rides along as packSnapshot (ONE read, never re-read).
           ...this.boxedSplitOrWarn(ri, item, packByProduct.get(item.productId)),

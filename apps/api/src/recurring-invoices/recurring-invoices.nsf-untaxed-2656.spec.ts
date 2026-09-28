@@ -25,18 +25,24 @@ import { createMockPrisma } from "../testing/prisma-mock";
 describe("RecurringInvoicesService — #2656 an NSF-described template line is never taxed", () => {
   let service: RecurringInvoicesService;
   let prisma: ReturnType<typeof createMockPrisma>;
+  let invoices: { create: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    invoices = { create: jest.fn().mockResolvedValue({ id: "inv-1" }) };
     const mod = await Test.createTestingModule({
       providers: [
         RecurringInvoicesService,
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: {} },
-        { provide: InvoicesService, useValue: { create: jest.fn() } },
+        { provide: InvoicesService, useValue: invoices },
         {
           provide: SellingRestrictionsService,
-          useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            // The unattended run screens the template first (blockedTemplateLines → checkLinesSellable).
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
         },
         { provide: NotificationsService, useValue: { sendToUser: jest.fn() } },
       ],
@@ -77,5 +83,49 @@ describe("RecurringInvoicesService — #2656 an NSF-described template line is n
       .catch((e) => e);
     expect(codeOf(caught)).toBeUndefined();
     expect(prisma.customer.findUnique).toHaveBeenCalled();
+  });
+
+  // Lead's Opus (#2673) per B142 "billing must never pause": the UNATTENDED nightly run never refuses a
+  // legacy template whose NSF line still carries a rate — it bills that line at 0 and logs it.
+  it("the nightly run on a legacy taxed-NSF template generates the invoice, NSF line at 0, logged; no 400", async () => {
+    prisma.recurringInvoice.update.mockResolvedValue({ id: "ri-1" });
+    prisma.recurringInvoice.updateMany.mockResolvedValue({ count: 1 });
+    prisma.invoice.update.mockResolvedValue({ id: "inv-1" });
+    prisma.product.findMany.mockResolvedValue([]);
+    const warn = jest.spyOn((service as any).logger, "warn").mockImplementation(() => undefined);
+    const template = {
+      id: "ri-1",
+      customerId: "cust-1",
+      frequency: "MONTHLY",
+      dayOfMonth: 1,
+      discount: 0,
+      shippingFee: 0,
+      notes: null,
+      terms: null,
+      autoSend: false,
+      nextRunAt: new Date("2026-07-01"),
+      items: [
+        {
+          description: "Cola 12pk",
+          productId: null,
+          qty: 1,
+          unitPrice: 100,
+          discount: 0,
+          taxRate: 0.075,
+          unitLabel: null,
+        },
+        { ...nsfLine(0.08), productId: null, discount: 0, unitLabel: null },
+      ],
+    };
+
+    await expect((service as any).generateInvoiceFromTemplate(template)).resolves.toBeTruthy();
+
+    expect(invoices.create).toHaveBeenCalledTimes(1);
+    const items = invoices.create.mock.calls[0][0].items;
+    expect(items[0].taxRate).toBe(0.075); // goods keep their rate
+    expect(items[1].taxRate).toBe(0); // the NSF line is billed untaxed, never refused
+    expect(
+      warn.mock.calls.some((c: any[]) => /NSF fee line .*billed at 0/.test(String(c[0]))),
+    ).toBe(true);
   });
 });
