@@ -21,8 +21,8 @@
  * STRUCTURE: three independent tests, each creating its own Case order through the API
  * (`createCaseOrder`, which also asserts the stored base-piece truth). The price-only edit is
  * its own test so an edit can never revert the invoice the invoice test reads
- * (`OrdersService.updateOrderItems` → `revertLinkedInvoicesForOrderEdit`). It is `test.fixme`
- * until #2305 lands: on master the order-edit page cannot re-price a units_v1 line.
+ * (`OrdersService.updateOrderItems` → `revertLinkedInvoicesForOrderEdit`). It is the #2305
+ * regression gate (a typed price on a units_v1 line survived nowhere before #2380).
  *
  * Read-only display is asserted at the PAGE level ("3 Cases" appears once, since the
  * order/invoice created here carries exactly one line), not via a `<tr>` ancestor —
@@ -361,12 +361,10 @@ test.describe("Units v1 — order → edit → invoice lane (#2233 / SA-390)", (
     await expect(main.getByText(/\b3 Cases\b/).first()).toBeVisible({ timeout: 10_000 });
   });
 
-  // #2305: un-fixme in the fix PR. On master the order-edit page cannot re-price a units_v1 line:
-  // OrderLineUnitPicker's tier-refresh effect re-applies the ladder price whenever the line's price
-  // differs (PriceEditRow never marks the price MANUAL), so the typed price is overwritten, the edit
-  // total stays $63.00, and Save sends no request. The fix PR removes this fixme — red on master,
-  // green with the fix.
-  test.fixme("a price-only edit THROUGH THE WEB UI saves the new price and leaves qty/boxes unchanged (SA-388)", async ({
+  // #2305 (fixed by #2380): before the fix, OrderLineUnitPicker's tier-refresh effect re-applied the
+  // ladder price whenever the line's price differed, so the typed price was overwritten, the edit
+  // total stayed $63.00, and Save sent no request.
+  test("a price-only edit THROUGH THE WEB UI saves the new price and leaves qty/boxes unchanged (SA-388)", async ({
     page,
     request,
   }) => {
