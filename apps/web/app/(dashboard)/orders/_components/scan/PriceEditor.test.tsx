@@ -134,7 +134,8 @@ describe("PriceEditor", () => {
     it("Case mode edits whole cases and extra units through the row's handlers", () => {
       const props = setup(boxed());
       fireEvent.change(screen.getByLabelText("Cases"), { target: { value: "3" } });
-      fireEvent.change(screen.getByLabelText("Extra units"), { target: { value: "2" } });
+      fireEvent.click(screen.getByRole("button", { name: "+ units" })); // #2696 (d): opt-in
+      fireEvent.change(screen.getByLabelText("Extra loose units"), { target: { value: "2" } });
       expect(props.onSetBoxes).toHaveBeenLastCalledWith(3);
       expect(props.onSetPieces).toHaveBeenLastCalledWith(2);
     });
@@ -145,16 +146,30 @@ describe("PriceEditor", () => {
       const props = setup(boxed({ boxes: 2, pieces: 3 }));
       fireEvent.change(screen.getByLabelText("Cases"), { target: { value: "" } });
       expect(props.onSetBoxes).toHaveBeenLastCalledWith(0);
-      fireEvent.change(screen.getByLabelText("Extra units"), { target: { value: "" } });
+      fireEvent.change(screen.getByLabelText("Extra loose units"), { target: { value: "" } });
       expect(props.onSetPieces).toHaveBeenLastCalledWith(0);
       for (const fn of [props.onSetBoxes, props.onSetPieces]) {
         for (const [arg] of (fn as jest.Mock).mock.calls) expect(Number.isNaN(arg)).toBe(false);
       }
     });
 
+    it("SA-563: cases 0 + units n ⇒ no remove-extra-units control", () => {
+      setup(boxed({ boxes: 0, pieces: 3 }));
+      expect(screen.getByLabelText("Extra loose units")).toBeInTheDocument();
+      expect(screen.queryByLabelText("Remove extra units")).not.toBeInTheDocument();
+    });
+
+    it("SA-563: cases ≥ 1 + units n ⇒ remove sets units 0 and leaves cases alone", () => {
+      const props = setup(boxed({ boxes: 2, pieces: 3 }));
+      fireEvent.click(screen.getByLabelText("Remove extra units"));
+      expect(props.onSetPieces).toHaveBeenCalledWith(0);
+      expect(props.onSetBoxes).not.toHaveBeenCalled();
+    });
+
     it("extra units are capped below one case", () => {
       setup(boxed());
-      expect(screen.getByLabelText("Extra units")).toHaveAttribute("max", "5");
+      fireEvent.click(screen.getByRole("button", { name: "+ units" }));
+      expect(screen.getByLabelText("Extra loose units")).toHaveAttribute("max", "5");
     });
 
     it("the Case | Unit toggle drives onSetSellBy and reflects the current mode", () => {

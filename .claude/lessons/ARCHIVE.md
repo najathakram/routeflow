@@ -3213,3 +3213,34 @@ citations, closed-out with its own post-init assertion guard).
   (Archived 2026-09-27 to make room at cap for L-240: one outside citation, a handoff note that
   still resolves here; guard = the landing-coordinator checklist, unchanged by archiving the
   prose; the sibling trap stays active as L-190.)
+
+### L-230 · 2026-09-22 · process · a verification framed as "is my work safe" answers itself by construction
+
+- **Symptom:** on the #1219/#1221 merge rehearsal, the forward probe (revert only #1221's own fix,
+  confirm its own cases fail) passed and looked complete. The reverse probe (revert the OTHER
+  side's fix, confirm THEIR cases fail) found #1221's fix had no guard in the DEFAULT Jest lane —
+  reverting it left all 395 unit tests green.
+- **Root cause:** "is my work safe" is answered the moment your own side passes, so it stops there
+  by construction — it never asks whether the merge weakened anything ELSE.
+- **Lesson:** **Frame a merge verification as "did this change weaken anything", symmetric: revert
+  YOUR change on the merged tree and confirm your cases still fail, then revert THEIRS and confirm
+  theirs still fail.** A missing guard is silent in the direction that matters — green suite, more
+  test files, every signal points the right way. Structural fix, not "review harder": a fix guarded
+  only by a DB-lane spec must ALSO carry a default-lane pin — the DB spec proves it against real
+  transactions, the unit pin proves it still exists after a merge that doesn't re-trigger the DB
+  lane (it fires on ADDING a `.db.spec.ts`, not on changing the logic it protects).
+- **Guard:** #1221's added default-lane pin; the default-lane-pin requirement for any
+  DB-lane-guarded fix going forward.
+  (Archived 2026-09-28 to make room at cap for L-241: one outside citation, a roadmap deferred
+  row that still resolves here; guard = #1221's default-lane pin, unchanged by archiving the prose.)
+
+### L-218 · 2026-09-25 · testing · a red-proof that matches message TEXT can be vacuous (B861)
+
+- **Symptom:** the red-proofs AB/AD passed on the OLD code, so they proved nothing about the fix.
+- **Root cause:** they matched `/reload/`, which the pre-existing 409's message also contains, so the
+  wrong error satisfied the assertion.
+- **Lesson:** **Assert by error CLASS or code, never by message text another error can share. Run the
+  proof against the old code and confirm it fails for the intended reason.**
+- **Guard:** `REG-B861-AB`/`AD` assert `BadRequestException`.
+  (Archived 2026-09-28 to make room at cap for L-242: one outside citation, a handoff note that
+  still resolves here; guard = the REG-B861-AB/AD specs asserting BadRequestException, unchanged.)

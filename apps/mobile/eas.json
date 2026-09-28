@@ -16,6 +16,8 @@
       },
       "env": {
         "EXPO_PUBLIC_API_URL": "http://192.168.4.25:3000",
+        "EXPO_PUBLIC_WEB_URL": "http://192.168.4.25:3001",
+        "EXPO_PUBLIC_WEB_SHELL": "on",
         "HUSKY": "0",
         "npm_config_engine_strict": "false"
       },
@@ -28,6 +30,8 @@
       },
       "env": {
         "EXPO_PUBLIC_API_URL": "http://192.168.4.25:3000",
+        "EXPO_PUBLIC_WEB_URL": "http://192.168.4.25:3001",
+        "EXPO_PUBLIC_WEB_SHELL": "on",
         "HUSKY": "0",
         "npm_config_engine_strict": "false"
       },
@@ -40,6 +44,8 @@
       },
       "env": {
         "EXPO_PUBLIC_API_URL": "https://routeflowapi-production.up.railway.app",
+        "EXPO_PUBLIC_WEB_URL": "https://www.routeflow.info",
+        "EXPO_PUBLIC_WEB_SHELL": "on",
         "HUSKY": "0",
         "npm_config_engine_strict": "false"
       },
@@ -50,6 +56,8 @@
       "autoIncrement": true,
       "env": {
         "EXPO_PUBLIC_API_URL": "https://routeflowapi-production.up.railway.app",
+        "EXPO_PUBLIC_WEB_URL": "https://www.routeflow.info",
+        "EXPO_PUBLIC_WEB_SHELL": "on",
         "HUSKY": "0",
         "npm_config_engine_strict": "false"
       },

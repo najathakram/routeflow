@@ -119,24 +119,6 @@
 - **Lesson:** **Land a train only after its head is verified and any hand hunk (import unions, ratchet rows) is confirmed against the merge-tree; after the squash, compare `git rev-parse origin/master^{tree}` with the verified tree and stop on any difference.**
 - **Guard:** the train PR body states the expected tree; the landing coordinator runs the comparison (train A: master's tree equals e98a41e8, checked). Dropped PRs are named with their reason so they re-enter the next train. Cf. [[L-197]].
 
-### L-230 · 2026-09-22 · process · a verification framed as "is my work safe" answers itself by construction
-
-- **Symptom:** on the #1219/#1221 merge rehearsal, the forward probe (revert only #1221's own fix,
-  confirm its own cases fail) passed and looked complete. The reverse probe (revert the OTHER
-  side's fix, confirm THEIR cases fail) found #1221's fix had no guard in the DEFAULT Jest lane —
-  reverting it left all 395 unit tests green.
-- **Root cause:** "is my work safe" is answered the moment your own side passes, so it stops there
-  by construction — it never asks whether the merge weakened anything ELSE.
-- **Lesson:** **Frame a merge verification as "did this change weaken anything", symmetric: revert
-  YOUR change on the merged tree and confirm your cases still fail, then revert THEIRS and confirm
-  theirs still fail.** A missing guard is silent in the direction that matters — green suite, more
-  test files, every signal points the right way. Structural fix, not "review harder": a fix guarded
-  only by a DB-lane spec must ALSO carry a default-lane pin — the DB spec proves it against real
-  transactions, the unit pin proves it still exists after a merge that doesn't re-trigger the DB
-  lane (it fires on ADDING a `.db.spec.ts`, not on changing the logic it protects).
-- **Guard:** #1221's added default-lane pin; the default-lane-pin requirement for any
-  DB-lane-guarded fix going forward.
-
 ### L-231 · 2026-09-22 · process · a register claim needs the check that would disprove it, not just the belief
 
 - **Symptom:** this incident's own write-up first carried a false claim — "no CI workflow runs the
@@ -171,6 +153,19 @@
 - **Guard:** `fleet-lead/scripts/fleet-status.mjs` reads the board from one `BOARD_ISSUE` constant
   (env `FLEET_BOARD_ISSUE`), and `fleet-lead/SKILL.md` names #2554 as the live board. Proposed:
   `fleet-status.mjs` prints the board's comment count and warns at 2,300.
+
+### L-241 · 2026-09-28 · process · text with backticks goes through a quoted heredoc to a file, never an unquoted heredoc or --body "…" (#2707)
+
+- **Symptom:** a lane wrote a PR body through an unquoted heredoc (`<<EOF`). The shell ran the
+  backticked commands in the text, including an owner-only `railway run … audit-tenant-entitlements.mjs`,
+  which was stopped only by a missing CLI on that machine (MacBook, #2707; no damage).
+- **Root cause:** shell command substitution runs inside an unquoted heredoc and inside a
+  double-quoted `--body "…"`, so any backticked command in prose is executed, not quoted.
+- **Lesson:** **Any PR, board or brief text that contains backticks is written with a QUOTED heredoc
+  (`<<'EOF'`) or the file-write tool to a file, then passed as `--body-file` / `gh … -F body=@file`.
+  Never interpolate such text into a command line.**
+- **Guard:** the lane brief rule (write bodies to a file first); production commands are owner-run on
+  the Mac mini only, with no railway CLI or link on the MacBook.
 
 ## tooling
 
@@ -434,15 +429,6 @@
   plainly that it is unverified.**
 - **Guard:** none — judgment. Grep `isWeb`/`Platform.OS` in any file a fix touches.
 
-### L-218 · 2026-09-25 · testing · a red-proof that matches message TEXT can be vacuous (B861)
-
-- **Symptom:** the red-proofs AB/AD passed on the OLD code, so they proved nothing about the fix.
-- **Root cause:** they matched `/reload/`, which the pre-existing 409's message also contains, so the
-  wrong error satisfied the assertion.
-- **Lesson:** **Assert by error CLASS or code, never by message text another error can share. Run the
-  proof against the old code and confirm it fails for the intended reason.**
-- **Guard:** `REG-B861-AB`/`AD` assert `BadRequestException`.
-
 ### L-226 · 2026-09-27 · testing · a money fixture must be shaped by the production writer (#2274, #2245, #2305)
 
 - **Symptom:** ledger and unit-line specs built rows by hand in shapes the writer never produces (credit overshoot legs the per-line and header caps would refuse; quantities not in base pieces), so they proved a state that cannot exist and could miss the one the writer can.
@@ -675,6 +661,19 @@
   connection), `customer-delete-money-records-2587.db.spec.ts`,
   `customer-delete-fk-race-2572.db.spec.ts`; `common/update-tenant-class-ledger.db.spec.ts`.
   Cf. [[L-217]], [[L-221]].
+
+### L-242 · 2026-09-28 · domain · never key a UI draft or map by a nullable id (B889, #2709)
+
+- **Symptom:** mobile buyer edit-items keyed its draft by `productId`. The seller's custom lines
+  (`productId` null) collapsed into one "Product" row, and Save sent `productId: null`, which the
+  server silently ignored.
+- **Root cause:** a draft keyed by a nullable id: every null collides on one key, and the null class
+  is not a real member of the keyed set.
+- **Lesson:** **Never key a UI draft or map by a nullable id. Key on the non-null identity and skip or
+  segregate the null class explicitly, mirroring web's established filter and the server's own
+  definition (`isUnlisted = !productId`).**
+- **Guard:** #2709's pins in `apps/mobile/__tests__/buyer-edit-items-custom-lines.test.ts`
+  (`isCustomLine` skips seller custom lines in `hydrateBuyerDraft`).
 
 ## security
 

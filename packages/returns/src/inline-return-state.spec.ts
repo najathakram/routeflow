@@ -230,6 +230,47 @@ describe("dropExcessAndRequote — option 3, 'return only what was bought'", () 
   });
 });
 
+// #2693: what option 3 can do BEFORE any re-quote is sent. Resolved at call time so a missing
+// export fails these cases (red) rather than the whole file.
+const pkg = require("./inline-return-state");
+
+describe("#2693: 'return only what was bought' availability", () => {
+  it("an all-excess quote (nothing matched to any invoice) cannot return only what was bought", () => {
+    const quote = quoteResponse([chunk({ productId: "prod-2", sourceOrderId: null, pieces: 9 })]);
+    expect(pkg.canReturnOnlyPurchased(quote)).toBe(false);
+  });
+
+  it("a quote with any covered piece can", () => {
+    const quote = quoteResponse([
+      chunk({ productId: "prod-1", sourceOrderId: "order-1", pieces: 4 }),
+      chunk({ productId: "prod-2", sourceOrderId: null, pieces: 9 }),
+    ]);
+    expect(pkg.canReturnOnlyPurchased(quote)).toBe(true);
+  });
+
+  it("names every product that drops to zero (bought never), in line order, each once", () => {
+    const quote = quoteResponse([
+      chunk({ productId: "prod-1", sourceOrderId: "order-1", pieces: 4 }),
+      chunk({ productId: "prod-1", sourceOrderId: null, pieces: 2 }),
+      chunk({ productId: "prod-2", sourceOrderId: null, pieces: 9 }),
+      chunk({ productId: "prod-3", sourceOrderId: null, pieces: 1 }),
+      chunk({ productId: "prod-3", sourceOrderId: null, pieces: 1 }),
+    ]);
+    const lines = [
+      { productId: "prod-3", productName: "Gadget" },
+      { productId: "prod-1", productName: "Widget" },
+      { productId: "prod-2", productName: "Sprocket" },
+    ];
+    expect(pkg.notBoughtBeforeNames(quote, lines)).toEqual(["Gadget", "Sprocket"]);
+  });
+
+  it("the friendly text is the owner's wording, never the DTO's", () => {
+    expect(pkg.NOTHING_BOUGHT_BEFORE_MESSAGE).toBe(
+      "This customer hasn't bought these items before — there's no invoice to return them against.",
+    );
+  });
+});
+
 describe("applyCoveredPiecesToLines — keeps Step 1's own state in sync with option 3", () => {
   it("caps a line's boxes/pieces to the covered total so a later capture never over-sends", () => {
     const covered = chunk({ productId: "prod-1", sourceOrderId: "order-1", pieces: 4 });

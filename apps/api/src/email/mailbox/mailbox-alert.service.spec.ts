@@ -4,11 +4,18 @@
  * through the PLATFORM sender (never the dead mailbox). THROTTLED: in-app only. The copy says what
  * happened, where the tenant's email goes meanwhile, and how to fix it. Never throws.
  */
+import * as fs from "fs";
+import * as path from "path";
 import { ConfigService } from "@nestjs/config";
 import axios from "axios";
 import { EncryptionService } from "../../common/encryption.service";
 import { TenantContextService } from "../../tenant/tenant-context.service";
 import { MailboxAlertService } from "./mailbox-alert.service";
+import {
+  MAILBOX_ALERT_DELIVERY_DEADLINE_MS,
+  MAILBOX_ALERT_LEASE_MS,
+  MAILBOX_ALERT_SWEEP_EVERY_MIN,
+} from "./mailbox-alert-outbox";
 import { MailboxSendService, type MailboxStateChange } from "./mailbox-send.service";
 
 jest.mock("axios");
@@ -28,9 +35,22 @@ function change(over: Partial<MailboxStateChange> = {}): MailboxStateChange {
     status: "REVOKED",
     reasonCode: "google_invalid_grant",
     throttledUntil: null,
+    alertPendingAt: PENDING_AT,
     ...over,
   };
 }
+
+/** #2113: the value the transition committed; the stubbed CAS matches it. */
+const PENDING_AT = new Date("2026-09-28T00:00:00.000Z");
+
+/** The row a claim reads back — by default, the state the change describes. */
+const rowFor = (c: MailboxStateChange) => ({
+  tenantId: c.tenantId,
+  provider: c.provider,
+  accountEmail: c.accountEmail,
+  status: c.status,
+  throttledUntil: c.throttledUntil,
+});
 
 const ADMINS = [
   { id: "u-owner", email: "owner@acme.test", username: "owner" },
@@ -40,8 +60,15 @@ const ADMINS = [
 function build(opts: { admins?: typeof ADMINS; hasFallback?: boolean } = {}) {
   const tenantCtx = new TenantContextService();
   const tenantSeenBy: string[] = [];
+  let current = rowFor(change());
   const prisma = {
     user: { findMany: jest.fn().mockResolvedValue(opts.admins ?? ADMINS) },
+    // #2113: claim/clear CAS both win by default; the claimed row mirrors the change notified.
+    mailboxConnection: {
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      findUnique: jest.fn().mockImplementation(async () => current),
+      findMany: jest.fn().mockResolvedValue([]),
+    },
   };
   const notifications = {
     sendToUser: jest.fn().mockImplementation(async () => {
@@ -70,6 +97,11 @@ function build(opts: { admins?: typeof ADMINS; hasFallback?: boolean } = {}) {
     email as any,
     gateway as any,
   );
+  const notify = service.notifyAdmins.bind(service);
+  service.notifyAdmins = (c: MailboxStateChange) => {
+    current = rowFor(c);
+    return notify(c);
+  };
   return { service, prisma, notifications, email, mailboxSend, tenantCtx, tenantSeenBy, gateway };
 }
 
@@ -280,6 +312,9 @@ describe("MailboxAlertService — subscription wiring", () => {
     } = build({
       admins: [ADMINS[0]],
     });
+    alertPrisma.mailboxConnection.findUnique.mockResolvedValue(
+      rowFor(change({ provider: "MICROSOFT" })),
+    );
     const alerts = new MailboxAlertService(
       mailboxSend,
       alertPrisma as any,
@@ -360,5 +395,115 @@ describe("MailboxAlertService — web bell (#2113)", () => {
     await expect(service.notifyAdmins(change())).resolves.toBeUndefined();
     expect(notifications.sendToUser).toHaveBeenCalledTimes(2);
     expect(email.sendMailboxRevokedNotice).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("MailboxAlertService — durable settlement (#2113, SA-528)", () => {
+  it("pins the lease at ≥ 3× the sweep cadence, and the delivery deadline well inside it", () => {
+    expect(MAILBOX_ALERT_LEASE_MS).toBeGreaterThanOrEqual(
+      3 * MAILBOX_ALERT_SWEEP_EVERY_MIN * 60_000,
+    );
+    expect(MAILBOX_ALERT_DELIVERY_DEADLINE_MS).toBeLessThanOrEqual(2 * 60_000);
+    expect(MAILBOX_ALERT_DELIVERY_DEADLINE_MS).toBeLessThan(MAILBOX_ALERT_LEASE_MS);
+  });
+
+  it("the sweep's cron expression matches the pinned cadence", () => {
+    const src = fs.readFileSync(path.join(__dirname, "mailbox-alert.service.ts"), "utf8");
+    expect(src).toContain(
+      `@LeaderCron("*/${MAILBOX_ALERT_SWEEP_EVERY_MIN} * * * *", "mailbox-alert.sweepPending")`,
+    );
+  });
+
+  it.each([null, undefined, new Date("not a date")])(
+    "a seen value of %p issues NO compare-and-set and delivers nothing",
+    async (seen) => {
+      const { service, prisma, notifications } = build();
+      await expect(service.settle("mc-1", seen as any)).resolves.toBe("not-claimed");
+      expect(prisma.mailboxConnection.updateMany).not.toHaveBeenCalled();
+      expect(notifications.sendToUser).not.toHaveBeenCalled();
+    },
+  );
+
+  it("claims by CAS on the seen value, delivers, then clears by CAS on the lease", async () => {
+    const { service, prisma, notifications } = build();
+    service.now = () => new Date("2026-09-28T00:01:00.000Z");
+
+    await service.notifyAdmins(change());
+
+    const [claim, clear] = prisma.mailboxConnection.updateMany.mock.calls.map((c: any[]) => c[0]);
+    const lease = new Date(Date.parse("2026-09-28T00:01:00.000Z") + MAILBOX_ALERT_LEASE_MS);
+    expect(claim).toEqual({
+      where: { id: "mc-1", alertPendingAt: PENDING_AT },
+      data: { alertPendingAt: lease },
+    });
+    expect(clear).toEqual({
+      where: { id: "mc-1", alertPendingAt: lease },
+      data: { alertPendingAt: null },
+    });
+    expect(notifications.sendToUser).toHaveBeenCalledTimes(2);
+  });
+
+  it("a lost claim (count 0) delivers nothing and clears nothing", async () => {
+    const { service, prisma, notifications, email } = build();
+    prisma.mailboxConnection.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    await expect(service.settle("mc-1", PENDING_AT)).resolves.toBe("not-claimed");
+    expect(prisma.mailboxConnection.updateMany).toHaveBeenCalledTimes(1);
+    expect(notifications.sendToUser).not.toHaveBeenCalled();
+    expect(email.sendMailboxRevokedNotice).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["reconnected", { status: "CONNECTED", throttledUntil: null }],
+    ["a throttle that has already lifted", { status: "THROTTLED", throttledUntil: new Date(0) }],
+  ])("a row that is %s at claim time is cleared WITHOUT notifying", async (_label, state) => {
+    const { service, prisma, notifications } = build();
+    prisma.mailboxConnection.findUnique.mockResolvedValue({ ...rowFor(change()), ...state });
+
+    await expect(service.settle("mc-1", PENDING_AT)).resolves.toBe("stale");
+    expect(prisma.mailboxConnection.updateMany).toHaveBeenCalledTimes(2); // claim + clear
+    expect(notifications.sendToUser).not.toHaveBeenCalled();
+  });
+
+  it("no active admin: cleared (nothing to deliver), never left owed", async () => {
+    const { service, prisma } = build({ admins: [] });
+    await expect(service.settle("mc-1", PENDING_AT)).resolves.toBe("delivered");
+    expect(prisma.mailboxConnection.updateMany).toHaveBeenCalledTimes(2);
+  });
+
+  it("a failed delivery (admin lookup down) is abandoned WITHOUT clearing — the sweep retries", async () => {
+    const { service, prisma } = build();
+    prisma.user.findMany.mockRejectedValueOnce(new Error("db down"));
+    await expect(service.settle("mc-1", PENDING_AT)).resolves.toBe("abandoned");
+    expect(prisma.mailboxConnection.updateMany).toHaveBeenCalledTimes(1); // the claim only
+  });
+
+  it("a delivery that overruns the deadline is abandoned WITHOUT clearing", async () => {
+    jest.useFakeTimers();
+    try {
+      const { service, prisma, email } = build();
+      email.isEmailConfigured.mockImplementation(() => new Promise(() => {})); // hangs forever
+      const settled = service.settle("mc-1", PENDING_AT);
+      await jest.advanceTimersByTimeAsync(MAILBOX_ALERT_DELIVERY_DEADLINE_MS + 1);
+      await expect(settled).resolves.toBe("abandoned");
+      expect(prisma.mailboxConnection.updateMany).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("sweepPending settles every due row and counts the deliveries", async () => {
+    const { service, prisma, notifications } = build();
+    prisma.mailboxConnection.findMany.mockResolvedValue([
+      { id: "mc-1", alertPendingAt: PENDING_AT },
+      { id: "mc-2", alertPendingAt: PENDING_AT },
+    ]);
+    prisma.mailboxConnection.updateMany
+      .mockResolvedValueOnce({ count: 1 }) // mc-1 claim
+      .mockResolvedValueOnce({ count: 1 }) // mc-1 clear
+      .mockResolvedValueOnce({ count: 0 }); // mc-2 claim lost to another deliverer
+
+    await expect(service.sweepPending()).resolves.toBe(1);
+    expect(notifications.sendToUser).toHaveBeenCalledTimes(2); // mc-1's two admins only
   });
 });
