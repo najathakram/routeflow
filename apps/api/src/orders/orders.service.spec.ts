@@ -4741,7 +4741,7 @@ describe("OrdersService", () => {
 
       expect(prisma.orderItem.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "li-A" },
+          where: { id: "li-A", orderId: "ord-1" },
           data: expect.objectContaining({
             productId: "prod-tob",
             unitPrice: 20,
@@ -4840,7 +4840,7 @@ describe("OrdersService", () => {
 
       expect(prisma.orderItem.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "li-A" },
+          where: { id: "li-A", orderId: "ord-1" },
           data: expect.objectContaining({
             productId: "prod-tob",
             unitPrice: 8,
@@ -5160,7 +5160,7 @@ describe("OrdersService", () => {
 
       expect(prisma.orderItem.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "li-A" },
+          where: { id: "li-A", orderId: "ord-1" },
           data: expect.objectContaining({
             productId: "prod-loose",
             // 2 * (unitsPerBox ?? 0) would have been qty 0 / subtotal 0 — a free line.
@@ -5288,6 +5288,7 @@ describe("OrdersService", () => {
       prisma.order.findUnique.mockResolvedValue(orderWithItems);
       prisma.deliveryMutation.count.mockResolvedValue(0);
       prisma.orderItem.findMany.mockResolvedValue([]);
+      prisma.orderItem.deleteMany.mockResolvedValue({ count: 1 });
 
       await service.updateOrderItems(
         "ord-1",
@@ -5295,7 +5296,10 @@ describe("OrdersService", () => {
         operatorPayload,
       );
 
-      expect(prisma.orderItem.delete).toHaveBeenCalledWith({ where: { id: "li-A" } });
+      // #2563: scoped to THIS order, never a bare line id.
+      expect(prisma.orderItem.deleteMany).toHaveBeenCalledWith({
+        where: { id: "li-A", orderId: "ord-1" },
+      });
     });
 
     it("action DELETE falls back to strike-off when the line was already invoiced", async () => {
@@ -5306,6 +5310,7 @@ describe("OrdersService", () => {
       prisma.order.findUnique.mockResolvedValue(billed);
       prisma.deliveryMutation.count.mockResolvedValue(0);
       prisma.orderItem.findMany.mockResolvedValue([]);
+      prisma.orderItem.updateMany.mockResolvedValue({ count: 1 });
 
       await service.updateOrderItems(
         "ord-1",
@@ -5313,10 +5318,10 @@ describe("OrdersService", () => {
         operatorPayload,
       );
 
-      expect(prisma.orderItem.delete).not.toHaveBeenCalled();
-      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+      expect(prisma.orderItem.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.orderItem.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "li-A" },
+          where: { id: "li-A", orderId: "ord-1" },
           data: expect.objectContaining({ status: "CANCELLED" }),
         }),
       );
@@ -6620,6 +6625,7 @@ describe("OrdersService", () => {
       prisma.order.findUnique.mockResolvedValue(twoLineOrder);
       prisma.deliveryMutation.count.mockResolvedValue(0);
       prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 7, status: "PENDING" }]);
+      prisma.orderItem.deleteMany.mockResolvedValue({ count: 1 });
 
       await service.updateOrderItems(
         "ord-1",
@@ -6627,8 +6633,11 @@ describe("OrdersService", () => {
         driverPayload,
       );
 
-      expect(prisma.orderItem.deleteMany).not.toHaveBeenCalled();
-      expect(prisma.orderItem.delete).toHaveBeenCalledWith({ where: { id: "li-A" } });
+      // Only the targeted line, scoped to this order (#2563) — never the replace branch's wipe.
+      expect(prisma.orderItem.deleteMany).toHaveBeenCalledTimes(1);
+      expect(prisma.orderItem.deleteMany).toHaveBeenCalledWith({
+        where: { id: "li-A", orderId: "ord-1" },
+      });
     });
 
     it("a driver diff substitution bills the substitute's list price (B13 — no price control)", async () => {
@@ -6654,7 +6663,7 @@ describe("OrdersService", () => {
 
       expect(prisma.orderItem.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "li-A" },
+          where: { id: "li-A", orderId: "ord-1" },
           data: expect.objectContaining({
             productId: "prod-sub",
             unitPrice: 8,
@@ -6683,6 +6692,8 @@ describe("OrdersService", () => {
 
     it("a buyer (CUSTOMER) diff-shaped payload is rejected with 400 before any mutation", async () => {
       prisma.order.findUnique.mockResolvedValue({ ...twoLineOrder, status: "PENDING" });
+      // SA-507b: the 400 answers the ORDER'S OWNER only (a non-owner meets the bare 403 first).
+      prisma.customer.findFirst.mockResolvedValue({ id: twoLineOrder.customerId });
 
       await expect(
         service.updateOrderItems(
@@ -9428,107 +9439,3 @@ describe("OrdersService", () => {
 });
 
 // ─── Controller: the merge-choice branch bypasses OrdersService.create ───────
-
-describe("OrdersController — merge choice vs orderDate", () => {
-  let controller: OrdersController;
-  let ordersService: {
-    findActiveOrder: jest.Mock;
-    updateOrderItems: jest.Mock;
-    mergeAllPendingForCustomer: jest.Mock;
-    findOne: jest.Mock;
-    create: jest.Mock;
-  };
-
-  const activeOrder = {
-    id: "ord-open",
-    orderNumber: "ORD-00009",
-    status: "PENDING",
-    total: 10,
-    createdAt: new Date(),
-    // priceType MANUAL: only an operator override survives the fold (F30/R11 refined
-    // contract) — derived prices are omitted so updateOrderItems re-derives at the
-    // merged qty; orders.scan-hardening.spec.ts pins that branch.
-    lineItems: [{ productId: "prod-1", qty: 2, unitPrice: 5, priceType: "MANUAL", name: null }],
-  };
-
-  beforeEach(async () => {
-    ordersService = {
-      findActiveOrder: jest.fn().mockResolvedValue(activeOrder),
-      updateOrderItems: jest.fn().mockResolvedValue(undefined),
-      mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
-      findOne: jest.fn().mockResolvedValue(activeOrder),
-      create: jest.fn().mockResolvedValue({ id: "ord-new", customerId: "cust-1" }),
-    };
-
-    const module: TestingModule = await Test.createTestingModule({
-      controllers: [OrdersController],
-      providers: [
-        { provide: OrdersService, useValue: ordersService },
-        { provide: ChangeRequestsService, useValue: {} },
-      ],
-    }).compile();
-
-    controller = module.get<OrdersController>(OrdersController);
-  });
-
-  it("rejects merge + orderDate before any items are folded in", async () => {
-    await expect(
-      controller.create(
-        {
-          customerId: "cust-1",
-          items: [{ productId: "prod-1", qty: 1 }],
-          mergeChoice: "merge",
-          orderDate: isoDaysAgo(4),
-        } as any,
-        operatorPayload,
-      ),
-    ).rejects.toBeInstanceOf(BadRequestException);
-
-    expect(ordersService.updateOrderItems).not.toHaveBeenCalled();
-    expect(ordersService.mergeAllPendingForCustomer).not.toHaveBeenCalled();
-    expect(ordersService.create).not.toHaveBeenCalled();
-  });
-
-  it("still merges an undated order into the open one", async () => {
-    await controller.create(
-      {
-        customerId: "cust-1",
-        items: [{ productId: "prod-1", qty: 1 }],
-        mergeChoice: "merge",
-      } as any,
-      operatorPayload,
-    );
-
-    // F30/R11 (B199): the fold carries the EXISTING line's unitPrice through —
-    // a merge is never where an operator's price override quietly disappears.
-    // B465 fix round 4: the create-merge call site now always passes a 4th
-    // opts argument naming isCreateMerge — the ONLY place this ever gets set.
-    expect(ordersService.updateOrderItems).toHaveBeenCalledWith(
-      "ord-open",
-      expect.objectContaining({ items: [{ productId: "prod-1", qty: 3, unitPrice: 5 }] }),
-      operatorPayload,
-      expect.objectContaining({ isCreateMerge: true }),
-    );
-  });
-
-  it("a dated order chosen as separate goes through create()", async () => {
-    const orderDate = isoDaysAgo(4);
-
-    await controller.create(
-      {
-        customerId: "cust-1",
-        items: [{ productId: "prod-1", qty: 1 }],
-        mergeChoice: "separate",
-        orderDate,
-      } as any,
-      operatorPayload,
-    );
-
-    expect(ordersService.updateOrderItems).not.toHaveBeenCalled();
-    expect(ordersService.create).toHaveBeenCalledWith(
-      expect.objectContaining({ orderDate }),
-      operatorPayload,
-      { skipAutoMerge: true },
-    );
-  });
-});

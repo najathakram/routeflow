@@ -17,9 +17,11 @@
  * The two paths that genuinely leak are the BULK ones, and neither was named in
  * the report:
  *
- *   - `deleteAllCustomers` blocks only on **PAID or SENT** invoices, then
- *     hard-deletes every remaining invoice — DRAFT included.
- *   - `deleteImportedCustomers` has **no invoice guard at all**.
+ *   - `deleteAllCustomers` blocks only on issued or paid invoices (PAID or SENT at the time;
+ *     SENT/VIEWED/PARTIAL/OVERDUE/PAID since #2558), then hard-deletes every remaining invoice —
+ *     DRAFT included.
+ *   - `deleteImportedCustomers` had **no invoice guard at all** (since #2569 it runs the same
+ *     pre-flight, in-tx re-check and CAS delete as deleteAllCustomers).
  *
  * The load-bearing fact that makes those real: a **DRAFT invoice already carries
  * ledger rows**. `createSplitInvoices` calls `ledger.writeSaleEntries` in the
@@ -68,9 +70,11 @@ describe("CustomersService — purge paths reverse the regulated ledger", () => 
       calls.push("deleteItems");
       return Promise.resolve({ count: 0 });
     });
+    // SA-510a: deleteAllCustomers' invoice delete is a CAS that must remove exactly the rows it
+    // read (primeInvoices' two DRAFTs).
     prisma.invoice.deleteMany.mockImplementation(() => {
       calls.push("deleteInvoices");
-      return Promise.resolve({ count: 0 });
+      return Promise.resolve({ count: 2 });
     });
 
     const module: TestingModule = await Test.createTestingModule({
@@ -113,7 +117,10 @@ describe("CustomersService — purge paths reverse the regulated ledger", () => 
 
   /** Two DRAFT invoices — the status that used to look safe and is not. */
   function primeInvoices() {
-    prisma.invoice.findMany.mockResolvedValue([{ id: "inv-1" }, { id: "inv-2" }]);
+    prisma.invoice.findMany.mockResolvedValue([
+      { id: "inv-1", customerId: "cust-1", status: "DRAFT" },
+      { id: "inv-2", customerId: "cust-1", status: "DRAFT" },
+    ]);
   }
 
   it("REG-LEDGER-PURGE: deleteAllCustomers reverses every invoice's ledger entries BEFORE deleting them", async () => {
@@ -140,7 +147,7 @@ describe("CustomersService — purge paths reverse the regulated ledger", () => 
     expect(calls.indexOf("reverse:inv-2")).toBeLessThan(calls.indexOf("deleteInvoices"));
   });
 
-  it("REG-LEDGER-PURGE: deleteImportedCustomers reverses them too — it has no invoice guard at all, so it can destroy PAID invoices", async () => {
+  it("REG-LEDGER-PURGE: deleteImportedCustomers reverses its (DRAFT/VOID-only, #2569) invoices' ledger entries too", async () => {
     prisma.customer.findMany.mockResolvedValue([
       { id: "cust-1", userId: "user-1", customerLink: { status: "PENDING" } },
     ]);

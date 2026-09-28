@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 // #2187 / SA-387 — apps/api/scripts/report-b2187-subscription-period-census.mjs contract.
 // Read-only, counts only: fails closed without a DB url, carries no write SQL, buckets period
@@ -36,7 +37,7 @@ function evalExports(expr: string) {
     [
       "--input-type=module",
       "-e",
-      `import * as m from ${JSON.stringify(SCRIPT)}; console.log(JSON.stringify(${expr}));`,
+      `import * as m from ${JSON.stringify(pathToFileURL(SCRIPT).href)}; console.log(JSON.stringify(${expr}));`,
     ],
     process.env,
   );

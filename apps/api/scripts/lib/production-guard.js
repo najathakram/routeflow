@@ -40,7 +40,12 @@ function classifyDbTarget(dbUrl, env = process.env, { requireDb = true } = {}) {
   if (env.RAILWAY_ENVIRONMENT !== undefined) {
     return { ok: false, reason: "running inside Railway (RAILWAY_ENVIRONMENT is set)" };
   }
-  if (env.NODE_ENV === "production") {
+  // #2421: case- and whitespace-insensitive ("Production", " production ").
+  if (
+    String(env.NODE_ENV ?? "")
+      .trim()
+      .toLowerCase() === "production"
+  ) {
     return { ok: false, reason: "NODE_ENV is production" };
   }
   if (!requireDb) return { ok: true, config: null };
@@ -56,6 +61,32 @@ function classifyDbTarget(dbUrl, env = process.env, { requireDb = true } = {}) {
   return { ok: true, config };
 }
 
+/** Hosts a script may call the HTTP API on (#2421); the same loopback set as the DB allow-list. */
+const LOCAL_API_HOSTS = ["localhost", "127.0.0.1", "::1"];
+
+/**
+ * #2421: an HTTP API base URL is local only when WHATWG URL parsing puts the hostname on the
+ * allow-list, it carries no userinfo (a `http://localhost@prod.host/` trick parses to prod.host
+ * anyway, but credentials in a base URL are refused outright), and the scheme is http(s).
+ * @returns {{ ok: true } | { ok: false, reason: string }}
+ */
+function classifyApiTarget(apiUrl) {
+  let url;
+  try {
+    url = new URL(String(apiUrl ?? ""));
+  } catch {
+    return { ok: false, reason: "the API URL is empty or unparseable" };
+  }
+  const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) {
+    return { ok: false, reason: "the API URL is not a plain http(s) URL without credentials" };
+  }
+  if (!LOCAL_API_HOSTS.includes(host)) {
+    return { ok: false, reason: `the API host "${host}" is not provably local` };
+  }
+  return { ok: true };
+}
+
 /** Redact credentials for display; never print a password. */
 function describe(dbUrl) {
   if (!dbUrl) return "(not set)";
@@ -67,14 +98,19 @@ function describe(dbUrl) {
 }
 
 /**
- * @param {{ requireFlag?: string, dbUrl?: string|null, requireDb?: boolean }} [opts]
+ * @param {{ requireFlag?: string, dbUrl?: string|null, requireDb?: boolean, apiUrl?: string }} [opts]
+ *   apiUrl: for a script that drives the HTTP API, the base URL it will call (#2421).
  *   dbUrl: the URL the script will ACTUALLY dial (after its own fallbacks). Required unless
  *   requireDb is false (a script that talks to no database).
  * @returns {object|null} the provably-local pg connection fields (host, port, user, password,
  *   database) to build the pg Pool/Client from, or null when requireDb is false.
  */
-function productionGuard({ requireFlag, dbUrl, requireDb = true } = {}) {
-  const verdict = classifyDbTarget(dbUrl, process.env, { requireDb });
+function productionGuard({ requireFlag, dbUrl, requireDb = true, apiUrl } = {}) {
+  let verdict = classifyDbTarget(dbUrl, process.env, { requireDb });
+  if (verdict.ok && apiUrl !== undefined) {
+    const api = classifyApiTarget(apiUrl);
+    if (!api.ok) verdict = api;
+  }
   if (!verdict.ok) {
     console.error("╔══════════════════════════════════════════════════════════╗");
     console.error("║  BLOCKED: this script runs only against a LOCAL database ║");
@@ -107,4 +143,4 @@ function productionGuard({ requireFlag, dbUrl, requireDb = true } = {}) {
   return verdict.config;
 }
 
-module.exports = { productionGuard, classifyDbTarget };
+module.exports = { productionGuard, classifyDbTarget, classifyApiTarget };

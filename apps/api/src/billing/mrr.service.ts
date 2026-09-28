@@ -71,16 +71,14 @@ export interface MrrOverview {
    * that would make `mrr`/`ledgerMrr` agree by construction and permanently disable the
    * reconciliation check the divergence between them exists to provide.
    *
-   * The gaps that DO still exist today, and can drift `ledgerMrr` away from `mrr`:
-   *   - BillingService.reconcilePriceLedger() only mirrors this file's `planKey != null`
-   *     condition, not the full four-part payingWhere (status/deletedAt/class too) — a price
-   *     edit on a non-ACTIVE-but-still-PRODUCTION tenant can book a delta live `mrr` never sees.
-   *   - PlatformAdminService.updateTenantClass() retroactively imports a tenant's ENTIRE
-   *     historical delta stream into this SUM the moment it flips a tenant into PRODUCTION
-   *     (this query re-scopes by CURRENT class, not class-at-event-time), with no compensating
-   *     entry for that import.
-   * See apps/api/scripts/report-mrr-ledger-drift.mjs for a read-only tool that finds which
-   * tenant(s) and which of the above account for a given drift.
+   * #2045: the two gaps this comment used to list are both closed —
+   *   - BillingService.reconcilePriceLedger() gates its emit on the shared isPayingRow (the full
+   *     four-part paying set), so a price edit on a non-paying row books nothing (SA-140 item 1);
+   *   - PlatformAdminService.updateTenantClass() books a compensating tenant.class_changed delta
+   *     (live contribution − the imported history) when a tenant enters PRODUCTION, with the class
+   *     read under the Tenant lock (SA-140 item 2, #2045).
+   * A remaining `mrr`/`ledgerMrr` divergence is therefore a real defect to investigate, not a
+   * known gap; start from the tenant's BillingEvent stream against its current snapshot.
    */
   ledgerMrr: number;
   /** Net MRR change over the last 30 days (Σ amountDelta in that window). */
