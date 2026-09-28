@@ -36,7 +36,13 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import pg from "pg";
-import { inferredFlatRate } from "@routeflow/pricing";
+import {
+  NSF_FEE_DESCRIPTION_PREFIX,
+  NSF_FEE_SYSTEM_KIND,
+  NSF_HAS_TRANSITION_LEG,
+  inferredFlatRate,
+  isNsfLine,
+} from "@routeflow/pricing";
 import { isTestTenant } from "../../../scripts/lib/test-tenants.cjs";
 import { isLocalDbTarget } from "./lib/local-db-target.cjs";
 import { requireLocalPgConfig } from "./lib/local-pg-config.mjs";
@@ -57,12 +63,33 @@ const argOf = (name) => {
 const sha256 = (obj) => createHash("sha256").update(JSON.stringify(obj)).digest("hex");
 const refuse = (msg) => Object.assign(new Error(msg), { refuse: true });
 
+/**
+ * #2392 / SA-478: the SQL twin of @routeflow/pricing isNsfLine — "this InvoiceItem is NOT the NSF
+ * fee line", with the same transition flag. `starts_with` on COALESCE(description, ''): a bare
+ * NULL description would make `NOT (… AND NULL)` NULL and silently skip an ordinary line.
+ */
+export function notNsfSql(firstParam) {
+  const kind = `$${firstParam}`;
+  if (!NSF_HAS_TRANSITION_LEG) {
+    return { sql: `"systemKind" IS DISTINCT FROM ${kind}`, params: [NSF_FEE_SYSTEM_KIND] };
+  }
+  const prefix = `$${firstParam + 1}`;
+  return {
+    sql: `("systemKind" IS DISTINCT FROM ${kind} AND NOT ("systemKind" IS NULL AND starts_with(COALESCE(description, ''), ${prefix})))`,
+    params: [NSF_FEE_SYSTEM_KIND, NSF_FEE_DESCRIPTION_PREFIX],
+  };
+}
+
 /** Pure: one invoice → APPLY / REVIEW / null (skipped). */
 export function classifyInvoice(invoice, lines, fixDate = FIX_DATE) {
+  // #2392 / SA-478: the NSF bounce-fee line is never taxed — excluded from the inference, both its
+  // line and its money (the header subtotal includes the untaxed fee, which diluted the rate).
+  const nsf = lines.map((l) => isNsfLine(l));
+  const nsfSubtotal = lines.reduce((s, l, i) => (nsf[i] ? s + (Number(l.subtotal) || 0) : s), 0);
   const inferred = inferredFlatRate({
-    subtotal: invoice.subtotal,
+    subtotal: (Number(invoice.subtotal) || 0) - nsfSubtotal,
     taxAmount: invoice.taxAmount,
-    lines,
+    lines: lines.filter((_, i) => !nsf[i]),
   });
   if (!inferred) return null;
   if (!inferred.verified) {
@@ -90,7 +117,7 @@ const DERIVED_INVOICES_SQL = `
          OR EXISTS (SELECT 1 FROM "Estimate" e WHERE e."invoiceId" = i.id))
   ORDER BY i.id`;
 const LINES_SQL = `
-  SELECT id, "invoiceId", "taxRate", "categoryTaxAmount"
+  SELECT id, "invoiceId", "taxRate", "categoryTaxAmount", subtotal, "systemKind", description
   FROM "InvoiceItem" WHERE "invoiceId" = ANY($1::text[]) ORDER BY id`;
 
 async function resolveTarget() {
@@ -269,9 +296,11 @@ async function apply() {
         JSON.stringify(lines.map((l) => l.id)) !== JSON.stringify(a.expected.lineIds) ||
         lines.some((l) => Number(l.taxRate) !== 0);
       if (changed) throw refuse(`invoice ${a.invoiceId} has changed since the dry run`);
+      // #2392: never stamp a rate onto the NSF fee line.
+      const notNsf = notNsfSql(3);
       const res = await client.query(
-        'UPDATE "InvoiceItem" SET "taxRate" = $1 WHERE "invoiceId" = $2 AND "taxRate" = 0',
-        [a.rate, a.invoiceId],
+        `UPDATE "InvoiceItem" SET "taxRate" = $1 WHERE "invoiceId" = $2 AND "taxRate" = 0 AND ${notNsf.sql}`,
+        [a.rate, a.invoiceId, ...notNsf.params],
       );
       stamped += res.rowCount;
     }
@@ -321,6 +350,37 @@ function selfTest() {
       null,
     ],
     ["skipped: no tax", { subtotal: 100, taxAmount: 0, createdAt: before }, zero, null],
+    // #2392: $125 = $100 goods + a $25 NSF fee; $7.50 tax is 7.5% of the goods — never 0.06.
+    [
+      "APPLY #2392: a stamped NSF line is out of the inference (7.5% on goods, not 0.06)",
+      { subtotal: 125, taxAmount: 7.5, createdAt: before },
+      [
+        { taxRate: 0, subtotal: 100, systemKind: null, description: "Cola 12pk" },
+        {
+          taxRate: 0,
+          subtotal: 25,
+          systemKind: "NSF_FEE",
+          description: `${NSF_FEE_DESCRIPTION_PREFIX} #9`,
+        },
+      ],
+      "APPLY",
+      0.075,
+    ],
+    [
+      "APPLY #2392: a pre-backfill NSF line (prefix only) is out of the inference too",
+      { subtotal: 125, taxAmount: 7.5, createdAt: before },
+      [
+        { taxRate: 0, subtotal: 100, systemKind: null, description: "Cola 12pk" },
+        {
+          taxRate: 0,
+          subtotal: 25,
+          systemKind: null,
+          description: `${NSF_FEE_DESCRIPTION_PREFIX} #9`,
+        },
+      ],
+      "APPLY",
+      0.075,
+    ],
     [
       "skipped: only category tax",
       { subtotal: 100, taxAmount: 5, createdAt: before },

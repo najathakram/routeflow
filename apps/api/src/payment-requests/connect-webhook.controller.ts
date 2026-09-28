@@ -2,8 +2,8 @@ import { Controller, HttpCode, HttpStatus, Inject, Logger, Post, Req, Res } from
 import { ApiExcludeEndpoint, ApiTags } from "@nestjs/swagger";
 import { SkipThrottle } from "@nestjs/throttler";
 import type { Request, Response } from "express";
-import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
+import { claimRedelivery, insertLedgerRow } from "../common/webhook-ledger-claim";
 import { AuditService } from "../audit/audit.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { StripeConnectService } from "../stripe-connect/stripe-connect.service";
@@ -13,10 +13,6 @@ import {
   type PaymentProvider,
   type NormalizedConnectEvent,
 } from "./provider/payment-provider.interface";
-
-function isUniqueConstraintViolation(err: unknown): boolean {
-  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002";
-}
 
 /**
  * Webhooks for events ON CONNECTED ACCOUNTS (buyer card payments), separate
@@ -42,7 +38,9 @@ function isUniqueConstraintViolation(err: unknown): boolean {
  * write. The row's `outcome` is filled in once routing finishes, and is what
  * separates a duplicate from a retry: a collision whose row shows no outcome
  * or an `error:` one is re-routed, because that is the redelivery this
- * controller's own 500 asked for (see `alreadyProcessed`).
+ * controller's own 500 asked for. #2476 / SA-472a: a redelivery takes the row EXCLUSIVELY first
+ * (`claimRedelivery`, common/webhook-ledger-claim.ts — DB clock): an in-flight row inside its lease
+ * is a 503, and the outcome is written only while this delivery still holds its claim.
  *
  * ANTI-SPOOF (invariant 2): every event whose tenant is resolved from
  * metadata (payment_intent.succeeded, checkout.session.expired via
@@ -110,25 +108,34 @@ export class ConnectWebhookController {
     }
 
     // Insert-first ledger (invariant 3) — BEFORE any tenant resolution or
-    // state/money write. A unique violation on the Stripe event id means this
+    // state/money write. A conflict on the Stripe event id means this
     // delivery was already ledgered; whether that is a benign duplicate or
     // the very retry we asked for is decided by the recorded outcome.
+    let token: Date;
     try {
-      await this.prisma.stripeConnectEvent.create({
-        data: {
-          id: evt.eventId,
-          accountRef: evt.accountRef,
-          type: evt.type,
-          createdAt: evt.created,
-        },
+      const inserted = await insertLedgerRow(this.prisma, "StripeConnectEvent", {
+        id: evt.eventId,
+        accountRef: evt.accountRef,
+        type: evt.type,
+        createdAt: evt.created,
       });
-    } catch (err) {
-      if (isUniqueConstraintViolation(err)) {
-        if (await this.alreadyProcessed(evt.eventId)) {
+      if (inserted) {
+        token = inserted;
+      } else {
+        // #2476 / SA-472: take the row EXCLUSIVELY before re-routing.
+        const claim = await claimRedelivery(this.prisma, "StripeConnectEvent", evt.eventId);
+        if (claim.kind === "duplicate") {
           this.logger.log(
             `Connect webhook ${evt.type} (${evt.eventId}) already processed — duplicate delivery, skipping`,
           );
           res.status(HttpStatus.OK).json({ received: true });
+          return;
+        }
+        if (claim.kind === "in_flight") {
+          this.logger.warn(
+            `Connect webhook ${evt.type} (${evt.eventId}) is being processed by another delivery — 503, Stripe retries`,
+          );
+          res.status(HttpStatus.SERVICE_UNAVAILABLE).json({ error: "Webhook event in progress" });
           return;
         }
         // An earlier delivery of this event did NOT finish. Skipping here
@@ -139,11 +146,12 @@ export class ConnectWebhookController {
         this.logger.warn(
           `Connect webhook ${evt.type} (${evt.eventId}) redelivered after an unfinished attempt — reprocessing`,
         );
-      } else {
-        this.logger.error(`Connect webhook ledger insert failed: ${(err as any)?.message}`);
-        res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ error: "Processing failed" });
-        return;
+        token = claim.token;
       }
+    } catch (err) {
+      this.logger.error(`Connect webhook ledger insert/claim failed: ${(err as any)?.message}`);
+      res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ error: "Processing failed" });
+      return;
     }
 
     let outcome = "ignored";
@@ -159,25 +167,25 @@ export class ConnectWebhookController {
     } finally {
       // Best-effort bookkeeping only — never let it mask the response
       // already sent above.
+      // #2476: LOGGED on failure, never swallowed (the row stays in flight until its lease expires).
+      // Fenced on this delivery's claim: count 0 ⇒ the lease expired and another delivery holds it.
       await this.prisma.stripeConnectEvent
-        .update({ where: { id: evt.eventId }, data: { outcome } })
-        .catch(() => {});
+        .updateMany({
+          where: { id: evt.eventId, outcome: null, processedAt: token },
+          data: { outcome },
+        })
+        .then(({ count }) => {
+          if (count === 0)
+            this.logger.error(
+              `Connect webhook ${evt.type} (${evt.eventId}) claim lost before its outcome write — "${outcome}" not recorded`,
+            );
+        })
+        .catch((e: unknown) =>
+          this.logger.error(
+            `Connect webhook ${evt.type} (${evt.eventId}) outcome write failed (row left in flight): ${(e as Error)?.message}`,
+          ),
+        );
     }
-  }
-
-  /**
-   * A unique violation on the ledger insert only means "seen before" — it
-   * does NOT mean "handled before", and the difference is the whole retry
-   * story. `handle()` answers 500 on a routing failure precisely so Stripe
-   * redelivers, so an unconditional skip on P2002 would throw away every
-   * retry it asked for, including a manual "Resend" from the Stripe dashboard
-   * (same event id). Only a delivery that ran to completion and recorded a
-   * non-`error:` outcome is a true duplicate; a NULL outcome (the process
-   * died mid-route) or an `error:` one is a delivery that must run again.
-   */
-  private async alreadyProcessed(eventId: string): Promise<boolean> {
-    const row = await this.prisma.stripeConnectEvent.findUnique({ where: { id: eventId } });
-    return !!row?.outcome && !row.outcome.startsWith("error:");
   }
 
   private async route(evt: NormalizedConnectEvent): Promise<string> {

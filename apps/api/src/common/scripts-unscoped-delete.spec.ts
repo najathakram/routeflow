@@ -95,6 +95,48 @@ describe("#2421 apps/api/scripts: unscoped bulk writes only on the reviewed allo
   });
 });
 
+/**
+ * #2500 (SA-481 (5)): the same pin over the ROOT scripts/ folder (repo tooling, campaign and CI
+ * helpers). Every entry states why its hit is not a bulk write; the list may only shrink.
+ */
+const ROOT_SCRIPTS = path.resolve(__dirname, "../../../../scripts");
+
+const ROOT_ALLOWED: Record<string, string> = {
+  "ci-freshness-guard.mjs":
+    "a `truncate(...)` string helper called inside template literals (log text), not SQL",
+  "work/plane-release-sync.self-test.mjs":
+    'self-test labels ("release update sets target_date") read as UPDATE ... SET; no SQL, no DB',
+};
+
+const rootScanned = scriptFiles(ROOT_SCRIPTS).map((f) => {
+  const rel = path.relative(ROOT_SCRIPTS, f).replace(/\\/g, "/");
+  return { rel, unscoped: unscopedWrites(fs.readFileSync(f, "utf8")) };
+});
+
+describe("#2500 root scripts/: unscoped bulk writes only on the reviewed allow-list", () => {
+  it("the scan covers the root scripts folder, including its subfolders", () => {
+    expect(rootScanned.length).toBeGreaterThan(50);
+    expect(rootScanned.some((s) => s.rel.startsWith("lib/"))).toBe(true);
+    expect(rootScanned.some((s) => s.rel.startsWith("work/"))).toBe(true);
+  });
+
+  it("no file outside the allow-list performs an unscoped deleteMany/updateMany/DELETE/TRUNCATE", () => {
+    const offenders = rootScanned
+      .filter((s) => s.unscoped > 0 && !(s.rel in ROOT_ALLOWED))
+      .map((s) => `${s.rel} (${s.unscoped} unscoped)`);
+    expect(offenders).toEqual([]);
+  });
+
+  it("every entry carries a reason, still exists and still needs its entry (the list may only shrink)", () => {
+    for (const reason of Object.values(ROOT_ALLOWED))
+      expect(reason.trim().length).toBeGreaterThan(20);
+    const stale = Object.keys(ROOT_ALLOWED).filter(
+      (rel) => !rootScanned.some((s) => s.rel === rel && s.unscoped > 0),
+    );
+    expect(stale).toEqual([]);
+  });
+});
+
 describe("#2421 import-zoho.js stays retired", () => {
   const src = fs.readFileSync(path.join(SCRIPTS, "import-zoho.js"), "utf8");
 
