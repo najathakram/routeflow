@@ -750,7 +750,11 @@ export default function CustomersPage() {
             : "Your current filters are saved in the page link — copy the URL to share this view."
         }
         action={
-          <div className="flex items-center gap-2">
+          // B749: overflowed at 390px because PageHeader's own action wrapper (shrink-0, no
+          // max-w-full) never actually shrank enough for THIS flex-wrap to trigger — fixed at
+          // the PageHeader level too (packages/ui/src/web/PageHeader.tsx), this row's own
+          // wrap is still needed so the content itself has somewhere to go once it can.
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <Button
               variant="secondary"
               leftIcon={<Upload className="h-4 w-4" />}
