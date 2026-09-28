@@ -20,10 +20,12 @@ export interface AddonDelta {
 }
 
 /**
- * SA-277a D2 — the house lock order (tenant row → subscription/add-on rows → ledger): every
- * $transaction that will call `emitAddonDelta` takes this AS ITS FIRST STATEMENT, before any
- * TenantAddon/TenantSubscription read or write, so the tenant row lock is always acquired before
- * any FK-referencing row lock (avoids the FOR KEY SHARE → FOR UPDATE upgrade deadlock).
+ * SA-277a D2 / SA-508 — the house lock order (plan-transition hook → tenant row → subscription/add-on
+ * rows → ledger): every $transaction that writes the subscription or add-on rows, or books the ledger,
+ * takes this as its FIRST STATEMENT AFTER the plan-transition hook (its first statement where there is
+ * no hook), before any TenantAddon/TenantSubscription write, so the tenant row lock is always acquired
+ * before any FK-referencing row lock (avoids the FOR KEY SHARE → FOR UPDATE upgrade deadlock).
+ * `tenant-lock-order.tripwire.spec.ts` enforces it for every subscription-writing transaction.
  */
 export async function lockTenantForLedger(
   tx: Prisma.TransactionClient,
