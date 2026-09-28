@@ -36,6 +36,10 @@ export const AdminAuditAction = {
   FEATURE_DIFF_EXPLAINED: "FEATURE_DIFF_EXPLAINED",
   CONFIG_SNAPSHOT_RESTORED: "CONFIG_SNAPSHOT_RESTORED",
   CONFIG_SNAPSHOT_FLAG_CHANGED: "CONFIG_SNAPSHOT_FLAG_CHANGED",
+  // #2159 S1 — wholesaler onboarding cases. tenantId is null until the case is activated.
+  ONBOARDING_CASE_CREATED: "ONBOARDING_CASE_CREATED",
+  ONBOARDING_STAGE_ADVANCED: "ONBOARDING_STAGE_ADVANCED",
+  ONBOARDING_STEP_WAIVED: "ONBOARDING_STEP_WAIVED",
 } as const;
 
 export type AdminAuditActionCode = (typeof AdminAuditAction)[keyof typeof AdminAuditAction];
@@ -63,6 +67,9 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   FEATURE_DIFF_EXPLAINED: "Feature resolver diff explained",
   CONFIG_SNAPSHOT_RESTORED: "Configuration snapshot restored",
   CONFIG_SNAPSHOT_FLAG_CHANGED: "Config snapshot flag changed",
+  ONBOARDING_CASE_CREATED: "Onboarding case created",
+  ONBOARDING_STAGE_ADVANCED: "Onboarding stage advanced",
+  ONBOARDING_STEP_WAIVED: "Onboarding step waived",
 };
 
 /** Facet list for the audit-log filter dropdown (code + label), ordered as declared. */

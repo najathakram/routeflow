@@ -11,6 +11,7 @@ import { assertNoNegativeLineSubtotal } from "../common/money-invariants.util";
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { recomputeInvoiceStatus } from "./invoice-status";
+import { tenantTimeZone } from "../common/tenant-time-zone";
 import { StorageService } from "../storage/storage.service";
 import {
   deletePaymentImage,
@@ -25,6 +26,7 @@ import {
   isBlockingPayment,
   remainingCapacity,
 } from "@routeflow/pricing";
+import { computeDepositFields } from "./deposit-fields";
 import { orderLineShape, orderLineUnchanged } from "./order-backsync-lines";
 import {
   buildEditedLines,
@@ -336,42 +338,6 @@ export class InvoicesService {
 
   private async nextInvoiceNumber(): Promise<string> {
     return this.generateInvoiceNumber();
-  }
-
-  /** SA-488: delegates to the shared invoice-status.ts body (optional trailing `timeZone`). */
-  private recomputeStatus(...args: Parameters<typeof recomputeInvoiceStatus>): InvoiceStatus {
-    return recomputeInvoiceStatus(...args);
-  }
-
-  /**
-   * Deliberately minimal deposit schedule (Tier 1): the deposit dollar amount is
-   * ALWAYS derived from depositPercent * total at read time — never stored — and
-   * depositOverdue is a computed filter, never a status flip. No InvoiceInstallment
-   * table / deposit-aware statuses in this phase; recomputeStatus/AR aging are
-   * completely untouched by this.
-   */
-  private computeDepositFields(
-    inv: {
-      total: number | string;
-      depositPercent: number | string | null;
-      depositDueDate: Date | null;
-    },
-    totalPaid: number,
-  ): { depositAmount: number | null; depositOverdue: boolean } {
-    if (inv.depositPercent == null) return { depositAmount: null, depositOverdue: false };
-    const depositAmount = roundMoney((Number(inv.total) * Number(inv.depositPercent)) / 100);
-    // RF-202 convention (see findAll): compare ISO date strings so a deposit due
-    // TODAY is never flagged overdue. A raw Date compare treats the UTC-midnight
-    // depositDueDate as past the instant UTC rolls over — i.e. the evening before
-    // it is actually due for every tenant behind UTC.
-    const depositDueIso = inv.depositDueDate
-      ? new Date(inv.depositDueDate).toISOString().slice(0, 10)
-      : null;
-    const depositOverdue =
-      depositDueIso != null &&
-      depositDueIso < new Date().toISOString().slice(0, 10) &&
-      totalPaid < depositAmount;
-    return { depositAmount, depositOverdue };
   }
 
   private async findOneOrThrow(id: string) {
@@ -1396,6 +1362,7 @@ export class InvoicesService {
     orderId: string,
     opts: { basis: "order" | "delivered"; tx?: any; after?: AfterCommit },
   ) {
+    const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     const db = opts.tx ?? this.prisma.forTenant();
     const split = await this.reconcileSplitOrderDrafts(orderId, opts.basis, db);
     if (split) return split;
@@ -1515,11 +1482,12 @@ export class InvoicesService {
     // they anchor to placement/terms, not to edits, so they're preserved verbatim.
     // F03/R1: CONFIRMED (PAID) payments only.
     const nextStatus = isDepositMirror
-      ? this.recomputeStatus(
+      ? recomputeInvoiceStatus(
           roundMoney(sumConfirmed((draft as any).payments)),
           total,
           (draft as any).dueDate ?? null,
           draft.status,
+          tz,
         )
       : InvoiceStatus.DRAFT;
 
@@ -1851,6 +1819,7 @@ export class InvoicesService {
     db: any,
     opts?: { preserveStatus?: boolean },
   ): Promise<any[]> {
+    const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     const tenantId = this.prisma.getTenantId();
     const customer = await db.customer.findFirst({
       where: { id: order.customerId },
@@ -1959,11 +1928,12 @@ export class InvoicesService {
         // findAll/findOne so the recomputed status agrees. An unconfirmed DRAFT
         // payment must not count toward the balance any more than a VOID one does.
         const paid = sumConfirmed(pd.draft.payments);
-        nextStatus = this.recomputeStatus(
+        nextStatus = recomputeInvoiceStatus(
           paid,
           pd.total,
           pd.draft.dueDate ?? null,
           pd.draft.status,
+          tz,
         );
       }
       await db.invoiceItem.deleteMany({
@@ -2954,9 +2924,10 @@ export class InvoicesService {
             .slice(0, 10)
         : null;
       const isOverdue = !isSettled && balanceDue > 0 && dueDateIso != null && dueDateIso < todayIso;
-      const { depositAmount, depositOverdue } = this.computeDepositFields(
+      const { depositAmount, depositOverdue } = computeDepositFields(
         inv as any,
         totalConfirmed,
+        todayIso,
       );
       return {
         ...inv,
@@ -3060,12 +3031,13 @@ export class InvoicesService {
           .toISOString()
           .slice(0, 10)
       : null;
-    const isOverdue =
-      !isSettled &&
-      balanceDue > 0 &&
-      dueDateIso != null &&
-      dueDateIso < new Date().toISOString().slice(0, 10);
-    const { depositAmount, depositOverdue } = this.computeDepositFields(inv as any, totalConfirmed);
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const isOverdue = !isSettled && balanceDue > 0 && dueDateIso != null && dueDateIso < todayIso;
+    const { depositAmount, depositOverdue } = computeDepositFields(
+      inv as any,
+      totalConfirmed,
+      todayIso,
+    );
     // Rides the invoice payload (not /settings/invoice, which is operator-only)
     // so CUSTOMER viewers of this same document honor the tenant's
     // hide-original-price preference too.
@@ -3363,6 +3335,7 @@ export class InvoicesService {
       subject?: string;
     },
   ) {
+    const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     const inv = await this.prisma.forTenant().invoice.findUnique({
       where: { id },
       include: { payments: true },
@@ -3382,7 +3355,13 @@ export class InvoicesService {
     // F03/R1: CONFIRMED (PAID) payments only — same predicate every other status
     // computation in this file uses.
     const totalPaid = sumConfirmed(inv.payments);
-    const newStatus = this.recomputeStatus(totalPaid, Number(inv.total), newDueDate, inv.status);
+    const newStatus = recomputeInvoiceStatus(
+      totalPaid,
+      Number(inv.total),
+      newDueDate,
+      inv.status,
+      tz,
+    );
 
     const auditLine = `[${new Date().toLocaleDateString()} — Terms updated: ${oldDueDateStr} → ${newDueDateStr}]`;
     const existingInternal = (inv as any).internalNotes ?? "";
@@ -3493,7 +3472,8 @@ export class InvoicesService {
    * from the row it locks and re-reads first (SA-404), so a retry can never write SENT over a
    * VOID committed since the caller's read.
    */
-  private markSent(id: string, orderId: string | null, emailSent = false) {
+  private async markSent(id: string, orderId: string | null, emailSent = false) {
+    const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     return retryOnTxConflict(`invoice mark-sent id=${id}`, () =>
       this.prisma.tenantTransaction(
         async (tx) => {
@@ -3548,11 +3528,12 @@ export class InvoicesService {
             if (fresh) {
               // F03/R1: CONFIRMED (PAID) payments only.
               const paid = roundMoney(sumConfirmed(fresh.payments));
-              const st = this.recomputeStatus(
+              const st = recomputeInvoiceStatus(
                 paid,
                 Number(fresh.total),
                 fresh.dueDate,
                 fresh.status,
+                tz,
               );
               if (st !== fresh.status) {
                 await tx.invoice.update({
@@ -3715,7 +3696,8 @@ export class InvoicesService {
       hideOriginalPrice,
       // Deposit schedule (display-only): derive with the same read-time math the
       // detail endpoint uses; null when the invoice carries no deposit.
-      depositAmount: this.computeDepositFields(inv as any, 0).depositAmount,
+      depositAmount: computeDepositFields(inv as any, 0, new Date().toISOString().slice(0, 10))
+        .depositAmount,
       depositDueDate: inv.depositDueDate ? formatDate(inv.depositDueDate) : null,
     };
     await this.assertSendableUnderLock(id, inv.orderId); // SA-404a: VOID now ⇒ 400, no email
@@ -4574,6 +4556,7 @@ export class InvoicesService {
   // ─── Payment recording ────────────────────────────────────────────────────
 
   async recordPayment(id: string, dto: RecordInvoicePaymentDto) {
+    const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     if ((dto.method as any) === "CREDIT_NOTE" || (dto.method as any) === "ADVANCE") {
       throw new BadRequestException(
         "Use the dedicated 'Apply Credit Note' or 'Apply Advance Payment' actions for these methods so the source balance is properly debited.",
@@ -4660,7 +4643,7 @@ export class InvoicesService {
       const newPaid = paymentStatus === "PAID" ? alreadyPaid + amount : alreadyPaid;
       const newStatus =
         paymentStatus === "PAID"
-          ? this.recomputeStatus(newPaid, total, inv.dueDate, inv.status)
+          ? recomputeInvoiceStatus(newPaid, total, inv.dueDate, inv.status, tz)
           : inv.status;
 
       const paid = await tx.invoice.update({
@@ -4750,6 +4733,7 @@ export class InvoicesService {
     excess: number;
     advancePaymentId: string | null;
   }> {
+    const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     if (!(amount > 0) || orderIds.length === 0)
       return { applied: 0, invoiceIds: [], paymentIds: [], excess: 0, advancePaymentId: null };
     // CREDIT_NOTE/ADVANCE must debit a source balance (see recordPayment); a driver
@@ -4828,11 +4812,12 @@ export class InvoicesService {
         },
       });
 
-      const newStatus = this.recomputeStatus(
+      const newStatus = recomputeInvoiceStatus(
         alreadyPaid + applyHere,
         total,
         inv.dueDate,
         baseStatus,
+        tz,
       );
       await tx.invoice.update({
         where: { id: inv.id },
@@ -4978,6 +4963,7 @@ export class InvoicesService {
   }
 
   async updatePayment(invoiceId: string, paymentId: string, dto: UpdatePaymentDto) {
+    const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     if ((dto.method as any) === "CREDIT_NOTE" || (dto.method as any) === "ADVANCE") {
       throw new BadRequestException(
         "Cannot edit a payment to method CREDIT_NOTE or ADVANCE. Void this payment and apply the credit note / advance via the dedicated action.",
@@ -5065,7 +5051,7 @@ export class InvoicesService {
       });
 
       const newPaid = othersTotal + effectiveAmount;
-      const newStatus = this.recomputeStatus(newPaid, total, inv.dueDate, inv.status);
+      const newStatus = recomputeInvoiceStatus(newPaid, total, inv.dueDate, inv.status, tz);
       const updated = await tx.invoice.update({
         where: { id: invoiceId },
         data: { status: newStatus, paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null },
@@ -5088,6 +5074,7 @@ export class InvoicesService {
   }
 
   async deletePayment(invoiceId: string, paymentId: string) {
+    const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     let imageKey: string | null = null;
     const updated = await withAfterCommit(this.prisma, async (tx, after) => {
       // PR-2 review (routeflow-Lead, 2026-09-16): same Invoice FOR UPDATE lock as
@@ -5142,7 +5129,7 @@ export class InvoicesService {
       // invoice must not be counted as paid and mis-recompute the status.
       const remaining = sumConfirmed(inv.payments.filter((p) => p.id !== paymentId));
       const total = Number(inv.total);
-      const newStatus = this.recomputeStatus(remaining, total, inv.dueDate, inv.status);
+      const newStatus = recomputeInvoiceStatus(remaining, total, inv.dueDate, inv.status, tz);
       const updated = await tx.invoice.update({
         where: { id: invoiceId },
         data: { status: newStatus, paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null },
@@ -5291,6 +5278,7 @@ export class InvoicesService {
       assertAllocationsWithinBalance?: boolean;
     },
   ) {
+    const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     const paymentGroupId = randomUUID();
     const paidAt = dto.paidAt ? new Date(dto.paidAt) : new Date();
     // One bank date for the whole allocation group — the money landed once.
@@ -5383,11 +5371,12 @@ export class InvoicesService {
               where: { invoiceId: alloc.invoiceId, ...CONFIRMED_PAYMENT },
             });
             const totalPaid = sumConfirmed(allPayments);
-            const newStatus = this.recomputeStatus(
+            const newStatus = recomputeInvoiceStatus(
               totalPaid,
               Number(invoice.total),
               invoice.dueDate,
               invoice.status,
+              tz,
             );
             invoiceData = {
               status: newStatus,
@@ -5427,6 +5416,7 @@ export class InvoicesService {
   // ─── Void a single payment ────────────────────────────────────────────────
 
   async voidPayment(invoiceId: string, paymentId: string) {
+    const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     return withAfterCommit(this.prisma, async (tx, after) => {
       // PR-2 review (routeflow-Lead, 2026-09-16): same Invoice FOR UPDATE lock as
       // updatePayment/recordPayment/deletePayment, taken BEFORE touching the
@@ -5496,11 +5486,12 @@ export class InvoicesService {
       }
 
       const totalPaid = sumConfirmed(invoice.payments.filter((p) => p.id !== paymentId));
-      const newStatus = this.recomputeStatus(
+      const newStatus = recomputeInvoiceStatus(
         totalPaid,
         Number(invoice.total),
         invoice.dueDate,
         invoice.status,
+        tz,
       );
       await tx.invoice.update({
         where: { id: invoiceId },
@@ -5538,6 +5529,7 @@ export class InvoicesService {
    * transaction (all balance readers use the stored total).
    */
   async setCheckStatus(invoiceId: string, paymentId: string, dto: SetCheckStatusDto) {
+    const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     return withAfterCommit(this.prisma, async (tx, after) => {
       // PR-2 review (routeflow-Lead, 2026-09-16): same Invoice FOR UPDATE lock as
       // recordPayment/updatePayment/deletePayment/voidPayment, taken BEFORE
@@ -5656,7 +5648,13 @@ export class InvoicesService {
       }
 
       const totalPaid = sumConfirmed(invoice.payments.filter((p) => p.id !== paymentId));
-      const newStatus = this.recomputeStatus(totalPaid, newTotal, invoice.dueDate, invoice.status);
+      const newStatus = recomputeInvoiceStatus(
+        totalPaid,
+        newTotal,
+        invoice.dueDate,
+        invoice.status,
+        tz,
+      );
       await tx.invoice.update({
         where: { id: invoiceId },
         data: {
@@ -5777,23 +5775,13 @@ export class InvoicesService {
 
   // ─── Cron ─────────────────────────────────────────────────────────────────
 
-  async markOverdue() {
-    const { timezone } = await this.resolveTenantInvoiceDefaults(); // SA-488: the tenant's day
-    await this.prisma.forTenant().invoice.updateMany({
-      where: {
-        status: { in: [InvoiceStatus.SENT, InvoiceStatus.VIEWED, InvoiceStatus.PARTIAL] },
-        dueDate: { lt: overdueCutoff(new Date(), timezone) },
-      },
-      data: { status: InvoiceStatus.OVERDUE },
-    });
-  }
-
   // ─── Retroactive Price Adjustment ─────────────────────────────────────────
 
   async applyPriceAdjustment(
     id: string,
     dto: { items: { itemId: string; newUnitPrice: number }[]; scope: string; sinceDate?: string },
   ) {
+    const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     const invoice = await this.prisma.forTenant().invoice.findUnique({
       where: { id },
       // F03/R4: CONFIRMED (PAID) payments only — feeds the status recompute below.
@@ -5871,7 +5859,7 @@ export class InvoicesService {
           itemUpdates,
           auditLine,
           tx,
-          recomputeStatus: (...a) => this.recomputeStatus(...a),
+          recomputeStatus: (p, t, d, st) => recomputeInvoiceStatus(p, t, d, st, tz),
           ledger: this.ledger,
           resync: (...a) => this.resyncInvoiceLedger(...a),
         });
