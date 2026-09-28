@@ -20,11 +20,18 @@ import * as fs from "fs";
 import * as path from "path";
 
 const SRC = path.resolve(__dirname, "..");
-const TX_OPEN = /\$transaction\(\s*async\s*\(\s*(\w+)\b[^)]*\)\s*(?::[^=]+)?=>\s*\{/g;
+/** `$transaction(` / `tenantTransaction(` with an (async or not) arrow callback and a block body. */
+const TX_OPEN =
+  /(?:\$transaction|\btenantTransaction)\(\s*(?:async\s*)?(?:\(\s*(\w+)\b[^)]*\)|(\w+))\s*(?::[^=]+)?=>\s*\{/g;
 const WRITES = "update|updateMany|upsert|create|createMany|delete|deleteMany";
-const RAW_SUB_WRITE = /\b(?:UPDATE|INSERT\s+INTO)\s+(?:"public"\.)?"TenantSubscription"/;
+/** Raw SQL that writes or row-locks the subscription row (searched in template contents). */
+const RAW_SUB_TAKE =
+  /\b(?:UPDATE|INSERT\s+INTO)\s+(?:"public"\.)?"TenantSubscription"|\bSELECT\b[^`]*?\bFROM\s+(?:"public"\.)?"TenantSubscription"[^`]*?\bFOR\s+(?:NO\s+KEY\s+)?UPDATE\b/;
+/** Named functions/methods: `name(firstParam` at line start. */
 const DECL =
   /^\s*(?:export\s+)?(?:(?:private|public|protected)\s+)?(?:static\s+)?(?:async\s+)?(?:function\s+)?(\w+)\s*\(\s*(\w+)?/gm;
+/** Arrow-const helpers: `const name = async (firstParam`. */
+const ARROW = /\b(?:const|let)\s+(\w+)\s*=\s*(?:async\s*)?\(\s*(\w+)/g;
 const NOT_A_NAME = new Set([
   "if",
   "for",
@@ -44,88 +51,193 @@ const KNOWN: Record<string, string> = {};
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** Replace every comment with spaces (indices preserved), skipping string and template literals. */
-function stripComments(src: string): string {
-  const out = src.split("");
+/**
+ * One pass over the source, indices preserved:
+ *  - `code`:   comments blanked (string/template/regex contents kept — raw SQL lives in templates);
+ *  - `masked`: comments AND string/template/regex contents blanked (code structure only).
+ * Regex literals are recognised by the preceding token, so a quote inside one never desyncs the
+ * string scanner (#2581).
+ */
+function scan(src: string): { code: string; masked: string } {
+  const code = src.split("");
+  const masked = src.split("");
+  const blank = (arr: string[], i: number) => {
+    if (arr[i] !== "\n") arr[i] = " ";
+  };
+  const regexAllowedAfter = (i: number) => {
+    let j = i - 1;
+    while (j >= 0 && /\s/.test(src[j])) j--;
+    if (j < 0) return true;
+    if ("(,=:[!&|?{};+-*%<>~^".includes(src[j])) return true;
+    const word = /(\w+)$/.exec(src.slice(Math.max(0, j - 10), j + 1));
+    return !!word && ["return", "typeof", "case", "in", "of", "void"].includes(word[1]);
+  };
   let i = 0;
   while (i < src.length) {
     const c = src[i];
     const n = src[i + 1];
     if (c === '"' || c === "'" || c === "`") {
       i++;
-      while (i < src.length && src[i] !== c) i += src[i] === "\\" ? 2 : 1;
+      while (i < src.length && src[i] !== c) {
+        const step = src[i] === "\\" ? 2 : 1;
+        for (let k = 0; k < step; k++) blank(masked, i + k);
+        i += step;
+      }
       i++;
     } else if (c === "/" && n === "/") {
-      while (i < src.length && src[i] !== "\n") out[i++] = " ";
+      while (i < src.length && src[i] !== "\n") (blank(code, i), blank(masked, i), i++);
     } else if (c === "/" && n === "*") {
       while (i < src.length && !(src[i] === "*" && src[i + 1] === "/"))
-        ((out[i] = src[i] === "\n" ? "\n" : " "), i++);
-      out[i] = " ";
-      out[i + 1] = " ";
+        (blank(code, i), blank(masked, i), i++);
+      for (const k of [i, i + 1]) (blank(code, k), blank(masked, k));
       i += 2;
+    } else if (c === "/" && regexAllowedAfter(i)) {
+      i++;
+      let inClass = false;
+      while (i < src.length && src[i] !== "\n" && (inClass || src[i] !== "/")) {
+        if (src[i] === "[") inClass = true;
+        else if (src[i] === "]") inClass = false;
+        const step = src[i] === "\\" ? 2 : 1;
+        for (let k = 0; k < step; k++) blank(masked, i + k);
+        i += step;
+      }
+      i++;
+      while (i < src.length && /[a-z]/i.test(src[i])) i++;
     } else i++;
   }
-  return out.join("");
+  return { code: code.join(""), masked: masked.join("") };
 }
 
-/** The `{…}` body opening at `open` (the index just past the `{`). */
-function blockFrom(src: string, open: number): string {
+/** The `{…}` body opening at `open` (the index just past the `{`); braces counted on `masked`. */
+function blockEnd(masked: string, open: number): number {
   let i = open;
   let depth = 1;
-  while (i < src.length && depth > 0) {
-    if (src[i] === "{") depth++;
-    else if (src[i] === "}") depth--;
+  while (i < masked.length && depth > 0) {
+    if (masked[i] === "{") depth++;
+    else if (masked[i] === "}") depth--;
     i++;
   }
-  return src.slice(open, i - 1);
+  return i - 1;
 }
 
 const subWriteVia = (v: string) =>
   new RegExp(`\\b${esc(v)}\\.tenantSubscription\\.(?:${WRITES})\\s*\\(`);
+const callWith = (h: string, v: string) =>
+  new RegExp(`\\b(?:this\\.)?${esc(h)}\\(\\s*${esc(v)}\\b`);
 
-/** Named functions/methods that write the subscription row through their FIRST parameter. */
-function helperWriters(files: { src: string }[]): Set<string> {
-  const names = new Set<string>();
-  for (const { src } of files) {
-    for (const d of src.matchAll(DECL)) {
-      const [, name, param] = d;
-      if (!param || NOT_A_NAME.has(name)) continue;
-      const open = src.indexOf("{", d.index! + d[0].length);
-      if (open < 0) continue;
-      const body = blockFrom(src, open + 1);
-      if (subWriteVia(param).test(body)) names.add(name);
+type Scanned = { rel: string; code: string; masked: string };
+
+/** Functions/methods/arrow-consts that write the subscription row through their FIRST parameter —
+ *  directly, by raw SQL, or through another such helper (resolved to a fixpoint: multi-level). */
+function helperWriters(files: Scanned[]): Set<string> {
+  const candidates: { name: string; param: string; code: string; masked: string }[] = [];
+  for (const { code, masked } of files) {
+    const add = (name: string, param: string | undefined, from: number) => {
+      if (!param || NOT_A_NAME.has(name)) return;
+      const arrow = masked.indexOf("=>", from);
+      const brace = masked.indexOf("{", from);
+      if (brace < 0) return;
+      // For an arrow const, the body is the block after `=>` (skip a block in the param list).
+      const open =
+        arrow >= 0 && arrow < brace + 200 && masked.indexOf("{", arrow) >= 0
+          ? masked.indexOf("{", arrow) + 1
+          : brace + 1;
+      const end = blockEnd(masked, open);
+      candidates.push({
+        name,
+        param,
+        code: code.slice(open, end),
+        masked: masked.slice(open, end),
+      });
+    };
+    for (const d of masked.matchAll(DECL)) add(d[1], d[2], d.index! + d[0].length);
+    for (const d of masked.matchAll(ARROW)) add(d[1], d[2], d.index! + d[0].length);
+  }
+  const helpers = new Set<string>();
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const c of candidates) {
+      if (helpers.has(c.name)) continue;
+      const writes =
+        subWriteVia(c.param).test(c.masked) ||
+        (RAW_SUB_TAKE.test(c.code) && new RegExp(`\\b${esc(c.param)}\\.\\$`).test(c.masked)) ||
+        [...helpers].some((h) => callWith(h, c.param).test(c.masked));
+      if (writes) {
+        helpers.add(c.name);
+        changed = true;
+      }
     }
   }
-  return names;
+  return helpers;
 }
 
-function firstIndex(body: string, patterns: RegExp[]): number {
-  const hits = patterns.map((p) => body.search(p)).filter((x) => x >= 0);
-  return hits.length ? Math.min(...hits) : -1;
+function firstIndex(body: string, patterns: RegExp[], accept = (_i: number) => true): number {
+  let best = -1;
+  for (const p of patterns) {
+    const g = new RegExp(p.source, p.flags.includes("g") ? p.flags : p.flags + "g");
+    for (const m of body.matchAll(g)) {
+      if (!accept(m.index!)) continue;
+      if (best < 0 || m.index! < best) best = m.index!;
+      break;
+    }
+  }
+  return best;
+}
+
+/** A lock counts only as an unconditional statement at the tx body's top level. */
+function topLevelStatement(masked: string, at: number): boolean {
+  let depth = 0;
+  for (let i = 0; i < at; i++) {
+    if (masked[i] === "{") depth++;
+    else if (masked[i] === "}") depth--;
+  }
+  if (depth !== 0) return false;
+  const start = Math.max(
+    masked.lastIndexOf(";", at),
+    masked.lastIndexOf("{", at),
+    masked.lastIndexOf("}", at),
+  );
+  return !/\bif\s*\(|\?|&&|\|\|/.test(masked.slice(start + 1, at));
 }
 
 function findViolations(raw: { rel: string; src: string }[]): string[] {
-  const files = raw.map((f) => ({ rel: f.rel, src: stripComments(f.src) }));
+  const files: Scanned[] = raw.map((f) => ({ rel: f.rel, ...scan(f.src) }));
   const helpers = helperWriters(files);
   const out: string[] = [];
-  for (const { rel, src } of files) {
-    const decls = [...src.matchAll(METHOD)].map((d) => ({ at: d.index!, name: d[1] }));
-    for (const m of src.matchAll(TX_OPEN)) {
-      const tx = esc(m[1]);
-      const body = blockFrom(src, m.index! + m[0].length);
-      const write = firstIndex(body, [
-        subWriteVia(m[1]),
-        RAW_SUB_WRITE,
-        ...[...helpers].map((h) => new RegExp(`\\b(?:this\\.)?${esc(h)}\\(\\s*${tx}\\b`)),
-      ]);
-      if (write < 0) continue;
+  for (const { rel, code, masked } of files) {
+    const decls = [...masked.matchAll(METHOD)].map((d) => ({ at: d.index!, name: d[1] }));
+    for (const m of masked.matchAll(TX_OPEN)) {
+      const txName = m[1] ?? m[2];
+      const tx = esc(txName);
+      const open = m.index! + m[0].length;
+      const end = blockEnd(masked, open);
+      const body = masked.slice(open, end);
+      const bodyCode = code.slice(open, end);
+      const write = Math.min(
+        ...[
+          firstIndex(body, [subWriteVia(txName), ...[...helpers].map((h) => callWith(h, txName))]),
+          firstIndex(bodyCode, [RAW_SUB_TAKE]),
+        ].map((x) => (x < 0 ? Infinity : x)),
+      );
+      if (write === Infinity) continue;
       const create = body.search(new RegExp(`\\b${tx}\\.tenant\\.create\\s*\\(`));
       if (create >= 0 && create < write) continue;
-      const lock = firstIndex(body, [
-        new RegExp(`\\blockTenantForLedger\\(\\s*${tx}\\b`),
-        /FROM "Tenant" WHERE id = \$\{[^}]+\} FOR UPDATE/,
-      ]);
-      if (lock >= 0 && lock < write) continue;
+      const top = (i: number) => topLevelStatement(body, i);
+      const lock = Math.min(
+        ...[
+          firstIndex(body, [new RegExp(`\\blockTenantForLedger\\(\\s*${tx}\\b`)], top),
+          firstIndex(
+            bodyCode,
+            [
+              new RegExp(
+                `\\b${tx}\\.\\$(?:queryRaw|executeRaw)\\s*\`[^\`]*FROM "Tenant" WHERE id = \\$\\{[^}]+\\} FOR UPDATE`,
+              ),
+            ],
+            top,
+          ),
+        ].map((x) => (x < 0 ? Infinity : x)),
+      );
+      if (lock < write) continue;
       const method = decls.filter((x) => x.at < m.index!).pop()?.name ?? "?";
       out.push(`${rel}#${method}`);
     }
@@ -210,6 +322,37 @@ describe("#2551 tripwire — no subscription write in a $transaction before the 
         "viaHelperGood",
         "      await lockTenantForLedger(tx, tenantId);\n      await this.writeSub(tx, tenantId);",
       ),
+      // #2581 (the lead's #2578 review): the remaining evasions
+      tenantTx: `class X {\n  async tenantTx() {\n    await this.prisma.tenantTransaction(async (tx) => {\n      await tx.tenantSubscription.update({});\n    });\n  }\n}\n`,
+      nonAsync: `class X {\n  async nonAsync() {\n    await this.prisma.$transaction((tx) => {\n      return tx.tenantSubscription.update({});\n    });\n  }\n}\n`,
+      arrowHelper:
+        wrap(
+          "arrowHelper",
+          "      await writeSubArrow(tx, tenantId);\n      await lockTenantForLedger(tx, tenantId);",
+        ) +
+        "const writeSubArrow = async (c: any, id: string) => {\n  await c.tenantSubscription.update({ where: { tenantId: id } });\n};\n",
+      multiLevel:
+        wrap(
+          "multiLevel",
+          "      await this.outerWrite(tx, tenantId);\n      await lockTenantForLedger(tx, tenantId);",
+        ) +
+        "class Z {\n  private async outerWrite(c: any, id: string) {\n    await this.innerWrite(c, id);\n  }\n  private async innerWrite(d: any, id: string) {\n    await d.tenantSubscription.upsert({});\n  }\n}\n",
+      lockInIf: wrap(
+        "lockInIf",
+        "      if (flag) {\n        await lockTenantForLedger(tx, tenantId);\n      }\n      await tx.tenantSubscription.update({});",
+      ),
+      lockInString: wrap(
+        "lockInString",
+        '      const note = "lockTenantForLedger(tx, tenantId)";\n      await tx.tenantSubscription.update({});',
+      ),
+      regexQuote: wrap(
+        "regexQuote",
+        '      const re = /"/;\n      // await lockTenantForLedger(tx, tenantId);\n      const q = "x";\n      await tx.tenantSubscription.update({});',
+      ),
+      rawSelectForUpdate: wrap(
+        "rawSelectForUpdate",
+        '      await tx.$queryRaw`SELECT 1 FROM "TenantSubscription" WHERE "tenantId" = ${id} FOR UPDATE`;\n      await lockTenantForLedger(tx, tenantId);',
+      ),
     };
     expect(findViolations(Object.entries(cases).map(([rel, src]) => ({ rel, src })))).toEqual([
       "bad#bad",
@@ -218,6 +361,14 @@ describe("#2551 tripwire — no subscription write in a $transaction before the 
       "rawUpdate#rawUpdate",
       "commentLock#commentLock",
       "viaHelper#viaHelper",
+      "tenantTx#tenantTx",
+      "nonAsync#nonAsync",
+      "arrowHelper#arrowHelper",
+      "multiLevel#multiLevel",
+      "lockInIf#lockInIf",
+      "lockInString#lockInString",
+      "regexQuote#regexQuote",
+      "rawSelectForUpdate#rawSelectForUpdate",
     ]);
   });
 });
