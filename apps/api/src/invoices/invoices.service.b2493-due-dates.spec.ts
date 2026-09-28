@@ -95,6 +95,8 @@ describe("InvoicesService — #2493 due dates under a negative-offset process zo
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // #2070: createPartialFromOrder's invoicedQty bump is a CAS (updateMany); a clean read matches 1.
+    prisma.orderItem.updateMany.mockResolvedValue({ count: 1 } as any);
     prisma.invoice.findFirst.mockResolvedValue({ items: [] });
 
     const module: TestingModule = await Test.createTestingModule({
