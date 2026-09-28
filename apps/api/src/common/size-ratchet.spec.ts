@@ -48,7 +48,7 @@ const BASELINE: Record<string, number> = {
   "apps/web/app/(dashboard)/customers/[id]/page.tsx": 4378,
   "apps/web/app/(dashboard)/orders/[id]/page.tsx": 3720,
   "apps/api/src/customers/customers.service.spec.ts": 3138, // #2587: REG-B189 destruction pins retired (was 3209)
-  "apps/api/src/routes/routes.service.ts": 3142, // #2512: POD-ingest helpers -> routes/pod-ingest.ts (was 3189); prefactor: run/stop select shapes + status constants live in routes/routes.constants.ts (was 3270)
+  "apps/api/src/routes/routes.service.ts": 3126, // #2562 (#2135): run-stop reorder body -> run-stop-reorder.ts; merged file measures 3126 (wc -l, SA-425a/512c). // #2512: POD-ingest helpers -> routes/pod-ingest.ts (was 3189); prefactor: run/stop select shapes + status constants live in routes/routes.constants.ts (was 3270)
   "apps/web/app/(dashboard)/products/[id]/page.tsx": 2942,
   "apps/mobile/app/(operator)/(tabs)/orders/[id]/edit-items.tsx": 1405, // #2340 prefactor (re-derived after #2444 moved StepperRow to components/EditItemsStepperRow): DraftItemCard, PriceOverrideModal, the unlisted card+modal, CreateCreditNoteModal, ProductPicker and the StyleSheet moved verbatim to components/edit-items/*; marginFloorPrice -> lib/margin-floor-price.ts (master was 3205 after #2444). Measured, not rounded.
   "apps/mobile/components/NewOrderScreen.tsx": 4056, // SA-085: lineUnitFor + the total/totalItems memo -> lib/cart-order-total.ts (executable pin for the order-total fix) (was 4078)
