@@ -164,7 +164,7 @@ describe("OrdersService.updateOrderItems — pack-line creators stamp the B297 t
 
     expect(h.prisma.orderItem.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "li-A" },
+        where: { id: "li-A", orderId: "ord-1" },
         data: expect.objectContaining({
           productId: "prod-tob",
           trackedCategoryId: "cat-1",

@@ -286,3 +286,15 @@ export function describeFailedDrain(records: FailedActionRecord[]): {
     message: `${shown}${rest > 0 ? `\n• …and ${rest} more` : ""}\n\n${footer}`,
   };
 }
+
+/**
+ * #2410: the query keys to refresh after a drain DELIVERED these actions. A replayed stop
+ * completion (or any route-run write) changes the run the driver's route list reads, so the list
+ * showed the stop as "Up next" with 0 Done until a manual pull-to-refresh. `["route-runs"]` is the
+ * prefix every route-run query shares (active, scheduled, the run itself, its packing list).
+ */
+export function queriesToRefreshAfterDrain(
+  delivered: readonly Pick<QueuedAction, "endpoint">[],
+): string[][] {
+  return delivered.some((a) => a.endpoint.startsWith("/route-runs/")) ? [["route-runs"]] : [];
+}

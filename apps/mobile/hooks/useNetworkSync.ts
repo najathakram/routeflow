@@ -10,7 +10,9 @@ import {
   buildReplayRequestConfig,
   describeFailedDrain,
   nextDrainDelayMs,
+  queriesToRefreshAfterDrain,
 } from "../lib/queue-drain";
+import { queryClient } from "../lib/query-client";
 import { isLiveOnline } from "../lib/live-online";
 import { resolveQueueIdentity, settleQueueOwnership } from "../lib/queue-identity";
 import { inlineReturnDrainSettleRecords } from "../lib/inline-return-submit-key";
@@ -113,6 +115,13 @@ export function useNetworkSync() {
       });
 
       for (const id of result.delivered) dequeue(id);
+      // #2410: a delivered replay changed the run the route list reads — refresh it now, not on the
+      // driver's next pull-to-refresh.
+      const deliveredIds = new Set(result.delivered);
+      for (const queryKey of queriesToRefreshAfterDrain(
+        remaining.filter((a) => deliveredIds.has(a.id)),
+      ))
+        void queryClient.invalidateQueries({ queryKey });
       for (const id of result.retriedIds) incrementRetry(id);
       // #2389: unreached entries stay queued, retry counts untouched; try again on a bounded
       // backoff (the reconnect event below also re-triggers immediately). Never a hot loop.

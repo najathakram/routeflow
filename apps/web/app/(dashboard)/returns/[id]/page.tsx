@@ -356,9 +356,12 @@ export default function ReturnDetailPage() {
   }
 
   const status = ret.status;
-  const canCancel = (["PENDING", "APPROVED", "IN_TRANSIT", "RECEIVED"] as ReturnStatus[]).includes(
-    status,
-  );
+  // #2406: an INLINE return (captured inside an order write) takes none of the standard-path
+  // actions — the server refuses them all (INLINE_RETURN_USE_INLINE_ENDPOINTS).
+  const isInline = ret.kind === "INLINE";
+  const canCancel =
+    !isInline &&
+    (["PENDING", "APPROVED", "IN_TRANSIT", "RECEIVED"] as ReturnStatus[]).includes(status);
 
   // ── Action handlers ──────────────────────────────────────────────────────────
 
@@ -521,7 +524,9 @@ export default function ReturnDetailPage() {
 
         {/* Actions based on status */}
         <div className="flex flex-wrap items-center gap-2">
-          {status === "PENDING" && (
+          {/* #2406: an INLINE return has its own capture/approve flow (PR-1c/1d) — never
+              the STANDARD approve/reject actions, even if it were ever PENDING. */}
+          {status === "PENDING" && !isInline && (
             <>
               <Button
                 size="sm"
@@ -542,7 +547,7 @@ export default function ReturnDetailPage() {
             </>
           )}
 
-          {status === "APPROVED" && (
+          {status === "APPROVED" && !isInline && (
             <>
               <Button
                 size="sm"
@@ -564,7 +569,7 @@ export default function ReturnDetailPage() {
             </>
           )}
 
-          {status === "IN_TRANSIT" && (
+          {status === "IN_TRANSIT" && !isInline && (
             <>
               <Button
                 size="sm"
@@ -586,7 +591,7 @@ export default function ReturnDetailPage() {
             </>
           )}
 
-          {status === "RECEIVED" && (
+          {status === "RECEIVED" && !isInline && (
             <Button
               size="sm"
               leftIcon={<RefreshCw className="h-4 w-4" />}

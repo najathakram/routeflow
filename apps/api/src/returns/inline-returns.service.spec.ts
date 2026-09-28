@@ -284,6 +284,127 @@ describe("InlineReturnsService", () => {
     expect(result).toBeDefined();
   });
 
+  // ─── B735: parked reversal visibility ────────────────────────────────────────
+
+  describe("B735: a park guard reversal must be visible on the capture/approve response", () => {
+    it("REG-B735-api-capture-parked: a fresh capture with an unresolved parked reversal carries a count/pieces total", async () => {
+      prisma.regulatedLedgerParkedReversal.findMany.mockResolvedValue([
+        { returnedPieces: 3 },
+        { returnedPieces: 2 },
+      ]);
+
+      const result = await service.capture(CAPTURE_DTO as any, OPERATOR);
+
+      expect(prisma.regulatedLedgerParkedReversal.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            returnId: "ret-1",
+            tenantId: "test-tenant",
+            resolvedAt: null,
+          }),
+        }),
+      );
+      expect((result as any).parkedReversals).toEqual({ count: 2, pieces: 5 });
+    });
+
+    // #2144 (+ #2477's first item): after capture() issues the credit, it reads the row back. A
+    // null read-back used to fall back to the PRE-issue snapshot, which carries no creditNoteId —
+    // a response that looks un-issued for a credit that WAS issued. Like approve() (#2467), it now
+    // refuses instead; a retry with the same returnKey replays and returns the issued row.
+    it("#2144: the capture response is the POST-issue row, carrying the issued creditNoteId", async () => {
+      prisma.regulatedLedgerParkedReversal.findMany.mockResolvedValue([]);
+      const result = await service.capture(CAPTURE_DTO as any, OPERATOR);
+      expect(result).toMatchObject({ creditNoteId: "cn-1" });
+    });
+
+    it("#2144: a null read-back after issuing never returns the stale pre-issue snapshot", async () => {
+      prisma.regulatedLedgerParkedReversal.findMany.mockResolvedValue([]);
+      prisma.return.findUnique.mockResolvedValue(null);
+      await expect(service.capture(CAPTURE_DTO as any, OPERATOR)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it("REG-B735-api-capture-clean: a fresh capture with no parked rows carries parkedReversals: null, never undefined", async () => {
+      prisma.regulatedLedgerParkedReversal.findMany.mockResolvedValue([]);
+
+      const result = await service.capture(CAPTURE_DTO as any, OPERATOR);
+
+      expect((result as any).parkedReversals).toBeNull();
+    });
+
+    it("REG-B735-api-capture-read-fails: a failed parked-reversal read after commit does not 500 the capture; the field is ABSENT, not null", async () => {
+      prisma.regulatedLedgerParkedReversal.findMany.mockRejectedValue(new Error("db down"));
+
+      const result = await service.capture(CAPTURE_DTO as any, OPERATOR);
+
+      expect(result).toBeDefined();
+      expect(result).not.toHaveProperty("parkedReversals");
+    });
+
+    it("REG-B735-api-capture-null-tenant: no tenant context (SUPER_ADMIN) omits the field and never queries", async () => {
+      prisma.getTenantId.mockReturnValue(null);
+
+      const result = await service.capture(CAPTURE_DTO as any, OPERATOR);
+
+      expect(result).not.toHaveProperty("parkedReversals");
+      expect(prisma.regulatedLedgerParkedReversal.findMany).not.toHaveBeenCalled();
+    });
+
+    it("REG-B735-api-capture-replay-shortcircuit-parked: the pre-tx returnKey replay never calls reverseReturnEntries, but still reports an existing park", async () => {
+      const existing = {
+        id: "ret-existing",
+        returnKey: "nonce-1",
+        kind: "INLINE",
+        customerId: "cust-1",
+        orderId: "ord-carrying",
+        status: "REFUNDED",
+        creditNoteId: "cn-existing",
+        holdReason: null,
+        items: [],
+      };
+      prisma.return.findFirst.mockResolvedValueOnce(existing);
+      prisma.regulatedLedgerParkedReversal.findMany.mockResolvedValue([{ returnedPieces: 4 }]);
+
+      const result = await service.capture(CAPTURE_DTO as any, OPERATOR);
+
+      // The whole point of a fresh read over a threaded return value: this branch never
+      // calls reverseReturnEntries (it's a replay, not a fresh reversal) and would show a
+      // parked capture as clean if the signal only ever came from that call's own result.
+      expect(ledger.reverseReturnEntries).not.toHaveBeenCalled();
+      expect((result as any).parkedReversals).toEqual({ count: 1, pieces: 4 });
+    });
+
+    it("REG-B735-api-capture-overcap-null: a DRIVER_CAP hold defers the reversal to approve(), so capture's own response carries parkedReversals: null", async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-carrying",
+        customerId: "cust-1",
+        total: 30,
+        status: "PENDING",
+        routeRunId: "run-1",
+      });
+      prisma.return.findMany.mockResolvedValue([
+        { creditSubtotal: 25, creditTax: 0, creditCategoryTax: 0 },
+      ]);
+      quoteService.priceInlineReturn.mockResolvedValue(priced(10, 10, 0, 0));
+      // No park exists for THIS return — it never reached reverseReturnEntries, so nothing
+      // was ever written for it. The lookup still runs (unconditionally, by design — see
+      // withParkedReversals) and correctly finds nothing.
+      prisma.regulatedLedgerParkedReversal.findMany.mockResolvedValue([]);
+
+      const result = await service.capture(DRIVER_CAPTURE_DTO as any, DRIVER);
+
+      expect(ledger.reverseReturnEntries).not.toHaveBeenCalled();
+      // Proves the lookup is scoped to THIS return's own id, not a blanket "any park exists"
+      // check — a park belonging to a different return must never leak into this response.
+      expect(prisma.regulatedLedgerParkedReversal.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ returnId: "ret-1" }) }),
+      );
+      expect((result as any).parkedReversals).toBeNull();
+      expect((result as any).holdReason).toBe("DRIVER_CAP");
+    });
+  });
+
   it("resolves restock from the reason default (DAMAGED never restocks) when the item omits an explicit flag", async () => {
     quoteService.priceInlineReturn.mockResolvedValue(priced());
     await service.capture({ ...CAPTURE_DTO, reason: "DAMAGED" } as any, OPERATOR);
@@ -312,7 +433,9 @@ describe("InlineReturnsService", () => {
 
     const result = await service.capture(CAPTURE_DTO as any, OPERATOR);
 
-    expect(result).toBe(existing);
+    // B735: every capture exit now carries a fresh parkedReversals read, so a bare `toBe`
+    // referential-equality check no longer holds — the response is a new wrapped object.
+    expect(result).toEqual({ ...existing, parkedReversals: null });
     expect(prisma.return.create).not.toHaveBeenCalled();
     expect(prisma.stockMovement.create).not.toHaveBeenCalled();
     expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
@@ -421,7 +544,8 @@ describe("InlineReturnsService", () => {
       prisma.return.findFirst.mockResolvedValueOnce(raced);
 
       const result = await service.capture(CAPTURE_DTO as any, OPERATOR);
-      expect(result).toBe(raced);
+      // B735: same wrapping as the pre-tx replay branch — no longer referentially equal.
+      expect(result).toEqual({ ...raced, parkedReversals: null });
     });
 
     it("throws a 409 Conflict (never a raw P2002) when the raced row belongs to someone else", async () => {
@@ -734,6 +858,86 @@ describe("InlineReturnsService", () => {
       );
     });
 
+    it("REG-B735-api-approve-parked: approve() reverses the ledger it deferred from capture, and its own response carries any resulting park", async () => {
+      prisma.return.findFirst.mockResolvedValue(HELD);
+      prisma.return.updateMany.mockResolvedValue({ count: 1 });
+      prisma.regulatedLedgerParkedReversal.findMany.mockResolvedValue([{ returnedPieces: 6 }]);
+
+      const result = await service.approve("ret-held", OPERATOR);
+
+      expect(ledger.reverseReturnEntries).toHaveBeenCalled();
+      expect(prisma.regulatedLedgerParkedReversal.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            returnId: "ret-held",
+            tenantId: "test-tenant",
+            resolvedAt: null,
+          }),
+        }),
+      );
+      expect((result as any).parkedReversals).toEqual({ count: 1, pieces: 6 });
+    });
+
+    // #2143: approve() commits, then the post-commit read-back fails. The operator retries the
+    // SAME approval: the unlocked pre-check used to see creditNoteId set and 400. An
+    // already-APPROVED hold must return its current state, idempotently, with no money write.
+    const APPROVED: any = {
+      ...HELD,
+      status: "REFUNDED",
+      holdReason: null,
+      creditNoteId: "cn-approved",
+      approvedById: "user-op",
+      approvedAt: new Date("2026-09-27T06:00:00Z"),
+    };
+
+    it("#2143: a retry of an already-approved return gets its current state, no second write", async () => {
+      prisma.return.findFirst.mockResolvedValue(APPROVED);
+      prisma.return.findUnique.mockResolvedValue(APPROVED);
+      prisma.regulatedLedgerParkedReversal.findMany.mockResolvedValue([]);
+      prisma.tenantTransaction.mockClear();
+
+      const result = await service.approve("ret-held", OPERATOR);
+
+      expect(result).toMatchObject({
+        id: "ret-held",
+        status: "REFUNDED",
+        creditNoteId: "cn-approved",
+      });
+      expect((result as any).parkedReversals).toBeNull();
+      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+      expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(ledger.reverseReturnEntries).not.toHaveBeenCalled();
+      expect(prisma.return.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("#2143: the retry's amount does not matter — the first approval stands, nothing is written", async () => {
+      prisma.return.findFirst.mockResolvedValue(APPROVED);
+      prisma.return.findUnique.mockResolvedValue(APPROVED);
+      await expect(service.approve("ret-held", OPERATOR, { amount: 5 })).resolves.toMatchObject({
+        creditNoteId: "cn-approved",
+      });
+      expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+    });
+
+    it("#2143: an already-approved retry whose re-read comes back empty is a 404, no write", async () => {
+      prisma.return.findFirst.mockResolvedValue(APPROVED);
+      prisma.return.findUnique.mockResolvedValue(null);
+      prisma.tenantTransaction.mockClear();
+      await expect(service.approve("ret-held", OPERATOR)).rejects.toThrow(NotFoundException);
+      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+      expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+    });
+
+    it("#2143: a return issued WITHOUT a hold (never approved) still refuses approve()", async () => {
+      prisma.return.findFirst.mockResolvedValue({
+        ...APPROVED,
+        approvedById: null,
+        approvedAt: null,
+      });
+      await expect(service.approve("ret-held", OPERATOR)).rejects.toThrow(BadRequestException);
+    });
+
     it("approves a REDUCED amount when given one", async () => {
       prisma.return.findFirst.mockResolvedValue(HELD);
       prisma.return.updateMany.mockResolvedValue({ count: 1 });
@@ -802,6 +1006,26 @@ describe("InlineReturnsService", () => {
     it("404s a missing return", async () => {
       prisma.return.findFirst.mockResolvedValue(null);
       await expect(service.approve("nope", OPERATOR)).rejects.toThrow(NotFoundException);
+    });
+
+    it("REG-B735-api-approve-read-fails: a failed parked-reversal read does not 500 committed approve work; the field is ABSENT", async () => {
+      prisma.return.findFirst.mockResolvedValue(HELD);
+      prisma.return.updateMany.mockResolvedValue({ count: 1 });
+      prisma.regulatedLedgerParkedReversal.findMany.mockRejectedValue(new Error("db down"));
+
+      const result = await service.approve("ret-held", OPERATOR);
+
+      expect(result).toBeDefined();
+      expect(result).not.toHaveProperty("parkedReversals");
+    });
+
+    it("B735: 404s when the post-approve read comes back null, never returns a fake record", async () => {
+      prisma.return.findFirst.mockResolvedValue(HELD);
+      prisma.return.updateMany.mockResolvedValue({ count: 1 });
+      prisma.return.findUnique.mockResolvedValue(null);
+
+      await expect(service.approve("ret-held", OPERATOR)).rejects.toThrow(NotFoundException);
+      expect(prisma.regulatedLedgerParkedReversal.findMany).not.toHaveBeenCalled();
     });
   });
 
