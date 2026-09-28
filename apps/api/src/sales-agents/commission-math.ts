@@ -8,7 +8,8 @@ export const COMMISSION_EPS = 0.005;
  * `invoices.service.ts setCheckStatus`, which imports this constant so the
  * writer and the commission engine's reader can never drift apart.
  */
-export const NSF_FEE_DESCRIPTION_PREFIX = "NSF fee — returned check";
+// #2392 / SA-478 (A): defined ONCE in @routeflow/pricing (nsf-line.ts), shared with web and mobile.
+export { NSF_FEE_DESCRIPTION_PREFIX } from "@routeflow/pricing";
 
 export interface InvoiceMoneyState {
   subtotal: number;
