@@ -2059,6 +2059,24 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
       expect(email.send.mock.calls[0][0].html).toContain("https://billing.stripe.test/p/session_1");
     });
 
+    // #2476 Opus MED fold: stripe-node's defaults (80 s timeout, network retries) could hold the
+    // webhook claim for minutes; the email's portal link is best-effort, so its call is capped.
+    it("#2476: the payment-failed portal call is capped (10 s, no network retries)", async () => {
+      const { svc, stripe } = make({ sub: FAILING });
+      await (svc as any).onPaymentFailed(failed());
+      expect(stripe.createBillingPortalSession).toHaveBeenCalledWith(
+        expect.objectContaining({ customerId: "cus_1" }),
+        { timeoutMs: 10_000, maxNetworkRetries: 0 },
+      );
+    });
+
+    it("#2476: the user-facing portal session keeps Stripe's default request options", async () => {
+      const { svc, stripe } = make({ sub: FAILING });
+      await svc.createBillingPortalSession("t1");
+      expect(stripe.createBillingPortalSession).toHaveBeenCalledTimes(1);
+      expect(stripe.createBillingPortalSession.mock.calls[0][1]).toBeUndefined();
+    });
+
     it("a portal failure still sends the email, with today's fallback text", async () => {
       const { svc, stripe, email } = make({ sub: FAILING });
       stripe.createBillingPortalSession.mockRejectedValue(new Error("portal down"));
