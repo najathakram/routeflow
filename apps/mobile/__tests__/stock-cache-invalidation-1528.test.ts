@@ -34,20 +34,22 @@ function load(modulePath: string) {
   return { mod, run };
 }
 
-const STOCK: Keys = [["products"], ["inventory"]];
+// SA-543a: mobile's operator product lists (useAdminProducts / useAdminProductsInfinite) carry
+// currentStock + reorderPoint under ["admin", "products", …], outside the ["products"] root.
+const STOCK: Keys = [["products"], ["inventory"], ["admin", "products"]];
 const hasAll = (keys: Keys, want: Keys) =>
   want.every((w) => keys.some((k) => JSON.stringify(k) === JSON.stringify(w)));
 const hasAny = (keys: Keys, want: Keys) =>
   want.some((w) => keys.some((k) => JSON.stringify(k) === JSON.stringify(w)));
 
 describe("#1528 mobile returns hooks", () => {
-  it("useReceiveReturn (bare id and {id, restock}) invalidates products + inventory", async () => {
+  it("useReceiveReturn (bare id and {id, restock}) invalidates products + inventory + admin products", async () => {
     const { mod, run } = load("../lib/api/returns");
     expect(hasAll(await run(mod.useReceiveReturn, "r1"), STOCK)).toBe(true);
     expect(hasAll(await run(mod.useReceiveReturn, { id: "r1", restock: false }), STOCK)).toBe(true);
   });
 
-  it("useCancelReturn invalidates products + inventory (cancel undoes the receive restock)", async () => {
+  it("useCancelReturn invalidates products + inventory + admin products (cancel undoes the receive restock)", async () => {
     const { mod, run } = load("../lib/api/returns");
     expect(hasAll(await run(mod.useCancelReturn, "r1"), STOCK)).toBe(true);
   });
@@ -64,7 +66,7 @@ describe("#1528 mobile returns hooks", () => {
 });
 
 describe("#1528 mobile vendor-bill hooks", () => {
-  it("useVoidVendorBill invalidates products + inventory (void decrements stock)", async () => {
+  it("useVoidVendorBill invalidates products + inventory + admin products (void decrements stock)", async () => {
     const { mod, run } = load("../lib/api/vendor-bills");
     expect(hasAll(await run(mod.useVoidVendorBill, "vb1"), STOCK)).toBe(true);
   });
