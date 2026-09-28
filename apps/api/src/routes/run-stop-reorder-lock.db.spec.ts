@@ -352,6 +352,89 @@ describeDb("#2562 run-stop reorder vs a concurrent run start — real Postgres",
     });
   });
 
+  /** Resolves once at least `n` backends are waiting on another (pg_blocking_pids non-empty). */
+  async function waitForBlockedCount(n: number, timeoutMs = 20_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      await prisma.$executeRaw`SELECT pg_stat_clear_snapshot()`; // returns void: $executeRaw
+      const rows: Array<{ n: bigint | number }> = await prisma.$queryRaw`
+        SELECT count(*)::int AS n FROM pg_stat_activity
+        WHERE cardinality(pg_blocking_pids(pid)) > 0`;
+      if (Number(rows[0]?.n ?? 0) >= n) return;
+      if (Date.now() > deadline) throw new Error(`fewer than ${n} backends ever blocked`);
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  }
+
+  // #2635 PRIMARY (lead 5864008688): a stop PATCH on a SCHEDULED run, through the REAL
+  // updateStopStatus (#2514/#2633: stop CAS, then RouteRun FOR UPDATE), against a reorder. T0 holds
+  // the RouteRun row so the interleaving is forced: the reorder queues first, then the PATCH, and
+  // only then does T0 commit. Run-first reorder: it takes the run, then needs the PATCH's stop row
+  // while the PATCH (holding that row) needs the run ⇒ 40P01. Stop-first reorder: it already holds
+  // every stop row, so the PATCH waits on it and no cycle forms.
+  it("#2635 PRIMARY: PATCH stop (real updateStopStatus) x reorder on a SCHEDULED run never deadlocks", async () => {
+    const ROUNDS = 3;
+    const errors: string[] = [];
+    for (let round = 0; round < ROUNDS; round++) {
+      // eslint-disable-next-line no-await-in-loop
+      const s = await seedRunWithTwoStops(`patch${round}`);
+      let releaseRun!: () => void;
+      const runMayCommit = new Promise<void>((r) => (releaseRun = r));
+      let runHeld!: () => void;
+      const runLocked = new Promise<void>((r) => (runHeld = r));
+      const t0 = prisma.$transaction(
+        async (tx: any) => {
+          await tx.$executeRaw`SELECT id FROM "RouteRun" WHERE id = ${s.run.id} FOR UPDATE`;
+          runHeld();
+          await runMayCommit;
+        },
+        { timeout: 60_000 },
+      );
+      // eslint-disable-next-line no-await-in-loop
+      await runLocked;
+      const settle = (p: Promise<unknown>) =>
+        p.then(
+          () => null,
+          (e: unknown) => String((e as Error)?.message ?? e),
+        );
+      try {
+        const reorder = settle(
+          tenantCtx.run(s.tenantId, () =>
+            routesService.reorderRunStops(s.run.id, [
+              { id: s.stop1.id, stopNumber: 2 },
+              { id: s.stop2.id, stopNumber: 1 },
+            ]),
+          ),
+        );
+        // eslint-disable-next-line no-await-in-loop
+        await waitForBlockedCount(1);
+        const patch = settle(
+          tenantCtx.run(s.tenantId, () =>
+            routesService.updateStopStatus(s.run.id, s.stop1.id, { status: "SKIPPED" }, {
+              sub: "r2635-operator",
+              role: "OPERATOR",
+            } as never),
+          ),
+        );
+        // eslint-disable-next-line no-await-in-loop
+        await waitForBlockedCount(2);
+        releaseRun();
+        // eslint-disable-next-line no-await-in-loop
+        const [rErr, pErr] = await Promise.all([reorder, patch]);
+        for (const e of [rErr, pErr]) if (e) errors.push(e);
+      } finally {
+        releaseRun();
+        // eslint-disable-next-line no-await-in-loop
+        await t0;
+      }
+    }
+    expect({
+      deadlocks: errors.filter((e) => /deadlock|40P01/i.test(e)).length,
+      otherErrors: errors.filter((e) => !/deadlock|40P01/i.test(e)),
+    }).toEqual({ deadlocks: 0, otherErrors: [] });
+  }, 120_000);
+
   // #2635 (SA-533e): the house lock order for this family is STOP rows → RouteRun, the order a
   // last-stop completion takes (claim the stop row, then auto-complete the run). The real
   // completeWithPayment cannot race a reorder that reaches its writes (completion needs an
