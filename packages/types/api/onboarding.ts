@@ -224,6 +224,291 @@ export const ONBOARDING_CONFLICT_CODES = [
 ] as const;
 export type OnboardingConflictCode = (typeof ONBOARDING_CONFLICT_CODES)[number];
 
+// ─── S2 — the secure intake link ────────────────────────────────────────────────────────────
+//
+// Public routes (no auth; the token travels ONLY in POST bodies — never a URL, L-188; every
+// token failure is the same 404 "Link not found or expired."):
+//   POST public/onboarding/session           { token }                          → IntakeSessionView
+//   POST public/onboarding/sections/save     { token, key, answers }            → IntakeSessionView
+//   POST public/onboarding/sections/submit   { token, key }                     → IntakeSessionView
+//   POST public/onboarding/accept            { token, acceptedName, acceptedEmail, agree: true } → IntakeSessionView
+//   POST public/onboarding/files             multipart: token, sectionKey, kind, file (≤ 25 MB; csv/xlsx/pdf/png/jpg) → IntakeSessionView
+//   POST public/onboarding/files/delete      { token, fileId }                  → IntakeSessionView
+// Back office (JwtAuthGuard + SuperAdminGuard):
+//   POST platform-admin/onboarding/cases/:id/intake-link          { send?: boolean } → IssueIntakeLinkResponse (the URL is shown ONCE)
+//   POST platform-admin/onboarding/cases/:id/intake-link/revoke                     → OnboardingIntakeAdminView
+//   GET  platform-admin/onboarding/cases/:id/intake                                 → OnboardingIntakeAdminView
+//   POST platform-admin/onboarding/cases/:id/sections/:key/review { action, note? } → OnboardingIntakeAdminView
+//   POST platform-admin/onboarding/cases/:id/files                multipart: sectionKey, kind, file → OnboardingIntakeAdminView
+//   GET  platform-admin/onboarding/cases/:id/files/:fileId/url                      → { url } (short-lived signed URL)
+
+export const INTAKE_SECTION_KEY_VALUES = [
+  "ACCOUNT",
+  "TAX_COMPLIANCE",
+  "INVOICING",
+  "TEAM",
+  "OPERATIONS",
+  "DATA_FILES",
+  "GO_LIVE_PREFS",
+] as const;
+export type IntakeSectionKey = (typeof INTAKE_SECTION_KEY_VALUES)[number];
+
+export const INTAKE_SECTION_STATUS_VALUES = [
+  "EMPTY",
+  "DRAFT",
+  "SUBMITTED",
+  "CHANGES_REQUESTED",
+  "APPROVED",
+  "APPLIED",
+  "WAIVED",
+] as const;
+export type IntakeSectionStatus = (typeof INTAKE_SECTION_STATUS_VALUES)[number];
+
+/** File kinds (IntakeFile.kind). `containsPii` is derived server-side from the kind. */
+export const INTAKE_FILE_KIND_VALUES = [
+  "products",
+  "customers",
+  "suppliers",
+  "stock",
+  "ar_aging",
+  "open_docs",
+  "tax_cert",
+  "licence",
+  "logo",
+  "other",
+] as const;
+export type IntakeFileKind = (typeof INTAKE_FILE_KIND_VALUES)[number];
+
+export const INTAKE_UPLOAD_MAX_BYTES = 25 * 1024 * 1024;
+export const INTAKE_UPLOAD_EXTENSIONS = [".csv", ".xlsx", ".pdf", ".png", ".jpg", ".jpeg"] as const;
+
+/** The one generic public error body (L-178): expired, revoked, unknown and forged all look alike. */
+export const INTAKE_LINK_NOT_FOUND = "Link not found or expired." as const;
+
+// Section answers — playbook Appendix A (sections B–H). No field ever carries a secret
+// (password, bank/card number, API key): unknown fields are refused by the server.
+
+export interface IntakeAccountAnswers {
+  legalName: string;
+  displayName?: string;
+  /** 3–30 chars, lowercase letters/digits/hyphens, starts with a letter or digit, not reserved. */
+  slug: string;
+  ownerName: string;
+  adminName: string;
+  adminEmail: string;
+  adminUsername?: string;
+  addressLine1: string;
+  addressLine2?: string;
+  city: string;
+  state: string;
+  zip: string;
+  phone: string;
+  replyToEmail?: string;
+  website?: string;
+  /** IANA zone, e.g. America/Chicago. */
+  timeZone: string;
+}
+
+export interface IntakeTaxComplianceAnswers {
+  salesTaxRatePercent?: number;
+  federalEin?: string;
+  regulatedGoods: {
+    category: "tobacco" | "vape" | "nicotine" | "alcohol" | "other";
+    states: string[];
+    note?: string;
+  }[];
+  licences: { name: string; number: string; state?: string; expiresOn?: string }[];
+  statesSoldInto: string[];
+  exciseNotes?: string;
+  hasTaxExemptCustomers: boolean;
+  retailLicenceNotes?: string;
+}
+
+export interface IntakeInvoicingAnswers {
+  lastInvoiceNumber?: string;
+  invoiceNumberFormat?: string;
+  lastQuoteNumber?: string;
+  lastCreditNoteNumber?: string;
+  paymentTerms: "COD" | "NET_7" | "NET_15" | "NET_30" | "NET_45" | "NET_60" | "OTHER";
+  paymentTermsOther?: string;
+  invoiceFooterText?: string;
+  takesDeposits: boolean;
+  depositPercent?: number;
+  paymentMethods: ("cash" | "check" | "ach" | "card" | "zelle" | "other")[];
+  paymentMethodsOther?: string;
+  wantsOnlineCardPay: boolean;
+}
+
+export interface IntakeTeamAnswers {
+  staff: { name: string; email: string; role: "admin" | "office" }[];
+  drivers: { name: string; mobile: string; email?: string }[];
+  vehicleCount?: number;
+  vehicleNames?: string[];
+}
+
+export interface IntakeOperationsAnswers {
+  depotAddress: string;
+  deliveryDays: ("MON" | "TUE" | "WED" | "THU" | "FRI" | "SAT" | "SUN")[];
+  deliveryAreas?: string;
+  /** HH:MM, 24-hour. */
+  orderCutoffTime?: string;
+  hasTimeWindowCustomers: boolean;
+  timeWindowNotes?: string;
+  offersCustomerPickup: boolean;
+}
+
+export interface IntakeDataFilesAnswers {
+  currentSystems: string;
+  /** YYYY-MM-DD — the date the stock file was counted. */
+  stockCountDate?: string;
+  notes?: string;
+}
+
+export interface IntakeGoLivePrefsAnswers {
+  /** YYYY-MM-DD. */
+  earliestGoLiveDate?: string;
+  trainingAttendees?: string;
+  trainingAvailability?: string;
+  notes?: string;
+}
+
+export interface IntakeSectionAnswersByKey {
+  ACCOUNT: IntakeAccountAnswers;
+  TAX_COMPLIANCE: IntakeTaxComplianceAnswers;
+  INVOICING: IntakeInvoicingAnswers;
+  TEAM: IntakeTeamAnswers;
+  OPERATIONS: IntakeOperationsAnswers;
+  DATA_FILES: IntakeDataFilesAnswers;
+  GO_LIVE_PREFS: IntakeGoLivePrefsAnswers;
+}
+
+export interface IntakeSectionView {
+  key: IntakeSectionKey;
+  status: IntakeSectionStatus;
+  schemaVersion: number;
+  /** Draft answers may be partial; a SUBMITTED section passed full validation. */
+  answers: Record<string, unknown>;
+  reviewNote: string | null;
+  submittedAt: string | null;
+  /** The customer may save/submit only EMPTY, DRAFT or CHANGES_REQUESTED sections. */
+  editable: boolean;
+}
+
+export interface IntakeFileView {
+  id: string;
+  sectionKey: IntakeSectionKey;
+  kind: IntakeFileKind;
+  originalName: string;
+  contentType: string;
+  sizeBytes: number;
+  uploadedBy: "customer" | "admin";
+  createdAt: string;
+}
+
+/** The frozen order, computed server-side from the case's deal terms + the LIVE catalog. */
+export interface IntakeOrderSnapshot {
+  planKey: string;
+  planName: string;
+  cycle: "MONTHLY" | "ANNUAL";
+  isCustom: boolean;
+  lines: {
+    type: "plan" | "addon";
+    key: string;
+    name: string;
+    quantity: number;
+    monthly: number;
+    cyclePrice: number;
+    included: boolean;
+  }[];
+  /** Recurring charge for the cycle (dollars). */
+  recurringDue: number;
+  /** One-time setup fee (dollars; never MRR). */
+  setupFee: number;
+  setupFeeCents: number;
+  /** recurringDue + setupFee. */
+  dueToday: number;
+  catalogVersion: number | null;
+  currency: "USD";
+  computedAt: string;
+}
+
+export interface OrderAcceptanceView {
+  id: string;
+  orderSnapshot: IntakeOrderSnapshot;
+  termsVersion: string;
+  privacyVersion: string;
+  acceptedName: string;
+  acceptedEmail: string;
+  acceptedAt: string;
+  supersededAt: string | null;
+}
+
+export interface IntakeSessionView {
+  companyName: string;
+  contactName: string;
+  expiresAt: string;
+  sections: IntakeSectionView[];
+  files: IntakeFileView[];
+  /** Live order preview; null (with `orderUnavailable`) when the deal terms can't be priced yet. */
+  order: IntakeOrderSnapshot | null;
+  orderUnavailable: boolean;
+  terms: { termsVersion: string; privacyVersion: string };
+  /** The current (non-superseded) acceptance, if any. */
+  acceptance: OrderAcceptanceView | null;
+}
+
+export interface IntakeTokenRequest {
+  token: string;
+}
+export interface SaveIntakeSectionRequest extends IntakeTokenRequest {
+  key: IntakeSectionKey;
+  answers: Record<string, unknown>;
+}
+export interface SubmitIntakeSectionRequest extends IntakeTokenRequest {
+  key: IntakeSectionKey;
+}
+export interface AcceptIntakeOrderRequest extends IntakeTokenRequest {
+  acceptedName: string;
+  acceptedEmail: string;
+  /** Must be true — the Terms/Privacy checkbox. */
+  agree: true;
+}
+export interface DeleteIntakeFileRequest extends IntakeTokenRequest {
+  fileId: string;
+}
+
+export interface IssueIntakeLinkResponse {
+  /** `<WEB_URL>/onboarding#token=<token>` — shown once; only a hash is stored. */
+  url: string;
+  expiresAt: string;
+  emailed: boolean;
+}
+
+export interface ReviewIntakeSectionRequest {
+  action: "approve" | "request_changes" | "waive";
+  /** Required for request_changes and waive. */
+  note?: string;
+}
+
+export interface OnboardingIntakeAdminView {
+  link: { active: boolean; expiresAt: string | null; lastUsedAt: string | null };
+  sections: (IntakeSectionView & { reviewedById: string | null; reviewedAt: string | null })[];
+  files: (IntakeFileView & { containsPii: boolean; sha256: string })[];
+  acceptances: OrderAcceptanceView[];
+}
+
+/**
+ * Non-token intake errors (token failures are always the one 404 above). 409s carry `code`;
+ * INTAKE_ANSWERS_INVALID is a 400 with `errors: [{ field, messages[] }]`.
+ */
+export const INTAKE_ERROR_CODES = [
+  "INTAKE_SECTION_LOCKED",
+  "INTAKE_ORDER_NOT_READY",
+  "INTAKE_SECTION_NOT_REVIEWABLE",
+  "INTAKE_ANSWERS_INVALID",
+] as const;
+export type IntakeErrorCode = (typeof INTAKE_ERROR_CODES)[number];
+
 // ─── Tenant side: "Getting started" (#2159 S4) ────────────────────────────────────
 
 /** The catalog key of the customer's written sign-off (VERIFY_TRAIN). */
