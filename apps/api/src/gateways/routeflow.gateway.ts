@@ -29,6 +29,14 @@ import {
  */
 export const BUYER_ROOM_RESYNC_MS = 60_000;
 
+/** #1534: the token roles whose sockets are re-validated against the user row (SA-515). */
+const STAFF_ROLES = new Set<string | undefined>([
+  UserRole.OPERATOR,
+  UserRole.TENANT_ADMIN,
+  UserRole.DRIVER,
+  UserRole.SUPER_ADMIN,
+]);
+
 /** `buyerAccountId: { in }` batch size for the resync read (well under Postgres' bind limit). */
 const BUYER_RESYNC_BATCH = 500;
 
@@ -47,6 +55,14 @@ interface RoomMember {
     customerUserId?: string;
     customerTenantId?: string | null;
     customerTokenExp?: number;
+    /**
+     * #1534 / SA-515: a staff socket's verified user and the claims its rooms were granted from
+     * (role, tenant, canActAsDriver) — re-checked against the user row at connect and every resync.
+     */
+    staffUserId?: string;
+    staffRole?: string;
+    staffTenantId?: string | null;
+    staffCanActAsDriver?: boolean;
   };
   join(room: string): unknown;
   leave(room: string): unknown;
@@ -294,6 +310,25 @@ export class RouteFlowGateway
 
       const tenantId = payload.tenantId ?? null;
 
+      // #1534 / SA-515: a staff socket is admitted only while its user row still matches the token
+      // (ACTIVE, undeleted, same role, tenant and canActAsDriver) — here and at every resync. A
+      // failed read throws, refusing the connection (fails closed).
+      if (STAFF_ROLES.has(payload.role)) {
+        if (typeof payload.sub !== "string" || !payload.sub) {
+          throw new WsException("Invalid staff token");
+        }
+        const data = client.data as RoomMember["data"];
+        data.staffUserId = payload.sub;
+        data.staffRole = payload.role;
+        data.staffTenantId = tenantId;
+        // #1534 fold: only a PRESENT claim is compared — a token that does not carry it (issued
+        // before every issuer minted it) asserts nothing about it, so it is not a mismatch.
+        data.staffCanActAsDriver =
+          typeof payload.canActAsDriver === "boolean" ? payload.canActAsDriver : undefined;
+        const [live] = await this.checkStaffSockets([client as unknown as RoomMember]);
+        if (!live) return;
+      }
+
       if (payload.role === UserRole.OPERATOR || payload.role === UserRole.TENANT_ADMIN) {
         await client.join(this.tenantRoom(tenantId, "operators"));
       } else if (payload.role === UserRole.DRIVER) {
@@ -341,10 +376,12 @@ export class RouteFlowGateway
     if (!this.server) return;
     let buyers: RoomMember[];
     let customers: RoomMember[];
+    let staff: RoomMember[];
     try {
       const sockets = (await this.server.local.fetchSockets()) as unknown as RoomMember[];
       buyers = sockets.filter((s) => !!s.data?.buyerAccountId);
       customers = sockets.filter((s) => !!s.data?.customerUserId);
+      staff = sockets.filter((s) => !!s.data?.staffUserId);
     } catch (err) {
       this.logger.warn(`[B104] buyer room resync skipped: ${(err as Error)?.message ?? err}`);
       return;
@@ -362,6 +399,13 @@ export class RouteFlowGateway
       await this.syncCustomerRooms(liveCustomers);
     } catch (err) {
       this.logger.warn(`[#2164] customer room resync skipped: ${(err as Error)?.message ?? err}`);
+    }
+    // #1534 / SA-515: staff sockets get the DB re-check only — no expiry kick until the staff
+    // clients can recover from one (#2588). A failed read keeps the last verified state.
+    try {
+      await this.checkStaffSockets(staff);
+    } catch (err) {
+      this.logger.warn(`[#1534] staff socket resync skipped: ${(err as Error)?.message ?? err}`);
     }
   }
 
@@ -503,6 +547,46 @@ export class RouteFlowGateway
       }
       if (!socket.rooms.has(want)) await socket.join(want);
     }
+  }
+
+  /**
+   * #1534 / SA-515: keeps each staff socket only while its user is ACTIVE and undeleted and still
+   * has the role, tenant and canActAsDriver its token was minted with — a role change (including a
+   * canActAsDriver toggle, when the token carries that claim) or a tenant move ends the socket, and
+   * the client re-authenticates. One
+   * user read per batch, however many sockets; it finishes before any socket is touched, so a
+   * failed read throws and changes nothing. Returns, in order, whether each socket was kept.
+   */
+  private async checkStaffSockets(sockets: RoomMember[]): Promise<boolean[]> {
+    const userIds = [
+      ...new Set(sockets.map((s) => s.data.staffUserId).filter((id): id is string => !!id)),
+    ];
+    const users = new Map<
+      string,
+      { role: string; tenantId: string | null; canActAsDriver: boolean }
+    >();
+    for (let i = 0; i < userIds.length; i += BUYER_RESYNC_BATCH) {
+      const rows = await this.prisma.user.findMany({
+        where: {
+          id: { in: userIds.slice(i, i + BUYER_RESYNC_BATCH) },
+          status: "ACTIVE",
+          deletedAt: null,
+        },
+        select: { id: true, role: true, tenantId: true, canActAsDriver: true },
+      });
+      for (const row of rows) users.set(row.id, row);
+    }
+    return sockets.map((socket) => {
+      const { staffUserId, staffRole, staffTenantId, staffCanActAsDriver } = socket.data;
+      const row = staffUserId ? users.get(staffUserId) : undefined;
+      const live =
+        !!row &&
+        row.role === staffRole &&
+        (row.tenantId ?? null) === (staffTenantId ?? null) &&
+        (staffCanActAsDriver === undefined || row.canActAsDriver === staffCanActAsDriver);
+      if (!live) socket.disconnect(true);
+      return live;
+    });
   }
 
   // ─── Client → Server events ───────────────────────────────��──────────────────

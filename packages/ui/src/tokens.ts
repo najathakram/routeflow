@@ -1,5 +1,18 @@
 // Design system tokens for use in React Native StyleSheet
 // (React Native does not support Tailwind CSS)
+//
+// #2330 ruling (a): the pre-Ledger values below are deliberately NOT re-pointed, so existing
+// screens do not move. Ledger values are ADDED under new keys (from `./tokens/ledger`, the source
+// the web Tailwind preset is built from); new work uses `@routeflow/ui/native`. Screens move to
+// Ledger when they are rebuilt behind `useNewUi(role)`.
+
+import {
+  ledgerBuyerScale,
+  ledgerInk,
+  ledgerRadius,
+  ledgerStatus,
+  ledgerSurface,
+} from "./tokens/ledger";
 
 export const colors = {
   brand: {
@@ -39,7 +52,14 @@ export const colors = {
     DEFAULT: "#ffffff",
     raised: "#f8fafc",
     border: "#e2e8f0",
+    // Ledger additions (#2330).
+    sunken: ledgerSurface.sunken,
+    borderStrong: ledgerSurface.lineStrong,
   },
+  // Ledger additions (#2330).
+  ink: ledgerInk,
+  buyer: ledgerBuyerScale,
+  info: { DEFAULT: ledgerStatus.info.fg, bg: ledgerStatus.info.bg },
 } as const;
 
 export const fontFamily = {
@@ -48,6 +68,9 @@ export const fontFamily = {
 
 export const borderRadius = {
   sm: 4,
+  // Ledger additions (#2330): controls 6, cards 10.
+  ctl: ledgerRadius.ctl,
+  card: ledgerRadius.card,
   DEFAULT: 8,
   lg: 12,
   xl: 16,
