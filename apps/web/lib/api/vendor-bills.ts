@@ -329,6 +329,9 @@ export function useRevertVendorBillToDraft() {
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ["vendor-bills"] });
       qc.invalidateQueries({ queryKey: ["vendor-bills", id] });
+      // #1528 (B86): the server restocks / un-stocks here — refresh the stock views too.
+      qc.invalidateQueries({ queryKey: ["products"] });
+      qc.invalidateQueries({ queryKey: ["inventory"] });
     },
   });
 }
@@ -340,6 +343,9 @@ export function useVoidVendorBill() {
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ["vendor-bills"] });
       qc.invalidateQueries({ queryKey: ["vendor-bills", id] });
+      // #1528 (B86): the server restocks / un-stocks here — refresh the stock views too.
+      qc.invalidateQueries({ queryKey: ["products"] });
+      qc.invalidateQueries({ queryKey: ["inventory"] });
     },
   });
 }

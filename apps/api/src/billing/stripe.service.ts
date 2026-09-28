@@ -104,30 +104,18 @@ export class StripeService implements OnModuleInit {
 
   // ─── Billing Portal ───────────────────────────────────────────────────────
 
-  async createBillingPortalSession(params: {
-    customerId: string;
-    returnUrl: string;
-  }): Promise<{ url: string }> {
-    return this.client.billingPortal.sessions.create({
-      customer: params.customerId,
-      return_url: params.returnUrl,
-    });
-  }
-
-  // ─── Price lookup ─────────────────────────────────────────────────────────
-
-  getPriceIdForPlan(plan: string): string {
-    const stripeConfig = this.config.get<AppConfig["stripe"]>("stripe")!;
-    switch (plan) {
-      case "STARTER":
-        return stripeConfig.priceStarter;
-      case "PROFESSIONAL":
-        return stripeConfig.priceProfessional;
-      case "ENTERPRISE":
-        return stripeConfig.priceEnterprise;
-      default:
-        throw new Error(`Unknown plan: ${plan}`);
-    }
+  /** #2476: `request` caps this one call (stripe-node's `timeout` / `maxNetworkRetries`); omit it for
+   *  Stripe's defaults. */
+  async createBillingPortalSession(
+    params: { customerId: string; returnUrl: string },
+    request?: { timeoutMs: number; maxNetworkRetries: number },
+  ): Promise<{ url: string }> {
+    return this.client.billingPortal.sessions.create(
+      { customer: params.customerId, return_url: params.returnUrl },
+      request
+        ? { timeout: request.timeoutMs, maxNetworkRetries: request.maxNetworkRetries }
+        : undefined,
+    );
   }
 
   // ─── Webhook signature verification ───────────────────────────────────────
