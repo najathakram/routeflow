@@ -260,7 +260,7 @@ describeDb("#2562 run-stop reorder vs a concurrent run start — real Postgres",
       await prisma.$executeRaw`SELECT pg_stat_clear_snapshot()`; // returns void: $executeRaw
       const rows: Array<{ n: bigint | number }> = await prisma.$queryRaw`
         SELECT count(*)::int AS n FROM pg_stat_activity
-        WHERE cardinality(pg_blocking_pids(pid)) > 0`;
+        WHERE datname = current_database() AND cardinality(pg_blocking_pids(pid)) > 0`;
       if (Number(rows[0]?.n ?? 0) > 0) return true;
       if (settled) return false;
       if (Date.now() > deadline) throw new Error("the reorder neither blocked nor finished");
@@ -359,7 +359,7 @@ describeDb("#2562 run-stop reorder vs a concurrent run start — real Postgres",
       await prisma.$executeRaw`SELECT pg_stat_clear_snapshot()`; // returns void: $executeRaw
       const rows: Array<{ n: bigint | number }> = await prisma.$queryRaw`
         SELECT count(*)::int AS n FROM pg_stat_activity
-        WHERE cardinality(pg_blocking_pids(pid)) > 0`;
+        WHERE datname = current_database() AND cardinality(pg_blocking_pids(pid)) > 0`;
       if (Number(rows[0]?.n ?? 0) >= n) return;
       if (Date.now() > deadline) throw new Error(`fewer than ${n} backends ever blocked`);
       // eslint-disable-next-line no-await-in-loop

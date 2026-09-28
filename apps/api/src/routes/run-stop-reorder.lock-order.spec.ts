@@ -9,6 +9,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as ts from "typescript";
+import { reorderRunStopsInTx } from "./run-stop-reorder";
 
 describe("reorderRunStopsInTx lock order (#2635, SA-533g)", () => {
   const src = ts.createSourceFile(
@@ -37,22 +38,30 @@ describe("reorderRunStopsInTx lock order (#2635, SA-533g)", () => {
     expect(fn?.body).toBeDefined();
   });
 
-  it("statement 1 locks the run's stop rows, in id order, FOR UPDATE", () => {
-    const sql = rawSql(statements()[0]);
+  it("statement 1 refuses a missing run id (SA-533h) before any query", () => {
+    const st = statements()[0];
+    expect(ts.isIfStatement(st)).toBe(true);
+    const ifSt = st as ts.IfStatement;
+    expect(ifSt.expression.getText(src)).toBe("!runId");
+    expect(ts.isThrowStatement(ifSt.thenStatement)).toBe(true);
+  });
+
+  it("statement 2 locks the run's stop rows, in id order, FOR UPDATE", () => {
+    const sql = rawSql(statements()[1]);
     expect(sql).not.toBeNull();
     expect(sql).toMatch(
       /FROM "RouteRunStop" WHERE "routeRunId" = \$\{runId\} ORDER BY id FOR UPDATE/,
     );
   });
 
-  it("statement 2 locks the RouteRun FOR UPDATE", () => {
-    const sql = rawSql(statements()[1]);
+  it("statement 3 locks the RouteRun FOR UPDATE", () => {
+    const sql = rawSql(statements()[2]);
     expect(sql).not.toBeNull();
     expect(sql).toMatch(/FROM "RouteRun" WHERE id = \$\{runId\} FOR UPDATE/);
   });
 
   it("no tx read or write comes before the two locks", () => {
-    const lockEnd = statements()[1].getEnd();
+    const lockEnd = statements()[2].getEnd();
     const early: string[] = [];
     const walk = (n: ts.Node) => {
       if (
@@ -66,5 +75,26 @@ describe("reorderRunStopsInTx lock order (#2635, SA-533g)", () => {
     };
     walk(fn!.body!);
     expect(early).toEqual([]);
+  });
+
+  it("runtime (SA-533h): an undefined run id throws before ANY query", async () => {
+    const tx = {
+      $executeRaw: jest.fn(),
+      $queryRaw: jest.fn(),
+      routeRun: { findFirst: jest.fn() },
+      routeRunStop: { findMany: jest.fn(), updateMany: jest.fn() },
+      route: { update: jest.fn() },
+    };
+    await expect(reorderRunStopsInTx(tx, undefined as never, [])).rejects.toThrow(/run id missing/);
+    for (const fn of [
+      tx.$executeRaw,
+      tx.$queryRaw,
+      tx.routeRun.findFirst,
+      tx.routeRunStop.findMany,
+      tx.routeRunStop.updateMany,
+      tx.route.update,
+    ]) {
+      expect(fn).not.toHaveBeenCalled();
+    }
   });
 });

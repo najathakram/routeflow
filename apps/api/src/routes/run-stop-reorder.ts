@@ -18,6 +18,9 @@ export async function reorderRunStopsInTx(
   runId: string,
   order: { id: string; stopNumber: number }[],
 ): Promise<void> {
+  // SA-533h: an undefined id would bind NULL and lock nothing, and the Prisma reads below would drop
+  // the undefined key (the tenant's FIRST run, stops and swaps widened across runs). Refuse first.
+  if (!runId) throw new Error("#2635: run id missing for the run-stop reorder");
   await tx.$executeRaw`SELECT id FROM "RouteRunStop" WHERE "routeRunId" = ${runId} ORDER BY id FOR UPDATE`;
   await tx.$executeRaw`SELECT id FROM "RouteRun" WHERE id = ${runId} FOR UPDATE`;
   const run = await tx.routeRun.findFirst({ where: { id: runId } });
