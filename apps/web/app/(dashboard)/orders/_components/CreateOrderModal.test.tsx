@@ -885,7 +885,13 @@ describe("CreateOrderModal", () => {
         renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
         capturedOnScan!("111");
         await screen.findByText("$10.00 / each");
-        fireEvent.change(screen.getByPlaceholderText("10.00"), { target: { value: "9.00" } });
+        // #2696 (b): the price is changed by tapping it — the sheet owns the one-time price.
+        fireEvent.click(screen.getAllByLabelText("Change price")[0]);
+        const sheet = await screen.findByRole("dialog", { name: /^edit /i });
+        fireEvent.change(within(sheet).getByPlaceholderText("10.00"), {
+          target: { value: "9.00" },
+        });
+        fireEvent.click(within(sheet).getByRole("button", { name: "Done" }));
         expect(await screen.findByText("$9.00 / each")).toBeInTheDocument();
 
         await pickCustomer("Acme Foods");
