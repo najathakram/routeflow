@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -30,11 +31,13 @@ import { SuperAdminGuard } from "../tenant/super-admin.guard";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { OnboardingService } from "./onboarding.service";
+import { OnboardingLifecycleService } from "./onboarding-lifecycle.service";
 import {
   CompleteOnboardingStepDto,
   CreateOnboardingCaseDto,
   ListDemoBookingsQueryDto,
   ListOnboardingCasesQueryDto,
+  OnboardingFunnelQueryDto,
   UpdateOnboardingCaseDto,
   WaiveOnboardingStepDto,
 } from "./dto/onboarding.dto";
@@ -51,6 +54,7 @@ export class OnboardingController {
   constructor(
     private readonly onboarding: OnboardingService,
     private readonly intake: OnboardingIntakeService,
+    private readonly lifecycle: OnboardingLifecycleService,
   ) {}
 
   @Get("onboarding/cases")
@@ -61,6 +65,15 @@ export class OnboardingController {
   @Get("onboarding/cases/counts")
   counts() {
     return this.onboarding.counts();
+  }
+
+  /** #2159 S5: demo → signed → paid → live, and median days per stage, for a cohort window. */
+  @Get("onboarding/funnel")
+  funnel(@Query() q: OnboardingFunnelQueryDto) {
+    const to = q.to ? new Date(q.to) : new Date();
+    const from = q.from ? new Date(q.from) : new Date(to.getTime() - 90 * 24 * 60 * 60 * 1000);
+    if (!(from < to)) throw new BadRequestException("`from` must be before `to`");
+    return this.lifecycle.funnel(from, to);
   }
 
   @Post("onboarding/cases")
