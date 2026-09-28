@@ -14,18 +14,23 @@
 //          payment counters, device tokens, refresh tokens, password reset
 //          tokens, driver locations.
 //
-// Usage:
-//   node apps/api/scripts/wipe-tenant-fresh-start.js <tenant-slug>
-//   node apps/api/scripts/wipe-tenant-fresh-start.js <tenant-slug> --execute
+// Usage (#2500, SA-481 — exactly ONE path flag; neither is a usage error, exit 2):
+//   Test tenant, local database (the only test-tenant path):
+//     node apps/api/scripts/wipe-tenant-fresh-start.js <test-slug> --local [--execute]
+//   Live tenant, client-requested fresh start — OWNER-RUN ONLY, Railway proxy only:
+//     railway run --service postgres node apps/api/scripts/backup-production.mjs pre-fresh-start-<slug>
+//     railway run --service postgres node apps/api/scripts/wipe-tenant-fresh-start.js <slug> \
+//       --live-tenant-override --exclude-tenant <slug,...> [--execute --backup-taken]
 //
-// Without --execute the script prints row counts only (dry run).
-// With --execute the script requires the operator to type the slug back to confirm,
-// then runs all deletes inside one Prisma $transaction.
+// Dry run (row counts only) unless --execute. With --execute the operator types the slug back,
+// then every delete runs inside one Prisma $transaction.
 //
-// Test-tenant policy: only approved test tenants may be wiped. Wiping a live
-// tenant (e.g. a client requesting a fresh start before go-live) additionally
-// requires the explicit --live-tenant-override flag on top of the dry-run
-// default and the type-back confirmation.
+// ONE target: the database URL is resolved once (lib/fresh-start-target.mjs) and that same value
+// feeds the pg Pool, the redacted "DB:" banner (with its source) and the guard — the banner can
+// never name a different database than the one wiped. --local accepts only a provably-local target
+// (production-guard.js); --live-tenant-override dials only the Railway proxy variables, never a
+// stray DATABASE_URL. --exclude-tenant names tenants that are never wiped in any mode (supplied at
+// run time, never written into git) and is required on the live path.
 
 const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
@@ -34,34 +39,17 @@ const { PrismaClient } = require("../../../node_modules/@prisma/client");
 const { PrismaPg } = require("../../../node_modules/@prisma/adapter-pg");
 const { Pool } = require("../../../node_modules/pg");
 const { isTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
+const { classifyDbTarget } = require("./lib/production-guard");
 
-const dbUrl =
-  process.env.DATABASE_PUBLIC_URL ||
-  process.env.DATABASE_URL ||
-  "postgresql://user:pass@localhost:5432/routeflow_dev";
+const USAGE =
+  "Usage: node wipe-tenant-fresh-start.js <test-slug> --local [--execute]\n" +
+  "   or (owner-run, under railway run): <slug> --live-tenant-override --exclude-tenant <slug,...> " +
+  "[--execute --backup-taken]";
 
-const pool = new Pool({ connectionString: dbUrl });
-const adapter = new PrismaPg(pool);
-const prisma = new PrismaClient({ adapter });
-
-const slug = process.argv[2];
-const execute = process.argv.includes("--execute");
-const liveTenantOverride = process.argv.includes("--live-tenant-override");
-
-if (!slug) {
-  console.error("Missing tenant slug. Usage: node wipe-tenant-fresh-start.js <slug> [--execute]");
-  process.exit(1);
-}
-
-if (!isTestTenant(slug) && !liveTenantOverride) {
-  console.error(
-    `Test-tenant policy: "${slug}" is not an approved test tenant.\n` +
-      "Wiping a LIVE tenant requires the explicit --live-tenant-override flag\n" +
-      "(and still needs --execute plus the type-back confirmation).\n" +
-      'See CLAUDE.md "Test tenants & real-client data (policy)".',
-  );
-  process.exit(1);
-}
+// Assigned once main() has resolved THE target; nothing dials before that.
+let prisma;
+let slug;
+let execute;
 
 // Ordered children-first for explicit FK safety. Each entry is the Prisma model
 // name as it appears on the client (lowerCamel of the schema model name).
@@ -289,13 +277,54 @@ async function nuke(tenantId) {
 }
 
 (async () => {
-  const dbUrl = (process.env.DATABASE_URL || "").replace(/:\/\/[^@]*@/, "://***:***@");
-  console.log(`\nDB:     ${dbUrl}`);
+  const { parseFreshStartArgs, planFreshStart, checkExcludedTenants } =
+    await import("./lib/fresh-start-target.mjs");
+  const { resolveDatabaseUrl, redactUrl } = await import("./lib/railway-db-url.mjs");
+  const args = parseFreshStartArgs(process.argv.slice(2));
+  if (args.error) {
+    console.error(`${args.error}\n${USAGE}`);
+    process.exit(2);
+  }
+  // #2500: THE target — one resolution feeds the Pool, the banner and the guard below.
+  const target = planFreshStart(args, process.env, {
+    resolve: resolveDatabaseUrl,
+    redact: redactUrl,
+    classifyLocal: (url, env) => classifyDbTarget(url, env),
+    isTestTenant,
+  });
+  if (!target.ok) {
+    console.error(target.reason);
+    if (target.exit === 2) console.error(USAGE);
+    process.exit(target.exit);
+  }
+  slug = args.slug;
+  execute = args.execute;
+  prisma = new PrismaClient({ adapter: new PrismaPg(new Pool(target.poolConfig)) });
+
+  console.log(`\n${target.banner}`);
+  if (target.backupCommand) console.log(`Backup: ${target.backupCommand}`);
   console.log(`Tenant: ${slug}`);
   console.log(`Mode:   ${execute ? "EXECUTE (DESTRUCTIVE)" : "DRY-RUN (counts only)"}\n`);
 
   const tenant = await getTenant();
   console.log(`Resolved tenant: ${tenant.name} (id=${tenant.id})\n`);
+
+  // #2508 F1: every excluded slug must name a tenant in THIS database (same client), and the
+  // target is refused by id, all BEFORE any count or write.
+  const found = args.exclude.length
+    ? await prisma.tenant.findMany({
+        where: { slug: { in: args.exclude } },
+        select: { id: true, slug: true, name: true },
+      })
+    : [];
+  const exclusion = checkExcludedTenants({ exclude: args.exclude, found, tenant });
+  if (!exclusion.ok) {
+    console.error(exclusion.reason);
+    await prisma.$disconnect();
+    process.exit(1);
+  }
+  for (const line of exclusion.lines) console.log(line);
+  if (exclusion.lines.length) console.log("");
 
   console.log("Row counts in nuke scope:");
   const rows = await countAll(tenant.id);
@@ -327,6 +356,6 @@ async function nuke(tenantId) {
   await prisma.$disconnect();
 })().catch(async (err) => {
   console.error("\nFATAL:", err);
-  await prisma.$disconnect();
+  if (prisma) await prisma.$disconnect();
   process.exit(99);
 });
