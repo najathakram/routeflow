@@ -134,6 +134,45 @@ describe("OrderLineUnitPicker", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
+  // #2305: the order-edit price row sets only `unitPrice` (priceType stays STANDARD). Master
+  // re-checked on every price change and snapped the typed price back to the ladder's.
+  it("keeps a price-only edit on a unit line: no refresh when only unitPrice moves (#2305)", () => {
+    const onChange = jest.fn();
+    const { rerender } = render(
+      <OrderLineUnitPicker line={caseLine} tier={1} onChange={onChange} />,
+    );
+    expect(onChange).not.toHaveBeenCalled(); // 480 is already the ladder's Case price
+    rerender(
+      <OrderLineUnitPicker line={{ ...caseLine, unitPrice: 500 }} tier={1} onChange={onChange} />,
+    );
+    rerender(
+      <OrderLineUnitPicker line={{ ...caseLine, unitPrice: 505 }} tier={1} onChange={onChange} />,
+    );
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("still re-prices a hand-priced STANDARD unit line when the tier then changes under it (#2305)", () => {
+    const onChange = jest.fn();
+    const { rerender } = render(
+      <OrderLineUnitPicker line={{ ...caseLine, unitPrice: 500 }} tier={1} onChange={onChange} />,
+    );
+    // first sight at a price that is not the ladder's: the mount refresh (pinned above) applies
+    expect(onChange).toHaveBeenCalledTimes(1);
+    onChange.mockClear();
+    rerender(
+      <OrderLineUnitPicker line={{ ...caseLine, unitPrice: 500 }} tier={1} onChange={onChange} />,
+    );
+    expect(onChange).not.toHaveBeenCalled(); // same ladder, same typed price: nothing
+    rerender(
+      <OrderLineUnitPicker line={{ ...caseLine, unitPrice: 500 }} tier={2} onChange={onChange} />,
+    );
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ value: "Case", price: 240 }),
+      true,
+    );
+  });
+
   it("resets a held unit to the pack even when the product's ladder is now EMPTY (review defect 3)", () => {
     mockUnits = [];
     const onChange = jest.fn();
@@ -157,5 +196,45 @@ describe("OrderLineUnitPicker", () => {
       expect.objectContaining({ value: "", kind: "pack" }),
       false,
     );
+  });
+
+  // #2381: "Not available" → Undo unmounts and remounts the picker, and the first-sight refresh
+  // snapped a price the operator had TYPED back to the ladder's. A typed price survives a remount.
+  describe("a typed price survives a remount (#2381)", () => {
+    const typed = { ...caseLine, unitPrice: 300, priceEdited: true };
+
+    it("first sight after a remount does not re-price a line whose price was typed", () => {
+      const onChange = jest.fn();
+      const first = render(<OrderLineUnitPicker line={typed} tier={2} onChange={onChange} />);
+      first.unmount(); // "Not available"
+      render(<OrderLineUnitPicker line={typed} tier={2} onChange={onChange} />); // Undo
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it("nor when the ladder loads after the picker mounted", () => {
+      const onChange = jest.fn();
+      mockUnits = undefined;
+      const view = render(<OrderLineUnitPicker line={typed} tier={2} onChange={onChange} />);
+      mockUnits = [CASE];
+      view.rerender(<OrderLineUnitPicker line={typed} tier={2} onChange={onChange} />);
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it("a real ladder move afterwards (the customer's tier changes) still re-prices it", () => {
+      const onChange = jest.fn();
+      const view = render(<OrderLineUnitPicker line={typed} tier={1} onChange={onChange} />);
+      expect(onChange).not.toHaveBeenCalled();
+      view.rerender(<OrderLineUnitPicker line={typed} tier={2} onChange={onChange} />);
+      expect(onChange).toHaveBeenCalledWith(
+        expect.objectContaining({ value: "Case", price: 240 }),
+        true,
+      );
+    });
+
+    it("an untyped line is still refreshed on first sight (unchanged)", () => {
+      const onChange = jest.fn();
+      render(<OrderLineUnitPicker line={caseLine} tier={2} onChange={onChange} />);
+      expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ price: 240 }), true);
+    });
   });
 });

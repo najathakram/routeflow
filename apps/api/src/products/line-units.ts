@@ -6,6 +6,7 @@ import {
   type LadderProduct,
   type LadderUnit,
 } from "@routeflow/pricing";
+import { keepsHeldUnit, norm } from "../orders/unit-label-norm";
 
 /**
  * THE one place an order/invoice line's pack factor is decided (units_v1, step 4).
@@ -50,7 +51,6 @@ const toFactor = (v: unknown): number => {
   const n = Math.trunc(Number(v));
   return Number.isFinite(n) && n >= 1 ? n : 0;
 };
-const norm = (s: string) => s.trim().toLowerCase();
 const kindOf = (label: string, factor: number): "piece" | "level" =>
   norm(label) === norm(PIECE_LABEL) || factor === 1 ? "piece" : "level";
 
@@ -72,8 +72,9 @@ export function resolveLineUnits(
   const held = (existing?.unitLabel ?? "").trim();
   const ladderProduct: LadderProduct = { pricePerUnit: 0, ...product };
 
-  // Rule 2: a rewrite that leaves the unit unchanged (or re-sends the same one) keeps the line.
-  if (held && (explicit === undefined || (asked !== "" && norm(asked) === norm(held)))) {
+  // Rule 2: a rewrite that leaves the unit unchanged (or re-sends the same one) keeps the line —
+  // THE keep-held-unit rule (SA-070), shared with the restriction netting.
+  if (keepsHeldUnit(explicit, held)) {
     let factor = toFactor(existing?.unitsPerBox);
     if (factor === 0) {
       // Snapshot missing/corrupt: recover it from the ladder BY LABEL, never from the pack.

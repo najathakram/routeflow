@@ -49,6 +49,7 @@ import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import type { JwtPayload } from "../auth/jwt-payload.interface";
 
 const MOCK_ORDER = {
   id: "ord-1",
@@ -70,20 +71,25 @@ const MOCK_ORDER = {
   customer: { businessName: "Test Business" },
 };
 
-const operatorPayload = {
+// Complete JwtPayloads (B806: specs are type-checked now, so a mock missing a required field fails).
+const operatorPayload: JwtPayload = {
   sub: "user-op",
   username: "operator1",
   role: "OPERATOR" as const,
   status: "ACTIVE" as const,
   forcePasswordChange: false,
+  tenantId: "test-tenant",
+  tenantSlug: "test",
 };
 
-const customerPayload = {
+const customerPayload: JwtPayload = {
   sub: "user-cust",
   username: "customer1",
   role: "CUSTOMER" as const,
   status: "ACTIVE" as const,
   forcePasswordChange: false,
+  tenantId: "test-tenant",
+  tenantSlug: "test",
 };
 
 describe("OrdersService.findOne — tier-price leak (SA-085f)", () => {

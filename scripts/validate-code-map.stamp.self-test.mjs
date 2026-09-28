@@ -400,6 +400,66 @@ const main = () => {
     cleanup(victim);
   }
 
+  // ── CL: CHANGELOG entry count (#2229) ─────────────────────────────────────
+  // Both live bullet styles count; the 30-entry cap fails at 31; nested bullets,
+  // undated bold bullets and CHANGELOG-ARCHIVE.md are never counted. Each case only
+  // rewrites the (uncommitted) changelog files, so no drift rule is involved.
+  const oldStyle = (i) => `- **2026-08-${String((i % 28) + 1).padStart(2, "0")}** — old entry ${i}`;
+  const newStyle = (i) =>
+    `- **2026-09-${String((i % 28) + 1).padStart(2, "0")} — new entry ${i}.** body`;
+  const changelogCase = (lines, { archive = null } = {}) => {
+    let res;
+    withRepo("feature/changelog-count", (repo) => {
+      const mapDir = join(repo.scratch, ".claude", "code-map");
+      writeFileSync(join(mapDir, "CHANGELOG.md"), `# Changelog\n\n${lines.join("\n")}\n`);
+      if (archive) writeFileSync(join(mapDir, "CHANGELOG-ARCHIVE.md"), archive);
+      res = runScript(repo.scriptCopy, [], repo.scratch);
+    });
+    return { status: res.status, out: res.stdout + res.stderr };
+  };
+  const range = (n, f, from = 0) => Array.from({ length: n }, (_, i) => f(from + i));
+
+  {
+    const r = changelogCase(range(30, newStyle));
+    check("CL1: 30 current-style entries exit 0", r.status, 0);
+    check("CL1: ...and are counted (30/30)", r.out.includes("30/30 entries"), true);
+  }
+  {
+    const r = changelogCase(range(31, newStyle));
+    check("CL2: 31 current-style entries exit 1", r.status, 1);
+    check("CL2: ...naming CHANGELOG ENTRIES", r.out.includes("CHANGELOG ENTRIES:"), true);
+    check("CL2: ...with the count 31", r.out.includes("has 31 dated entries"), true);
+  }
+  {
+    const r = changelogCase(range(31, oldStyle));
+    check("CL3: 31 old-style entries exit 1", r.status, 1);
+  }
+  {
+    const r = changelogCase([...range(15, oldStyle), ...range(15, newStyle, 15)]);
+    check("CL4: 15 old + 15 current = 30, exit 0", r.status, 0);
+    check("CL4: ...counted 30/30", r.out.includes("30/30 entries"), true);
+    const r2 = changelogCase([...range(16, oldStyle), ...range(15, newStyle, 16)]);
+    check("CL4: 16 old + 15 current = 31, exit 1", r2.status, 1);
+  }
+  {
+    const noise = [
+      "- **Convention for new sessions:** add a bullet at the top.",
+      "  - **2026-09-01 — a nested bullet** is not an entry",
+      "-  **2026-09-02** double space is not an entry",
+      "- 2026-09-03 plain text, no bold",
+      "- **2026-09-0x — malformed date**",
+    ];
+    const r = changelogCase([...range(30, newStyle), ...noise]);
+    check("CL5: undated/nested/malformed bullets are not counted (exit 0)", r.status, 0);
+    check("CL5: ...still 30/30", r.out.includes("30/30 entries"), true);
+  }
+  {
+    const archive = `# Code map changelog — archive\n\n${range(45, newStyle).join("\n")}\n`;
+    const r = changelogCase(range(30, newStyle), { archive });
+    check("CL6: CHANGELOG-ARCHIVE.md entries are not counted (exit 0)", r.status, 0);
+    check("CL6: ...30/30, not 75", r.out.includes("30/30 entries"), true);
+  }
+
   console.log(
     failures
       ? `\nvalidate-code-map.stamp.self-test: ${failures} FAILURE(S)`

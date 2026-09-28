@@ -114,6 +114,25 @@ export function packFromOwnSplit(input: {
   return Number.isInteger(pack) && pack > 1 ? pack : null;
 }
 
+/**
+ * Does a stored box/piece split add up to its qty? True only when the pack is known and greater than 1 and
+ * `boxes x pack + pieces === qty` (tolerance 1e-6 on qty). A split with no pack (null, 0 or 1) is never
+ * "matching": it cannot be checked. ONE definition, used by the invoice edit plan and the invoice -> order
+ * back-sync (SA-257), so a split one writes is never one the other would refuse.
+ */
+export function splitMatchesQty(input: {
+  qty: number;
+  boxes?: number | null;
+  pieces?: number | null;
+  unitsPerBox?: number | null;
+}): boolean {
+  const pack = Number(input.unitsPerBox ?? 0);
+  if (!(pack > 1)) return false;
+  const boxes = Number(input.boxes ?? 0);
+  const pieces = Number(input.pieces ?? 0);
+  return Math.abs(boxes * pack + pieces - Number(input.qty ?? 0)) < 1e-6;
+}
+
 export interface LineSubtotalInput {
   unitPrice: number;
   /**
@@ -1086,36 +1105,8 @@ export function invoiceLineQtyText(item: UnitLineQtyInput): string {
 // line's split at the NEW pack instead of the one it was actually received
 // at. Web and mobile both import these now — no local copy of either.
 
-/**
- * "1,240 pcs (51 boxes + 16 pcs)" for a boxed product, "45.5 kg" otherwise.
- *
- * `Product.currentStock` (and every other stock figure — StockMovement.quantity,
- * StockLot.qty) is stored in PIECES system-wide. For a BOXED product
- * (`unitsPerBox > 1`) `unit` is the SELLING unit noun ("case", "box") — never
- * render a piece count next to it; the split is a display re-grouping of the
- * summed piece count, so the raw count stays primary and the box/piece
- * breakdown is parenthetical. For a NON-boxed product the stored figure is
- * already in the product's own unit, so pass `unit` and it keeps its real noun
- * ("kg", "gallon"); "pcs" is only the fallback when no unit is known.
- */
-export function unitsLabel(
-  units: number | string | null | undefined,
-  unitsPerBox?: number | null,
-  unit?: string | null,
-): string {
-  // Prisma Decimal columns arrive as numeric STRINGS, and a missing field must
-  // degrade to a dash rather than throw inside a render.
-  const u = Number(units);
-  if (!Number.isFinite(u)) return "—";
-  const n = u.toLocaleString("en-US");
-  const upb = Number(unitsPerBox ?? 0);
-  // Not boxed: the figure is denominated in the product's own unit, so keep its noun.
-  if (!(upb > 1)) return `${n} ${unit?.trim() || "pcs"}`;
-  // Boxed: a piece count — `unit` is the box noun, so it must NOT be used here.
-  if (u <= 0) return `${n} pcs`;
-  const split = normalizeBoxesPieces({ qty: u, unitsPerBox: upb });
-  return `${n} pcs (${formatQtySplit({ qty: split.qty, boxes: split.boxes, pieces: split.pieces })})`;
-}
+// `unitsLabel` itself lives in ./units-label (master moved it there first); only `linePack`
+// is added here.
 
 /**
  * B699/B722: the pack a PO line is denominated in. The line's OWN stored
