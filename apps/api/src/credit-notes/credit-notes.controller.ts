@@ -117,7 +117,11 @@ export class CreditNotesController {
   @Patch(":id")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  update(@Param("id") id: string, @Body() body: { reason?: string; expiresAt?: string | null }) {
-    return this.creditNotesService.updateCreditNote(id, body);
+  update(
+    @Param("id") id: string,
+    @Body() body: { reason?: string; expiresAt?: string | null },
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.creditNotesService.updateCreditNote(id, body, user?.sub ?? null);
   }
 }
