@@ -33,7 +33,7 @@ import {
 } from "../../../../../lib/invoice-totals";
 import { isPendingOrderMirror } from "../../../../../lib/invoices-logic";
 import { hasUnitLine, unitLabelsOf } from "../../../../../lib/invoice-line-unit";
-import { computeLineSubtotal, packFromOwnSplit } from "@routeflow/pricing";
+import { computeLineSubtotal, isNsfLine, packFromOwnSplit } from "@routeflow/pricing";
 import { showToast } from "../../../../../lib/toast";
 import {
   hasUnsavedInvoiceLineEdits,
@@ -66,6 +66,8 @@ type EditLine = {
   attestedPack?: number;
   productId: string | null;
   description: string;
+  /** #2656: carried so the NSF fee line's Taxable toggle stays locked off (the API refuses > 0). */
+  systemKind?: string | null;
   /** Total pieces (boxes × unitsPerBox + pieces when split). */
   qty: number;
   boxes: number | null;
@@ -142,6 +144,7 @@ export default function EditInvoiceScreen() {
         : {}),
       productId: it.productId ?? null,
       description: it.description,
+      systemKind: it.systemKind ?? null,
       qty: Number(it.qty),
       boxes: it.boxes ?? null,
       pieces: it.boxes != null ? (it.pieces ?? 0) : null,
@@ -397,7 +400,7 @@ export default function EditInvoiceScreen() {
               pieces: l.pieces,
               unitsPerBox: l.unitsPerBox,
               discount: l.discount ?? undefined,
-              taxable: l.taxable,
+              taxable: l.taxable && !isNsfLine(l), // #2656: the NSF fee line is never taxed
               notes: l.note,
               promoFreeUnits: editedLineFreeUnits(l),
             },
@@ -796,7 +799,19 @@ function LineCard({
         </>
       )}
 
-      {showTax && rate > 0 ? (
+      {showTax && rate > 0 && isNsfLine(line) ? (
+        // #2656 / SA-549: the NSF fee line is never taxed — the toggle is locked off (API refuses > 0).
+        <Pressable
+          style={[styles.taxRow, { opacity: 0.5 }]}
+          disabled
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: false, disabled: true }}
+          accessibilityLabel="Not taxed: the NSF fee is never taxed"
+        >
+          <View style={styles.checkbox} />
+          <Text style={styles.taxLabel}>Not taxed (NSF fee)</Text>
+        </Pressable>
+      ) : showTax && rate > 0 ? (
         <Pressable
           style={styles.taxRow}
           onPress={() => onPatch({ taxable: !line.taxable })}

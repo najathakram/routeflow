@@ -119,24 +119,6 @@
 - **Lesson:** **Land a train only after its head is verified and any hand hunk (import unions, ratchet rows) is confirmed against the merge-tree; after the squash, compare `git rev-parse origin/master^{tree}` with the verified tree and stop on any difference.**
 - **Guard:** the train PR body states the expected tree; the landing coordinator runs the comparison (train A: master's tree equals e98a41e8, checked). Dropped PRs are named with their reason so they re-enter the next train. Cf. [[L-197]].
 
-### L-230 · 2026-09-22 · process · a verification framed as "is my work safe" answers itself by construction
-
-- **Symptom:** on the #1219/#1221 merge rehearsal, the forward probe (revert only #1221's own fix,
-  confirm its own cases fail) passed and looked complete. The reverse probe (revert the OTHER
-  side's fix, confirm THEIR cases fail) found #1221's fix had no guard in the DEFAULT Jest lane —
-  reverting it left all 395 unit tests green.
-- **Root cause:** "is my work safe" is answered the moment your own side passes, so it stops there
-  by construction — it never asks whether the merge weakened anything ELSE.
-- **Lesson:** **Frame a merge verification as "did this change weaken anything", symmetric: revert
-  YOUR change on the merged tree and confirm your cases still fail, then revert THEIRS and confirm
-  theirs still fail.** A missing guard is silent in the direction that matters — green suite, more
-  test files, every signal points the right way. Structural fix, not "review harder": a fix guarded
-  only by a DB-lane spec must ALSO carry a default-lane pin — the DB spec proves it against real
-  transactions, the unit pin proves it still exists after a merge that doesn't re-trigger the DB
-  lane (it fires on ADDING a `.db.spec.ts`, not on changing the logic it protects).
-- **Guard:** #1221's added default-lane pin; the default-lane-pin requirement for any
-  DB-lane-guarded fix going forward.
-
 ### L-231 · 2026-09-22 · process · a register claim needs the check that would disprove it, not just the belief
 
 - **Symptom:** this incident's own write-up first carried a false claim — "no CI workflow runs the
@@ -171,6 +153,19 @@
 - **Guard:** `fleet-lead/scripts/fleet-status.mjs` reads the board from one `BOARD_ISSUE` constant
   (env `FLEET_BOARD_ISSUE`), and `fleet-lead/SKILL.md` names #2554 as the live board. Proposed:
   `fleet-status.mjs` prints the board's comment count and warns at 2,300.
+
+### L-241 · 2026-09-28 · process · text with backticks goes through a quoted heredoc to a file, never an unquoted heredoc or --body "…" (#2707)
+
+- **Symptom:** a lane wrote a PR body through an unquoted heredoc (`<<EOF`). The shell ran the
+  backticked commands in the text, including an owner-only `railway run … audit-tenant-entitlements.mjs`,
+  which was stopped only by a missing CLI on that machine (MacBook, #2707; no damage).
+- **Root cause:** shell command substitution runs inside an unquoted heredoc and inside a
+  double-quoted `--body "…"`, so any backticked command in prose is executed, not quoted.
+- **Lesson:** **Any PR, board or brief text that contains backticks is written with a QUOTED heredoc
+  (`<<'EOF'`) or the file-write tool to a file, then passed as `--body-file` / `gh … -F body=@file`.
+  Never interpolate such text into a command line.**
+- **Guard:** the lane brief rule (write bodies to a file first); production commands are owner-run on
+  the Mac mini only, with no railway CLI or link on the MacBook.
 
 ## tooling
 
