@@ -3,7 +3,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "./entitlements.service";
 import { FeatureOverrideService, FeatureOverrideEffect } from "./feature-override.service";
 import { PlanCatalogService } from "./plan-catalog.service";
-import { FEATURE_REGISTRY, FeatureDef } from "./feature-registry";
+import { FEATURE_REGISTRY, FeatureDef, isDefaultGrantedAddon } from "./feature-registry";
 import { findPlanDefinition } from "./plan-catalog.constants";
 import type { EffectiveFeature, FeatureSource } from "@routeflow/types";
 
@@ -162,6 +162,17 @@ export function resolveOneKey(feature: FeatureDef, ctx: ResolveContext): Resolve
   if (isAddonKeyed) {
     const active = ctx.activeAddonSet.has(feature.key);
     if (!active) {
+      // Owner ruling 2026-09-28: a default-granted add-on is held with no row when its
+      // `requires` are met — the SAME rule AddonService applies at runtime.
+      if (isDefaultGrantedAddon(feature, ctx.activeAddonSet, ctx.entFlags, ctx.overrides)) {
+        return {
+          key: feature.key,
+          effective: true,
+          source: "PRESET",
+          term: "default",
+          charged: false,
+        };
+      }
       return { key: feature.key, effective: false, source: "NONE", charged: false };
     }
     const grantingSku = feature.billing.skus.find((s) => ctx.activeSkuSet.has(s));
