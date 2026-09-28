@@ -7,7 +7,7 @@ import { isPodStorageKey } from "../routes/pod-artifacts.util";
 /**
  * #2548 (SA-502): the owner-run, READ-ONLY census of stored POD values failing #2547's strict key
  * shape (apps/api/scripts/report-2542-pod-keys.mjs). Its classifier and summary are checked by its
- * own `--self-test`; the argument gates refuse before any connection; and its hand-written mirror of
+ * own `--self-test`; the argument gates refuse before any connection; its hand-written mirror of
  * `isPodStorageKey` is pinned to the real one here, so the two cannot drift.
  */
 const SCRIPT = path.resolve(__dirname, "../../scripts/report-2542-pod-keys.mjs");
@@ -68,6 +68,33 @@ describe("report-2542-pod-keys.mjs (#2548, SA-502)", () => {
     );
     expect(child.stderr).toBe("");
     expect(JSON.parse(child.stdout)).toEqual(CASES.map((v) => isPodStorageKey(v, T)));
+  });
+
+  // #2585 (b): a pre-#2582 relink is a canonical OWN-tenant key naming another stop. It passes the
+  // shape and tenant checks (so it still signs), and the census now counts it separately.
+  it("counts an own-tenant key for another stop as SAME_TENANT_OTHER_STOP (#2585)", () => {
+    const href = pathToFileURL(SCRIPT).href;
+    const child = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `import { failingValues, summarize } from ${JSON.stringify(href)};
+         const own = { stopId: "stop-1", tenantId: "t1",
+           signatureUrl: "tenants/t1/pod/stop-1/signature-sig00001.jpg",
+           podPhotoUrls: ["tenants/t1/pod/stop-2/photo-abcd1234.jpg"] };
+         const f = failingValues(own);
+         const s = summarize(f.map((x) => ({ tenantId: "t1", stopId: own.stopId, kind: x.kind })));
+         console.log(JSON.stringify({ f, otherStop: s.otherStop, row: s.detail[0] }));`,
+      ],
+      { encoding: "utf8", timeout: 60_000 },
+    );
+    expect(child.stderr).toBe("");
+    const out = JSON.parse(child.stdout);
+    expect(out.f).toEqual([{ field: "podPhotoUrls", kind: "SAME_TENANT_OTHER_STOP" }]);
+    expect(out.otherStop).toBe(1);
+    expect(out.row.SAME_TENANT_OTHER_STOP).toBe(1);
+    expect(JSON.stringify(out.row)).not.toMatch(/tenants\/|"t1"|stop-1/);
   });
 
   it.each([
