@@ -26,6 +26,7 @@ import {
   packFromOwnSplit,
   roundMoney,
   getTierPrice,
+  isNsfLine,
 } from "@routeflow/pricing";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -258,6 +259,8 @@ interface LineItemState {
   attestedPack?: number;
   productId?: string;
   description: string;
+  /** #2656: carried so the NSF fee line's tax rate can be locked at 0 (the server refuses > 0). */
+  systemKind?: string | null;
   qty: number;
   unitPrice: number;
   taxRate: number;
@@ -449,9 +452,11 @@ export default function EditInvoicePage() {
                 storedPieces: locked ? Number(it.pieces ?? 0) : undefined,
                 productId: it.productId,
                 description: it.description,
+                systemKind: it.systemKind ?? null,
                 qty: Number(it.qty),
                 unitPrice: Number(it.unitPrice),
-                taxRate: Number(it.taxRate ?? 0),
+                // #2656: the NSF fee line is never taxed — a legacy stored rate loads (and saves) as 0.
+                taxRate: isNsfLine(it) ? 0 : Number(it.taxRate ?? 0),
                 discount: Number(it.discount ?? 0),
                 unitsPerBox: isBoxSplit && upb > 1 ? upb : undefined,
                 notes: it.notes ?? undefined,
@@ -551,7 +556,7 @@ export default function EditInvoicePage() {
           description: it.description,
           qty: Number(it.qty),
           unitPrice: Number(it.unitPrice),
-          taxRate: it.taxRate != null ? Number(it.taxRate) : undefined,
+          taxRate: isNsfLine(it) ? 0 : it.taxRate != null ? Number(it.taxRate) : undefined, // #2656
           discount:
             it.discount != null && Number(it.discount) !== 0 ? Number(it.discount) : undefined,
           ...(it.locked
@@ -827,8 +832,12 @@ export default function EditInvoicePage() {
                     decimals={4}
                     min={0}
                     max={1}
-                    value={item.taxRate}
+                    value={isNsfLine(item) ? 0 : item.taxRate}
                     placeholder="0.10"
+                    // #2656: the NSF fee line is never taxed — locked at 0 (the API refuses > 0).
+                    disabled={isNsfLine(item)}
+                    title={isNsfLine(item) ? "The NSF fee is never taxed" : undefined}
+                    aria-label={isNsfLine(item) ? "Tax rate (NSF fee: never taxed)" : undefined}
                     onChange={(v) => updateItem(item.key, { taxRate: v ?? 0 })}
                     className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
                   />

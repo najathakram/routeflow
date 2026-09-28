@@ -270,8 +270,9 @@ test.describe("Operator — Boxed order entry (WP2-13)", () => {
     const boxesInput = row.locator('input[title="Number of whole cases"]');
     const piecesInput = row.locator('input[title="Extra loose units (less than a full case)"]');
 
-    // Pieces-only: 0 cases + 2 loose units.
+    // Pieces-only: 0 cases + 2 loose units. Loose units are opt-in (#2696 d): open the field.
     await setBoxedQty(page, boxesInput, "0");
+    await row.getByRole("button", { name: "+ units" }).click();
     await setBoxedQty(page, piecesInput, "2");
     await assertLineTotal(row, boxPrice, unitsPerBox, 0, 2);
 

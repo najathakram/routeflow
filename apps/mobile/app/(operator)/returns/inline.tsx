@@ -15,17 +15,22 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import {
   applyCoveredPiecesToLines,
+  applyReturnScan,
   buildQuoteRequest,
+  canReturnOnlyPurchased,
   dropExcessAndRequote,
   extractRefusalMessage,
   groupQuoteChunks,
   isBoxedProduct,
   keyReusedReturnOf,
+  NOTHING_BOUGHT_BEFORE_MESSAGE,
+  notBoughtBeforeNames,
   RETURNS_NOT_ENABLED_MESSAGE,
   sumChunkTotals,
   type ExcessOption,
@@ -56,6 +61,18 @@ import { useAuthStore } from "../../../lib/auth-store";
 import { useInlineReturnRemoveGuard } from "../../../lib/use-inline-return-remove-guard";
 import { useInlineReturnSubmissionStore } from "../../../store/inlineReturnSubmissionStore";
 import { sanitizeIntInput } from "../../../lib/qty";
+import { ScanOrderSheet } from "../../../components/ScanOrderSheet";
+import { makeScanHandler } from "../../../lib/scan-ladder";
+import { resolveProductByCode } from "../../../lib/barcode-resolve";
+import { looksLikeScanCode, type ScanMatchable } from "../../../lib/wedge-scan";
+import { bumpScanOrder, nextFlash, type ScanFlash } from "../../../lib/scan-tray";
+import type { ScanOutcome } from "../../../lib/scan-loop";
+import {
+  returnLinePieces,
+  returnTrayRows,
+  setReturnLineQty,
+  stepReturnLine,
+} from "../../../lib/return-scan-tray";
 
 const MIN_TARGET = 44;
 
@@ -84,6 +101,10 @@ export default function InlineReturnScreen() {
   const [lines, setLines] = useState<PrefilledReturnLine[]>([]);
   const [reason, setReason] = useState<ReturnReason | "">("");
   const [search, setSearch] = useState("");
+  // #2694: scan into "What came back" with the SAME ScanOrderSheet + resolve ladder as order items.
+  const [scanOpen, setScanOpen] = useState(false);
+  const [scanOrder, setScanOrder] = useState<string[]>([]);
+  const [scanFlash, setScanFlash] = useState<ScanFlash | null>(null);
   /** #2647: a key-reused 409 means the earlier capture WAS recorded: clear the draft (the lines
    *  re-seed from the order, the reason resets) so the same goods are not re-entered and credited
    *  twice, and offer "Open RET-…". Any other refusal keeps the draft for a fix-and-retry. */
@@ -99,6 +120,33 @@ export default function InlineReturnScreen() {
   const quoteMut = useInlineReturnQuote();
   const captureMut = useCaptureInlineReturn();
   const getOrCreateNonce = useInlineReturnSubmissionStore((s) => s.getOrCreateNonce);
+  type ScannedProduct = ScanMatchable & {
+    id: string;
+    name: string;
+    unit?: string | null;
+    unitsPerBox?: number | null;
+  };
+  // A scan adds the product with 1 piece; a repeat adds a piece (applyReturnScan). Returns never
+  // create products, so the ladder gets no onCreate; several matches hand the code to the search.
+  const acceptScanned = (product: ScannedProduct): ScanOutcome => {
+    setLines(
+      (prev) => applyReturnScan(prev, product, (base) => ({ ...base, soldLabel: "" })).lines,
+    );
+    setScanOrder((order) => bumpScanOrder(order, product.id));
+    setScanFlash((prev) => nextFlash(prev, product.id));
+    setSearch("");
+    if (scanOpen) return; // the tray row is the confirmation
+    return { feedback: { kind: "added", text: `Added ${product.name}` } };
+  };
+  const handleScanned = makeScanHandler<ScannedProduct>({
+    products: () => (products?.data ?? []) as ScannedProduct[],
+    accept: acceptScanned,
+    resolve: (c, signal) => resolveProductByCode<ScannedProduct>(c, signal),
+    onAmbiguous: (code) => {
+      setScanOpen(false);
+      setSearch(code);
+    },
+  });
   const { data: products } = useAdminProducts(
     { search: search.trim(), limit: 8 },
     { enabled: search.trim().length > 1 },
@@ -146,6 +194,8 @@ export default function InlineReturnScreen() {
       dispatch({ ...quotedEvent(screen), excessOption: option });
       return;
     }
+    // #2693: nothing matched to an invoice ⇒ the re-quote would be EMPTY; never send it.
+    if (!canReturnOnlyPurchased(screen.quote)) return;
     requote(dropExcessAndRequote(customerId, screen.quote), (quote) => {
       // Capture reads the quoted snapshot, so the reduced amount goes into the snapshot too.
       const reduced = applyCoveredPiecesToLines(screen.quotedLines, quote);
@@ -218,9 +268,27 @@ export default function InlineReturnScreen() {
               What came back
             </Text>
             <SearchBar
-              placeholder="Search products to add…"
+              placeholder="Search or scan products to add…"
               value={search}
               onChangeText={setSearch}
+              // A wedge / paste scanner ends with Enter; only a code-shaped term is a scan, so a
+              // typed product NAME never auto-adds.
+              onSubmitEditing={() => {
+                const code = search.trim();
+                if (!looksLikeScanCode(code)) return;
+                setSearch("");
+                void handleScanned(code);
+              }}
+              trailing={
+                <Pressable
+                  onPress={() => setScanOpen(true)}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Scan items"
+                >
+                  <Ionicons name="barcode-outline" size={22} color={ios.brand} />
+                </Pressable>
+              }
             />
             {(products?.data ?? [])
               .filter((p) => !lines.some((l) => l.productId === p.id))
@@ -296,6 +364,7 @@ export default function InlineReturnScreen() {
         {(screen.step === "quote" || screen.step === "capturing") && (
           <QuoteView
             quote={screen.quote}
+            lines={screen.quotedLines}
             excessOption={screen.excessOption}
             onExcessOption={changeExcess}
             reason={reason}
@@ -360,6 +429,23 @@ export default function InlineReturnScreen() {
           </View>
         )}
       </ScrollView>
+
+      {/* #2694: the order items' scan sheet, price-less for returns. */}
+      <ScanOrderSheet
+        visible={scanOpen}
+        rows={returnTrayRows(lines, scanOrder)}
+        flash={scanFlash}
+        totalItems={lines.reduce((n, l) => n + returnLinePieces(l), 0)}
+        total={0}
+        hideMoney
+        onScanned={handleScanned}
+        onChangeQty={(id, qty) => setLines((prev) => setReturnLineQty(prev, id, qty))}
+        onIncrement={(id) => setLines((prev) => stepReturnLine(prev, id, +1))}
+        onDecrement={(id) => setLines((prev) => stepReturnLine(prev, id, -1))}
+        onRemove={(id) => setLines((prev) => prev.filter((l) => l.productId !== id))}
+        onReview={() => setScanOpen(false)}
+        onDone={() => setScanOpen(false)}
+      />
     </SafeAreaView>
   );
 }
@@ -373,6 +459,8 @@ function quotedEvent(
 
 function QuoteView(props: {
   quote: import("@routeflow/types").InlineReturnQuoteResponse;
+  /** The quoted lines, for naming products option 3 would drop (#2693). */
+  lines: ReadonlyArray<Pick<InlineReturnLineDraft, "productId" | "productName">>;
   excessOption: ExcessOption;
   onExcessOption: (o: ExcessOption) => void;
   reason: ReturnReason | "";
@@ -385,6 +473,10 @@ function QuoteView(props: {
   const { quote } = props;
   const { covered, excess } = groupQuoteChunks(quote);
   const excessTotals = sumChunkTotals(excess);
+  const onlyBoughtPossible = canReturnOnlyPurchased(quote);
+  const notBoughtBefore = onlyBoughtPossible ? notBoughtBeforeNames(quote, props.lines) : [];
+  const optionDisabled = (value: ExcessOption) =>
+    props.locked || (value === "RETURN_ONLY_PURCHASED" && !onlyBoughtPossible);
   return (
     <>
       <Text style={styles.section}>Matched to earlier orders</Text>
@@ -412,13 +504,17 @@ function QuoteView(props: {
           ).map(([value, label]) => (
             <Pressable
               key={value}
-              style={[styles.chip, props.excessOption === value && styles.chipActive]}
-              disabled={props.locked}
+              style={[
+                styles.chip,
+                props.excessOption === value && styles.chipActive,
+                optionDisabled(value) && !props.locked && styles.chipDisabled,
+              ]}
+              disabled={optionDisabled(value)}
               accessibilityRole="radio"
               accessibilityLabel={label}
               accessibilityState={{
                 selected: props.excessOption === value,
-                disabled: props.locked,
+                disabled: optionDisabled(value),
               }}
               onPress={() => props.onExcessOption(value)}
             >
@@ -429,6 +525,10 @@ function QuoteView(props: {
               </Text>
             </Pressable>
           ))}
+          {!onlyBoughtPossible && <Text style={styles.hint}>{NOTHING_BOUGHT_BEFORE_MESSAGE}</Text>}
+          {notBoughtBefore.length > 0 && (
+            <Text style={styles.hint}>Not bought before: {notBoughtBefore.join(", ")}</Text>
+          )}
         </View>
       )}
       <View style={styles.card}>
@@ -554,6 +654,7 @@ const styles = StyleSheet.create({
   },
   chipActive: { backgroundColor: ios.brand },
   chipText: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label },
+  chipDisabled: { opacity: 0.4 },
   chipTextActive: { color: "#fff" },
   error: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.system.red },
   btn: {
