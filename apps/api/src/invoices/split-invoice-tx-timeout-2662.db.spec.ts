@@ -6,7 +6,10 @@
  * and holds the tuple lock on an "OrderItem" row (pg_locks, as #2666). T2 then holds the line past the
  * timeout ON PURPOSE (the condition under test) and commits.
  *   - fixed: the creation is a ServiceUnavailableException (503, "nothing was saved … retry");
- *   - pre-fix: a raw Prisma P2028 error (a 500);
+ *   - pre-fix (MASTER itself, pre-existing — not introduced by #2624): the timed-out in-tx create comes
+ *     back null and the loop throws `TypeError: Cannot read properties of null (reading 'items')`, a
+ *     raw 500 (F2's pre-push run, #2554 5865725759). #2624's `restrictedLines` line would hit the same
+ *     null one line earlier; the guard sits above both;
  *   - either way Prisma rolled the transaction back: the order has NO invoice, invoicedQty stays 0.
  *
  * Runs only under `npm run local:test:db` (jest.db.config.js). Throwaway `qa-2662-<run>-<n>` tenants
