@@ -1174,13 +1174,22 @@ describe("CreateOrderModal", () => {
       expect(qty.value).toBe("7");
       fireEvent.change(qty, { target: { value: "0" } });
       expect(qty.value).toBe("1");
+      // A cleared field (and non-numeric input, which a number field reports as "") never NaNs.
+      fireEvent.change(qty, { target: { value: "7" } });
+      fireEvent.change(qty, { target: { value: "" } });
+      expect(qty.value).toBe("1");
+      fireEvent.change(qty, { target: { value: "abc" } });
+      expect(qty.value).toBe("1");
       fireEvent.change(qty, { target: { value: "7" } });
       expect(saveDraft()).toEqual([{ productId: "prod-2", qty: 7 }]);
     });
 
     it("(b) tapping a line's price opens its price/qty sheet; closing it returns to the list", async () => {
       await setup(plain);
-      fireEvent.click(await screen.findByLabelText("Change price"));
+      const tap = await screen.findByLabelText("Change price");
+      // The list row carries no inline price box — the price is changed by tapping it (owner).
+      expect(screen.queryByText("Price:")).not.toBeInTheDocument();
+      fireEvent.click(tap);
       // The modal itself is a dialog; the price sheet is the one named "Edit <product>".
       expect(await screen.findByRole("dialog", { name: /^edit /i })).toBeInTheDocument();
       fireEvent.click(screen.getAllByRole("button", { name: /close price editor/i })[0]);

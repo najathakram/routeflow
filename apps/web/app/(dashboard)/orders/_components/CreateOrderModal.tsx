@@ -21,7 +21,7 @@ import { useCreateDraft, useUpdateDraft, useDeleteDraft, useDraft } from "@/lib/
 import { draftDeviceLabel, type OrderDraftPayload } from "@/lib/drafts";
 import { apiClient } from "@/lib/api-client";
 import { orderCreatedToast } from "./order-created-toast";
-import { mergeQtyIntoLine, mergedLineMessage, newLineQty, parseAddQty } from "./add-line-merge";
+import { mergeQtyIntoLine, mergedLineMessage, newLineQty } from "./add-line-merge";
 import { getTierPrice, computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MoneyInput, DecimalInput } from "@/components/MoneyInput";
@@ -359,7 +359,7 @@ export function CreateOrderModal({
       // decided inside the setLineItems updater, against the true latest state, never from a
       // closure-captured `lineItems` read here beforehand (which a same-tick retry-plus-live-scan
       // race of the same product could make stale — see addLineItem's own comment).
-      const { created } = addLineItem(product, 1);
+      const { created } = addLineItem(product);
       return { created };
     },
     onUnknownCode: (code) => {
@@ -543,8 +543,8 @@ export function CreateOrderModal({
     return { ...li, qty: Math.max(1, li.qty + dir) };
   };
 
-  const addLineItem = (product: any, addQty = 1): { created: boolean } => {
-    const n = orderUiV2 ? parseAddQty(addQty) : 1; // #2696: every caller now adds 1 (no quick-add Qty)
+  const addLineItem = (product: any): { created: boolean } => {
+    const n = 1; // #2696: every pick / scan adds one (the quick-add Qty field is gone)
     // Already in the list: MERGE (sum) into that line instead of adding a duplicate.
     //  - order_ui_v2: +1 for a scan / plain pick, +N for a typed qty. Box-aware: a case-packed line
     //    gains N cases and its qty is re-derived from boxes/pieces (pricing reads the split).

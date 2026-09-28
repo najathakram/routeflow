@@ -171,6 +171,18 @@ describe("B715: the tap-to-edit price has a visible affordance only when onTapPr
     expect(screen.queryByLabelText("Change price")).not.toBeInTheDocument();
     expect(screen.queryByText("Tap to change")).not.toBeInTheDocument();
   });
+
+  // #2696 (b), owner: "tap on the price and change it" — not a text box beside it. With the tap
+  // wired the sheet owns the price, so the row renders no inline price box; without it, it does.
+  it("renders no inline price box when onTapPrice is provided, and one when it is omitted", () => {
+    const { unmount } = renderRow({ ...makeProps(plainItem), onTapPrice: jest.fn() });
+    expect(screen.queryByText("Price:")).not.toBeInTheDocument();
+    expect(screen.queryAllByRole("textbox")).toHaveLength(0);
+    unmount();
+    renderRow(makeProps(plainItem));
+    expect(screen.getByText("Price:")).toBeInTheDocument();
+    expect(screen.getAllByRole("textbox").length).toBeGreaterThan(0);
+  });
 });
 
 describe("multi-line per-item notes", () => {

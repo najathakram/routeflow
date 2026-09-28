@@ -122,6 +122,21 @@ export interface LineItemRowProps {
  * `CreateOrderModal.tsx`'s inline `.map()` — every branch below existed there
  * unchanged; see that file's git history for prior art. No behavior change.
  */
+/**
+ * #2696 (d): on a case-packed line in Case mode the loose-units field is OPT-IN ("+ units"), never
+ * shown by default — so a new line submits pieces = 0. Shown whenever pieces > 0 regardless (an
+ * edited line with boxes + pieces, or one switched back from Unit mode, never hides its units).
+ * Shared by the row and the scan screen's PriceEditor so the two cannot drift.
+ */
+export function useLooseUnitsToggle(pieces: number | null | undefined) {
+  const [open, setOpen] = React.useState(false);
+  return {
+    showLooseUnits: open || (pieces ?? 0) > 0,
+    openLooseUnits: () => setOpen(true),
+    closeLooseUnits: () => setOpen(false),
+  };
+}
+
 export function LineItemRow({
   item: li,
   category,
@@ -149,11 +164,7 @@ export function LineItemRow({
   onSetQty,
   rowRef,
 }: LineItemRowProps) {
-  // #2696 (d): on a case-packed line in Case mode the loose-units field is OPT-IN ("+ units"), never
-  // shown by default — so a new line submits pieces = 0. Shown whenever pieces > 0 regardless (an
-  // edited line with boxes + pieces, or one switched back from Unit mode, never hides its units).
-  const [looseUnitsOpen, setLooseUnitsOpen] = React.useState(false);
-  const showLooseUnits = looseUnitsOpen || (li.pieces ?? 0) > 0;
+  const { showLooseUnits, openLooseUnits, closeLooseUnits } = useLooseUnitsToggle(li.pieces);
   return (
     <li
       ref={rowRef}
@@ -278,8 +289,9 @@ export function LineItemRow({
               {category.name} · regulated
             </span>
           )}
-          {/* One-time discount input (only when no special price already applied) */}
-          {li.priceType !== "SPECIAL" && (
+          {/* One-time discount input (only when no special price already applied). #2696 (b): when
+              the price is tap-to-edit (onTapPrice), the sheet owns the price — no inline box. */}
+          {li.priceType !== "SPECIAL" && !onTapPrice && (
             <div className="mt-1 flex items-center gap-1 flex-wrap">
               <span className="text-[10px] text-navy/70">
                 {li.unitsPerBox && li.unitsPerBox > 1 ? "Case price:" : "Price:"}
@@ -419,7 +431,7 @@ export function LineItemRow({
                     type="button"
                     onClick={() => {
                       onSetPieces(0);
-                      setLooseUnitsOpen(false);
+                      closeLooseUnits();
                     }}
                     aria-label="Remove extra units"
                     className="text-xs text-navy/50 hover:text-danger"
@@ -430,7 +442,7 @@ export function LineItemRow({
               ) : (
                 <button
                   type="button"
-                  onClick={() => setLooseUnitsOpen(true)}
+                  onClick={openLooseUnits}
                   className="whitespace-nowrap rounded border border-dashed border-surface-border px-1.5 py-0.5 text-[10px] font-medium text-navy/60 hover:bg-surface-raised"
                 >
                   + units

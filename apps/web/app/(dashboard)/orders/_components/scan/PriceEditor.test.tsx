@@ -135,7 +135,7 @@ describe("PriceEditor", () => {
       const props = setup(boxed());
       fireEvent.change(screen.getByLabelText("Cases"), { target: { value: "3" } });
       fireEvent.click(screen.getByRole("button", { name: "+ units" })); // #2696 (d): opt-in
-      fireEvent.change(screen.getByLabelText("Extra units"), { target: { value: "2" } });
+      fireEvent.change(screen.getByLabelText("Extra loose units"), { target: { value: "2" } });
       expect(props.onSetBoxes).toHaveBeenLastCalledWith(3);
       expect(props.onSetPieces).toHaveBeenLastCalledWith(2);
     });
@@ -146,7 +146,7 @@ describe("PriceEditor", () => {
       const props = setup(boxed({ boxes: 2, pieces: 3 }));
       fireEvent.change(screen.getByLabelText("Cases"), { target: { value: "" } });
       expect(props.onSetBoxes).toHaveBeenLastCalledWith(0);
-      fireEvent.change(screen.getByLabelText("Extra units"), { target: { value: "" } });
+      fireEvent.change(screen.getByLabelText("Extra loose units"), { target: { value: "" } });
       expect(props.onSetPieces).toHaveBeenLastCalledWith(0);
       for (const fn of [props.onSetBoxes, props.onSetPieces]) {
         for (const [arg] of (fn as jest.Mock).mock.calls) expect(Number.isNaN(arg)).toBe(false);
@@ -156,7 +156,7 @@ describe("PriceEditor", () => {
     it("extra units are capped below one case", () => {
       setup(boxed());
       fireEvent.click(screen.getByRole("button", { name: "+ units" }));
-      expect(screen.getByLabelText("Extra units")).toHaveAttribute("max", "5");
+      expect(screen.getByLabelText("Extra loose units")).toHaveAttribute("max", "5");
     });
 
     it("the Case | Unit toggle drives onSetSellBy and reflects the current mode", () => {
