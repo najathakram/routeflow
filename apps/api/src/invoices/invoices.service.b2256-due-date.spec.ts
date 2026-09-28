@@ -82,6 +82,8 @@ describe("InvoicesService — #2256 due dates are the literal calendar day", () 
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // #2612: the split path's invoicedQty bump is a CAS (updateMany); a clean read matches 1.
+    prisma.orderItem.updateMany.mockResolvedValue({ count: 1 } as any);
     prisma.invoice.findFirst.mockResolvedValue({ items: [] });
 
     const module: TestingModule = await Test.createTestingModule({
