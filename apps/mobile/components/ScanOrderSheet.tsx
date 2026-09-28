@@ -50,6 +50,8 @@ export interface ScanOrderSheetProps {
    * `isSpecialFor`), so this only ever reports the tapped row id.
    */
   onEditPrice?: (id: string) => void;
+  /** #2694: a price-less scan (returns) — hide the header total and the rows' money. */
+  hideMoney?: boolean;
   /** Leave scanning for the full builder (prices, notes, customer, submit). */
   onReview: () => void;
   onDone: () => void;
@@ -77,6 +79,7 @@ export function ScanOrderSheet({
   onDecrement,
   onRemove,
   onEditPrice,
+  hideMoney,
   onReview,
   onDone,
 }: ScanOrderSheetProps) {
@@ -204,7 +207,7 @@ export function ScanOrderSheet({
           <View style={styles.trayHeader}>
             <View style={styles.trayHeaderLeft}>
               <Text style={styles.traySummary}>
-                {itemsLabel} · ${total.toFixed(2)}
+                {hideMoney ? itemsLabel : `${itemsLabel} · $${total.toFixed(2)}`}
               </Text>
               {isResolving ? (
                 <Text style={styles.resolvingText} accessibilityLiveRegion="polite">
@@ -232,6 +235,7 @@ export function ScanOrderSheet({
             onDecrement={onDecrement}
             onRemove={onRemove}
             onEditPrice={onEditPrice}
+            hideMoney={hideMoney}
             ListEmptyComponent={
               <Text style={styles.empty}>Scan an item — it lands here instantly.</Text>
             }

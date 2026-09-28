@@ -324,8 +324,9 @@ describe("ScanTray.tsx price-edit affordance (REG-shared-scantray-price)", () =>
     expect(scanTraySrc).toMatch(/onEditPrice,?\s*\}:\s*RowProps/);
     // renderItem passes it through and lists it as a memo dependency.
     expect(scanTraySrc).toMatch(/onEditPrice=\{onEditPrice\}/);
+    // #2694 appended the optional hideMoney to the same memo deps.
     expect(scanTraySrc).toMatch(
-      /\[flash, reduceMotion, onChangeQty, onIncrement, onDecrement, onRemove, onEditPrice\]/,
+      /\[flash, reduceMotion, onChangeQty, onIncrement, onDecrement, onRemove, onEditPrice(, hideMoney)?\]/,
     );
   });
 });
