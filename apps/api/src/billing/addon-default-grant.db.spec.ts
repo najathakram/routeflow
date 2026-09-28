@@ -11,10 +11,10 @@
  *   - case 5 is the production path itself: the PLAN grants flag.returns, no override, no rows;
  *   - cases 1–2 reach flag.returns through a GRANT override on it instead (`requires` folds
  *     GRANT/DENY overrides into its set alongside ent.flags);
- *   - case 3 (#2700, SA-559d) is pinned to the version WITHOUT flag.returns, so "flags gain forward"
- *     decides: it holds the key exactly when the PUBLISHED GROWTH carries flag.returns (a seeded
- *     DB: true; a fresh DB, whose fixture GROWTH has no flags: false — the plan-absence path), and
- *     a DENY on flag.returns then removes it on either DB.
+ *   - case 3 (#2700, lead F1 / SA-559d) is two UNCONDITIONAL cases on spec-unique plan keys, so no
+ *     DB's published catalog can decide them: (3a) a key no published version carries ⇒ the
+ *     "flags gain forward" union adds nothing ⇒ not granted; (3b) the spec publishes its OWN
+ *     version carrying flag.returns ⇒ pinned ∪ published grants it, and a DENY then removes it.
  *
  * Only Stripe / BillingEventService / EntitlementAuthority / FeatureResolverService are stubbed
  * (boundaries `sa385b` also stubs); PrismaService, EntitlementsService, FeatureOverrideService,
@@ -58,6 +58,8 @@ describeDb(
     // flag.returns). One version's GROWTH carries flag.returns, the other's does not.
     let versionWithReturns: string;
     let versionWithoutReturns: string;
+    // #2700: spec-owned versions made by case 3a/3b (deleted in afterAll with the others).
+    const extraVersionIds: string[] = [];
 
     beforeAll(async () => {
       const url = requireLocalDatabaseUrl();
@@ -120,7 +122,11 @@ describeDb(
       }
       // Spec-owned versions go after their tenants (definitions cascade).
       await prisma.planVersion.deleteMany({
-        where: { id: { in: [versionWithReturns, versionWithoutReturns].filter(Boolean) } },
+        where: {
+          id: {
+            in: [versionWithReturns, versionWithoutReturns, ...extraVersionIds].filter(Boolean),
+          },
+        },
       });
       await dropPublishedCatalog(prisma, createdVersionId);
       await prisma?.$disconnect();
@@ -234,42 +240,117 @@ describeDb(
       expect(after).toBe(0);
     });
 
-    it("(3) #2700: a pin WITHOUT flag.returns follows the published GROWTH through the union (a fresh DB: plan absence → false; a seeded DB: true), and a DENY on flag.returns wins on either", async () => {
-      const t = await throwawayTenant("case3");
-      const before = await prisma.tenantAddon.count({ where: { tenantId: t } });
-
-      // What "flags gain forward" implies for this pin: the spec-owned version is never PUBLISHED,
-      // so the tenant's plan flags are its own [] ∪ the PUBLISHED GROWTH's. Read, not assumed —
-      // a fresh DB (ensurePublishedCatalog's GROWTH carries no flags) and a seeded one differ.
-      const published = await new PlanCatalogService(prisma as any).getPublishedVersion();
-      const publishedGrowthHasReturns = !!published?.definitions
-        .find((d) => d.planKey === "GROWTH")
-        ?.featureFlags.includes(FLAG);
-      await expect(addons.hasAddon(t, KEY)).resolves.toBe(publishedGrowthHasReturns);
-      if (publishedGrowthHasReturns) {
-        await expect(addons.getActiveAddons(t)).resolves.toContain(KEY);
-        await expect(guardFor(KEY, t)()).resolves.toBe(true);
-      } else {
-        await expect(addons.getActiveAddons(t)).resolves.not.toContain(KEY);
-        await expect(guardFor(KEY, t)()).rejects.toBeInstanceOf(ForbiddenException);
-      }
-
-      // SA-559d: a DENY on flag.returns wins over a union-granted flag, whatever the DB.
-      await featureOverrides.create({
-        tenantId: t,
-        featureKey: FLAG,
-        effect: "DENY",
-        reason: "#2700 db.spec — fixture deny of flag.returns over a union grant",
-        expiresAt: null,
-        createdById: null,
+    /** #2700 (lead F1, SA-559d): a spec-owned PlanVersion with ONE definition under `planKey`. */
+    async function specVersionFor(planKey: string, featureFlags: string[], status?: "PUBLISHED") {
+      const version = 1_900_000_000 + Math.floor(Math.random() * 99_999_999);
+      const now = new Date();
+      const v = await prisma.planVersion.create({
+        data: {
+          version,
+          ...(status ? { status, publishedAt: now, effectiveAt: now } : {}),
+          notes: "addon-default-grant.db.spec.ts #2700 (spec-owned, deleted in afterAll)",
+          definitions: {
+            create: [{ planKey, name: planKey, monthlyPrice: 1, isCustom: false, featureFlags }],
+          },
+        },
       });
+      extraVersionIds.push(v.id);
+      return v.id;
+    }
+
+    /** A throwaway tenant on a spec-unique `planKey`, pinned to `versionId`. */
+    async function tenantOnPlan(label: string, planKey: string, versionId: string) {
+      seq += 1;
+      const slug = assertTestTenant(
+        `qa-sa540-${run}-${seq}-${label}`,
+        "addon-default-grant.db.spec.ts",
+      );
+      const t = await prisma.tenant.create({
+        data: {
+          slug,
+          name: slug,
+          class: TenantClass.PRODUCTION,
+          status: TenantStatus.ACTIVE,
+          planVersionId: versionId,
+        } as any,
+      });
+      tenantIds.push(t.id);
+      await prisma.tenantSubscription.create({
+        data: {
+          tenantId: t.id,
+          planKey,
+          planVersionId: versionId,
+          stripeSubId: `sub_sa540_${run}_${seq}`,
+          discount: 0,
+        } as any,
+      });
+      return t.id;
+    }
+
+    it("(3a) #2700 NEGATIVE, any DB: a plan key no published catalog carries ⇒ the union adds nothing ⇒ no flag.returns, no key, guard throws", async () => {
+      // Spec-unique key: no published version (seeded or fresh) has a definition for it, so the
+      // union has no forward row — plan absence holds on EVERY DB, unconditionally.
+      const planKey = `QA2700ABSENT${run.toUpperCase()}`;
+      const t = await tenantOnPlan("case3a", planKey, await specVersionFor(planKey, []));
+
+      await expect(entitlements.hasFlag(t, FLAG)).resolves.toBe(false);
       await expect(addons.hasAddon(t, KEY)).resolves.toBe(false);
       await expect(addons.getActiveAddons(t)).resolves.not.toContain(KEY);
       await expect(guardFor(KEY, t)()).rejects.toBeInstanceOf(ForbiddenException);
+      expect(await prisma.tenantAddon.count({ where: { tenantId: t } })).toBe(0);
+    });
 
-      const after = await prisma.tenantAddon.count({ where: { tenantId: t } });
-      expect(after).toBe(before);
-      expect(after).toBe(0);
+    it("(3b) #2700 UNION + DENY, any DB: pinned (no flag) ∪ a spec-PUBLISHED source carrying flag.returns ⇒ granted; a DENY on flag.returns ⇒ denied", async () => {
+      const planKey = `QA2700UNION${run.toUpperCase()}`;
+      // The spec controls the published source: demote whatever is PUBLISHED for this case only,
+      // publish its own version (the SAME spec-unique key, carrying flag.returns), restore after.
+      const toRestore = await prisma.planVersion.findMany({
+        where: { status: "PUBLISHED" },
+        select: { id: true, publishedAt: true, effectiveAt: true },
+      });
+      await prisma.planVersion.updateMany({
+        where: { id: { in: toRestore.map((v) => v.id) } },
+        data: { status: "SUPERSEDED" },
+      });
+      try {
+        const pinned = await specVersionFor(planKey, []);
+        const publishedId = await specVersionFor(planKey, [FLAG], "PUBLISHED");
+        const t = await tenantOnPlan("case3b", planKey, pinned);
+
+        const ent = await entitlements.resolve(t);
+        expect(ent.planVersionId).toBe(pinned); // never re-pinned
+        expect(ent.flags).toContain(FLAG); // gained forward from the spec-published version
+        await expect(addons.hasAddon(t, KEY)).resolves.toBe(true);
+        await expect(addons.getActiveAddons(t)).resolves.toContain(KEY);
+        await expect(guardFor(KEY, t)()).resolves.toBe(true);
+
+        await featureOverrides.create({
+          tenantId: t,
+          featureKey: FLAG,
+          effect: "DENY",
+          reason: "#2700 db.spec — fixture deny of flag.returns over a union grant",
+          expiresAt: null,
+          createdById: null,
+        });
+        await expect(addons.hasAddon(t, KEY)).resolves.toBe(false);
+        await expect(addons.getActiveAddons(t)).resolves.not.toContain(KEY);
+        await expect(guardFor(KEY, t)()).rejects.toBeInstanceOf(ForbiddenException);
+        expect(await prisma.tenantAddon.count({ where: { tenantId: t } })).toBe(0);
+        expect(publishedId).toBeTruthy();
+      } finally {
+        // Demote the spec's own PUBLISHED version FIRST (even when an assertion failed above), so
+        // exactly the original row(s) end up PUBLISHED again.
+        await prisma.planVersion.updateMany({
+          where: { id: { in: extraVersionIds }, status: "PUBLISHED" },
+          data: { status: "SUPERSEDED" },
+        });
+        for (const v of toRestore) {
+          await prisma.planVersion.update({
+            where: { id: v.id },
+            data: { status: "PUBLISHED", publishedAt: v.publishedAt, effectiveAt: v.effectiveAt },
+          });
+        }
+      }
     });
 
     it("(5) THE production path: the PLAN grants flag.returns, no override, no rows → hasAddon, getActiveAddons and the real AddonGuard all hold it with 0 rows; a DENY on flag.returns then removes it everywhere", async () => {
