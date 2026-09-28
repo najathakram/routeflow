@@ -195,7 +195,8 @@ export function checkProtectedTarget({ tenant, sub, allowPayingTenant }) {
     return {
       ok: false,
       reason:
-        `${tenant.name} (${tenant.id}) is protected: ${why}. Refused in every mode. ` +
+        // SA-547a: the id + arm only — a business NAME is a client identifier, like a slug.
+        `tenant ${tenant.id} is protected: ${why}. Refused in every mode. ` +
         "An owner-approved wipe of a protected tenant needs --allow-paying-tenant plus a typed confirmation.",
     };
   return {

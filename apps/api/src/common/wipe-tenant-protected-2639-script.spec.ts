@@ -49,6 +49,7 @@ describe("#2639 wipe-tenant-fresh-start refuses a protected target", () => {
   it("a paying target without the flag is refused, naming the paying arm", () => {
     expect(r.paying.ok).toBe(false);
     expect(r.paying.reason).toMatch(/PAYING/);
+    expect(r.paying.reason).toMatch(/tenant t-1 is protected/);
     expect(r.paying.reason).toMatch(/--allow-paying-tenant/);
   });
 
@@ -65,6 +66,13 @@ describe("#2639 wipe-tenant-fresh-start refuses a protected target", () => {
   it("an unprotected target is unchanged: ok, no phrase, no line", () => {
     for (const k of ["plain", "noSub", "deletedStripe"])
       expect(r[k]).toEqual({ ok: true, phrase: null, line: null });
+  });
+
+  it("SA-547a: no refusal names the tenant — id + arm only, never its slug or business name", () => {
+    for (const k of ["paying", "stripeOnly"]) {
+      expect(r[k].reason).not.toMatch(/qa-2639/);
+      expect(r[k].reason).not.toMatch(/QA 2639/);
+    }
   });
 
   it("the parser accepts --allow-paying-tenant and defaults it off", () => {
