@@ -117,16 +117,20 @@ describeDb("B104 / #2095 — buyer rooms and tracking against real Postgres", ()
   }
 
   async function connectCustomerRole(userId: string, tenantId: string): Promise<FakeSocket> {
+    // #2164: a CUSTOMER token carries a real exp, as every server-minted one does.
     const s = socketFor(
-      jwt.sign({
-        sub: userId,
-        username: userId,
-        role: "CUSTOMER",
-        status: "ACTIVE",
-        forcePasswordChange: false,
-        tenantId,
-        tenantSlug: "acme",
-      }),
+      jwt.sign(
+        {
+          sub: userId,
+          username: userId,
+          role: "CUSTOMER",
+          status: "ACTIVE",
+          forcePasswordChange: false,
+          tenantId,
+          tenantSlug: "acme",
+        },
+        { expiresIn: "15m" },
+      ),
     );
     await gateway.handleConnection(s as never);
     return s;
@@ -395,11 +399,106 @@ describeDb("B104 / #2095 — buyer rooms and tracking against real Postgres", ()
   });
 
   it("REG-B104: a CUSTOMER-role socket joins its own Customer's room, inside its own tenant only", async () => {
-    expect(roomsOf(await connectCustomerRole(ids.mine.user, T_A))).toEqual([room(T_A, "mine")]);
-    // The same user claiming another tenant resolves nothing there.
-    expect(roomsOf(await connectCustomerRole(ids.mine.user, T_B))).toEqual([]);
-    // A removed customer's user resolves nothing (REG-B131).
-    expect(roomsOf(await connectCustomerRole(ids.removed.user, T_A))).toEqual([]);
+    const mine = await connectCustomerRole(ids.mine.user, T_A);
+    expect(roomsOf(mine)).toEqual([room(T_A, "mine")]);
+    expect(mine.disconnect).not.toHaveBeenCalled();
+    // #2164: the same user claiming another tenant resolves nothing there, and is refused.
+    const crossed = await connectCustomerRole(ids.mine.user, T_B);
+    expect(roomsOf(crossed)).toEqual([]);
+    expect(crossed.disconnect).toHaveBeenCalledWith(true);
+    // A removed customer's user resolves nothing (REG-B131), and is refused (#2164).
+    const removed = await connectCustomerRole(ids.removed.user, T_A);
+    expect(roomsOf(removed)).toEqual([]);
+    expect(removed.disconnect).toHaveBeenCalledWith(true);
+    // #2164: a user at a SUSPENDED seller is refused too.
+    const atSuspended = await connectCustomerRole(ids.suspended.user, T_S);
+    expect(atSuspended.disconnect).toHaveBeenCalledWith(true);
+  });
+
+  // #1534 / SA-515: the staff re-check's user read EXECUTED on real Postgres (its select —
+  // role, tenantId, canActAsDriver — must exist on the row, which a mock cannot prove).
+  it("#1534: a staff socket is kept only while its user row matches the token's role, tenant and canActAsDriver", async () => {
+    const connectStaff = async (role: string, tenantId: string, extra = {}) => {
+      const s = socketFor(
+        jwt.sign(
+          {
+            sub: U_DRIVER,
+            username: U_DRIVER,
+            role,
+            status: "ACTIVE",
+            forcePasswordChange: false,
+            tenantId,
+            tenantSlug: "acme",
+            ...extra,
+          },
+          { expiresIn: "15m" },
+        ),
+      );
+      await gateway.handleConnection(s as never);
+      return s;
+    };
+    const live = await connectStaff("DRIVER", T_A);
+    expect(roomsOf(live)).toEqual([`tenant:${T_A}:driver:${U_DRIVER}`]);
+    expect(live.disconnect).not.toHaveBeenCalled();
+
+    for (const [role, tenant, extra] of [
+      ["OPERATOR", T_A, {}], // a role other than the row's
+      ["DRIVER", T_B, {}], // a tenant other than the row's
+      ["DRIVER", T_A, { canActAsDriver: true }], // a canActAsDriver other than the row's
+    ] as const) {
+      const refused = await connectStaff(role, tenant, extra);
+      expect(roomsOf(refused)).toEqual([]);
+      expect(refused.disconnect).toHaveBeenCalledWith(true);
+    }
+
+    await prisma.user.update({ where: { id: U_DRIVER }, data: { status: "INACTIVE" } });
+    try {
+      const inactive = await connectStaff("DRIVER", T_A);
+      expect(inactive.disconnect).toHaveBeenCalledWith(true);
+    } finally {
+      await prisma.user.update({ where: { id: U_DRIVER }, data: { status: "ACTIVE" } });
+    }
+  });
+
+  it("#2164: a connected CUSTOMER socket is disconnected at the next resync when its user, customer or seller stops being live", async () => {
+    const resyncOnly = async (socket: FakeSocket) => {
+      (gateway as unknown as { server: unknown }).server = {
+        local: { fetchSockets: async () => [socket] },
+      };
+      await gateway.resyncBuyerRooms();
+    };
+    const u = ids.other.user;
+    const c = ids.other.customer;
+    const q = (sql: string, id: string) => pool.query(sql, [id]);
+    const restore = async () => {
+      await q(`UPDATE "User" SET "status" = 'ACTIVE', "deletedAt" = NULL WHERE "id" = $1`, u);
+      await q(`UPDATE "Customer" SET "deletedAt" = NULL WHERE "id" = $1`, c);
+      await q(`UPDATE "Tenant" SET "status" = 'ACTIVE' WHERE "id" = $1`, T_A);
+    };
+    const changes: Array<[string, () => Promise<unknown>]> = [
+      ["user INACTIVE", () => q(`UPDATE "User" SET "status" = 'INACTIVE' WHERE "id" = $1`, u)],
+      ["user SUSPENDED", () => q(`UPDATE "User" SET "status" = 'SUSPENDED' WHERE "id" = $1`, u)],
+      ["user deleted", () => q(`UPDATE "User" SET "deletedAt" = now() WHERE "id" = $1`, u)],
+      ["customer removed", () => q(`UPDATE "Customer" SET "deletedAt" = now() WHERE "id" = $1`, c)],
+      [
+        "seller suspended",
+        () => q(`UPDATE "Tenant" SET "status" = 'SUSPENDED' WHERE "id" = $1`, T_A),
+      ],
+    ];
+    try {
+      for (const [label, change] of changes) {
+        const socket = await connectCustomerRole(u, T_A);
+        expect([label, roomsOf(socket)]).toEqual([label, [room(T_A, "other")]]);
+        await resyncOnly(socket);
+        expect([label, socket.disconnect.mock.calls]).toEqual([label, []]);
+        await change();
+        await resyncOnly(socket);
+        expect([label, socket.disconnect.mock.calls]).toEqual([label, [[true]]]);
+        await restore();
+      }
+    } finally {
+      await restore();
+    }
   });
 
   // ─── Tracking ───────────────────────────────────────────────────────────────────

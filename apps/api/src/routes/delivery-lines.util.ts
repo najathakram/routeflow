@@ -19,12 +19,70 @@ export async function claimStopCompletion(
   stopId: string,
   data: Record<string, unknown>,
 ): Promise<void> {
+  // #2409: only a PENDING / IN_PROGRESS stop can be completed — a SKIPPED one (the office skipped
+  // it while a completion sat in the driver's offline queue) must never flip to COMPLETED.
   const claimed = await tx.routeRunStop.updateMany({
-    where: { id: stopId, status: { not: "COMPLETED" } },
+    where: { id: stopId, status: { in: COMPLETABLE_STOP_STATUSES } },
     data,
   });
   if (claimed.count === 0) {
+    const current = await tx.routeRunStop.findUnique({
+      where: { id: stopId },
+      select: { status: true },
+    });
+    assertStopNotSkipped(current?.status);
     throw new ConflictException("This stop was already completed by another request.");
+  }
+}
+
+/**
+ * #2415: the compare-and-swap for updateStopStatus (skip / arrive). The old check-then-`update`
+ * let a skip that read PENDING overwrite a completion that committed in between — COMPLETED became
+ * SKIPPED and its DeliveryMutation / invoice / payment were stranded. The write now only lands on a
+ * row that is still not COMPLETED; losing to a completion answers 409 STOP_ALREADY_COMPLETED.
+ * (`not COMPLETED`, not `in [PENDING, IN_PROGRESS]`: a SKIPPED stop may still be marked
+ * IN_PROGRESS, as before — only the race with a completion is closed.)
+ */
+export async function claimStopStatusChange(
+  db: any,
+  stopId: string,
+  data: Record<string, unknown>,
+): Promise<void> {
+  const claimed = await db.routeRunStop.updateMany({
+    where: { id: stopId, status: { not: "COMPLETED" } },
+    data,
+  });
+  if (claimed.count > 0) return;
+  const current = await db.routeRunStop.findUnique({
+    where: { id: stopId },
+    select: { status: true },
+  });
+  if (current?.status === "COMPLETED") {
+    throw new ConflictException({
+      code: "STOP_ALREADY_COMPLETED",
+      message:
+        "This stop was just completed. Reopen it instead — that reverses the delivery correctly.",
+    });
+  }
+  throw new NotFoundException("Stop not found");
+}
+
+/** #2409: the stop statuses a completion may claim from. */
+export const COMPLETABLE_STOP_STATUSES = ["PENDING", "IN_PROGRESS"];
+
+/**
+ * #2409: a SKIPPED stop refuses a completion with a readable 409 — the pre-transaction guard in
+ * both completeStop and completeWithPayment, and the loser branch of claimStopCompletion. A
+ * replayed offline completion then dead-letters on the driver's device (a 4xx), with the failed
+ * badge, instead of silently turning a skipped stop into a completed one (201).
+ */
+export function assertStopNotSkipped(status: string | null | undefined): void {
+  if (status === "SKIPPED") {
+    throw new ConflictException({
+      code: "STOP_SKIPPED",
+      message:
+        "This stop was skipped by dispatch, so it can't be completed. Ask dispatch to reopen it.",
+    });
   }
 }
 

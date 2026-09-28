@@ -62,6 +62,16 @@ import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON, useOrderUiV2 } from "@/lib/api/addons";
 import { RecordReturnAction } from "../../returns/_components/RecordReturnAction";
+import {
+  OrderInlineReturnsSection,
+  type OrderInlineReturnsSectionHandle,
+} from "../_components/OrderInlineReturnsSection";
+import {
+  RETURN_SAVE_BLOCKED,
+  useOrderInlineReturnSave,
+} from "../_components/use-order-inline-return-save";
+import { AppliedCreditsSection } from "./_components/AppliedCreditsSection";
+import { OrderReturnsPanel } from "./_components/OrderReturnsPanel";
 import { describeCancelImpact } from "@/lib/cancel-impact";
 import { fmtCalendarDate, isInternalEmail } from "@/lib/formatting";
 import { formatMoney, formatQty } from "@/lib/format";
@@ -80,6 +90,9 @@ import { DemoteReasonModal } from "./_components/DemoteReasonModal";
 import {
   findLockedUnitLineEdit,
   LockedUnitLineBadge,
+  lockedUnitLineDisplay,
+  lockedUnitLineRefusal,
+  type LockedUnitLineDisplay,
   LockedUnitLineError,
   unitLineCount,
 } from "./_components/unit-line-lock";
@@ -412,6 +425,7 @@ type ApiOrderStatus =
   | "CANCELLED";
 
 export interface EditItemState {
+  priceEdited?: boolean; // #2381: the operator typed this price (picker remounts keep it)
   id: string; // real DB id for existing items; temp "new-{uuid}" for new items
   isNew?: boolean;
   /** True for a free-text, non-catalog line (no productId; { name, qty, unitPrice }). */
@@ -421,6 +435,7 @@ export interface EditItemState {
   originalQty: number;
   /** SA-388 (unit-line-lock.tsx): no derivable count; lockedSubtotal = its stored money. */
   countLocked?: boolean;
+  lockedDisplay?: LockedUnitLineDisplay; // #2266
   lockedSubtotal?: number;
   /** The line's own denomination, restored when a substitution is undone (a
    *  substitute re-denominates the line against ITS case size). */
@@ -623,7 +638,13 @@ export function buildEditItemFromLine(li: OrderItem): EditItemState {
     originalProductId: li.productId ?? "",
     originalProductName: label,
     originalQty: count,
-    ...(countLocked ? { countLocked: true, lockedSubtotal: Number(li.subtotal ?? 0) } : {}),
+    ...(countLocked
+      ? {
+          countLocked: true,
+          lockedSubtotal: Number(li.subtotal ?? 0),
+          lockedDisplay: lockedUnitLineDisplay(li),
+        }
+      : {}),
     productId: li.productId ?? "",
     productName: label,
     qty: count,
@@ -1360,6 +1381,7 @@ export function EditableLineItems({
       basePrice: option.listPrice,
       overrideReason: undefined,
       reasonBaselinePrice: option.price,
+      priceEdited: false, // #2381: a unit change prices from the ladder
     });
   }
 
@@ -1468,7 +1490,9 @@ export function EditableLineItems({
             </div>
 
             {/* SA-388: a LOCKED unit line takes no qty edit; saves refuse any edit to it. */}
-            {!item.cancelled && item.countLocked && <LockedUnitLineBadge />}
+            {!item.cancelled && item.countLocked && (
+              <LockedUnitLineBadge display={item.lockedDisplay} />
+            )}
 
             {/* Qty input */}
             {!item.cancelled && !item.countLocked && (
@@ -1513,6 +1537,7 @@ export function EditableLineItems({
                         ? item.priceType
                         : "STANDARD",
                     unitLabel: item.unitLabel,
+                    priceEdited: item.priceEdited,
                   }}
                   tier={tierForProductId(item.productId)}
                   onChange={(option, refresh) => setLineUnit(item.id, option, refresh)}
@@ -1628,7 +1653,7 @@ export function EditableLineItems({
               // save-time check never disagree.
               originalUnitPrice={item.reasonBaselinePrice ?? item.originalUnitPrice}
               overrideReason={item.overrideReason}
-              onPriceChange={(net) => update(item.id, { unitPrice: net })}
+              onPriceChange={(net) => update(item.id, { unitPrice: net, priceEdited: true })}
               onReasonChange={(reason) => update(item.id, { overrideReason: reason || undefined })}
               unitCost={item.unitCost}
               unitsPerBox={item.unitsPerBox}
@@ -2037,6 +2062,11 @@ export default function OrderDetailPage() {
   // (undefined on the wire = leave the server's stored intents untouched).
   const [editCredits, setEditCredits] = React.useState<CreditSelection[]>([]);
   const [creditsTouched, setCreditsTouched] = React.useState(false);
+  // #2406: an inline return started in edit mode, folded into the SAME updateOrderItems write.
+  const returnsRef = React.useRef<OrderInlineReturnsSectionHandle>(null);
+  const returnSave = useOrderInlineReturnSave(returnsRef, (why) =>
+    toast({ title: RETURN_SAVE_BLOCKED[why], variant: "error" }),
+  );
 
   // Demotion modal
   const [demoteTarget, setDemoteTarget] = React.useState<ApiOrderStatus | null>(null);
@@ -2222,7 +2252,7 @@ export default function OrderDetailPage() {
     const locked = findLockedUnitLineEdit(editItems, order!.lineItems);
     if (!locked) return false;
     toast({
-      title: `${locked.productName || "This line"} needs repair — its stored quantity can't be read as a count, so it can't be edited. Nothing was saved.`,
+      title: lockedUnitLineRefusal(locked.productName || "This line", locked.lockedDisplay),
       variant: "error",
     });
     return true;
@@ -2258,7 +2288,11 @@ export default function OrderDetailPage() {
     // matches the API's "no dto.shippingFee ⇒ keep the stored fee" rule).
     const feeChanged = Math.abs(editShippingFee - Number(order!.shippingFee ?? 0)) > 0.0001;
 
-    if (updates.length === 0 && !feeChanged && !creditsTouched) {
+    // #2406: fold in whatever the operator has typed into the edit-mode Returns section.
+    const inlineReturn = returnSave.prepare(order!.customerId, order!.id);
+    if (inlineReturn === null) return;
+
+    if (updates.length === 0 && !feeChanged && !creditsTouched && !inlineReturn) {
       setIsEditing(false);
       return;
     }
@@ -2277,6 +2311,7 @@ export default function OrderDetailPage() {
         // the picker — undefined on the wire leaves the server's stored
         // intents untouched (see CreditNotePicker / syncOrderCreditSelections).
         ...(creditsTouched ? { appliedCreditNotes: editCredits } : {}),
+        ...(inlineReturn ? { inlineReturn } : {}),
       },
       {
         onSuccess: () => {
@@ -2284,8 +2319,12 @@ export default function OrderDetailPage() {
           setEditItems([]);
           setEditCredits([]);
           setCreditsTouched(false);
+          returnSave.onSuccess();
         },
-        onError: guardError(() => handleSaveItems()),
+        onError: returnSave.chainError(
+          inlineReturn,
+          guardError(() => handleSaveItems()),
+        ),
       },
     );
   }
@@ -3047,6 +3086,15 @@ export default function OrderDetailPage() {
                   estimatedOrderTotal={editTotal}
                 />
 
+                {/* Returns Inside Order Creation, edit mode (#2406) — quoted here, captured
+                    in the SAME save as the item edits below. */}
+                <OrderInlineReturnsSection
+                  ref={returnsRef}
+                  customerId={order.customerId}
+                  entryOrderId={order.id}
+                  refusalMessage={returnSave.refusalMessage}
+                />
+
                 <div className="flex gap-2 flex-wrap">
                   {localStatus === "DRAFT" ? (
                     <>
@@ -3089,8 +3137,16 @@ export default function OrderDetailPage() {
                           // from edit mode silently drops the fee the operator typed.
                           const feeChanged =
                             Math.abs(editShippingFee - Number(order!.shippingFee ?? 0)) > 0.0001;
+                          // #2406: the Returns section rides this save too, never silently dropped.
+                          const inlineReturn = returnSave.prepare(order!.customerId, order!.id);
+                          if (inlineReturn === null) return;
                           const saveThenPublish = () => {
-                            if (updates.length > 0 || feeChanged || creditsTouched) {
+                            if (
+                              updates.length > 0 ||
+                              feeChanged ||
+                              creditsTouched ||
+                              inlineReturn
+                            ) {
                               updateItems.mutate(
                                 {
                                   id: order!.id,
@@ -3108,10 +3164,14 @@ export default function OrderDetailPage() {
                                   // need the explicit carry-through (shippingFee had
                                   // this exact miss last PR — do not repeat it).
                                   ...(creditsTouched ? { appliedCreditNotes: editCredits } : {}),
+                                  ...(inlineReturn ? { inlineReturn } : {}),
                                 },
                                 {
-                                  onSuccess: doPublish,
-                                  onError: guardError(() => saveThenPublish()),
+                                  onSuccess: () => (returnSave.onSuccess(), doPublish()),
+                                  onError: returnSave.chainError(
+                                    inlineReturn,
+                                    guardError(() => saveThenPublish()),
+                                  ),
                                 },
                               );
                             } else {
@@ -3441,56 +3501,11 @@ export default function OrderDetailPage() {
               </div>
             </dl>
 
-            {/* Applied credits — intent (order.orderCreditNotes) vs money already
-                moved (Σ CREDIT_NOTE payments across this order's invoices). Credits
-                reduce the invoice balance due, never this order total above. */}
-            {(order.orderCreditNotes?.length ?? 0) > 0 && (
-              <div className="mt-3 space-y-2 border-t border-surface-border pt-3">
-                <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
-                  Applied credits
-                </p>
-                {order.orderCreditNotes!.map((oc) => {
-                  const appliedSoFar = (order.invoices ?? []).reduce((sum, inv) => {
-                    const pays = inv.payments ?? [];
-                    return (
-                      sum +
-                      pays
-                        .filter((p) => p.creditNoteId === oc.creditNoteId)
-                        .reduce((s, p) => s + Number(p.amount), 0)
-                    );
-                  }, 0);
-                  return (
-                    <div key={oc.id} className="flex items-start justify-between gap-2 text-xs">
-                      <div className="min-w-0">
-                        <Link
-                          href={`/credit-notes/${oc.creditNoteId}`}
-                          className="font-mono font-medium text-brand-600 hover:underline"
-                        >
-                          {oc.creditNote?.creditNoteNumber ?? oc.creditNoteId.slice(0, 8)}
-                        </Link>
-                        {oc.creditNote?.reason && (
-                          <span
-                            className="ml-1.5 truncate text-navy/70"
-                            title={oc.creditNote.reason}
-                          >
-                            {oc.creditNote.reason}
-                          </span>
-                        )}
-                        <div className="text-navy/50">
-                          {oc.amount != null
-                            ? `Requested ${formatMoney(oc.amount)}`
-                            : "Up to remaining"}
-                        </div>
-                      </div>
-                      <span className="shrink-0 font-medium text-navy">
-                        {formatMoney(appliedSoFar)} applied
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+            <AppliedCreditsSection order={order} />
           </Card>
+
+          {/* Returns on this order (#2406) — server figures only, never the quote's. */}
+          <OrderReturnsPanel orderId={order.id} />
 
           {/* Carrier shipment — operator records carrier + tracking when goods ship
               via a carrier instead of our own route. Gated so it doesn't render on

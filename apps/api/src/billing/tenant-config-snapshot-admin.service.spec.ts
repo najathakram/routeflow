@@ -200,7 +200,10 @@ describe("TenantConfigSnapshotAdminService (A2 step c)", () => {
     snapshots.list.mockResolvedValueOnce([{ id: "s1", restoredAt: TAKEN }]);
     prisma.auditLog.findMany.mockResolvedValueOnce([
       {
-        meta: { snapshotId: "s1", report: { restored: -1, skipped: 0, keptNewer: 0, unchanged: 0 } },
+        meta: {
+          snapshotId: "s1",
+          report: { restored: -1, skipped: 0, keptNewer: 0, unchanged: 0 },
+        },
       },
       {
         meta: { snapshotId: "s1", report: { restored: 3, skipped: 0, keptNewer: 0, unchanged: 0 } },
@@ -300,6 +303,36 @@ describe("TenantConfigSnapshotAdminService (A2 step c)", () => {
     ],
   ])("preview() maps %s to the right HTTP error", async (_l, opts, Err) => {
     await expect(build(opts as any).svc.preview("t1", "s1")).rejects.toBeInstanceOf(Err);
+  });
+
+  // #2226 / SA-386: list() reads the audit trail with `take = restoredIds.length`, exact only while
+  // each restored snapshot has ONE audit row. The manual writer's side of that invariant: a second
+  // restore of the same snapshot is refused (409) and writes no second audit row — whether the
+  // first had already committed (the preview sees restoredAt) or they raced (the claim loses).
+  it("#2226: a second restore of the same snapshot is refused and writes no second audit row", async () => {
+    const { svc, tx, snapshots } = build();
+    await svc.restoreNow("t1", "s1", "admin-1", NOW);
+    expect(tx.auditLog.create).toHaveBeenCalledTimes(1);
+    snapshots.previewRestore.mockResolvedValueOnce({
+      snapshotId: "s1",
+      takenAt: TAKEN,
+      planKey: HIGH,
+      restoredAt: NOW, // the first restore committed
+      plan: emptyPlan(),
+    });
+    await expect(svc.restoreNow("t1", "s1", "admin-1", NOW)).rejects.toThrow(
+      "This snapshot was already restored",
+    );
+    expect(snapshots.restoreSnapshot).toHaveBeenCalledTimes(1);
+    expect(tx.auditLog.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("#2226: a restore that loses the claim race after its preview is refused and writes no audit row", async () => {
+    const { svc, tx } = build({ restore: null }); // the claim matched 0 rows: someone restored first
+    await expect(svc.restoreNow("t1", "s1", "admin-1", NOW)).rejects.toThrow(
+      "This snapshot was already restored",
+    );
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
   });
 
   it("restoreNow() previews and restores in ONE transaction, stamps the CURRENT plan, then drops the caches", async () => {

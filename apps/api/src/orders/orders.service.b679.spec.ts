@@ -24,7 +24,15 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
-const operatorPayload = { sub: "user-op", username: "operator", role: "OPERATOR" as const };
+const operatorPayload = {
+  sub: "user-op",
+  username: "operator",
+  role: "OPERATOR" as const,
+  status: "ACTIVE" as const,
+  forcePasswordChange: false,
+  tenantId: "tenant-1",
+  tenantSlug: "test",
+};
 
 /** Every collaborator create() touches that this spec does not care about: any method resolves undefined. */
 const autoMock = () =>

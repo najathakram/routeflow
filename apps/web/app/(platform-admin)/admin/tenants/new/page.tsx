@@ -7,13 +7,17 @@ import { superAdminClient } from "@/lib/admin-api";
 import { fetchPlanCatalog, type PlanCatalogEntry } from "@/lib/api/platform-pricing";
 import { planLabel } from "../../../_components/AdminBadge";
 import { selectablePlanKeys } from "../../../_components/usePlanOptions";
+import { CopyButton } from "@/components/CopyButton";
 
 interface CreatedTenant {
   slug: string;
   id: string;
   adminUsername?: string;
-  tempPassword?: string;
-  checkoutUrl?: string;
+  /** #2439: the stable Pay-now link (login → /settings/billing), when self-serve checkout is allowed. */
+  payUrl?: string | null;
+  loginUrl?: string;
+  /** #2439: the welcome email (set-password link — never a password) and whether it was delivered. */
+  welcomeEmail?: { to: string; delivered: boolean; transport: string; error?: string };
 }
 
 export default function AdminCreateTenantPage() {
@@ -29,7 +33,8 @@ export default function AdminCreateTenantPage() {
   const [isLoading, setIsLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [success, setSuccess] = React.useState<CreatedTenant | null>(null);
-  const [copied, setCopied] = React.useState(false);
+  // #2438: a failed copy selects the link text so the admin can copy it by hand.
+  const payLinkRef = React.useRef<HTMLAnchorElement>(null);
   const [plans, setPlans] = React.useState<PlanCatalogEntry[]>([]);
   const [plansLoading, setPlansLoading] = React.useState(true);
   const [plansUnavailable, setPlansUnavailable] = React.useState(false);
@@ -80,13 +85,12 @@ export default function AdminCreateTenantPage() {
     setError(null);
     setSuccess(null);
     try {
-      // Omit a blank password so the API auto-generates a temporary one and
-      // returns it (we then surface it for the admin to copy).
+      // Omit a blank password: the API then sets none and the welcome email carries a
+      // single-use set-password link (#2439) — no password is ever generated or shown.
       const payload: Record<string, string> = { ...form };
       if (!payload.adminPassword) delete payload.adminPassword;
       const res = await superAdminClient.post("/platform-admin/tenants", payload);
       setSuccess(res.data);
-      setCopied(false);
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { message?: string | string[] } } })?.response?.data
         ?.message;
@@ -115,47 +119,52 @@ export default function AdminCreateTenantPage() {
             <p className="mt-1 text-sm text-green-300">
               Slug: <span className="font-mono">{success.slug}</span>
             </p>
-            {success.tempPassword && (
-              <div className="mt-3 rounded-lg bg-slate-900/60 p-3 ring-1 ring-green-700/40">
-                <p className="text-xs text-green-300">
-                  Auto-generated temporary password — copy it now, it won&apos;t be shown again. The
-                  admin must change it on first login.
+            {success.welcomeEmail &&
+              (success.welcomeEmail.delivered ? (
+                <p className="mt-3 text-sm text-green-300" data-testid="welcome-email-status">
+                  Welcome email sent to <span className="font-mono">{success.welcomeEmail.to}</span>{" "}
+                  with a set-password link (valid 72 hours)
+                  {success.payUrl ? " and a Pay-now link" : ""}.
                 </p>
-                <div className="mt-2 flex items-center gap-2">
-                  {success.adminUsername && (
-                    <span className="text-xs text-slate-400">
-                      {success.adminUsername}
-                      {" · "}
-                    </span>
-                  )}
-                  <code className="rounded bg-slate-800 px-2 py-1 font-mono text-sm text-white">
-                    {success.tempPassword}
-                  </code>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard?.writeText(success.tempPassword ?? "");
-                      setCopied(true);
-                    }}
-                    className="rounded px-2 py-1 text-xs font-medium text-indigo-300 hover:bg-indigo-900/40"
-                  >
-                    {copied ? "Copied" : "Copy"}
-                  </button>
+              ) : (
+                <div
+                  className="mt-3 rounded-lg bg-amber-900/40 p-3 ring-1 ring-amber-700"
+                  data-testid="welcome-email-status"
+                  role="alert"
+                >
+                  <p className="text-sm font-semibold text-amber-300">
+                    The welcome email was NOT delivered to {success.welcomeEmail.to}.
+                  </p>
+                  <p className="mt-1 text-xs text-amber-200">
+                    Open the tenant and use Reset admin password to give the owner access
+                    {success.welcomeEmail.error ? ` (${success.welcomeEmail.error})` : ""}.
+                  </p>
                 </div>
-              </div>
-            )}
-            {success.checkoutUrl && (
-              <p className="mt-3 text-sm text-green-300">
-                Payment link:{" "}
+              ))}
+            {success.payUrl && (
+              <div className="mt-3 text-sm text-green-300">
+                <div className="flex items-center justify-between gap-2">
+                  <span>Pay-now link (never expires — sign in, then billing):</span>
+                  <CopyButton
+                    value={success.payUrl}
+                    label="Copy Pay-now link"
+                    failedText="Copy failed — select the link"
+                    selectOnFail={payLinkRef}
+                    className="admin-tap inline-flex shrink-0 items-center gap-1 rounded px-2 py-1 text-xs font-medium text-indigo-300 hover:bg-indigo-900/40"
+                  />
+                </div>
+                {/* #2438: the link is one unbroken token in a monospace face; break-all keeps it
+                    inside the card at every width instead of running off the right edge. */}
                 <a
-                  href={success.checkoutUrl}
+                  ref={payLinkRef}
+                  href={success.payUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="admin-inline font-mono text-indigo-300 underline hover:text-indigo-200"
+                  className="admin-inline mt-1 block break-all font-mono text-indigo-300 underline hover:text-indigo-200"
                 >
-                  {success.checkoutUrl}
+                  {success.payUrl}
                 </a>
-              </p>
+              </div>
             )}
             <div className="mt-3 flex gap-3">
               <Link
@@ -250,7 +259,7 @@ export default function AdminCreateTenantPage() {
                 type={showPw ? "text" : "password"}
                 value={form.adminPassword}
                 onChange={onChange("adminPassword")}
-                placeholder="Leave blank to auto-generate"
+                placeholder="Leave blank — the owner sets it from the email"
                 className="h-10 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 pr-10 text-sm text-white placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
               />
               <button
@@ -293,7 +302,8 @@ export default function AdminCreateTenantPage() {
               </button>
             </div>
             <p className="text-xs text-slate-400">
-              If left blank, a secure temporary password is generated and shown once after creation.
+              If left blank, no password is set: the welcome email carries a single-use link (valid
+              72 hours) for the owner to set their own.
             </p>
           </div>
 

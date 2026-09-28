@@ -37,6 +37,7 @@ import {
   type StagedEdit,
   type UnlistedDraft,
 } from "../lib/edit-items-draft";
+import { readEditItemsSurface } from "./support/edit-items-source";
 
 // A two-line order: one boxed BUY_N_GET_M line, one loose line.
 function orderFixture(): BaselineOrderLike {
@@ -1055,9 +1056,7 @@ describe("edit-items-draft: resolveDraftKeyForPick / newDraftKey (B775 fleet-lea
 describe("edit-items.tsx source pin: the draft record is never keyed by productId (B775)", () => {
   const stripComments = (text: string) =>
     text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
-  const source = stripComments(
-    readFileSync(join(__dirname, "../app/(operator)/(tabs)/orders/[id]/edit-items.tsx"), "utf8"),
-  );
+  const source = stripComments(readEditItemsSurface());
   // B805: draft/draftRef/updateDraft moved to a shared hook (size-ratchet
   // driven) — pins about THEIR implementation now read this file instead.
   const hookSource = stripComments(
@@ -1146,13 +1145,13 @@ describe("edit-items.tsx source pin: the draft record is never keyed by productI
   });
 
   it("B805: every per-line draft writer in the screen calls updateDraft(, never setDraft( directly — setDraft appears only for the three whole-draft lifecycle replacements (hydrate/restore/post-save rebuild); updateDraft's own setDraft(fn) now lives in the hook", () => {
-    // Scoped to EditOrderItemsScreen's own body: StepperRow (a later,
-    // unrelated component in this same file) declares its OWN local
-    // `const [draft, setDraft] = useState(...)` for a text-input string — a
-    // pure naming collision, not the draft record, and out of scope here.
+    // Scoped to EditOrderItemsScreen's own body (+ DraftItemCard, which follows it). StepperRow,
+    // which declares its OWN local `const [draft, setDraft] = useState(...)` for a text-input
+    // string (a pure naming collision), now lives in components/EditItemsStepperRow.tsx (#2232
+    // prefactor), so the region ends at the next component, PriceOverrideModal — the same span.
     const screenStart = source.indexOf("export function EditOrderItemsScreen(");
     expect(screenStart).toBeGreaterThan(-1);
-    const stepperRowStart = source.indexOf("function StepperRow(", screenStart);
+    const stepperRowStart = source.indexOf("function PriceOverrideModal(", screenStart);
     expect(stepperRowStart).toBeGreaterThan(screenStart);
     const screenSrc = source.slice(screenStart, stepperRowStart);
     const setDraftCalls = [...screenSrc.matchAll(/\bsetDraft\(/g)];

@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 import * as crypto from "crypto";
 import { CostingMethod, MovementType, Prisma } from "@prisma/client";
@@ -32,6 +33,40 @@ import { BulkSetCostBasisDto } from "./dto/bulk-set-cost-basis.dto";
 import { RecomputeCostsDto } from "./dto/recompute-costs.dto";
 import { VariantAssignDto } from "./dto/variant-assign.dto";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
+import { AuditService } from "../audit/audit.service";
+
+/** B562 PR-3 (SA-136 §4): the reference prefix of a replay's own COST_BASIS correction. */
+export const REPLAY_CORRECTION_PREFIX = "RECOMPUTE:";
+/**
+ * A replay correction is the fold's OUTPUT, never an input (see replayProduct). SA-372: all three
+ * marks are required — a COST_BASIS row, quantity 0, and the `RECOMPUTE:` reference — so a manual
+ * or `B562:REPAIR:` cost-basis row (or any other movement) can never be skipped as one.
+ */
+export const isReplayCorrection = (m: {
+  type: string;
+  quantity: Prisma.Decimal | number | string;
+  reference: string | null | undefined;
+}) =>
+  m.type === MovementType.COST_BASIS &&
+  new Prisma.Decimal(m.quantity).isZero() &&
+  (m.reference?.startsWith(REPLAY_CORRECTION_PREFIX) ?? false);
+/** Clock-skew allowance for a client-sent "now" effective date. */
+const EFFECTIVE_DATE_SKEW_MS = 5 * 60 * 1000;
+/**
+ * B562 PR-3: a stock write's accounting date — the given `effectiveDate` or now. A FUTURE date is
+ * refused: it would sort after every real row still to come, so each later write would count it as
+ * "newer" and replay against a movement that has not happened yet.
+ */
+export function effectiveDateOf(raw: string | undefined, now = new Date()): Date {
+  if (!raw) return now;
+  const date = new Date(raw);
+  if (date.getTime() > now.getTime() + EFFECTIVE_DATE_SKEW_MS) {
+    throw new BadRequestException("The effective date can't be in the future.");
+  }
+  return date;
+}
+/** Averages closer than this are the same cost (costDecimal keeps 4dp). */
+const AVG_CORRECTION_EPSILON = new Prisma.Decimal("0.0001");
 
 @Injectable()
 export class InventoryService {
@@ -40,6 +75,8 @@ export class InventoryService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly stockAlerts: StockAlertService,
+    // B562 PR-3: the recompute-costs apply path writes its own audit row (global AuditModule).
+    @Optional() private readonly audit?: AuditService,
   ) {}
 
   /**
@@ -215,11 +252,10 @@ export class InventoryService {
 
     const qty = new Prisma.Decimal(qtyPieces);
     const currentStock = product.currentStock;
-    const effectiveDate = dto.effectiveDate ? new Date(dto.effectiveDate) : new Date();
+    const effectiveDate = effectiveDateOf(dto.effectiveDate);
 
     // New weighted average (used for AVCO; FIFO/LIFO still update for display)
     const newAvgCost = nextAverageCost(currentStock, product.averageCost, qty, unitCost);
-    const stockAfter = currentStock.add(qty);
     const updatesAverage = product.costingMethod !== CostingMethod.STANDARD;
     const avgCostAfter = updatesAverage ? newAvgCost : (product.averageCost ?? null);
 
@@ -237,6 +273,22 @@ export class InventoryService {
         },
       });
 
+      // Update stock and cost based on costing method
+      const costUpdate: any = { currentStock: { increment: qty } };
+      if (updatesAverage) {
+        // For FIFO/LIFO we still store the running average in averageCost for reference
+        costUpdate.averageCost = newAvgCost;
+      }
+      // STANDARD: don't touch averageCost
+
+      // B562 PR-3: snapshots are write-once now (SA-136 §4), so `stockAfter` is the counter this
+      // update RETURNED (SA-136 §1), never the pre-transaction read — the row is written after it.
+      const updated = await tx.product.update({
+        where: { id: dto.productId },
+        data: costUpdate,
+        select: { currentStock: true },
+      });
+
       const movement = await tx.stockMovement.create({
         data: {
           productId: dto.productId,
@@ -244,7 +296,7 @@ export class InventoryService {
           quantity: qty,
           unitCost,
           avgCostAfter,
-          stockAfter,
+          stockAfter: updated.currentStock,
           supplierId: dto.supplierId,
           reference: dto.reference,
           notes: dto.notes,
@@ -254,25 +306,17 @@ export class InventoryService {
         },
       });
 
-      // Update stock and cost based on costing method
-      const costUpdate: any = { currentStock: { increment: qty } };
-      if (updatesAverage) {
-        // For FIFO/LIFO we still store the running average in averageCost for reference
-        costUpdate.averageCost = newAvgCost;
-      }
-      // STANDARD: don't touch averageCost
-
-      await tx.product.update({
-        where: { id: dto.productId },
-        data: costUpdate,
-      });
-
-      // A backdated purchase invalidates the snapshots (and possibly the
-      // average) of every later movement — replay the product to repair them.
+      // A backdated purchase can change the average every later row implies. Later snapshots stay
+      // as written (SA-136 §4); the replay appends one dated COST_BASIS correction if needed.
       const newer = await tx.stockMovement.count({
         where: { productId: dto.productId, effectiveAt: { gt: effectiveDate } },
       });
-      if (newer > 0) await this.recomputeProductInTx(tx, dto.productId);
+      if (newer > 0) {
+        await this.recomputeProductInTx(tx, dto.productId, {
+          trigger: `PURCHASE:${movement.id}`,
+          performedById,
+        });
+      }
 
       return movement;
     });
@@ -288,9 +332,16 @@ export class InventoryService {
     if (!product) throw new NotFoundException("Product not found");
 
     const qty = new Prisma.Decimal(dto.quantity);
-    const effectiveDate = dto.effectiveDate ? new Date(dto.effectiveDate) : new Date();
+    const effectiveDate = effectiveDateOf(dto.effectiveDate);
 
     const result = await this.prisma.tenantTransaction(async (tx) => {
+      // B562 PR-3: `stockAfter` from the update's own returned row (SA-136 §1) — write-once now.
+      const updated = await tx.product.update({
+        where: { id: dto.productId },
+        data: { currentStock: { increment: qty } },
+        select: { currentStock: true },
+      });
+
       const movement = await tx.stockMovement.create({
         data: {
           productId: dto.productId,
@@ -298,18 +349,13 @@ export class InventoryService {
           quantity: qty,
           // Quantity-only adjustments never move the average
           avgCostAfter: product.averageCost ?? null,
-          stockAfter: product.currentStock.add(qty),
+          stockAfter: updated.currentStock,
           reference: dto.reference,
           notes: dto.notes,
           performedById,
           // B562: the effective date is the accounting date; createdAt stays write-once.
           effectiveAt: effectiveDate,
         },
-      });
-
-      await tx.product.update({
-        where: { id: dto.productId },
-        data: { currentStock: { increment: qty } },
       });
 
       // If positive adjustment, add to lots
@@ -327,11 +373,16 @@ export class InventoryService {
         });
       }
 
-      // Backdated adjustment: repair later snapshots
+      // Backdated adjustment: the replay appends a dated correction if the average moved (§4)
       const newer = await tx.stockMovement.count({
         where: { productId: dto.productId, effectiveAt: { gt: effectiveDate } },
       });
-      if (newer > 0) await this.recomputeProductInTx(tx, dto.productId);
+      if (newer > 0) {
+        await this.recomputeProductInTx(tx, dto.productId, {
+          trigger: `ADJUSTMENT:${movement.id}`,
+          performedById,
+        });
+      }
 
       return movement;
     });
@@ -2497,20 +2548,19 @@ export class InventoryService {
     return result;
   }
 
-  // ─── Cost recompute (repair) ────────────────────────────────────────────────
+  // ─── Cost recompute (history-preserving) ────────────────────────────────────
 
   /**
-   * Rebuild averageCost + movement snapshots by replaying each product's
-   * movement history. Products with no costful history (no PURCHASE with a
-   * unit cost, no COST_BASIS) are left untouched and reported under
-   * `noHistory` so the operator can set a cost basis manually.
-   *
-   * B562: products whose ledger can't account for their real currentStock
-   * (see replayProduct's gap-detection comment — order sales/edits are the
-   * usual cause) are reported under `gapsDetected` instead: nothing is
-   * written for them, dry-run or not, because the replay would be sales-blind.
+   * B562 PR-3 (SA-136 §4): check — and on apply, correct — each product's average cost by replaying
+   * its movement ledger. **Dry run is the default** (`dryRun` omitted ⇒ true). The apply path writes
+   * ONLY the §4 correction: one appended `COST_BASIS` row + `Product.averageCost`, per product whose
+   * replayed average differs — no existing movement is ever rewritten. Products whose ledger can't
+   * account for their `currentStock` are reported under `gapsDetected` and never written; products
+   * with no costful history (no PURCHASE with a unit cost, no manual COST_BASIS) under `noHistory`.
+   * Every apply writes an audit row naming the corrections.
    */
-  async recomputeCosts(dto: RecomputeCostsDto) {
+  async recomputeCosts(dto: RecomputeCostsDto, performedById: string | null = null) {
+    const dryRun = dto.dryRun !== false;
     const where: Prisma.ProductWhereInput = {};
     if (dto.productIds?.length) where.id = { in: dto.productIds };
     const products = await this.prisma.forTenant().product.findMany({
@@ -2522,23 +2572,21 @@ export class InventoryService {
     const results: {
       productId: string;
       name: string;
+      gap: number;
       oldAvgCost: number | null;
       newAvgCost: number | null;
-      stockDrift: number;
-      movementsBackfilled: number;
+      correctionId: string | null;
     }[] = [];
     const noHistory: { productId: string; name: string }[] = [];
-    // B562: products whose StockMovement ledger is missing quantity a real
-    // order sale/edit took out of currentStock (order paths write no
-    // movement row) never get a trustworthy replay — see replayProduct's
-    // gap-detection comment. Reported here instead of silently written.
     const gapsDetected: { productId: string; name: string; stockDrift: number }[] = [];
 
     for (const product of products) {
-      // One transaction per product to bound lock time on big tenants
-      const replay = dto.dryRun
+      // One transaction per product to bound lock time on big tenants.
+      const replay = dryRun
         ? await this.replayProduct(product, null)
-        : await this.prisma.tenantTransaction((tx) => this.replayProduct(product, tx));
+        : await this.prisma.tenantTransaction((tx) =>
+            this.replayProduct(product, tx, { trigger: "ENDPOINT", performedById }),
+          );
 
       if (replay.gapDetected) {
         gapsDetected.push({
@@ -2552,89 +2600,92 @@ export class InventoryService {
         results.push({
           productId: product.id,
           name: product.name,
+          gap: replay.stockDrift,
           oldAvgCost: replay.oldAvgCost,
           newAvgCost: replay.newAvgCost,
-          stockDrift: replay.stockDrift,
-          movementsBackfilled: replay.movementsBackfilled,
+          correctionId: replay.correctionId,
         });
       }
     }
 
+    const corrected = results.filter((r) => r.correctionId != null);
+    if (!dryRun) {
+      await this.audit?.log({
+        tenantId: this.prisma.getTenantId() ?? null,
+        userId: performedById,
+        action: "INVENTORY_RECOMPUTE_COSTS_APPLY",
+        entityType: "inventory",
+        meta: {
+          reason: dto.reason ?? null,
+          processed: products.length,
+          corrections: corrected.map(({ productId, oldAvgCost, newAvgCost, correctionId }) => ({
+            productId,
+            oldAvgCost,
+            newAvgCost,
+            correctionId,
+          })),
+          gapsDetected: gapsDetected.map((g) => g.productId),
+        },
+      });
+    }
+
     return {
-      dryRun: !!dto.dryRun,
+      dryRun,
       processed: products.length,
-      updated: results.length,
+      // Products whose average this call corrected (0 on a dry run). Kept as `updated` for the
+      // shared RecomputeCostsResult contract.
+      updated: corrected.length,
       noHistory,
       gapsDetected,
       results,
     };
   }
 
-  /** Repair a single product's snapshots/average inside an existing transaction. */
-  // Public: the backdated-movement repair primitive. Every stock writer that
-  // supports an effective date in the past (manual purchase, adjustment, and
-  // now vendor-bill receive stamping at billDate) must replay the product so
-  // later snapshots stay true.
+  /** Replay a single product inside an existing transaction (the backdated-write check). */
+  // Public: every stock writer that supports an effective date in the past (manual purchase,
+  // adjustment, vendor-bill receive at billDate) calls this after its own write, so a backdated row
+  // that changes the average gets its dated COST_BASIS correction (SA-136 §4).
   //
-  // B562: throwOnGap defaults to true because this call sits mid-transaction
-  // inside a live write (recordPurchase/recordAdjustment) — if the replay
-  // can't be trusted, the whole backdated write must fail loudly and roll
-  // back rather than leave later movements' snapshots stale OR (the actual
-  // bug) silently stamp them with a sales-blind average. recordPurchase and
-  // recordAdjustment both call this with no third argument, so they keep
-  // that refusal unconditionally — do not weaken it for them.
-  //
-  // B562 follow-up: vendor-bill receive processes every line of a bill in
-  // ONE transaction, so a single gapped product must not abort lines that
-  // have nothing wrong with them. It passes `{ throwOnGap: false }` and
-  // reads `.gapDetected` off the return value instead, skipping just that
-  // line's replay while still keeping the quantity it already received (see
-  // vendor-bills.service.ts `receive()`).
+  // throwOnGap defaults to true because this call sits mid-transaction inside a live write
+  // (recordPurchase/recordAdjustment): if the ledger can't account for currentStock, the whole
+  // backdated write must fail loudly and roll back rather than correct the average off a replay that
+  // can't be trusted. Vendor-bill receive passes `{ throwOnGap: false }` and flags the one gapped line
+  // instead of aborting the bill (vendor-bills.service.ts `receive()`).
   async recomputeProductInTx(
     tx: Prisma.TransactionClient,
     productId: string,
-    opts: { throwOnGap?: boolean } = {},
+    opts: { throwOnGap?: boolean; trigger?: string; performedById?: string | null } = {},
   ) {
     const product = await tx.product.findFirst({
       where: { id: productId },
       select: { id: true, name: true, currentStock: true, averageCost: true, costingMethod: true },
     });
     if (!product) return null;
-    return this.replayProduct(product, tx, { throwOnGap: opts.throwOnGap ?? true });
+    return this.replayProduct(product, tx, { ...opts, throwOnGap: opts.throwOnGap ?? true });
   }
 
   /**
-   * Replay a product's movements oldest-first with a running (stock, avg):
-   * - COST_BASIS ⇒ avg := unitCost
+   * B562 PR-3 (SA-136 §4): a PURE computation over the ledger — movements in accounting order
+   * (effectiveAt, createdAt, id) folded with a running (stock, avg):
+   * - COST_BASIS (a manual/owner cost basis) ⇒ avg := unitCost
    * - PURCHASE with unitCost ⇒ weighted average update
    * - ADJUSTMENT with unitCost ⇒ weighted forward (qty>0) / exact reverse (qty<0)
-   * - everything else ⇒ quantity only, average unchanged
-   * With a tx, snapshots are backfilled on every movement and the product's
-   * averageCost is updated when costful history exists. Never mutates stock.
+   * - everything else (SALE / RETURN / WRITE_OFF / quantity-only) ⇒ quantity only
    *
-   * B562 — GAP DETECTION (read before touching this method):
-   * Order creation/edit decrement `Product.currentStock` directly and write
-   * NO StockMovement row (see orders.service.ts `decrementStockForSale` /
-   * `settleStockForEdit`), so a replay driven purely off StockMovement rows
-   * is blind to every unit an order ever consumed. That used to mean this
-   * method computed a "sales-blind" weighted average and overwrote both
-   * `Product.averageCost` and every movement's `stockAfter`/`avgCostAfter`
-   * with it — a plausible-looking but wrong number that also destroyed the
-   * only evidence (the pre-replay snapshots) that could have exposed it.
+   * Snapshots are WRITE-ONCE: this never updates an existing row's `avgCostAfter`/`stockAfter` — a
+   * row keeps the state after ITS insertion. `gap = currentStock − Σquantity`:
+   * - gap ≠ 0 ⇒ the ledger can't explain the counter, the fold ran on a wrong stock balance, and
+   *   nothing is written (throw when `throwOnGap`, else report) — the L-207 guard.
+   * - gap = 0 and |impliedAvg − averageCost| ≥ 0.0001 — or |impliedAvg − the last row's
+   *   avgCostAfter| ≥ 0.0001, the as-of-now snapshot the cost index reads — (with a tx) ⇒ APPEND one COST_BASIS row
+   *   (quantity 0, unitCost = avgCostAfter = impliedAvg, stockAfter = the counter, effectiveAt = now,
+   *   reference `RECOMPUTE:<trigger>`, notes `old → new`) and set `Product.averageCost`. The
+   *   correction is dated when it is made, so prior-period COGS reports do not move.
    *
-   * The fix does not need to query Order/OrderItem to see this: EVERY other
-   * writer of `currentStock` in this codebase (recordPurchase,
-   * recordAdjustment, receivePurchaseOrder, commitStockCount, variant-assign,
-   * returns) pairs it with an equal-quantity StockMovement row in the same
-   * transaction (grep `currentStock:` in this file — each hit sits next to a
-   * `stockMovement.create`). So replaying every StockMovement row from a
-   * running stock of 0 and comparing the result to the product's real
-   * `currentStock` is an EXACT, observable proxy for "is there consumption
-   * (or any other write) this ledger never saw" — the naive "did avgCostAfter
-   * change" check the bug write-up rules out isn't needed. A nonzero result
-   * (`stockDrift`) means the weighted-average math above ran against a wrong
-   * running stock balance and cannot be trusted, so the persist step below is
-   * skipped entirely for that product: nothing is written, in or out of a tx.
+   * A `RECOMPUTE:` row is this fold's own OUTPUT, never an input: folding it would pin the average
+   * at the moment it was written, so any row later inserted with an earlier effectiveAt (the next
+   * backdated purchase) would be erased by it and the replay would "correct" the average back to a
+   * stale figure. Manual cost-basis rows remain inputs.
    */
   private async replayProduct(
     product: {
@@ -2645,20 +2696,29 @@ export class InventoryService {
       costingMethod: CostingMethod;
     },
     tx: Prisma.TransactionClient | null,
-    opts: { throwOnGap?: boolean } = {},
+    opts: { throwOnGap?: boolean; trigger?: string; performedById?: string | null } = {},
   ) {
     const client = tx ?? this.prisma.forTenant();
     // B562 (SA-136 §3): accounting order — effectiveAt, then insertion time, then id.
     const movements = await client.stockMovement.findMany({
       where: { productId: product.id },
       orderBy: [{ effectiveAt: "asc" }, { createdAt: "asc" }, { id: "asc" }],
-      select: { id: true, type: true, quantity: true, unitCost: true },
+      select: {
+        id: true,
+        type: true,
+        quantity: true,
+        unitCost: true,
+        reference: true,
+        avgCostAfter: true,
+      },
     });
+    // The as-of-now snapshot the point-in-time cost index reads (the last row in accounting order).
+    const tailAvg = movements.length ? movements[movements.length - 1].avgCostAfter : null;
 
     // STANDARD products keep averageCost frozen — the live recordPurchase path
     // deliberately never moves it (valuation reads standardCost). Replaying the
-    // weighted average here would overwrite it and fabricate a bogus dry-run
-    // "correction", so mirror that: carry the existing average forward untouched.
+    // weighted average here would fabricate a bogus correction, so mirror that:
+    // carry the existing average forward untouched and never correct it.
     const isStandard = product.costingMethod === CostingMethod.STANDARD;
 
     let stock = new Prisma.Decimal(0);
@@ -2669,16 +2729,6 @@ export class InventoryService {
       : null;
     let hasCostfulHistory = isStandard && avg != null;
 
-    // ── Pass 1: pure computation, no writes. Every movement's would-be
-    // snapshot is staged so the persist step (pass 2) can be skipped
-    // atomically if a gap turns up — we must not have already written some
-    // movements' snapshots before discovering movement N+1 makes the replay
-    // untrustworthy.
-    const snapshots: {
-      id: string;
-      avgCostAfter: Prisma.Decimal | null;
-      stockAfter: Prisma.Decimal;
-    }[] = [];
     for (const m of movements) {
       const qty = new Prisma.Decimal(m.quantity);
       const unitCost = m.unitCost != null ? new Prisma.Decimal(m.unitCost) : null;
@@ -2686,7 +2736,7 @@ export class InventoryService {
       if (!isStandard) {
         switch (m.type) {
           case MovementType.COST_BASIS:
-            if (unitCost != null) {
+            if (unitCost != null && !isReplayCorrection(m)) {
               avg = costDecimal(unitCost);
               hasCostfulHistory = true;
             }
@@ -2711,11 +2761,11 @@ export class InventoryService {
       }
 
       stock = stock.add(qty);
-      snapshots.push({ id: m.id, avgCostAfter: avg, stockAfter: stock });
     }
 
     const stockDrift = new Prisma.Decimal(product.currentStock).sub(stock);
     const gapDetected = !stockDrift.isZero();
+    const oldAvgCost = product.averageCost != null ? Number(product.averageCost) : null;
 
     if (gapDetected) {
       if (opts.throwOnGap) {
@@ -2735,46 +2785,60 @@ export class InventoryService {
           stockDrift: Number(stockDrift),
         });
       }
-      // Bulk recomputeCosts path: report the gap, write nothing for this
-      // product (dry-run or not — a gap makes hasCostfulHistory/newAvgCost
-      // untrustworthy either way), and let the caller keep processing others.
       return {
         hasCostfulHistory,
-        oldAvgCost: product.averageCost != null ? Number(product.averageCost) : null,
+        oldAvgCost,
         newAvgCost: null,
         stockDrift: Number(stockDrift),
-        movementsBackfilled: 0,
         gapDetected: true,
+        correctionId: null,
       };
     }
 
-    // ── Pass 2: persist. Only reached when the ledger fully accounts for
-    // currentStock, i.e. the replay above is trustworthy.
-    let movementsBackfilled = 0;
-    if (tx) {
-      for (const snap of snapshots) {
-        await tx.stockMovement.update({
-          where: { id: snap.id },
-          data: { avgCostAfter: snap.avgCostAfter, stockAfter: snap.stockAfter },
-        });
-        movementsBackfilled += 1;
-      }
-      // STANDARD never rewrites averageCost (frozen); others persist the replayed avg.
-      if (!isStandard && hasCostfulHistory && avg != null) {
-        await tx.product.update({
-          where: { id: product.id },
-          data: { averageCost: avg },
-        });
-      }
+    // The ledger explains the counter: the fold is trustworthy. Append the dated correction when the
+    // average differs (STANDARD never — its average is frozen by contract) — from
+    // `Product.averageCost`, OR from the as-of-now snapshot: a backdated row sorts before rows that
+    // were written earlier, so the LAST row in accounting order can hold a stale average even when
+    // `averageCost` is right (always, for a purchase-only ledger), and the cost index would read it
+    // for the current period. The correction, dated now, is then the row the index reads.
+    const differs = (x: Prisma.Decimal | null | undefined) =>
+      avg != null && (x == null || avg.sub(x).abs().gte(AVG_CORRECTION_EPSILON));
+    const productDrifted = differs(product.averageCost);
+    const drifted =
+      !isStandard && hasCostfulHistory && avg != null && (productDrifted || differs(tailAvg));
+    let correctionId: string | null = null;
+    if (tx && drifted && avg != null) {
+      const updated = await tx.product.update({
+        where: { id: product.id },
+        data: { averageCost: avg },
+        select: { currentStock: true },
+      });
+      const correction = await tx.stockMovement.create({
+        data: {
+          productId: product.id,
+          type: MovementType.COST_BASIS,
+          quantity: new Prisma.Decimal(0),
+          unitCost: avg,
+          avgCostAfter: avg,
+          stockAfter: updated.currentStock,
+          reference: `${REPLAY_CORRECTION_PREFIX}${opts.trigger ?? "ENDPOINT"}`,
+          notes: productDrifted
+            ? `${product.averageCost != null ? costDecimal(product.averageCost).toString() : "none"} → ${avg.toString()}`
+            : `as-of-now snapshot ${tailAvg != null ? costDecimal(tailAvg).toString() : "none"} → ${avg.toString()}`,
+          performedById: opts.performedById ?? null,
+        },
+        select: { id: true },
+      });
+      correctionId = correction.id;
     }
 
     return {
       hasCostfulHistory,
-      oldAvgCost: product.averageCost != null ? Number(product.averageCost) : null,
+      oldAvgCost,
       newAvgCost: avg != null ? Number(avg) : null,
       stockDrift: Number(stockDrift),
-      movementsBackfilled,
       gapDetected: false,
+      correctionId,
     };
   }
 }

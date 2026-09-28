@@ -37,6 +37,7 @@ import { MessagingService } from "../messaging/messaging.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { AfterCommit } from "../common/after-commit";
 
 describe("InvoicesService — B763", () => {
   let service: InvoicesService;
@@ -170,6 +171,12 @@ describe("InvoicesService — B763", () => {
       prisma.paymentCounter.upsert.mockResolvedValue({ next: 1 } as any);
       prisma.invoice.update.mockResolvedValue({} as any);
       prisma.advancePayment.create.mockResolvedValue({ id: "adv-1" } as any);
+      // SA-404f N1: the under-lock re-read sees each invoice as listed (nothing voided meanwhile).
+      prisma.invoice.findUnique.mockImplementation(async ({ where }: any) =>
+        ((await prisma.invoice.findMany.mock.results.at(-1)?.value) ?? []).find(
+          (r: any) => r.id === where.id,
+        ),
+      );
     });
 
     it("rounds the leftover excess before writing the AdvancePayment", async () => {
@@ -179,7 +186,13 @@ describe("InvoicesService — B763", () => {
       // Driver collects 100 against one $33.33 invoice: excess = 100 - 33.33 = 66.67, clean at
       // this scale, but the write must still go through roundMoney (defense against drift on a
       // larger, multi-invoice allocation loop -- see recordStandalonePayment's own pin above).
-      await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 100, "CASH");
+      await service.recordDeliveryPaymentInTx(
+        prisma as any,
+        new AfterCommit(),
+        ["ord-1"],
+        100,
+        "CASH",
+      );
 
       expect(prisma.advancePayment.create).toHaveBeenCalledWith(
         expect.objectContaining({

@@ -252,5 +252,60 @@ describeDb(
       expect(seen).toContainEqual({ productId: f.productId });
       expect(Number((await line(f.lineId)).qty)).toBe(36);
     });
+
+    // #2288 / SA-447: the write re-denominates a held unit line whose label is CLEARED (null) to the
+    // PACK; the netting must agree, so the edit is a re-denomination — unsized, checked in full.
+    const edit = (orderId: string, item: Record<string, unknown>) =>
+      tenantCtx.run(tenantId, () =>
+        orders.updateOrderItems(orderId, { replaceAll: false, items: [item] } as any, staff()),
+      );
+
+    // SA-447 × SA-474 (SA-474c): a CLEARED label on a held unit line is now refused by SA-474's
+    // assertNoPackRedenomination — 409 UNIT_AWARE_LINE, before the restriction netting is ever
+    // reached (the same precedence the ABSENT-label case below pins). SA-447's re-denomination
+    // netting rule stays pinned by the pure unitLineEdit cases for the day the units freeze lifts.
+    it("SA-447 × SA-474: a banned product's held Case line with unitLabel CLEARED (null) is refused by UNIT_AWARE_LINE before the netting, nothing written", async () => {
+      const f = await seed("clear");
+      banned = f.productId;
+      const linesOf = () =>
+        raw.orderItem.findMany({ where: { orderId: f.orderId }, orderBy: { id: "asc" } });
+      const stockOf = async () => ({
+        onHand: String(
+          (await raw.product.findUniqueOrThrow({ where: { id: f.productId } })).currentStock,
+        ),
+        movements: await raw.stockMovement.count({ where: { productId: f.productId } }),
+      });
+      const [linesBefore, stockBefore] = [await linesOf(), await stockOf()];
+      await expect(
+        edit(f.orderId, { id: f.lineId, unitLabel: null, qty: 3 }),
+      ).rejects.toMatchObject({
+        response: { code: "UNIT_AWARE_LINE" },
+      });
+      expect(seen).toEqual([]); // the restriction choke point is never reached
+      expect(await linesOf()).toEqual(linesBefore); // no order-line write
+      expect(await stockOf()).toEqual(stockBefore); // no stock write
+      const li = await line(f.lineId);
+      expect(li.unitLabel).toBe("Case"); // nothing written
+      expect(Number(li.qty)).toBe(36);
+      expect(li.unitsPerBox).toBe(12);
+    });
+
+    it("SA-447: with unitLabel ABSENT the edit never re-denominates — a qty edit is refused by UNIT_AWARE_LINE before the netting; a note-only edit nets nothing and is allowed", async () => {
+      const f = await seed("absent");
+      banned = f.productId;
+      // assertUnitLabelNamed (updateOrderItems :2978) runs before assertLinesSellable (:3024).
+      await expect(edit(f.orderId, { id: f.lineId, qty: 3 })).rejects.toMatchObject({
+        response: { code: "UNIT_AWARE_LINE" },
+      });
+      expect(seen).toEqual([]);
+      // Note-only, label absent (unitPrice/qty would be refused by UNIT_AWARE_LINE too): unitLineEdit
+      // returns null (no quantity change) — never checked.
+      await edit(f.orderId, { id: f.lineId, notes: "leave at the side door" });
+      expect(seen.filter((l) => l.productId === f.productId)).toEqual([]);
+      const li = await line(f.lineId);
+      expect(li.unitLabel).toBe("Case");
+      expect(Number(li.qty)).toBe(36);
+      expect(li.notes).toBe("leave at the side door");
+    });
   },
 );

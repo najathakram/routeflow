@@ -166,6 +166,16 @@ export type CheckStatus = (typeof CHECK_STATUS_VALUES)[number];
 export const INVOICE_ITEM_SYSTEM_KIND_VALUES = ["NSF_FEE"] as const;
 export type InvoiceItemSystemKind = (typeof INVOICE_ITEM_SYSTEM_KIND_VALUES)[number];
 
+// SA-436 (#2401): why a (credit note, invoice) pair is never re-applied automatically — the
+// CreditNoteApplyBlock row's reason. Mirrors the Prisma enum for the web/mobile "Applied credits"
+// panel (SA-436 PR-3).
+export const CREDIT_NOTE_APPLY_BLOCK_REASON_VALUES = [
+  "UNAPPLIED",
+  "UNTICKED",
+  "VOID_REVERSAL",
+] as const;
+export type CreditNoteApplyBlockReason = (typeof CREDIT_NOTE_APPLY_BLOCK_REASON_VALUES)[number];
+
 export const DOCUMENT_NUMBER_TYPE_VALUES = [
   "INVOICE",
   "ESTIMATE",
