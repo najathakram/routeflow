@@ -87,20 +87,16 @@ import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import pg from "pg";
-import { roundMoney } from "@routeflow/pricing";
+import { NSF_FEE_DESCRIPTION_PREFIX, NSF_FEE_SYSTEM_KIND, roundMoney } from "@routeflow/pricing";
 import { isTestTenant } from "../../../scripts/lib/test-tenants.cjs";
 import { isLocalDbTarget } from "./lib/local-db-target.cjs";
 import { requireLocalPgConfig } from "./lib/local-pg-config.mjs";
 import { redactUrl, resolveDatabaseUrl } from "./lib/railway-db-url.mjs";
 
 const TAG = "backfill-2169";
-const NSF_FEE_DESCRIPTION_PREFIX = "NSF fee — returned check";
-// The plain SQL scripts in this directory cannot cheaply value-import @prisma/client's generated
-// TypeScript enum (no build step for a raw .mjs invoked with `node`), so this is a hand-copied
-// string of the ONE Prisma enum member it writes: `InvoiceItemSystemKind.NSF_FEE` (see
-// apps/api/src/invoices/nsf-line.ts, which DOES import the real generated enum). Pinned by
-// --self-test below so a schema rename can't silently drift this string.
-const NSF_FEE_SYSTEM_KIND = "NSF_FEE";
+// NSF_FEE_SYSTEM_KIND / NSF_FEE_DESCRIPTION_PREFIX come from @routeflow/pricing (#2392 / SA-478 —
+// the ONE shared NSF predicate's values; pricing pins NSF_FEE_SYSTEM_KIND to the Prisma enum via
+// @routeflow/types + enum-parity.spec). --self-test below still checks the enum value.
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const SELF = resolve(dirname(fileURLToPath(import.meta.url)), "backfill-2169-nsf-system-kind.mjs");
 
