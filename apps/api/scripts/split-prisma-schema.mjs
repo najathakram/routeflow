@@ -230,6 +230,7 @@ const MODEL_DOMAIN = {
   AddonSku: "platform",
   MeterUsage: "platform",
   BillingEvent: "platform",
+  StripeBillingEvent: "platform",
   RfInvoice: "platform",
   SystemConfig: "platform",
   Message: "platform",

@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { overdueCutoff } from "./calendar-date";
@@ -74,21 +75,34 @@ describe("report-2520-first-overdue-sweep.mjs (#2556)", () => {
     const cases = days.flatMap((d) =>
       times.flatMap((t) => zones.map((z) => ({ at: `${d}T${t}Z`, z }))),
     );
-    const child = spawnSync(
-      process.execPath,
-      [
-        "--input-type=module",
-        "-e",
+    // #2665: this used to pass the whole check script (with the 960-case array embedded) as a
+    // `-e` argument. That serializes to ~51 KB, which blows past Windows' CreateProcess command-
+    // line limit (ENAMETOOLONG) — spawnSync then never launches the child at all, so `child.stdout`/
+    // `child.stderr` come back `undefined` instead of a real (possibly non-empty) stderr. Writing
+    // the same script to a temp file and spawning `node <file>` sidesteps the argv-length limit
+    // entirely (only the short file path is on the command line) and behaves identically on every
+    // platform. The temp dir is scoped to just this test and always cleaned up.
+    const dir = mkdtempSync(path.join(os.tmpdir(), "rf-2520-"));
+    const scriptFile = path.join(dir, "check.mjs");
+    try {
+      writeFileSync(
+        scriptFile,
         `import { cutoffFor } from ${JSON.stringify(pathToFileURL(SCRIPT).href)};
          const cases = ${JSON.stringify(cases)};
          console.log(JSON.stringify(cases.map((c) => cutoffFor(new Date(c.at), c.z).toISOString())));`,
-      ],
-      { encoding: "utf8", timeout: 60_000 },
-    );
-    expect(child.stderr).toBe("");
-    expect(JSON.parse(child.stdout)).toEqual(
-      cases.map((c) => overdueCutoff(new Date(c.at), c.z).toISOString()),
-    );
+        "utf8",
+      );
+      const child = spawnSync(process.execPath, [scriptFile], {
+        encoding: "utf8",
+        timeout: 60_000,
+      });
+      expect(child.stderr).toBe("");
+      expect(JSON.parse(child.stdout)).toEqual(
+        cases.map((c) => overdueCutoff(new Date(c.at), c.z).toISOString()),
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("--self-test passes with no database", () => {

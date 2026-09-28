@@ -40,6 +40,7 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { CheckStatus, InvoiceStatus, NotificationEvent, UserRole } from "@prisma/client";
 import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { fillSparseCasBasis } from "./testing/sparse-line-fixtures";
 
 const mockCompressDocument = compressDocument as jest.Mock;
 
@@ -111,7 +112,10 @@ describe("InvoicesService", () => {
   };
 
   beforeEach(async () => {
+    fillSparseCasBasis(); // #2645: sparse order fixtures vs the CAS basis pin
     prisma = createMockPrisma();
+    // #2070: createPartialFromOrder's invoicedQty bump is a CAS (updateMany); a clean read matches 1.
+    prisma.orderItem.updateMany.mockResolvedValue({ count: 1 } as any);
     prisma.invoice.findFirst.mockResolvedValue({ items: [] }); // units_v1 guard reads the parent invoice
     mockNumbering.reserveNext.mockClear();
     mockNumbering.reserveNext.mockResolvedValue("INV-2026-0001");
@@ -397,7 +401,10 @@ describe("InvoicesService", () => {
         },
         customer: { findFirst: jest.fn().mockResolvedValue({ isTaxExempt: false }) },
         trackedCategory: { findMany: jest.fn().mockResolvedValue([]) },
-        orderItem: { update: jest.fn().mockResolvedValue({}) },
+        orderItem: {
+          update: jest.fn().mockResolvedValue({}),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        }, // #2612 CAS
         $executeRaw: jest.fn().mockResolvedValue(0),
         $queryRaw: jest.fn().mockResolvedValue([]),
       };
@@ -2109,7 +2116,7 @@ describe("InvoicesService", () => {
       expect(Number(primary.taxAmount)).toBe(2);
       expect(Number(sibling.taxAmount)).toBe(1);
       // invoicedQty bumped exactly once per line.
-      expect(prisma.orderItem.update).toHaveBeenCalledTimes(2);
+      expect(prisma.orderItem.updateMany).toHaveBeenCalledTimes(2); // #2612: one CAS per line
     });
 
     it("produces a single invoice with no groupId for a non-regulated order (byte-identical path)", async () => {
@@ -5564,7 +5571,10 @@ describe("InvoicesService", () => {
           })),
           findFirst: jest.fn().mockResolvedValue(null),
         },
-        orderItem: { update: jest.fn().mockResolvedValue({}) },
+        orderItem: {
+          update: jest.fn().mockResolvedValue({}),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        }, // #2070 CAS
         $executeRaw: jest.fn().mockResolvedValue(0),
         $queryRaw: jest.fn().mockResolvedValue([]),
       };
