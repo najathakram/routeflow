@@ -2,6 +2,7 @@ import { Module, forwardRef } from "@nestjs/common";
 import { EmailService } from "./email.service";
 import { MailboxModule } from "./mailbox/mailbox.module";
 import { MailboxAlertService } from "./mailbox/mailbox-alert.service";
+import { GatewaysModule } from "../gateways/gateways.module";
 import { NotificationsModule } from "../notifications/notifications.module";
 
 // PrismaModule and CommonModule (EncryptionService) are global — no explicit imports needed.
@@ -14,7 +15,7 @@ import { NotificationsModule } from "../notifications/notifications.module";
 // `MailboxSendService.onStateChange` at module init, so the provider graph stays acyclic.
 // `NotificationsModule` supplies `NotificationsService` for the in-app notification.
 @Module({
-  imports: [forwardRef(() => MailboxModule), NotificationsModule],
+  imports: [forwardRef(() => MailboxModule), NotificationsModule, GatewaysModule],
   providers: [EmailService, MailboxAlertService],
   exports: [EmailService],
 })

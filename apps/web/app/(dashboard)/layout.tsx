@@ -13,6 +13,7 @@ import {
   Layers,
   Settings,
   Bell,
+  MailWarning,
   ChevronRight,
   ChevronLeft,
   ChevronDown,
@@ -553,6 +554,12 @@ function NotificationIcon({ type }: { type: AppNotification["type"] }) {
     return (
       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-50">
         <Truck className="h-4 w-4 text-brand-500" />
+      </span>
+    );
+  if (type === "mailbox")
+    return (
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-warning-bg">
+        <MailWarning className="h-4 w-4 text-warning" />
       </span>
     );
   if (type === "buyer" || type === "crm")

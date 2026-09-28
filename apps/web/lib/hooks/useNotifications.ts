@@ -9,7 +9,8 @@ import { useTenant } from "@/components/tenant-provider";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type NotificationType = "urgent" | "route" | "driver" | "stock" | "buyer" | "crm";
+export type NotificationType =
+  "urgent" | "route" | "driver" | "stock" | "buyer" | "crm" | "mailbox";
 
 export interface AppNotification {
   id: string;
@@ -163,12 +164,24 @@ export function useNotifications() {
         href: `/customers/${data.customerId}`,
       });
 
+    // #2113: the tenant's connected mailbox stopped sending (F-10a). The server sends this to
+    // TENANT_ADMIN sockets only, with the copy it already wrote; the entry opens the Email settings
+    // where the mailbox is reconnected.
+    const onMailboxAlert = (data: { status?: string; title?: string; body?: string }) =>
+      push({
+        type: "mailbox",
+        title: data?.title || "Your connected mailbox stopped sending",
+        description: data?.body || "Open Email settings to check the mailbox.",
+        href: "/settings?tab=email",
+      });
+
     socket.on("order.urgent.placed", onUrgentOrder);
     socket.on("route.stop.completed", onStopCompleted);
     socket.on("driver.status.updated", onDriverStatus);
     socket.on("buyer.connect.requested", onBuyerConnectRequested);
     socket.on("buyer.connect.autolinked", onBuyerAutoLinked);
     socket.on("crm.lead.handoff", onCrmHandoff);
+    socket.on("mailbox.alert", onMailboxAlert);
 
     return () => {
       socket.off("order.urgent.placed", onUrgentOrder);
@@ -177,6 +190,7 @@ export function useNotifications() {
       socket.off("buyer.connect.requested", onBuyerConnectRequested);
       socket.off("buyer.connect.autolinked", onBuyerAutoLinked);
       socket.off("crm.lead.handoff", onCrmHandoff);
+      socket.off("mailbox.alert", onMailboxAlert);
     };
   }, [push, queryClient]);
 

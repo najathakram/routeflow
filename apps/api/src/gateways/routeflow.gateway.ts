@@ -205,6 +205,17 @@ export interface ProductUpdatedPayload {
 }
 
 /** CRM (GoHighLevel) lead handoff — spec R24. Never sent for a dry-run preview. */
+/**
+ * #2113: a tenant's connected mailbox stopped sending on its own (F-10a). TENANT_ADMIN-only — the
+ * copy MailboxAlertService already built for the in-app push; never a token, cipher or secret.
+ */
+export interface MailboxAlertPayload {
+  status: "REVOKED" | "THROTTLED";
+  provider: "GOOGLE" | "MICROSOFT";
+  title: string;
+  body: string;
+}
+
 export interface CrmHandoffPayload {
   customerId: string;
   customerName: string;
@@ -331,6 +342,11 @@ export class RouteFlowGateway
 
       if (payload.role === UserRole.OPERATOR || payload.role === UserRole.TENANT_ADMIN) {
         await client.join(this.tenantRoom(tenantId, "operators"));
+        // #2113: tenant-admin-only notices (mailbox alerts). A socket whose user is no longer a
+        // TENANT_ADMIN is disconnected by the staff re-validation (#1534), so it leaves this too.
+        if (payload.role === UserRole.TENANT_ADMIN) {
+          await client.join(this.tenantRoom(tenantId, "admins"));
+        }
       } else if (payload.role === UserRole.DRIVER) {
         await client.join(this.tenantRoom(tenantId, `driver:${payload.sub}`));
       } else if (payload.role === UserRole.CUSTOMER) {
@@ -717,5 +733,10 @@ export class RouteFlowGateway
   /** A GoHighLevel lead was created/linked into a RouteFlow customer (spec R24). */
   emitCrmHandoff(tenantId: string | null, payload: CrmHandoffPayload) {
     this.server.to(this.tenantRoom(tenantId, "operators")).emit("crm.lead.handoff", payload);
+  }
+
+  /** #2113: the tenant's mailbox stopped sending — its TENANT_ADMINs only, never operators. */
+  emitMailboxAlert(tenantId: string, payload: MailboxAlertPayload) {
+    this.server.to(this.tenantRoom(tenantId, "admins")).emit("mailbox.alert", payload);
   }
 }

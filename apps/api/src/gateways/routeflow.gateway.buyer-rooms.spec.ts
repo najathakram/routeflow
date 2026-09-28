@@ -850,6 +850,31 @@ describe("RouteFlowGateway on a live Socket.IO server", () => {
     });
   });
 
+  describe("#2113 — mailbox.alert reaches the tenant's TENANT_ADMINs only", () => {
+    it("an admin of that tenant gets it; its operators, drivers, buyers and other tenants do not", async () => {
+      const admin = await connect(staffToken("u-admin", "TENANT_ADMIN", "t-1"));
+      const operator = await connect(staffToken("u-op", "OPERATOR", "t-1"));
+      const driver = await connect(staffToken("u-drv", "DRIVER", "t-1"));
+      const buyer = await connect(buyerToken("buyer-b"));
+      const payload = {
+        status: "REVOKED" as const,
+        provider: "GOOGLE" as const,
+        title: "Your Google mailbox was disconnected",
+        body: "Reconnect it in Settings → Email.",
+      };
+
+      gateway.emitMailboxAlert("t-1", payload);
+      gateway.emitMailboxAlert("t-2", { ...payload, title: "other tenant" });
+      await flush(admin, operator, driver, buyer);
+
+      const alertsOf = (c: Client) => c.events.filter((e) => e.event === "mailbox.alert");
+      expect(alertsOf(admin).map((e) => e.payload)).toEqual([payload]);
+      expect(alertsOf(operator)).toEqual([]);
+      expect(alertsOf(driver)).toEqual([]);
+      expect(alertsOf(buyer)).toEqual([]);
+    });
+  });
+
   // ─── Revocation: a live socket follows link changes ───────────────────────────
 
   describe("#1534 — a staff socket is re-validated at connect AND at every resync (SA-515)", () => {
@@ -857,7 +882,7 @@ describe("RouteFlowGateway on a live Socket.IO server", () => {
 
     it.each([
       ["OPERATOR", "u-op", "t-1", ["tenant:t-1:operators"]],
-      ["TENANT_ADMIN", "u-admin", "t-1", ["tenant:t-1:operators"]],
+      ["TENANT_ADMIN", "u-admin", "t-1", ["tenant:t-1:admins", "tenant:t-1:operators"]],
       ["DRIVER", "u-drv", "t-1", ["tenant:t-1:driver:u-drv"]],
       ["SUPER_ADMIN", "u-sa", null, ["super-admin"]],
     ])("control: a live %s joins its room", async (role, sub, tenantId, rooms) => {
@@ -944,7 +969,7 @@ describe("RouteFlowGateway on a live Socket.IO server", () => {
         await gateway.resyncBuyerRooms();
         expect(await serverHolds(id)).toBe(false);
         expect(await gone).toBe("io server disconnect");
-        expect(await serverRooms(admin)).toEqual(["tenant:t-1:operators"]);
+        expect(await serverRooms(admin)).toEqual(["tenant:t-1:admins", "tenant:t-1:operators"]);
         expect(buyer.socket.connected).toBe(true);
       },
     );

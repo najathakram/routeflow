@@ -1,4 +1,5 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from "@nestjs/common";
+import { RouteFlowGateway } from "../../gateways/routeflow.gateway";
 import { PrismaService } from "../../prisma/prisma.service";
 import { TenantContextService } from "../../tenant/tenant-context.service";
 import { NotificationsService } from "../../notifications/notifications.service";
@@ -21,6 +22,8 @@ interface AdminRecipient {
  *
  *   - in-app: `NotificationsService.sendToUser`, to every ACTIVE TENANT_ADMIN — REVOKED and
  *     THROTTLED. A user's own push opt-out (B04) is honoured there.
+ *   - web bell (#2113): one `mailbox.alert` socket emit to the tenant's TENANT_ADMIN room, with
+ *     the same copy — status, provider, title and body only.
  *   - email: REVOKED only, through `EmailService.sendMailboxRevokedNotice`, which is always the
  *     PLATFORM sender class — never the dead mailbox, never the tenant's SMTP. A THROTTLED mailbox
  *     comes back by itself, so it does not warrant an email.
@@ -40,6 +43,8 @@ export class MailboxAlertService implements OnModuleInit, OnModuleDestroy {
     private readonly tenantCtx: TenantContextService,
     private readonly notifications: NotificationsService,
     private readonly email: EmailService,
+    // #2113: the web bell. Optional so a context without the gateway still notifies by push/email.
+    @Optional() private readonly gateway?: RouteFlowGateway,
   ) {}
 
   onModuleInit(): void {
@@ -142,6 +147,21 @@ export class MailboxAlertService implements OnModuleInit, OnModuleDestroy {
           }`,
         );
       }
+    }
+    // #2113: web-only admins get no push; the bell reaches every open admin tab once.
+    try {
+      this.gateway?.emitMailboxAlert(change.tenantId, {
+        status: change.status,
+        provider: change.provider,
+        title: inApp.title,
+        body: inApp.body,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Mailbox ${change.status} web alert failed for tenant ${change.tenantId}: ${
+          err instanceof Error ? err.name : typeof err
+        }`,
+      );
     }
   }
 

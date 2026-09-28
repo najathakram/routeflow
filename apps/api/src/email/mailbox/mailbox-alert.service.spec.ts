@@ -61,14 +61,16 @@ function build(opts: { admins?: typeof ADMINS; hasFallback?: boolean } = {}) {
     sendPlatform: jest.fn(),
   };
   const mailboxSend = { onStateChange: jest.fn().mockReturnValue(jest.fn()) };
+  const gateway = { emitMailboxAlert: jest.fn() };
   const service = new MailboxAlertService(
     mailboxSend as any,
     prisma as any,
     tenantCtx,
     notifications as any,
     email as any,
+    gateway as any,
   );
-  return { service, prisma, notifications, email, mailboxSend, tenantCtx, tenantSeenBy };
+  return { service, prisma, notifications, email, mailboxSend, tenantCtx, tenantSeenBy, gateway };
 }
 
 beforeEach(() => jest.clearAllMocks());
@@ -315,5 +317,48 @@ describe("MailboxAlertService — subscription wiring", () => {
       provider: "MICROSOFT",
     });
     alerts.onModuleDestroy();
+  });
+});
+
+describe("MailboxAlertService — web bell (#2113)", () => {
+  it.each([
+    ["REVOKED", {}],
+    ["THROTTLED", { status: "THROTTLED", throttledUntil: new Date(Date.now() + 60 * 60_000) }],
+  ] as const)(
+    "%s: ONE mailbox.alert to the tenant's admin room, carrying only status, provider and the in-app copy",
+    async (_label, over) => {
+      const { service, gateway, notifications } = build();
+
+      await service.notifyAdmins(change(over as Partial<MailboxStateChange>));
+
+      expect(gateway.emitMailboxAlert).toHaveBeenCalledTimes(1);
+      const [tenantId, payload] = gateway.emitMailboxAlert.mock.calls[0];
+      expect(tenantId).toBe("tenant-a");
+      expect(Object.keys(payload).sort()).toEqual(["body", "provider", "status", "title"]);
+      // The same copy the push carried — one source of wording.
+      const push = notifications.sendToUser.mock.calls[0][1];
+      expect(payload).toEqual({
+        status: over.status ?? "REVOKED",
+        provider: "GOOGLE",
+        title: push.title,
+        body: push.body,
+      });
+    },
+  );
+
+  it("no admin to notify: no web alert either", async () => {
+    const { service, gateway } = build({ admins: [] });
+    await service.notifyAdmins(change());
+    expect(gateway.emitMailboxAlert).not.toHaveBeenCalled();
+  });
+
+  it("a throwing gateway never reaches the push or email, and notifyAdmins still resolves", async () => {
+    const { service, gateway, notifications, email } = build();
+    gateway.emitMailboxAlert.mockImplementation(() => {
+      throw new Error("socket server down");
+    });
+    await expect(service.notifyAdmins(change())).resolves.toBeUndefined();
+    expect(notifications.sendToUser).toHaveBeenCalledTimes(2);
+    expect(email.sendMailboxRevokedNotice).toHaveBeenCalledTimes(2);
   });
 });
