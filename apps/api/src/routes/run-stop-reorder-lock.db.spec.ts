@@ -430,8 +430,8 @@ describeDb("#2562 run-stop reorder vs a concurrent run start — real Postgres",
       }
     }
     expect({
-      deadlocks: errors.filter((e) => /deadlock|40P01/i.test(e)).length,
-      otherErrors: errors.filter((e) => !/deadlock|40P01/i.test(e)),
+      deadlocks: errors.filter((e) => /deadlock|40P01|P2034/i.test(e)).length,
+      otherErrors: errors.filter((e) => !/deadlock|40P01|P2034/i.test(e)),
     }).toEqual({ deadlocks: 0, otherErrors: [] });
   }, 120_000);
 
@@ -491,8 +491,8 @@ describeDb("#2562 run-stop reorder vs a concurrent run start — real Postgres",
       for (const e of [cErr, rErr]) if (e) errors.push(e);
     }
     expect({
-      deadlocks: errors.filter((e) => /deadlock|40P01/i.test(e)).length,
-      otherErrors: errors.filter((e) => !/deadlock|40P01/i.test(e)),
+      deadlocks: errors.filter((e) => /deadlock|40P01|P2034/i.test(e)).length,
+      otherErrors: errors.filter((e) => !/deadlock|40P01|P2034/i.test(e)),
     }).toEqual({ deadlocks: 0, otherErrors: [] });
   }, 120_000);
 });
