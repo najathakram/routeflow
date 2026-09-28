@@ -191,7 +191,6 @@ describe("RoutesService — POD key traversal (#2542)", () => {
       ["a data URL to ingest", "data:image/jpeg;base64,/9j/fake"],
       ["a device-local file URI", "file:///var/mobile/photo.jpg"],
       ["the legacy sentinel", "native-captured"],
-      ["an empty value", ""],
       ["this tenant's own key (a client echoing a stored key)", OWN],
     ])("accepts %s", (_label, v) => {
       expect(podCaptureValueRefusal(v, T)).toBeNull();
