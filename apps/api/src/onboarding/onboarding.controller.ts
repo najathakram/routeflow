@@ -4,12 +4,26 @@ import {
   Get,
   HttpCode,
   Param,
+  ParseEnumPipe,
   ParseUUIDPipe,
   Patch,
   Post,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from "@nestjs/common";
+import { FileInterceptor } from "@nestjs/platform-express";
+import { IntakeSectionKey } from "@prisma/client";
+import { memoryStorage } from "multer";
+import { MB, uploadLimits } from "../common/upload-limits";
+import { OnboardingIntakeService } from "./onboarding-intake.service";
+import { intakeFileFilter } from "./public-onboarding.controller";
+import {
+  IssueIntakeLinkDto,
+  ReviewIntakeSectionDto,
+  UploadIntakeFileFieldsDto,
+} from "./dto/intake.dto";
 import { ApiBearerAuth, ApiTags } from "@nestjs/swagger";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { SuperAdminGuard } from "../tenant/super-admin.guard";
@@ -34,7 +48,10 @@ import {
 @UseGuards(JwtAuthGuard, SuperAdminGuard)
 @Controller("platform-admin")
 export class OnboardingController {
-  constructor(private readonly onboarding: OnboardingService) {}
+  constructor(
+    private readonly onboarding: OnboardingService,
+    private readonly intake: OnboardingIntakeService,
+  ) {}
 
   @Get("onboarding/cases")
   list(@Query() q: ListOnboardingCasesQueryDto) {
@@ -113,6 +130,63 @@ export class OnboardingController {
   @HttpCode(200)
   adoptCatalog(@Param("id", ParseUUIDPipe) id: string, @CurrentUser() admin: JwtPayload) {
     return this.onboarding.adoptCatalog(id, admin.sub);
+  }
+
+  // ─── S2: the intake link ───────────────────────────────────────────────────
+
+  @Post("onboarding/cases/:id/intake-link")
+  @HttpCode(200)
+  issueLink(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body() dto: IssueIntakeLinkDto,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    return this.intake.issueLink(id, admin.sub, dto.send === true);
+  }
+
+  @Post("onboarding/cases/:id/intake-link/revoke")
+  @HttpCode(200)
+  revokeLink(@Param("id", ParseUUIDPipe) id: string, @CurrentUser() admin: JwtPayload) {
+    return this.intake.revokeLink(id, admin.sub);
+  }
+
+  @Get("onboarding/cases/:id/intake")
+  intakeView(@Param("id", ParseUUIDPipe) id: string) {
+    return this.intake.adminView(id);
+  }
+
+  @Post("onboarding/cases/:id/sections/:key/review")
+  @HttpCode(200)
+  reviewSection(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Param("key", new ParseEnumPipe(IntakeSectionKey)) key: IntakeSectionKey,
+    @Body() dto: ReviewIntakeSectionDto,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    return this.intake.review(id, key, dto.action, dto.note, admin.sub);
+  }
+
+  @Post("onboarding/cases/:id/files")
+  @HttpCode(200)
+  @UseInterceptors(
+    FileInterceptor("file", {
+      storage: memoryStorage(),
+      limits: uploadLimits(MB(25)),
+      fileFilter: intakeFileFilter,
+    }),
+  )
+  uploadFile(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body() dto: UploadIntakeFileFieldsDto,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    return this.intake.uploadAsAdmin(id, dto.sectionKey, dto.kind, file, admin.sub);
+  }
+
+  @Get("onboarding/cases/:id/files/:fileId/url")
+  fileUrl(@Param("id", ParseUUIDPipe) id: string, @Param("fileId", ParseUUIDPipe) fileId: string) {
+    return this.intake.signedFileUrl(id, fileId);
   }
 
   @Get("demo-bookings")
