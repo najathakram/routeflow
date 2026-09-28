@@ -40,6 +40,9 @@ export const AdminAuditAction = {
   ONBOARDING_CASE_CREATED: "ONBOARDING_CASE_CREATED",
   ONBOARDING_STAGE_ADVANCED: "ONBOARDING_STAGE_ADVANCED",
   ONBOARDING_STEP_WAIVED: "ONBOARDING_STEP_WAIVED",
+  // #2159 S2 — the intake link.
+  ONBOARDING_LINK_ISSUED: "ONBOARDING_LINK_ISSUED",
+  ONBOARDING_LINK_REVOKED: "ONBOARDING_LINK_REVOKED",
 } as const;
 
 export type AdminAuditActionCode = (typeof AdminAuditAction)[keyof typeof AdminAuditAction];
@@ -70,6 +73,8 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   ONBOARDING_CASE_CREATED: "Onboarding case created",
   ONBOARDING_STAGE_ADVANCED: "Onboarding stage advanced",
   ONBOARDING_STEP_WAIVED: "Onboarding step waived",
+  ONBOARDING_LINK_ISSUED: "Onboarding intake link issued",
+  ONBOARDING_LINK_REVOKED: "Onboarding intake link revoked",
 };
 
 /** Facet list for the audit-log filter dropdown (code + label), ordered as declared. */
