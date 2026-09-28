@@ -47,6 +47,9 @@ function harness(opts: { flags: string[]; rows?: string[]; overrides?: Record<st
     isAlwaysEnforcedTenant: jest.fn().mockResolvedValue(false),
   };
   const featureOverrides = {
+    get: jest
+      .fn()
+      .mockImplementation((_t: string, k: string) => Promise.resolve(overrides.get(k) ?? null)),
     getMany: jest.fn().mockImplementation((_t: string, keys: string[]) => {
       const m = new Map<string, Effect>();
       for (const k of keys) if (overrides.has(k)) m.set(k, overrides.get(k)!);

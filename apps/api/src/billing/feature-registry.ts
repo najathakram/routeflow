@@ -1216,16 +1216,22 @@ export function checkFeatureRequires(
 }
 
 /**
- * Owner ruling 2026-09-28 ("On for everyone"): the ONE rule for an add-on-keyed feature
- * (`gate.via` "RequireAddon" | "guard") that a tenant holds WITHOUT a TenantAddon row. It is held
- * when its registry row is `defaultGranted: true` AND its `requires` are met against
- * `rowKeys ∪ entFlags` (the tenant's active add-on rows and its ent.flags, i.e. plan flags plus
- * add-on-granted flags). A DENY override still removes it; that is the caller's job, because it
- * needs an override read (AddonService applies it; AddonGuard and /tenants/me/addons apply their
- * own override pass on top, as they always have).
+ * Owner ruling 2026-09-28 ("On for everyone") / SA-540: the ONE rule for an add-on-keyed feature
+ * (`gate.via` "RequireAddon" | "guard") that a tenant holds WITHOUT a TenantAddon row:
+ *
+ *   effective(addon) = (preset ∪ registry defaultGranted ∪ explicit grants) − explicit denies,
+ *   AND its `requires` are met — a SEPARATE conjunct that an add-on default never satisfies.
+ *
+ * This function is the default term plus the `requires` conjunct: true when the row is
+ * `defaultGranted: true` and its `requires` hold against the tenant's REQUIREMENT set,
+ * `(rowKeys ∪ entFlags ∪ GRANT overrides) − DENY overrides` (ent.flags = plan flags plus add-on
+ * granted flags; overrides applied exactly as PlanFlagGuard/hasFlag apply them, strictly, with no
+ * dark courtesy). Default-granted keys are never in that set, so a default cannot satisfy another
+ * key's `requires`. A DENY override on the feature key itself is the caller's job (AddonService,
+ * AddonGuard, /tenants/me/addons, the old path and the resolver all check it first).
  *
  * Every runtime and report path that decides "does this tenant hold add-on X" calls THIS function
- * (AddonService.getActiveAddons/hasAddon, EntitlementAuthority's old path, resolveOneKey); the
+ * (AddonService.getActiveAddons/hasAddon, EntitlementAuthority's old paths, resolveOneKey); the
  * publish/blast-radius scripts' mirror (`scripts/lib/feature-registry-mirror.cjs`) keeps a JS twin,
  * pinned by `feature-registry-mirror.parity.spec.ts`. Never re-derive it inline. `defaultGranted`
  * on a flag-keyed row is unrelated; resolveOneKey reads that one directly.
@@ -1236,11 +1242,24 @@ export function isDefaultGrantedAddon(
   },
   rowKeys: Iterable<string>,
   entFlags: Iterable<string>,
+  overrides?: ReadonlyMap<string, "GRANT" | "DENY">,
 ): boolean {
   if (!feature.defaultGranted) return false;
   if (feature.gate.via !== "RequireAddon" && feature.gate.via !== "guard") return false;
   const effective = new Set<string>([...rowKeys, ...entFlags]);
+  for (const [k, effect] of overrides ?? []) {
+    if (effect === "GRANT") effective.add(k);
+    else effective.delete(k);
+  }
   return checkFeatureRequires(feature.requires, effective).satisfied;
+}
+
+/** Every key a default-granted add-on's `requires` names — the overrides that predicate needs. */
+export function defaultGrantRequirementKeys(features: readonly FeatureDef[]): string[] {
+  const keys = new Set<string>();
+  for (const f of features)
+    for (const k of [...(f.requires?.allOf ?? []), ...(f.requires?.anyOf ?? [])]) keys.add(k);
+  return [...keys];
 }
 
 /** The add-on-keyed registry rows a tenant may hold with no row (see `isDefaultGrantedAddon`). */

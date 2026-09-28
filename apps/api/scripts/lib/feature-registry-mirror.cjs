@@ -297,7 +297,7 @@ function computeOldPathEffective(feature, ctx, env = process.env) {
   if (isAddonKeyed) {
     const active =
       ctx.activeAddonSet.has(feature.key) ||
-      isDefaultGrantedAddonMirror(feature, ctx.activeAddonSet, ctx.entFlags);
+      isDefaultGrantedAddonMirror(feature, ctx.activeAddonSet, ctx.entFlags, ctx.overrides);
     // addonGateState() only ever returns "dark" for a RequireAddon row (ADDON_GATE_REGISTRY is
     // derived from RequireAddon rows only) — a "guard" row like driver_payments always reads back
     // "enforced", regardless of its own gate.state field, because it was never in that projection.
@@ -317,11 +317,18 @@ const DEFAULT_GRANT_REQUIRES = {
   orders_inline_returns: { allOf: ["flag.returns"] },
 };
 
-/** JS twin of feature-registry.ts `isDefaultGrantedAddon` (same semantics as checkFeatureRequires). */
-function isDefaultGrantedAddonMirror(feature, activeAddonSet, entFlags) {
+/**
+ * JS twin of feature-registry.ts `isDefaultGrantedAddon` (same semantics as checkFeatureRequires):
+ * the requirement set is (activeAddonSet ∪ entFlags ∪ GRANT overrides) − DENY overrides (SA-540).
+ */
+function isDefaultGrantedAddonMirror(feature, activeAddonSet, entFlags, overrides) {
   if (!feature.defaultGranted) return false;
   if (feature.via !== "RequireAddon" && feature.via !== "guard") return false;
   const effective = new Set([...activeAddonSet, ...entFlags]);
+  for (const [k, effect] of overrides || []) {
+    if (effect === "GRANT") effective.add(k);
+    else effective.delete(k);
+  }
   const requires = DEFAULT_GRANT_REQUIRES[feature.key];
   const allOf = (requires && requires.allOf) || [];
   const anyOf = requires && requires.anyOf;
@@ -340,7 +347,7 @@ function computeNewPathEffective(feature, ctx) {
   if (isAddonKeyed) {
     return (
       ctx.activeAddonSet.has(feature.key) ||
-      isDefaultGrantedAddonMirror(feature, ctx.activeAddonSet, ctx.entFlags)
+      isDefaultGrantedAddonMirror(feature, ctx.activeAddonSet, ctx.entFlags, ctx.overrides)
     );
   }
 

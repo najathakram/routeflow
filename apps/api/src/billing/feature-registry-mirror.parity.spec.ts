@@ -50,6 +50,7 @@ const mirror = require("../../scripts/lib/feature-registry-mirror.cjs") as {
     feature: { key: string; via: string; defaultGranted: boolean },
     activeAddonSet: Set<string>,
     entFlags: string[],
+    overrides?: Map<string, "GRANT" | "DENY">,
   ) => boolean;
   DARK_PLAN_FLAGS: Set<string>;
   ALWAYS_ENFORCED_PLAN_KEYS: Set<string>;
@@ -89,19 +90,26 @@ describe("feature-registry-mirror.cjs parity with the real TypeScript source", (
     }
   });
 
-  it("isDefaultGrantedAddonMirror === isDefaultGrantedAddon for every key across flag/row sets", () => {
+  it("isDefaultGrantedAddonMirror === isDefaultGrantedAddon for every key across flag/row/override sets", () => {
     const byKey = new Map(mirror.FEATURE_REGISTRY_MIRROR.map((f) => [f.key, f]));
     const flagSets = [[], ["flag.returns"], ["flag.analytics"], ["flag.returns", "flag.reports"]];
     const rowSets = [[], ["recurring_routes"], ["order_delivery", "orders_inline_returns"]];
+    // SA-540: `requires` honours overrides (a DENY on flag.returns removes it; a GRANT adds it).
+    const overrideSets: Array<Map<string, "GRANT" | "DENY">> = [
+      new Map(),
+      new Map([["flag.returns", "DENY" as const]]),
+      new Map([["flag.returns", "GRANT" as const]]),
+    ];
     for (const real of FEATURE_REGISTRY) {
       for (const flags of flagSets) {
         for (const rows of rowSets) {
-          expect([
-            real.key,
-            rows,
-            flags,
-            mirror.isDefaultGrantedAddonMirror(byKey.get(real.key)!, new Set(rows), flags),
-          ]).toEqual([real.key, rows, flags, isDefaultGrantedAddon(real, rows, flags)]);
+          for (const ov of overrideSets) {
+            const label = [real.key, rows, flags, [...ov]];
+            expect([
+              label,
+              mirror.isDefaultGrantedAddonMirror(byKey.get(real.key)!, new Set(rows), flags, ov),
+            ]).toEqual([label, isDefaultGrantedAddon(real, rows, flags, ov)]);
+          }
         }
       }
     }

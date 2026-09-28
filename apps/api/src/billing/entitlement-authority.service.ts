@@ -9,6 +9,7 @@ import {
   DEFAULT_GRANTED_ADDON_FEATURES,
   FEATURE_REGISTRY,
   checkFeatureRequires,
+  defaultGrantRequirementKeys,
   isDefaultGrantedAddon,
   describeUnmetFeatureRequirement,
 } from "./feature-registry";
@@ -175,7 +176,11 @@ export class EntitlementAuthority {
 
       const isAddonKeyed = feature.gate.via === "RequireAddon" || feature.gate.via === "guard";
       if (isAddonKeyed) {
-        const active = activeAddonSet.has(feature.key);
+        // SA-540 / Opus review of fa6186b9 (M1): the SAME default-grant rule as computeOldPath and
+        // AddonService. Fails closed when entitlements could not resolve (ent === null).
+        const active =
+          activeAddonSet.has(feature.key) ||
+          (ent !== null && isDefaultGrantedAddon(feature, activeAddonSet, ent.flags, overrides));
         result.set(
           feature.key,
           active || (addonGateState(feature.key) === "dark" && !isAlwaysEnforced),
@@ -306,21 +311,16 @@ export class EntitlementAuthority {
       // DENY override was already handled above.
       if (feature && DEFAULT_GRANTED_ADDON_FEATURES.includes(feature)) {
         try {
-          const [rows, ent] = await Promise.all([
+          const [rows, ent, reqOverrides] = await Promise.all([
             this.prisma.tenantAddon.findMany({
               where: { tenantId, active: true },
               select: { addonKey: true },
             }),
             this.entitlements.resolve(tenantId),
+            this.featureOverrides.getMany(tenantId, defaultGrantRequirementKeys([feature])),
           ]);
-          if (
-            isDefaultGrantedAddon(
-              feature,
-              rows.map((r) => r.addonKey),
-              ent.flags,
-            )
-          )
-            return true;
+          const rowKeys = rows.map((r) => r.addonKey);
+          if (isDefaultGrantedAddon(feature, rowKeys, ent.flags, reqOverrides)) return true;
         } catch (err) {
           // Fail closed, exactly like AddonService.defaultGrantedKeys().
           this.logger.warn(

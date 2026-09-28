@@ -164,7 +164,7 @@ export function resolveOneKey(feature: FeatureDef, ctx: ResolveContext): Resolve
     if (!active) {
       // Owner ruling 2026-09-28: a default-granted add-on is held with no row when its
       // `requires` are met — the SAME rule AddonService applies at runtime.
-      if (isDefaultGrantedAddon(feature, ctx.activeAddonSet, ctx.entFlags)) {
+      if (isDefaultGrantedAddon(feature, ctx.activeAddonSet, ctx.entFlags, ctx.overrides)) {
         return {
           key: feature.key,
           effective: true,
