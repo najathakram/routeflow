@@ -387,8 +387,8 @@ export function SplitInvoiceScreen({
                   const globalLeft = remainingForItem(it.id);
                   return (
                     <View key={it.id} style={styles.itemRow}>
-                      <View style={{ flex: 1, minWidth: 0 }}>
-                        <Text style={styles.itemName} numberOfLines={1}>
+                      <View style={styles.itemNameBlock}>
+                        <Text style={styles.itemName} numberOfLines={2}>
                           {it.productName}
                         </Text>
                         <Text style={styles.itemSub}>
@@ -629,6 +629,11 @@ const styles = StyleSheet.create({
     borderTopColor: ios.separator,
     flexWrap: "wrap",
   },
+  // #2660: the name block keeps a real minimum width. At 390 the qty input, None/Half/All and the
+  // line total (~270pt) no longer fit beside it, so the wrapping row drops them onto their own line
+  // under the name instead of squeezing the name to "Mixed …" (the same wrap #2084 gave quickRow).
+  // Wider screens still fit everything on one row. The name itself may use two lines.
+  itemNameBlock: { flexGrow: 1, flexShrink: 1, flexBasis: 180, minWidth: 180 },
   itemName: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label },
   itemSub: {
     fontSize: 11,
