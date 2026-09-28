@@ -7,12 +7,18 @@ import { BadRequestException, NotFoundException } from "@nestjs/common";
  * body can never renumber another run. The run's status and its stops are read INSIDE the
  * transaction, under the run row lock, and a stop that is IN_PROGRESS refuses the reorder: a
  * driver is standing at it. Extracted from RoutesService (size ratchet); runs in the caller's tx.
+ *
+ * Lock order (#2635, SA-533e): the house order for this family is STOP rows → RouteRun, the order
+ * completeStop / completeWithPayment take on a run's last stop (stop → orders → run). So the run's
+ * stop rows are locked first, in a deterministic id order, and only then the RouteRun. Locking the
+ * run first inverted that order and could deadlock against a last-stop completion.
  */
 export async function reorderRunStopsInTx(
   tx: any,
   runId: string,
   order: { id: string; stopNumber: number }[],
 ): Promise<void> {
+  await tx.$executeRaw`SELECT id FROM "RouteRunStop" WHERE "routeRunId" = ${runId} ORDER BY id FOR UPDATE`;
   await tx.$executeRaw`SELECT id FROM "RouteRun" WHERE id = ${runId} FOR UPDATE`;
   const run = await tx.routeRun.findFirst({ where: { id: runId } });
   if (!run) throw new NotFoundException("Route run not found");

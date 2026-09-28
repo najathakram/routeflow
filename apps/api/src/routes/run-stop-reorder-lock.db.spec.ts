@@ -351,4 +351,65 @@ describeDb("#2562 run-stop reorder vs a concurrent run start — real Postgres",
       stop2: 1,
     });
   });
+
+  // #2635 (SA-533e): the house lock order for this family is STOP rows → RouteRun, the order a
+  // last-stop completion takes (claim the stop row, then auto-complete the run). The real
+  // completeWithPayment cannot race a reorder that reaches its writes (completion needs an
+  // IN_PROGRESS run; the reorder refuses one), so T2 replays that exact lock sequence in raw SQL:
+  // the stop row first, then the RouteRun. The reorder starts while T2 holds the stop row, and T2
+  // takes the run lock only once the reorder is observed blocked. Stop-first ordering never forms a
+  // cycle; the old run-first order does (40P01).
+  it("#2635: reorder vs a last-stop-completion lock sequence never deadlocks (N rounds)", async () => {
+    const ROUNDS = 5;
+    const errors: string[] = [];
+    for (let round = 0; round < ROUNDS; round++) {
+      // eslint-disable-next-line no-await-in-loop
+      const s = await seedRunWithTwoStops(`dl${round}`);
+      const last = [s.stop1, s.stop2].sort((a, b) => (a.id < b.id ? 1 : -1))[0]; // highest id
+      let takeRun!: () => void;
+      const mayTakeRun = new Promise<void>((r) => (takeRun = r));
+      let holdsStop!: () => void;
+      const stopHeld = new Promise<void>((r) => (holdsStop = r));
+      const completion = prisma
+        .$transaction(
+          async (tx: any) => {
+            await tx.$executeRaw`UPDATE "RouteRunStop" SET "updatedAt" = now() WHERE id = ${last.id}`;
+            holdsStop();
+            await mayTakeRun;
+            await tx.$executeRaw`UPDATE "RouteRun" SET "updatedAt" = now() WHERE id = ${s.run.id}`;
+          },
+          { timeout: 60_000 },
+        )
+        .then(
+          () => null,
+          (e: unknown) => String((e as Error)?.message ?? e),
+        );
+      // eslint-disable-next-line no-await-in-loop
+      await stopHeld;
+      const reorder = tenantCtx
+        .run(s.tenantId, () =>
+          routesService.reorderRunStops(s.run.id, [
+            { id: s.stop1.id, stopNumber: 2 },
+            { id: s.stop2.id, stopNumber: 1 },
+          ]),
+        )
+        .then(
+          () => null,
+          (e: unknown) => String((e as Error)?.message ?? e),
+        );
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await observeBlocked(reorder);
+      } finally {
+        takeRun();
+      }
+      // eslint-disable-next-line no-await-in-loop
+      const [cErr, rErr] = await Promise.all([completion, reorder]);
+      for (const e of [cErr, rErr]) if (e) errors.push(e);
+    }
+    expect({
+      deadlocks: errors.filter((e) => /deadlock|40P01/i.test(e)).length,
+      otherErrors: errors.filter((e) => !/deadlock|40P01/i.test(e)),
+    }).toEqual({ deadlocks: 0, otherErrors: [] });
+  }, 120_000);
 });
