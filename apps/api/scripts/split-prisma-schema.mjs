@@ -252,6 +252,9 @@ const MODEL_DOMAIN = {
   CrmConnection: "platform",
   CrmHandoff: "platform",
   MailboxConnection: "platform",
+  OnboardingCase: "platform",
+  OnboardingStep: "platform",
+  OnboardingEvent: "platform",
 
   // ─── compliance ────────────────────────────────────────────────────────────
   TobaccoReport: "compliance",
