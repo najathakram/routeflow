@@ -17,7 +17,15 @@ import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   assertNoBlockingInvoices,
+  assertNoDeliveryHistory,
+  assertNoMoneyRecords,
+  assertNoMoneyRecordsInTx,
   assertRecordFreeInTx,
+  countDeliveryHistory,
+  countMoneyRecords,
+  deleteCustomerRowsFkRaceAs409,
+  deleteDeliveryHistoryCas,
+  deleteMoneyRecordCas,
   deleteNonBlockingInvoicesCas,
   readInvoicesAssertingNoneBlocking,
 } from "./customer-delete-preflight";
@@ -2278,7 +2286,7 @@ export class CustomersService {
     // since-deleted invoice is still open). Neither showed up in the counts above, so
     // the hard-delete path below ran unconditionally and destroyed real liabilities
     // with no soft-delete, no statement, no audit row.
-    const [orderCount, invoiceCount, returnCount, advanceBalance, openCreditNotes] =
+    const [orderCount, invoiceCount, returnCount, advanceBalance, openCreditNotes, money, history] =
       await Promise.all([
         this.prisma.forTenant().order.count({ where: { customerId: id } }),
         this.prisma.forTenant().invoice.count({ where: { customerId: id } }),
@@ -2291,6 +2299,8 @@ export class CustomersService {
           where: { customerId: id, status: { not: "VOID" } },
           select: { amount: true, amountUsed: true },
         }),
+        countMoneyRecords(this.prisma.forTenant(), [id]), // #2587/SA-516: any status, any balance
+        countDeliveryHistory(this.prisma.forTenant(), [id]), // #2591/SA-516b
       ]);
 
     const hasAdvanceBalance = Number(advanceBalance._sum.balance ?? 0) > 0.001;
@@ -2299,8 +2309,14 @@ export class CustomersService {
     const hasOpenCreditNote = openCreditNotes.some(
       (cn) => Number(cn.amount) - Number(cn.amountUsed) > 0.001,
     );
+    const hasMoneyRecords = money.length > 0;
+    const hasDeliveryHistory = history.length > 0;
     const hasFinancialRecords =
-      orderCount + invoiceCount + returnCount > 0 || hasAdvanceBalance || hasOpenCreditNote;
+      orderCount + invoiceCount + returnCount > 0 ||
+      hasAdvanceBalance ||
+      hasOpenCreditNote ||
+      hasMoneyRecords ||
+      hasDeliveryHistory;
 
     if (hasFinancialRecords && !force) {
       const parts = [
@@ -2310,6 +2326,9 @@ export class CustomersService {
       ];
       if (hasAdvanceBalance) parts.push("an outstanding advance balance");
       if (hasOpenCreditNote) parts.push("an open credit note");
+      if (hasMoneyRecords && !hasAdvanceBalance && !hasOpenCreditNote)
+        parts.push("credit notes, payments or advance payments");
+      if (hasDeliveryHistory) parts.push("delivery history");
       throw new ConflictException(
         `Cannot delete customer with existing financial records. ` +
           `Affected: ${parts.join(", ")}. ` +
@@ -2356,19 +2375,11 @@ export class CustomersService {
       // that count is read OUTSIDE this tx; refuse (409, rollback) rather than destroy an invoice or
       // payment created in between.
       await assertRecordFreeInTx(tx, id);
+      await assertNoMoneyRecordsInTx(tx, [id]); // #2587/SA-516
+      await assertNoDeliveryHistory(tx, [id]); // #2591/SA-516b
 
-      // Credit notes — order↔credit-note links must be deleted BEFORE the notes
-      // (OrderCreditNote.creditNoteId has no onDelete, so the FK restricts the parent delete)
-      const creditNotes = await tx.creditNote.findMany({
-        where: { customerId: id },
-        select: { id: true },
-      });
-      if (creditNotes.length) {
-        await tx.orderCreditNote.deleteMany({
-          where: { creditNoteId: { in: creditNotes.map((n) => n.id) } },
-        });
-      }
-      await tx.creditNote.deleteMany({ where: { customerId: id } });
+      // #2587/SA-516: credit notes are never destroyed (so no order links to clear either)
+      await deleteMoneyRecordCas(tx.creditNote, { customerId: id });
 
       // Returns must be deleted BEFORE orders (Return has orderId FK on Order). Kind-agnostic
       // by design (PR-1a review) — removes every Return regardless of kind.
@@ -2391,7 +2402,7 @@ export class CustomersService {
         });
         if (transactions.length) {
           const txIds = transactions.map((t) => t.id);
-          await tx.payment.deleteMany({ where: { transactionId: { in: txIds } } });
+          await deleteMoneyRecordCas(tx.payment, { transactionId: { in: txIds } });
           await tx.transactionItem.deleteMany({ where: { transactionId: { in: txIds } } });
           await tx.transaction.deleteMany({ where: { id: { in: txIds } } });
         }
@@ -2436,7 +2447,7 @@ export class CustomersService {
       }
 
       // Route associations (RouteRunStop references RouteStop, so delete run stops first)
-      await tx.routeRunStop.deleteMany({ where: { customerId: id } });
+      await deleteDeliveryHistoryCas(tx, [id]); // #2591: expects zero rows
       await tx.routeCustomer.deleteMany({ where: { customerId: id } });
       await tx.routeStop.deleteMany({ where: { customerId: id } });
 
@@ -2447,11 +2458,11 @@ export class CustomersService {
       });
       if (remainingTxns.length) {
         const txnIds = remainingTxns.map((t) => t.id);
-        await tx.payment.deleteMany({ where: { transactionId: { in: txnIds } } });
+        await deleteMoneyRecordCas(tx.payment, { transactionId: { in: txnIds } });
         await tx.transactionItem.deleteMany({ where: { transactionId: { in: txnIds } } });
         await tx.transaction.deleteMany({ where: { customerId: id } });
       }
-      await tx.advancePayment.deleteMany({ where: { customerId: id } });
+      await deleteMoneyRecordCas(tx.advancePayment, { customerId: id });
       await tx.customerPrice.deleteMany({ where: { customerId: id } });
       await tx.customerAddress.deleteMany({ where: { customerId: id } });
 
@@ -2464,7 +2475,7 @@ export class CustomersService {
       await tx.expense.updateMany({ where: { customerId: id }, data: { customerId: null } });
 
       // Finally delete customer + user
-      await tx.customer.delete({ where: { id } });
+      await deleteCustomerRowsFkRaceAs409(tx.customer.delete({ where: { id } })); // #2572
       await tx.user.delete({ where: { id: customer.userId } });
     });
 
@@ -2532,10 +2543,14 @@ export class CustomersService {
 
     // #2558/SA-510a: the pre-flight breakdown; re-checked inside the tx, and the delete is a CAS.
     await assertNoBlockingInvoices(this.prisma.forTenant(), customerIds, { capList: true });
+    await assertNoMoneyRecords(this.prisma.forTenant(), customerIds); // #2587/SA-516
+    await assertNoDeliveryHistory(this.prisma.forTenant(), customerIds); // #2591/SA-516b
 
     await this.prisma.tenantTransaction(
       async (tx) => {
         const invoices = await readInvoicesAssertingNoneBlocking(tx, customerIds); // SA-510a (1)
+        await assertNoMoneyRecordsInTx(tx, customerIds); // #2587/SA-516
+        await assertNoDeliveryHistory(tx, customerIds); // #2591/SA-516b: the in-tx twin
         const invoiceIds = invoices.map((i) => i.id);
         if (invoiceIds.length) {
           // Reverse each invoice's regulated-sales ledger rows BEFORE its items
@@ -2549,23 +2564,13 @@ export class CustomersService {
           for (const invoiceId of invoiceIds) {
             await this.ledger.reverseInvoiceEntries({ invoiceId, db: tx });
           }
-          await tx.invoicePayment.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
+          await deleteMoneyRecordCas(tx.invoicePayment, { invoiceId: { in: invoiceIds } });
           await tx.invoiceItem.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
         }
         await deleteNonBlockingInvoicesCas(tx, customerIds, invoiceIds.length); // SA-510a (2)
 
-        // Order↔credit-note links must be deleted BEFORE the credit notes
-        // (OrderCreditNote.creditNoteId has no onDelete, so the FK restricts the parent delete)
-        const creditNotes = await tx.creditNote.findMany({
-          where: { customerId: { in: customerIds } },
-          select: { id: true },
-        });
-        if (creditNotes.length) {
-          await tx.orderCreditNote.deleteMany({
-            where: { creditNoteId: { in: creditNotes.map((n) => n.id) } },
-          });
-        }
-        await tx.creditNote.deleteMany({ where: { customerId: { in: customerIds } } });
+        // #2587/SA-516: credit notes are never destroyed (so no order links to clear either)
+        await deleteMoneyRecordCas(tx.creditNote, { customerId: { in: customerIds } });
 
         // Returns must be deleted BEFORE orders (Return has orderId FK on Order). Kind-agnostic
         // by design (PR-1a review) — removes every Return regardless of kind.
@@ -2591,7 +2596,7 @@ export class CustomersService {
           });
           if (txns.length) {
             const txnIds = txns.map((t) => t.id);
-            await tx.payment.deleteMany({ where: { transactionId: { in: txnIds } } });
+            await deleteMoneyRecordCas(tx.payment, { transactionId: { in: txnIds } });
             await tx.transactionItem.deleteMany({ where: { transactionId: { in: txnIds } } });
             await tx.transaction.deleteMany({ where: { id: { in: txnIds } } });
           }
@@ -2632,12 +2637,11 @@ export class CustomersService {
           await tx.orderTemplate.deleteMany({ where: { customerId: { in: customerIds } } });
         }
 
-        await tx.routeRunStop.deleteMany({ where: { customerId: { in: customerIds } } });
+        await deleteDeliveryHistoryCas(tx, customerIds); // #2591: expects zero rows
         await tx.routeCustomer.deleteMany({ where: { customerId: { in: customerIds } } });
         await tx.routeStop.deleteMany({ where: { customerId: { in: customerIds } } });
-        await tx.routeRunStop.deleteMany({ where: { customerId: { in: customerIds } } });
         await tx.transaction.deleteMany({ where: { customerId: { in: customerIds } } });
-        await tx.advancePayment.deleteMany({ where: { customerId: { in: customerIds } } });
+        await deleteMoneyRecordCas(tx.advancePayment, { customerId: { in: customerIds } });
         await tx.customerPrice.deleteMany({ where: { customerId: { in: customerIds } } });
         await tx.customerAddress.deleteMany({ where: { customerId: { in: customerIds } } });
 
@@ -2652,7 +2656,9 @@ export class CustomersService {
           data: { customerId: null },
         });
 
-        await tx.customer.deleteMany({ where: { id: { in: customerIds } } });
+        await deleteCustomerRowsFkRaceAs409(
+          tx.customer.deleteMany({ where: { id: { in: customerIds } } }),
+        ); // #2572
         await tx.user.deleteMany({ where: { id: { in: userIds } } });
       },
       { timeout: 60_000 },
@@ -2706,11 +2712,15 @@ export class CustomersService {
     // #2569 (SA-510): the same guards as deleteAllCustomers: the pre-flight breakdown, then the
     // in-tx re-check and the compare-and-set invoice delete (customer-delete-preflight.ts).
     await assertNoBlockingInvoices(this.prisma.forTenant(), ids, { capList: true });
+    await assertNoMoneyRecords(this.prisma.forTenant(), ids); // #2587/SA-516
+    await assertNoDeliveryHistory(this.prisma.forTenant(), ids); // #2591/SA-516b
 
     await this.prisma.tenantTransaction(
       async (tx) => {
         // Invoices (DRAFT/VOID only by now: any blocking one is a 409 and a rollback here)
         const invoices = await readInvoicesAssertingNoneBlocking(tx, ids);
+        await assertNoMoneyRecordsInTx(tx, ids); // #2587/SA-516
+        await assertNoDeliveryHistory(tx, ids); // #2591/SA-516b: the in-tx twin
         const invoiceIds = invoices.map((i) => i.id);
         if (invoiceIds.length) {
           // Reverse each invoice's regulated-sales ledger rows BEFORE its items
@@ -2724,23 +2734,13 @@ export class CustomersService {
           for (const invoiceId of invoiceIds) {
             await this.ledger.reverseInvoiceEntries({ invoiceId, db: tx });
           }
-          await tx.invoicePayment.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
+          await deleteMoneyRecordCas(tx.invoicePayment, { invoiceId: { in: invoiceIds } });
           await tx.invoiceItem.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
         }
         await deleteNonBlockingInvoicesCas(tx, ids, invoiceIds.length);
 
-        // Credit notes — order↔credit-note links must be deleted BEFORE the notes
-        // (OrderCreditNote.creditNoteId has no onDelete, so the FK restricts the parent delete)
-        const creditNotes = await tx.creditNote.findMany({
-          where: { customerId: { in: ids } },
-          select: { id: true },
-        });
-        if (creditNotes.length) {
-          await tx.orderCreditNote.deleteMany({
-            where: { creditNoteId: { in: creditNotes.map((n) => n.id) } },
-          });
-        }
-        await tx.creditNote.deleteMany({ where: { customerId: { in: ids } } });
+        // #2587/SA-516: credit notes are never destroyed (so no order links to clear either)
+        await deleteMoneyRecordCas(tx.creditNote, { customerId: { in: ids } });
 
         // Returns (must precede orders due to FK). Kind-agnostic by design (PR-1a
         // review) — removes every Return regardless of kind.
@@ -2767,7 +2767,7 @@ export class CustomersService {
           });
           if (txns.length) {
             const txnIds = txns.map((t) => t.id);
-            await tx.payment.deleteMany({ where: { transactionId: { in: txnIds } } });
+            await deleteMoneyRecordCas(tx.payment, { transactionId: { in: txnIds } });
             await tx.transactionItem.deleteMany({ where: { transactionId: { in: txnIds } } });
             await tx.transaction.deleteMany({ where: { id: { in: txnIds } } });
           }
@@ -2812,7 +2812,7 @@ export class CustomersService {
         }
 
         // Route associations
-        await tx.routeRunStop.deleteMany({ where: { customerId: { in: ids } } });
+        await deleteDeliveryHistoryCas(tx, ids); // #2591: expects zero rows
         await tx.routeCustomer.deleteMany({ where: { customerId: { in: ids } } });
         await tx.routeStop.deleteMany({ where: { customerId: { in: ids } } });
 
@@ -2823,11 +2823,11 @@ export class CustomersService {
         });
         if (remainingTxns.length) {
           const txnIds = remainingTxns.map((t) => t.id);
-          await tx.payment.deleteMany({ where: { transactionId: { in: txnIds } } });
+          await deleteMoneyRecordCas(tx.payment, { transactionId: { in: txnIds } });
           await tx.transactionItem.deleteMany({ where: { transactionId: { in: txnIds } } });
           await tx.transaction.deleteMany({ where: { customerId: { in: ids } } });
         }
-        await tx.advancePayment.deleteMany({ where: { customerId: { in: ids } } });
+        await deleteMoneyRecordCas(tx.advancePayment, { customerId: { in: ids } });
         await tx.customerPrice.deleteMany({ where: { customerId: { in: ids } } });
         await tx.customerAddress.deleteMany({ where: { customerId: { in: ids } } });
         await tx.contactPerson.deleteMany({ where: { customerId: { in: ids } } });
@@ -2844,7 +2844,7 @@ export class CustomersService {
         await tx.customerLink.deleteMany({ where: { customerId: { in: ids } } });
 
         // Finally delete customer + user rows
-        await tx.customer.deleteMany({ where: { id: { in: ids } } });
+        await deleteCustomerRowsFkRaceAs409(tx.customer.deleteMany({ where: { id: { in: ids } } })); // #2572
         await tx.user.deleteMany({ where: { id: { in: uids } } });
       },
       { timeout: 120_000 },
