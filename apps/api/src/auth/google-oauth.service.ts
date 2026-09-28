@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -341,7 +342,7 @@ export class GoogleOAuthService {
       data: { googleId, forcePasswordChange: false },
     });
 
-    this.logger.log(`Google account linked for user ${linkUserId} (${email})`);
+    this.logger.log(`Google account linked for user ${linkUserId}`);
 
     // Fire-and-forget security notification
     if (user.email) {
@@ -502,6 +503,39 @@ export class GoogleOAuthService {
     }
   }
 
+  // ─── Lookup order (#2495) ───────────────────────────────────────────────────
+  // Shared by handlePlatformAuth, handleTenantAuth's staff lookup and
+  // handleBuyerPortalAuth. The old `findFirst({ OR: [{ googleId }, { email }] })`
+  // was nondeterministic when two rows matched (one bound to this Google sub,
+  // another merely sharing the email) — Postgres gives no ordering guarantee over
+  // an OR with no ORDER BY, so which row "won" could vary. Resolve by the Google
+  // sub FIRST (a bound identity is unambiguous); only fall back to email when no
+  // sub match exists. If the email match is already bound to a DIFFERENT Google
+  // sub, refuse outright — signing in must never silently re-target someone
+  // else's linked account.
+  //
+  // Callers only ever receive a `GoogleProfile` from `verifyCallback`, which
+  // rejects `email_verified === false` before ever constructing one (see
+  // `google-oauth.email-verified.security.spec.ts`) — so an unverified email
+  // can never reach this lookup or the auto-link branches below it. Pinned,
+  // not re-checked here, to avoid duplicating that gate.
+  private async resolveBySubThenEmail<T extends { googleId: string | null }>(
+    findFirst: (where: Record<string, unknown>) => Promise<T | null>,
+    baseWhere: Record<string, unknown>,
+    profile: GoogleProfile,
+  ): Promise<T | null> {
+    const bySub = await findFirst({ ...baseWhere, googleId: profile.googleId });
+    if (bySub) return bySub;
+
+    const byEmail = await findFirst({ ...baseWhere, email: profile.email });
+    if (byEmail && byEmail.googleId && byEmail.googleId !== profile.googleId) {
+      // A different Google account is already bound to this email — no sign-in,
+      // no update. The caller must resolve the conflict out-of-band.
+      throw new ConflictException("google_account_mismatch");
+    }
+    return byEmail;
+  }
+
   /** Find or create the appropriate user record and return a token pair. */
   async findOrCreateUser(
     profile: GoogleProfile,
@@ -518,14 +552,11 @@ export class GoogleOAuthService {
     profile: GoogleProfile,
     deviceInfo?: DeviceInfo,
   ): Promise<GoogleAuthResult> {
-    const user = await this.prisma.user.findFirst({
-      where: {
-        tenantId: null,
-        role: "SUPER_ADMIN",
-        deletedAt: null,
-        OR: [{ googleId: profile.googleId }, { email: profile.email }],
-      },
-    });
+    const user = await this.resolveBySubThenEmail(
+      (where) => this.prisma.user.findFirst({ where }),
+      { tenantId: null, role: "SUPER_ADMIN", deletedAt: null },
+      profile,
+    );
 
     if (!user || user.status !== "ACTIVE") {
       throw new ForbiddenException("unauthorized");
@@ -576,14 +607,15 @@ export class GoogleOAuthService {
     }
 
     // Check for a matching staff user in this tenant first
-    let staffUser = await this.prisma.user.findFirst({
-      where: {
+    let staffUser = await this.resolveBySubThenEmail(
+      (where) => this.prisma.user.findFirst({ where }),
+      {
         tenantId: tenant.id,
         deletedAt: null,
         role: { in: ["OPERATOR", "DRIVER", "TENANT_ADMIN"] },
-        OR: [{ googleId: profile.googleId }, { email: profile.email }],
       },
-    });
+      profile,
+    );
 
     if (staffUser) {
       if (staffUser.status !== "ACTIVE") throw new ForbiddenException("unauthorized");
@@ -618,12 +650,11 @@ export class GoogleOAuthService {
   }
 
   private async handleBuyerPortalAuth(profile: GoogleProfile): Promise<GoogleAuthResult> {
-    let buyer = await this.prisma.buyerAccount.findFirst({
-      where: {
-        deletedAt: null,
-        OR: [{ googleId: profile.googleId }, { email: profile.email }],
-      },
-    });
+    let buyer = await this.resolveBySubThenEmail(
+      (where) => this.prisma.buyerAccount.findFirst({ where }),
+      { deletedAt: null },
+      profile,
+    );
 
     if (buyer) {
       if (buyer.status === "SUSPENDED") throw new ForbiddenException("unauthorized");
@@ -727,7 +758,7 @@ export class GoogleOAuthService {
           emailVerified: true,
         },
       });
-      this.logger.log(`BuyerAccount created via Google: ${profile.email}`);
+      this.logger.log(`BuyerAccount created via Google: ${buyer.id}`);
     }
 
     // Process an invite token embedded in the OAuth state
@@ -826,6 +857,9 @@ export class GoogleOAuthService {
       tenantId: user.tenantId ?? null,
       tenantSlug: tenantSlug ?? null,
       hasPassword: !!user.password,
+      // #2495: mirror AuthService.login()'s claims exactly — a Google-authenticated
+      // staff token must carry the same isAdmin claim a password login would.
+      isAdmin: user.isAdmin || user.role === "TENANT_ADMIN",
       // #1534: the same capability claim password login and refresh mint (auth.service) — the
       // staff socket re-check compares it with the user row.
       canActAsDriver: user.canActAsDriver ?? false,
