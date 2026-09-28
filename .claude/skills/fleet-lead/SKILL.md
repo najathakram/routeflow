@@ -59,6 +59,7 @@ itself.** When you catch one, write the guard, not the apology.
 - **A money fixture must be shaped by the writer** (#2274, #2245, #2305). Pins drive the real
   writer with the real callers' payload shapes (amount-only credits, tier-priced catalogs), never a
   hand-built argument; a review brief names each caller shape it must cover.
+- **Never brief from an issue title or a PR title; read the body, the last comments and the code at a pinned sha first** (#2474, #2647, #2075, #2665, #2693).
 
 ## 3. Gates (the merge contract)
 
