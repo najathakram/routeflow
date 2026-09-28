@@ -1010,6 +1010,50 @@ export function isUpsellLine(line: PriceOverrideLine): boolean {
   return Number(line.unitPrice) > Number(line.originalPrice);
 }
 
+/** The half-cent band inside which a typed price IS the baseline (no repricing decision). */
+export const STAFF_OVERRIDE_TOLERANCE = 0.005;
+
+export type StaffOverrideDecision =
+  | {
+      priceType: "SPECIAL" | "STANDARD" | "DISCOUNTED" | "MANUAL";
+      unitPrice: number;
+      originalPrice: number | null;
+    }
+  | { refused: "REASON_REQUIRED" };
+
+/**
+ * #2696(c) / SA-558 + SA-558a — the ONE rule for a staff-typed price on an order line, shared by
+ * the api and both clients (a client's "needs a reason" check is
+ * `decideStaffOverride(...).refused === "REASON_REQUIRED"`; the api owns the 400 text).
+ *   - within ½¢ ({@link STAFF_OVERRIDE_TOLERANCE}) of `baselinePrice` (the customer's tier price) is
+ *     NOT an override: SPECIAL on a special-tier line (originalPrice = list), STANDARD otherwise
+ *     (originalPrice null) — at the clean baseline, never the incoming near-miss float;
+ *   - a real change on a special-tier line with no reason ⇒ refused;
+ *   - otherwise an override: below list ⇒ DISCOUNTED, at or above list ⇒ MANUAL (an upsell above
+ *     list — see {@link isUpsellLine}), originalPrice = list, the price rounded to cents.
+ * Pure: the caller resolves the tier and list prices and whether a reason is on file.
+ */
+export function decideStaffOverride(input: {
+  overridePrice: number;
+  baselinePrice: number;
+  listPrice: number;
+  isSpecialTier: boolean;
+  hasReason: boolean;
+}): StaffOverrideDecision {
+  const { overridePrice, baselinePrice, listPrice, isSpecialTier, hasReason } = input;
+  if (Math.abs(overridePrice - baselinePrice) <= STAFF_OVERRIDE_TOLERANCE) {
+    return isSpecialTier
+      ? { priceType: "SPECIAL", unitPrice: baselinePrice, originalPrice: listPrice }
+      : { priceType: "STANDARD", unitPrice: baselinePrice, originalPrice: null };
+  }
+  if (isSpecialTier && !hasReason) return { refused: "REASON_REQUIRED" };
+  return {
+    priceType: overridePrice < listPrice ? "DISCOUNTED" : "MANUAL",
+    unitPrice: roundMoney(overridePrice),
+    originalPrice: listPrice,
+  };
+}
+
 /**
  * A customer's EFFECTIVE buyer price for a product. An operator's remembered
  * upsell — a saved override net price ABOVE the catalog LIST price — is sticky and

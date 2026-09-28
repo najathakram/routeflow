@@ -16,8 +16,11 @@ const STANDARD_LINE = { baselinePrice: 10, listPrice: 10, isSpecialTier: false }
 describe("#2696(c) decideStaffOverride — the decision matrix", () => {
   it.each([
     ["the tier price itself", 8],
-    ["½¢ above (inclusive boundary)", 8.005],
-    ["½¢ below (inclusive boundary)", 7.995],
+    // Inside the ½¢ band. The band test is the api's own `Math.abs(p - base) <= 0.005` verbatim
+    // (byte-identical with the substitute path), so an exact-½¢ literal like 8.005 falls either
+    // side of it with binary float; the pins sit clearly inside.
+    ["0.4¢ above", 8.004],
+    ["0.4¢ below", 7.996],
   ])("special line, %s ⇒ stays SPECIAL at the clean tier price, no reason needed", (_l, p) => {
     expect(decideStaffOverride({ ...SPECIAL, overridePrice: p, hasReason: false })).toEqual({
       priceType: "SPECIAL",
