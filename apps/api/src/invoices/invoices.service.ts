@@ -1246,13 +1246,13 @@ export class InvoicesService {
           db: tx,
         });
       }
-      // Bump invoicedQty once per order item (each belongs to exactly one group).
-      for (const { li, remainingQty } of remainingItems) {
-        await tx.orderItem.update({
-          where: { id: li.id },
-          data: { invoicedQty: { increment: remainingQty } },
-        });
-      }
+      // Bump invoicedQty once per order item (each belongs to exactly one group). #2612 / SA-523:
+      // a CAS on the values read, so a concurrent split or partial is a 409, never an over-bill.
+      await bumpInvoicedQtyCas(
+        tx,
+        remainingItems.map(({ li, remainingQty }) => ({ orderItemId: li.id, qty: remainingQty })),
+        new Map(remainingItems.map(({ li }) => [li.id, li])),
+      );
       // Apply any order-selected credit notes to the freshly created invoice(s).
       // Pass the effective tenantId explicitly: this runs on an unwrapped tx in the
       // fire-and-forget path (createInvoiceFromOrderWithTenant), where the tenant
