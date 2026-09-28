@@ -399,7 +399,10 @@ describe("InvoicesService", () => {
         },
         customer: { findFirst: jest.fn().mockResolvedValue({ isTaxExempt: false }) },
         trackedCategory: { findMany: jest.fn().mockResolvedValue([]) },
-        orderItem: { update: jest.fn().mockResolvedValue({}) },
+        orderItem: {
+          update: jest.fn().mockResolvedValue({}),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        }, // #2612 CAS
         $executeRaw: jest.fn().mockResolvedValue(0),
         $queryRaw: jest.fn().mockResolvedValue([]),
       };
@@ -2111,7 +2114,7 @@ describe("InvoicesService", () => {
       expect(Number(primary.taxAmount)).toBe(2);
       expect(Number(sibling.taxAmount)).toBe(1);
       // invoicedQty bumped exactly once per line.
-      expect(prisma.orderItem.update).toHaveBeenCalledTimes(2);
+      expect(prisma.orderItem.updateMany).toHaveBeenCalledTimes(2); // #2612: one CAS per line
     });
 
     it("produces a single invoice with no groupId for a non-regulated order (byte-identical path)", async () => {

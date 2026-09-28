@@ -169,7 +169,10 @@ describeDb("customer bulk deletes keep every money record (#2587, SA-516)", () =
 
   it.each([
     ["deleteAllCustomers", () => service.deleteAllCustomers()],
-    ["deleteImportedCustomers (no buyer link ⇒ selected)", () => service.deleteImportedCustomers()],
+    [
+      "deleteImportedCustomers (no buyer link ⇒ selected)",
+      () => service.runImportedCustomersCleanup(),
+    ],
   ])(
     "%s: credit note / advance, transaction payment, invoice payment ⇒ 409 naming each owner, all rows byte-identical",
     async (_n, run) => {
@@ -288,7 +291,7 @@ describeDb("cleanup imported refuses a customer with delivery history (#2591, SA
     expect(before.every((r) => r !== null)).toBe(true);
 
     const caught: any = await tenantCtx
-      .run(tenantId, () => service.deleteImportedCustomers())
+      .run(tenantId, () => service.runImportedCustomersCleanup())
       .catch((e) => e);
     expect(caught).toBeInstanceOf(ConflictException);
     expect(caught.message).toContain("delivery history");

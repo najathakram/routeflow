@@ -105,7 +105,7 @@ describeDb("customer delete vs a concurrent invoice insert: 409, not a raw P2003
     ["deleteAllCustomers", (s: CustomersService) => s.deleteAllCustomers()],
     [
       "deleteImportedCustomers (no buyer link ⇒ selected)",
-      (s: CustomersService) => s.deleteImportedCustomers(),
+      (s: CustomersService) => s.runImportedCustomersCleanup(),
     ],
   ])(
     "%s: T2's uncommitted invoice insert blocks the customer delete, T2 commits ⇒ 409, customer, user and invoice kept",
