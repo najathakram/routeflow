@@ -53,7 +53,9 @@ export function orderEditMode(
   replaceAll: boolean | undefined,
   isDiffPayload: boolean,
 ): OrderEditMode {
-  if (role === UserRole.CUSTOMER) return { kind: "replace", actor: "buyer" };
+  // SA-407: a buyer's per-line diff (a unit line's count / a removal) is merged like staff's.
+  if (role === UserRole.CUSTOMER)
+    return isDiffPayload ? { kind: "merge" } : { kind: "replace", actor: "buyer" };
   if (role === UserRole.DRIVER)
     return isDiffPayload ? { kind: "merge" } : { kind: "replace", actor: "driver" };
   return replaceAll === true ? { kind: "replace", actor: "staff" } : { kind: "merge" };

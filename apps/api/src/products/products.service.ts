@@ -18,6 +18,12 @@ import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { buildPlanGateBody } from "../billing/plan-gate";
 import { CreateProductDto } from "./dto/create-product.dto";
+import {
+  assertImageKeysReorder,
+  firstSignableImageKey,
+  isOwnProductImageKey,
+  signableImageKeys,
+} from "./product-image-keys";
 import { UpdateProductDto } from "./dto/update-product.dto";
 import { BulkAssignParentDto } from "./dto/bulk-assign-parent.dto";
 import { BulkSetMsrpDto } from "./dto/bulk-set-msrp.dto";
@@ -337,8 +343,9 @@ export class ProductsService {
     // Attach thumbnailUrl (first image only) for list/grid display without loading all images
     const enriched = await Promise.all(
       data.map(async (p) => {
-        const thumbnailUrl =
-          p.imageKeys.length > 0 ? await this.storage.presignedUrl(p.imageKeys[0]) : null;
+        // #2533: only a key under this product's own prefix is ever signed.
+        const thumbKey = firstSignableImageKey(p.id, p.imageKeys);
+        const thumbnailUrl = thumbKey ? await this.storage.presignedUrl(thumbKey) : null;
         return { ...p, thumbnailUrl };
       }),
     );
@@ -392,14 +399,15 @@ export class ProductsService {
       },
     });
     if (!product) throw new NotFoundException("Product not found");
-    // Attach presigned image URLs so the frontend can render them directly
-    const imageUrls =
-      product.imageKeys.length > 0 ? await this.storage.presignedUrls(product.imageKeys) : [];
+    // Attach presigned image URLs so the frontend can render them directly. #2533: only keys under
+    // this product's own prefix are returned or signed; imageUrls[i] still lines up with imageKeys[i].
+    const imageKeys = signableImageKeys(product.id, product.imageKeys);
+    const imageUrls = imageKeys.length > 0 ? await this.storage.presignedUrls(imageKeys) : [];
     // P5-03: operator waitlist count — additive, buyer-facing DTOs never see it.
     const stockAlertCount = await this.prisma.forTenant().stockAlert.count({
       where: { productId: id, status: StockAlertStatus.PENDING },
     });
-    return { ...product, imageUrls, stockAlertCount };
+    return { ...product, imageKeys, imageUrls, stockAlertCount };
   }
 
   async uploadImage(
@@ -439,8 +447,9 @@ export class ProductsService {
       throw new NotFoundException("Image not found on this product");
     }
 
-    // Remove from R2
-    await this.storage.delete(key);
+    // Remove from R2. #2533: only a file under this product's own prefix is ever deleted; a key
+    // planted before the write guard (another tenant's file) is unlinked below but never deleted.
+    if (isOwnProductImageKey(id, key)) await this.storage.delete(key);
 
     // Remove key from array
     await this.prisma.forTenant().product.update({
@@ -723,6 +732,8 @@ export class ProductsService {
     await this.assertCanFlagTobacco(dto.isTobacco);
     if (dto.msrp !== undefined) await this.assertMsrpAllowed();
     const existing = await this.findOne(id);
+    // #2533: a PATCH may only reorder/drop this product's own images (400 before any write).
+    if (dto.imageKeys !== undefined) assertImageKeysReorder(id, existing.imageKeys, dto.imageKeys);
     if (dto.name || dto.parentProductId !== undefined) {
       // The product's effective parent is the dto value if provided (could be
       // null to promote a variant to standalone), otherwise the existing one.
