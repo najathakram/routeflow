@@ -157,6 +157,8 @@ export class AddonService {
     } catch (err) {
       const now = Date.now();
       if (now - (this.defaultGrantWarnedAt.get(tenantId) ?? 0) > 60_000) {
+        // Bounded (lead nit n2): the throttle only needs recent tenants.
+        if (this.defaultGrantWarnedAt.size >= 1_000) this.defaultGrantWarnedAt.clear();
         this.defaultGrantWarnedAt.set(tenantId, now);
         this.logger.warn(
           `default-granted add-ons skipped for tenant ${tenantId} (fail closed): ` +
