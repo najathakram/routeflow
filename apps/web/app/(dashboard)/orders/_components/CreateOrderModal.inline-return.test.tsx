@@ -254,6 +254,48 @@ describe("CreateOrderModal — inline return payload on save (#2406)", () => {
       createOrderMutate.mock.calls[0][0].idempotencyKey,
     );
   });
+
+  // #2647: the order-level key-reused 409 (the earlier return WAS recorded): link it and clear
+  // the draft, so the same goods are not re-entered as a "new" return and credited twice.
+  it("#2647: a key-reused 409 links the recorded return and clears the return draft", async () => {
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await pickCustomer();
+    await openReturnsAndAddLine("5");
+    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
+    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
+    act(() => {
+      quoteMutate.mock.calls[0][1].onSuccess({
+        chunks: [],
+        subtotal: 0,
+        taxAmount: 0,
+        categoryTax: 0,
+        total: 0,
+        productBreakdown: {},
+      });
+    });
+    fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
+    act(() =>
+      createOrderMutate.mock.calls[0][1].onError({
+        response: {
+          status: 409,
+          data: {
+            code: "INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS",
+            returnId: "ret-9",
+            returnNumber: "RET-2026-0042",
+            message:
+              "Return RET-2026-0042 was already recorded with this capture key, with different items.",
+          },
+        },
+      }),
+    );
+
+    const link = await screen.findByTestId("order-return-recorded-link");
+    expect(link).toHaveTextContent("Open RET-2026-0042");
+    expect(link).toHaveAttribute("href", "/returns/ret-9");
+    // the draft is gone: the next save carries no inline return
+    fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
+    expect(createOrderMutate.mock.calls[1][0].inlineReturn).toBeUndefined();
+  });
 });
 
 // Lead fold on #2601: SAVE captures only the return the operator can SEE. Collapsing a section
