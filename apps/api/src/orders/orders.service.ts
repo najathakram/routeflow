@@ -62,6 +62,7 @@ import { nextOrderNumberFor } from "./order-number";
 import * as unitAware from "./unit-aware-guard";
 import * as cancelledLines from "./order-edit-cancelled";
 import * as driverAccess from "./driver-edit-access";
+import { assertRemovalsNameALine, writeLineRemoval, writeLineUpdate } from "./order-line-removal";
 import { ORDER_STATUS_TRANSITIONS, assertOrderStatusTransition } from "./order-status-transitions";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
 import {
@@ -1318,9 +1319,9 @@ export class OrdersService implements OnApplicationBootstrap {
     idempotencyKey: string,
     customerId: string,
     requestHash?: string,
-    returnKey?: string,
+    inlineReturn?: { returnKey?: string; items?: any[]; reason?: string | null }, // #2424
   ): Promise<{ orderId: string; verified: boolean } | null> {
-    return findOrderIdByKey(this.idemDeps(), idempotencyKey, customerId, requestHash, returnKey);
+    return findOrderIdByKey(this.idemDeps(), idempotencyKey, customerId, requestHash, inlineReturn);
   }
 
   /** B215/F30: replay-key lookup + stamping live in merge-idempotency.ts (size ratchet). */
@@ -2884,6 +2885,7 @@ export class OrdersService implements OnApplicationBootstrap {
       isCreateMerge?: boolean;
     },
   ) {
+    assertRemovalsNameALine(dto.items); // #2563: an id-less CANCEL/DELETE, before any read or write
     // SA-429: a DRIVER edits only an order on their own IN_PROGRESS run — FIRST, before any state leaks.
     await driverAccess.assertDriverMayEditOrder(this.prisma.forTenant(), orderId, user);
     const order = await this.prisma.forTenant().order.findUnique({
@@ -2894,6 +2896,16 @@ export class OrdersService implements OnApplicationBootstrap {
       },
     });
     if (!order) throw new NotFoundException("Order not found");
+    // #2565: a buyer's ownership is settled FIRST, unconditionally — before any status or shape
+    // answer and before any side effect (the linked-invoice revert below commits on its own
+    // connection). The later buyer checks were each conditional, so a non-owner's diff could revert
+    // another customer's invoice and only then meet the 403. A non-owner gets the bare 403 here.
+    if (user?.role === UserRole.CUSTOMER) {
+      const owner = await this.prisma
+        .forTenant()
+        .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
+      if (!owner || owner.id !== order.customerId) throw new ForbiddenException();
+    }
     // R1: items are editable at ANY live stage — DRAFT/PENDING/CONFIRMED and now
     // OUT_FOR_DELIVERY / PARTIALLY_DELIVERED / DELIVERED too (operator + driver). Only
     // a CANCELLED order is off-limits (nothing to edit). Post-delivery edits re-sync
@@ -3406,6 +3418,7 @@ export class OrdersService implements OnApplicationBootstrap {
           );
           const uctx: unitEdit.UnitWriteContext = {
             tx,
+            orderId,
             ladders: unitCtx.ladders,
             tenantId: this.prisma.getTenantId(),
             tier: (pid) => (atCustomerTier ? (operatorCpMap.get(pid) ?? operatorDefaultTier) : 1),
@@ -3799,35 +3812,11 @@ export class OrdersService implements OnApplicationBootstrap {
                 const hasDeliveries = await tx.deliveryMutation.count({
                   where: { orderItemId: item.id },
                 });
-                if ((li && Number(li.invoicedQty ?? 0) > 0) || hasDeliveries > 0) {
-                  await tx.orderItem.update({
-                    where: { id: item.id },
-                    data: {
-                      status: "CANCELLED",
-                      qty: 0,
-                      subtotal: 0,
-                      boxes: null,
-                      pieces: null,
-                      // A zeroed line has no free units left to show against it.
-                      promoFreeUnits: null,
-                    },
-                  });
-                } else {
-                  await tx.orderItem.delete({ where: { id: item.id } });
-                }
+                const keep = (li && Number(li.invoicedQty ?? 0) > 0) || hasDeliveries > 0;
+                // #2563: scoped to THIS order ({ id, orderId }); a foreign line id is a 404.
+                await writeLineRemoval(tx, orderId, item.id, keep ? "strike-off" : "delete");
               } else if (item.action === "CANCEL") {
-                await tx.orderItem.update({
-                  where: { id: item.id },
-                  data: {
-                    status: "CANCELLED",
-                    qty: 0,
-                    subtotal: 0,
-                    boxes: null,
-                    pieces: null,
-                    // A zeroed line has no free units left to show against it.
-                    promoFreeUnits: null,
-                  },
-                });
+                await writeLineRemoval(tx, orderId, item.id, "strike-off");
               } else if (item.substituteProductId) {
                 const product = await tx.product.findUniqueOrThrow({
                   where: { id: item.substituteProductId },
@@ -3926,43 +3915,41 @@ export class OrdersService implements OnApplicationBootstrap {
                   pieces: split?.pieces ?? null,
                   unitsPerBox: product.unitsPerBox,
                 });
-                await tx.orderItem.update({
-                  where: { id: item.id },
-                  data: {
-                    productId: item.substituteProductId,
-                    unitPrice,
-                    qty: qtyVal,
-                    // Always set the split explicitly — a loose substitute must not
-                    // keep the replaced product's boxes/pieces.
-                    boxes: split?.boxes ?? null,
-                    pieces: split?.pieces ?? null,
-                    // Re-snapshot the substitute's box size on box-split lines.
-                    unitsPerBox: split ? upb : null,
-                    // The product changed — a BOGO discount computed for the REPLACED
-                    // product doesn't carry to a different one (this branch never
-                    // re-runs applyBestPromotion; B13 non-staff-price posture above).
-                    promoFreeUnits: null,
-                    subtotal,
-                    status: "PENDING",
-                    notes: item.notes,
-                    priceType,
-                    originalPrice,
-                    overrideReason: isOverridden ? (item.overrideReason ?? null) : null,
-                    overriddenBy: isOverridden ? (user?.sub ?? null) : null,
-                    // The product changed — re-snapshot the substitute's category so
-                    // it doesn't keep the replaced product's (spec §7).
-                    trackedCategoryId: product.trackedCategoryId ?? null,
-                    // RF-3: re-snapshot the reporting subcategory alongside the category.
-                    trackedSubcategoryId: product.trackedSubcategoryId ?? null,
-                    // B297 (SA-098a): the product changed — re-stamp the trio from the
-                    // NEW product's live category, same substance as updateUnitLine's
-                    // isSubstitute:true arm.
-                    ...categoryTaxSnapshotOf(
-                      product.trackedCategoryId
-                        ? (substituteCategoryMap.get(product.trackedCategoryId) ?? null)
-                        : null,
-                    ),
-                  },
+                // #2577: scoped to THIS order ({ id, orderId }) — a foreign line id is a 404.
+                await writeLineUpdate(tx, orderId, item.id, {
+                  productId: item.substituteProductId,
+                  unitPrice,
+                  qty: qtyVal,
+                  // Always set the split explicitly — a loose substitute must not
+                  // keep the replaced product's boxes/pieces.
+                  boxes: split?.boxes ?? null,
+                  pieces: split?.pieces ?? null,
+                  // Re-snapshot the substitute's box size on box-split lines.
+                  unitsPerBox: split ? upb : null,
+                  // The product changed — a BOGO discount computed for the REPLACED
+                  // product doesn't carry to a different one (this branch never
+                  // re-runs applyBestPromotion; B13 non-staff-price posture above).
+                  promoFreeUnits: null,
+                  subtotal,
+                  status: "PENDING",
+                  notes: item.notes,
+                  priceType,
+                  originalPrice,
+                  overrideReason: isOverridden ? (item.overrideReason ?? null) : null,
+                  overriddenBy: isOverridden ? (user?.sub ?? null) : null,
+                  // The product changed — re-snapshot the substitute's category so
+                  // it doesn't keep the replaced product's (spec §7).
+                  trackedCategoryId: product.trackedCategoryId ?? null,
+                  // RF-3: re-snapshot the reporting subcategory alongside the category.
+                  trackedSubcategoryId: product.trackedSubcategoryId ?? null,
+                  // B297 (SA-098a): the product changed — re-stamp the trio from the
+                  // NEW product's live category, same substance as updateUnitLine's
+                  // isSubstitute:true arm.
+                  ...categoryTaxSnapshotOf(
+                    product.trackedCategoryId
+                      ? (substituteCategoryMap.get(product.trackedCategoryId) ?? null)
+                      : null,
+                  ),
                 });
               } else if (
                 item.qty !== undefined ||

@@ -102,16 +102,31 @@ const LEGACY_POD_SENTINELS = new Set(["native-captured"]);
  * #2542: why a client-supplied POD value (signatureUrl / a podPhotoUrls entry) is refused, or null
  * when it may be stored. A value with a URI scheme (`data:image/…` to ingest, a device-local
  * `file:`/`content:`/`ph:` URI) is never signed and passes; any schemeless value is a storage key
- * and must be exactly this tenant's pod key (or the legacy sentinel).
+ * and must be exactly this tenant's pod key (or the legacy sentinel). A blank value (empty or
+ * whitespace) is refused (#2585 / SA-519).
+ *
+ * #2550: with `stopId`, a key must also belong to THAT stop (`parts[3] === stopId`), so a
+ * completion cannot relink another stop's artifacts, even within the tenant. `null` is refused
+ * (not treated as "absent"): stored, it would silently clear an existing signature, and no client
+ * sends it.
  */
-export function podCaptureValueRefusal(value: unknown, tenantId: string): string | null {
+export function podCaptureValueRefusal(
+  value: unknown,
+  tenantId: string,
+  stopId?: string,
+): string | null {
   if (typeof value !== "string") return "a POD value must be a string";
   const v = value.trim();
-  if (v === "" || LEGACY_POD_SENTINELS.has(v)) return null;
+  // #2585 / SA-519: a present-but-blank value is refused, never coerced to "absent" (it would
+  // overwrite a stored signature with nothing). Absent means omitted.
+  if (v === "") return "a POD value must not be blank (omit the field to leave it unchanged)";
+  if (LEGACY_POD_SENTINELS.has(v)) return null;
   if (/^[a-z][a-z0-9+.-]*:/i.test(v)) return null;
-  return isPodStorageKey(v, tenantId)
-    ? null
-    : "a POD value must be an image capture or this tenant's own proof-of-delivery key";
+  if (!isPodStorageKey(v, tenantId))
+    return "a POD value must be an image capture or this tenant's own proof-of-delivery key";
+  if (stopId !== undefined && v.split("/")[3] !== stopId)
+    return "a POD value must be this stop's own proof-of-delivery key";
+  return null;
 }
 
 /**

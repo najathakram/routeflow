@@ -240,6 +240,10 @@ export function useVoidVendorBill() {
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ["vendor-bills"] });
       qc.invalidateQueries({ queryKey: ["vendor-bills", id] });
+      // #1528 (B86): void decrements stock server-side — refresh the stock views too.
+      qc.invalidateQueries({ queryKey: ["products"] });
+      qc.invalidateQueries({ queryKey: ["inventory"] });
+      qc.invalidateQueries({ queryKey: ["admin", "products"] }); // SA-543a: operator product lists
     },
   });
 }

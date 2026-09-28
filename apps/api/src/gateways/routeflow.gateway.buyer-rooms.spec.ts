@@ -48,10 +48,12 @@ interface Store {
   /** #2164: the CUSTOMER-role users behind the customers below. */
   users: Array<{
     id: string;
-    tenantId: string;
+    tenantId: string | null;
     role: string;
     status: UserStatus;
     deletedAt: Date | null;
+    /** #1534: staff users only (the token's `canActAsDriver` claim is re-checked against it). */
+    canActAsDriver?: boolean;
   }>;
   tenants: Array<{ id: string; status: TenantStatus }>;
   customers: Array<{ id: string; tenantId: string; userId: string; deletedAt: Date | null }>;
@@ -113,6 +115,19 @@ function seed(): Store {
         status: "ACTIVE",
         deletedAt: new Date("2026-09-01"),
       },
+      // #1534: staff users behind the staff tokens (re-checked at connect and every resync).
+      { id: "u-op", tenantId: "t-1", role: "OPERATOR", status: "ACTIVE", deletedAt: null },
+      { id: "u-admin", tenantId: "t-1", role: "TENANT_ADMIN", status: "ACTIVE", deletedAt: null },
+      { id: "u-drv", tenantId: "t-1", role: "DRIVER", status: "ACTIVE", deletedAt: null },
+      { id: "u-sa", tenantId: null, role: "SUPER_ADMIN", status: "ACTIVE", deletedAt: null },
+      {
+        id: "u-op-drv",
+        tenantId: "t-1",
+        role: "OPERATOR",
+        status: "ACTIVE",
+        deletedAt: null,
+        canActAsDriver: true,
+      },
     ],
     links: [
       // Buyer A: a live link at two sellers, plus one of every link that must grant nothing.
@@ -147,7 +162,9 @@ function keysAre(obj: unknown, keys: string[]): boolean {
 
 function pick<T extends Record<string, unknown>>(row: T, select: Record<string, boolean>) {
   const out: Record<string, unknown> = {};
-  for (const [k, on] of Object.entries(select)) if (on) out[k] = row[k];
+  // #1534: `canActAsDriver` is a non-null column (default false) — rows that omit it read false.
+  for (const [k, on] of Object.entries(select))
+    if (on) out[k] = k === "canActAsDriver" ? (row[k] ?? false) : row[k];
   return out;
 }
 
@@ -227,7 +244,20 @@ function makePrisma(store: Store) {
   }
 
   // #2164: exactly the shapes the CUSTOMER resync sends; anything else throws (L-081).
+  // #1534: plus the staff re-check's shape — live users by id, ANY role (the role is compared in
+  // code against the token's, so a role change is seen rather than filtered away).
   function liveUserMatches(u: Store["users"][number], where: Record<string, any>): boolean {
+    if (keysAre(where, ["id", "status", "deletedAt"])) {
+      if (
+        !keysAre(where.id, ["in"]) ||
+        !Array.isArray(where.id.in) ||
+        where.status !== "ACTIVE" ||
+        where.deletedAt !== null
+      ) {
+        throw new Error(`stand-in: unsupported staff User filter ${JSON.stringify(where)}`);
+      }
+      return where.id.in.includes(u.id) && u.status === "ACTIVE" && u.deletedAt === null;
+    }
     if (
       !keysAre(where, ["id", "role", "status", "deletedAt"]) ||
       !keysAre(where.id, ["in"]) ||
@@ -376,7 +406,12 @@ async function keptAfterConnect(token: string): Promise<{ kept: boolean; reason:
   return { kept, reason: await gone };
 }
 
-const staffToken = (sub: string, role: string, tenantId: string) =>
+const staffToken = (
+  sub: string,
+  role: string,
+  tenantId: string | null,
+  extra: Record<string, unknown> = {},
+) =>
   jwt.sign({
     sub,
     username: sub,
@@ -385,6 +420,7 @@ const staffToken = (sub: string, role: string, tenantId: string) =>
     forcePasswordChange: false,
     tenantId,
     tenantSlug: "acme",
+    ...extra,
   });
 
 /** #2164: a CUSTOMER-role access token as the server mints it — with a real `exp` (15 minutes). */
@@ -807,7 +843,7 @@ describe("RouteFlowGateway on a live Socket.IO server", () => {
       expect(buyer.socket.connected).toBe(true);
     });
 
-    it("staff sockets are still never ended by either check", async () => {
+    it("staff sockets are never ended by the EXPIRY check (#1534 adds no staff kick; #2588)", async () => {
       const operator = await connect(staffToken("u-op", "OPERATOR", "t-1"));
       await atClock(Date.now() + 24 * 60 * 60 * 1000, () => gateway.resyncBuyerRooms());
       expect(await serverRooms(operator)).toEqual(["tenant:t-1:operators"]);
@@ -815,6 +851,149 @@ describe("RouteFlowGateway on a live Socket.IO server", () => {
   });
 
   // ─── Revocation: a live socket follows link changes ───────────────────────────
+
+  describe("#1534 — a staff socket is re-validated at connect AND at every resync (SA-515)", () => {
+    const user = (id: string) => store.users.find((u) => u.id === id)!;
+
+    it.each([
+      ["OPERATOR", "u-op", "t-1", ["tenant:t-1:operators"]],
+      ["TENANT_ADMIN", "u-admin", "t-1", ["tenant:t-1:operators"]],
+      ["DRIVER", "u-drv", "t-1", ["tenant:t-1:driver:u-drv"]],
+      ["SUPER_ADMIN", "u-sa", null, ["super-admin"]],
+    ])("control: a live %s joins its room", async (role, sub, tenantId, rooms) => {
+      const client = await connect(staffToken(sub, role, tenantId as string | null));
+      expect(await serverRooms(client)).toEqual(rooms);
+    });
+
+    it.each([
+      [
+        "an INACTIVE user",
+        () => (user("u-op").status = "INACTIVE"),
+        staffToken("u-op", "OPERATOR", "t-1"),
+      ],
+      [
+        "a SUSPENDED user",
+        () => (user("u-op").status = "SUSPENDED"),
+        staffToken("u-op", "OPERATOR", "t-1"),
+      ],
+      [
+        "a deleted user",
+        () => (user("u-op").deletedAt = new Date()),
+        staffToken("u-op", "OPERATOR", "t-1"),
+      ],
+      ["a user with no row", () => undefined, staffToken("u-ghost", "OPERATOR", "t-1")],
+      ["a role other than the token's", () => undefined, staffToken("u-op", "TENANT_ADMIN", "t-1")],
+      ["a tenant other than the token's", () => undefined, staffToken("u-op", "OPERATOR", "t-2")],
+      [
+        "a canActAsDriver other than the token's",
+        () => undefined,
+        staffToken("u-op-drv", "OPERATOR", "t-1", { canActAsDriver: false }),
+      ],
+    ])("#1534: %s is refused at connect", async (_label, change, token) => {
+      change();
+      expect(await keptAfterConnect(token)).toEqual({
+        kept: false,
+        reason: "io server disconnect",
+      });
+    });
+
+    // #1534 fold: a token issued before canActAsDriver was a claim everywhere (or by an issuer that
+    // omits it) does not ASSERT it — so it is not compared; only a present claim must match the row.
+    it("#1534: a token WITHOUT the canActAsDriver claim, for a row with it true, connects and survives resync", async () => {
+      const client = await connect(staffToken("u-op-drv", "OPERATOR", "t-1"));
+      expect(await serverRooms(client)).toEqual(["tenant:t-1:operators"]);
+      await gateway.resyncBuyerRooms();
+      expect(await serverHolds(client.socket.id!)).toBe(true);
+    });
+
+    it("#1534: a PRESENT canActAsDriver claim matching the row connects and survives resync", async () => {
+      const client = await connect(
+        staffToken("u-op-drv", "OPERATOR", "t-1", { canActAsDriver: true }),
+      );
+      await gateway.resyncBuyerRooms();
+      expect(await serverHolds(client.socket.id!)).toBe(true);
+    });
+
+    // #2596 (SA-515d nit): the other mismatch direction — the token asserts canActAsDriver TRUE while
+    // the row says false — at connect and at resync.
+    it("#2596: a token asserting canActAsDriver TRUE for a row with it false is refused at connect", async () => {
+      expect(
+        await keptAfterConnect(staffToken("u-op", "OPERATOR", "t-1", { canActAsDriver: true })),
+      ).toEqual({ kept: false, reason: "io server disconnect" });
+    });
+
+    it("#2596: when the row's canActAsDriver is turned OFF under a token asserting TRUE, the socket ends at the next resync", async () => {
+      const client = await connect(
+        staffToken("u-op-drv", "OPERATOR", "t-1", { canActAsDriver: true }),
+      );
+      const id = client.socket.id!;
+      await gateway.resyncBuyerRooms();
+      expect(await serverHolds(id)).toBe(true);
+      user("u-op-drv").canActAsDriver = false;
+      await gateway.resyncBuyerRooms();
+      expect(await serverHolds(id)).toBe(false);
+    });
+
+    it("#1534: the user read failing refuses a staff connection (fails closed)", async () => {
+      prisma.user.findMany.mockRejectedValueOnce(new Error("db down"));
+      expect((await keptAfterConnect(staffToken("u-op", "OPERATOR", "t-1"))).kept).toBe(false);
+    });
+
+    it.each([
+      ["the user is deactivated", () => (user("u-op").status = "INACTIVE")],
+      ["the user is deleted", () => (user("u-op").deletedAt = new Date())],
+      ["the user's role changes", () => (user("u-op").role = "TENANT_ADMIN")],
+      ["the user moves tenant", () => (user("u-op").tenantId = "t-2")],
+      ["canActAsDriver is toggled", () => (user("u-op").canActAsDriver = true)],
+    ])(
+      "#1534: when %s, the connected staff socket is disconnected at the next resync",
+      async (_l, change) => {
+        // The token asserts canActAsDriver (as login, refresh and Google tokens do), so a toggle of
+        // the row's flag is a mismatch.
+        const operator = await connect(
+          staffToken("u-op", "OPERATOR", "t-1", { canActAsDriver: false }),
+        );
+        const admin = await connect(staffToken("u-admin", "TENANT_ADMIN", "t-1")); // untouched
+        const buyer = await connect(buyerToken("buyer-a")); // buyer control
+        const id = operator.socket.id!;
+        const gone = disconnected(operator);
+        await gateway.resyncBuyerRooms();
+        expect(await serverHolds(id)).toBe(true); // nothing changed yet
+
+        change();
+        await gateway.resyncBuyerRooms();
+        expect(await serverHolds(id)).toBe(false);
+        expect(await gone).toBe("io server disconnect");
+        expect(await serverRooms(admin)).toEqual(["tenant:t-1:operators"]);
+        expect(buyer.socket.connected).toBe(true);
+      },
+    );
+
+    it("#1534: a failed staff read keeps the last verified state; the next good read applies it", async () => {
+      const operator = await connect(staffToken("u-op", "OPERATOR", "t-1"));
+      user("u-op").status = "INACTIVE";
+      prisma.user.findMany.mockRejectedValueOnce(new Error("db down"));
+      await expect(gateway.resyncBuyerRooms()).resolves.toBeUndefined();
+      expect(await serverHolds(operator.socket.id!)).toBe(true);
+      await gateway.resyncBuyerRooms();
+      expect(await serverHolds(operator.socket.id!)).toBe(false);
+    });
+
+    it("#1534: the resync reads every connected staff user in one query, whatever the socket count", async () => {
+      await connect(staffToken("u-op", "OPERATOR", "t-1"));
+      await connect(staffToken("u-op", "OPERATOR", "t-1")); // a second tab
+      await connect(staffToken("u-drv", "DRIVER", "t-1"));
+      await connect(staffToken("u-sa", "SUPER_ADMIN", null));
+      prisma.user.findMany.mockClear();
+      await gateway.resyncBuyerRooms();
+      expect(prisma.user.findMany).toHaveBeenCalledTimes(1);
+      expect(prisma.user.findMany.mock.calls[0][0].where).toEqual({
+        id: { in: expect.arrayContaining(["u-op", "u-drv", "u-sa"]) },
+        status: "ACTIVE",
+        deletedAt: null,
+      });
+    });
+  });
 
   describe("B104 — a connected buyer's rooms follow its links", () => {
     it("REG-B104: a revoked link leaves the buyer's socket at the next resync, and a new link joins it", async () => {
