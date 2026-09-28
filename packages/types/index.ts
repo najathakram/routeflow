@@ -58,16 +58,9 @@ export enum TxnStatus {
   PAID = "PAID",
 }
 
-export enum PaymentMethod {
-  CASH = "CASH",
-  CHECK = "CHECK",
-  ACH = "ACH",
-  OTHER = "OTHER",
-  CREDIT_NOTE = "CREDIT_NOTE",
-  ADVANCE = "ADVANCE",
-  CREDIT_CARD = "CREDIT_CARD",
-  ZELLE = "ZELLE",
-}
+// #2722: the legacy `enum PaymentMethod` that lived here SHADOWED api/enums.ts' PaymentMethod
+// (a local declaration beats `export *`), so importers got a TS enum that string literals don't
+// satisfy. The one PaymentMethod is now PAYMENT_METHOD_VALUES' union (api/enums.ts, parity-pinned).
 
 export enum FulfillPath {
   ROUTE = "ROUTE",
