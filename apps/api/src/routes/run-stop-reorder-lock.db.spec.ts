@@ -359,7 +359,7 @@ describeDb("#2562 run-stop reorder vs a concurrent run start — real Postgres",
   // the stop row first, then the RouteRun. The reorder starts while T2 holds the stop row, and T2
   // takes the run lock only once the reorder is observed blocked. Stop-first ordering never forms a
   // cycle; the old run-first order does (40P01).
-  it("#2635: reorder vs a last-stop-completion lock sequence never deadlocks (N rounds)", async () => {
+  it("#2635 (completion lock-order replay, raw SQL: stop row then RouteRun): reorder never deadlocks (N rounds)", async () => {
     const ROUNDS = 5;
     const errors: string[] = [];
     for (let round = 0; round < ROUNDS; round++) {
