@@ -1093,20 +1093,14 @@ export function invoiceLineQtyText(item: UnitLineQtyInput): string {
   return formatQtySplit({ ...split, boxLabel: label });
 }
 
-// ─── Purchase-order line quantity display (#2066 review round) ────────────────
-// Moved here from apps/web/lib/stock-label.ts (`unitsLabel`) and
-// apps/web/app/(dashboard)/inventory/_components/purchase-orders-shared.ts
-// (`linePack`) verbatim — mobile's PO detail screen had grown its own copy of
-// `unitsLabel` and read the split straight off the LIVE product's
-// `unitsPerBox`, skipping `linePack`'s stored-wins rule entirely (the same
-// class of bug B707/#1171 fixed for invoice/order lines): a PO line written
-// against a boxed product shows no split once that product is edited to
-// non-boxed, and a repack (12 -> 6) silently re-denominates an already-written
-// line's split at the NEW pack instead of the one it was actually received
-// at. Web and mobile both import these now — no local copy of either.
-
-// `unitsLabel` itself lives in ./units-label (master moved it there first); only `linePack`
-// is added here.
+// ─── Purchase-order line pack (#2066 review round) ────────────────────────────
+// `linePack` moved here verbatim from
+// apps/web/app/(dashboard)/inventory/_components/purchase-orders-shared.ts, which now
+// re-exports it. Mobile's PO detail screen had read the boxes+pieces split straight off the
+// LIVE product's `unitsPerBox`, skipping this stored-wins rule (the class of bug B707/#1171
+// fixed for invoice/order lines): a repack (12 -> 6) silently re-denominated an already-written
+// line at the NEW pack. Web and mobile both import it; no-mirrors-linepack.spec.ts fails the
+// build on a local copy. (The label itself, `unitsLabel`, is ./units-label.ts.)
 
 /**
  * B699/B722: the pack a PO line is denominated in. The line's OWN stored
