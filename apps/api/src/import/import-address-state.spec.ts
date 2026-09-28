@@ -6,6 +6,7 @@ import { CustomersService } from "../customers/customers.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 /**
  * F4 — a contacts CSV writes CustomerAddress rows through `ImportService.importContacts`; the
@@ -35,6 +36,12 @@ describe("ImportService.importContacts — address state columns (F4)", () => {
         {
           provide: ExternalRefService,
           useValue: { findLocalId: jest.fn().mockResolvedValue(null), record: jest.fn() },
+        },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
         },
       ],
     }).compile();

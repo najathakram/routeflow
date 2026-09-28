@@ -1925,6 +1925,7 @@ export function CreateOrderModal({
               ref={returnsRef}
               customerId={selectedCustomer.id}
               refusalMessage={returnSave.refusalMessage}
+              refusalReturn={returnSave.refusalReturn}
             />
           )}
 
