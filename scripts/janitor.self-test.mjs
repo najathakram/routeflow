@@ -36,6 +36,10 @@ import {
   resolveRepoContext,
   deleteRefusal,
   refuseDelete,
+  isJestCacheDirName,
+  staleJestCacheEntries,
+  jestCacheDeleteRefusal,
+  JEST_CACHE_AGE_DAYS,
   removeWorktreeSafely,
   windowsRemoveTree,
   psLiteral,
@@ -1570,6 +1574,68 @@ if (process.platform === "win32" && CMD_UNSAFE.test(winBase)) {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+}
+
+// #2671: Jest caches (the legacy shared OS-temp cache and each worktree's .jest-cache).
+{
+  t("#2671 isJestCacheDirName: Jest's default names only", () => {
+    for (const ok of ["jest_dx", "jest_0", "JEST_AB12", "jest"])
+      assert.equal(isJestCacheDirName(ok), true, ok);
+    for (const no of ["jest_", "jest-dx", "jestdx", "my_jest_dx", "jest_dx/", ".jest-cache", "npm"])
+      assert.equal(isJestCacheDirName(no), false, no);
+  });
+  t("#2671 staleJestCacheEntries: only entries untouched longer than the age limit", () => {
+    const now = 10 * 86_400_000;
+    const day = 86_400_000;
+    const entries = [
+      { path: "/t/jest_dx/haste-old", mtimeMs: now - (JEST_CACHE_AGE_DAYS + 1) * day },
+      { path: "/t/jest_dx/haste-new", mtimeMs: now - day },
+      { path: "/t/jest_dx/edge", mtimeMs: now - JEST_CACHE_AGE_DAYS * day },
+    ];
+    assert.deepEqual(staleJestCacheEntries(entries, now), ["/t/jest_dx/haste-old"]);
+  });
+  t("#2671 jestCacheDeleteRefusal: a DIRECT child of a planned Jest cache root only", () => {
+    const roots = ["/t/jest_dx", "/w/lane/apps/api/.jest-cache"];
+    assert.equal(jestCacheDeleteRefusal("/t/jest_dx/haste-map-1", roots), null);
+    assert.equal(
+      jestCacheDeleteRefusal("/w/lane/apps/api/.jest-cache/jest-transform-cache-x", roots),
+      null,
+    );
+    assert.match(jestCacheDeleteRefusal("/t/jest_dx/a/b", roots), /direct child/);
+    assert.match(jestCacheDeleteRefusal("/t/jest_dx", roots), /direct child/);
+    assert.match(jestCacheDeleteRefusal("/etc/passwd", roots), /direct child/);
+    assert.match(jestCacheDeleteRefusal("/t/npm/x", ["/t/npm"]), /not named like a Jest cache/);
+    assert.equal(
+      jestCacheDeleteRefusal("/T/JEST_DX/x", ["/t/jest_dx"], { caseInsensitive: true }),
+      null,
+    );
+  });
+  t(
+    "#2671 execute: a jest-cache action passes ITS guard, then removes; a refusal removes nothing",
+    () => {
+      const calls = [];
+      const deps = (refusal) => ({
+        refuseDelete: () => (calls.push("WRONG GUARD"), null),
+        refuseJestCacheDelete: (tg, root) => (calls.push(`jguard ${tg} ${root}`), refusal),
+        isDirty: () => false,
+        removeTree: (tg) => calls.push(`removeTree ${tg}`),
+        removeWorktree: () => {},
+        run: () => {},
+        log: (m) => calls.push(`log ${m}`),
+      });
+      const a = { kind: "jest-cache", target: "/t/jest_dx/haste-1", root: "/t/jest_dx" };
+      assert.equal(execute(a, deps(null)), "done");
+      assert.deepEqual(calls.splice(0), [
+        "jguard /t/jest_dx/haste-1 /t/jest_dx",
+        "removeTree /t/jest_dx/haste-1",
+      ]);
+      assert.equal(execute(a, deps("nope")), "refused");
+      assert.deepEqual(calls.splice(0), [
+        "jguard /t/jest_dx/haste-1 /t/jest_dx",
+        "log    REFUSED, skipped: /t/jest_dx/haste-1 (nope)",
+      ]);
+    },
+  );
 }
 
 console.log(`janitor self-test: ${pass} passed, ${failures.length} failed`);
