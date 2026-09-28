@@ -310,4 +310,70 @@ describe("ConnectWebhookController", () => {
       data: { outcome: "failed" },
     });
   });
+
+  // #2476 lead verdict "must" list (2026-09-28): the same DB-clock claim and fenced outcome write as the
+  // billing webhook. Holds whether the insert stays a Prisma create or becomes raw SQL (SA's call).
+  describe("#2476 DB-clock claim and fenced outcome write", () => {
+    const T_INS = new Date("2026-09-28T06:00:00.000Z");
+    const T_CLAIM = new Date("2026-09-28T06:10:00.000Z");
+
+    function wire(opts: { redelivery?: boolean; claimed?: boolean; outcomeCount?: number } = {}) {
+      provider.verifyEvent.mockReturnValue(piEvent);
+      if (opts.redelivery) stripeConnectEvent.create.mockRejectedValue(uniqueViolation());
+      else stripeConnectEvent.create.mockResolvedValue({ id: "evt_dup", processedAt: T_INS });
+      stripeConnectEvent.findUnique.mockResolvedValue({ id: "evt_dup", outcome: null });
+      stripeConnectEvent.updateMany.mockImplementation(async (arg: any) =>
+        arg?.data && "processedAt" in arg.data
+          ? { count: opts.claimed ? 1 : 0 }
+          : { count: opts.outcomeCount ?? 1 },
+      );
+      const $queryRaw = jest.fn(async (q: Prisma.Sql) => {
+        const s = q.sql.trim();
+        if (/^INSERT/i.test(s)) return opts.redelivery ? [] : [{ processedAt: T_INS }];
+        if (/^UPDATE/i.test(s)) return opts.claimed ? [{ processedAt: T_CLAIM }] : [];
+        if (/^SELECT/i.test(s)) return [{ outcome: null }];
+        return [];
+      });
+      (prisma as any).$queryRaw = $queryRaw;
+      return $queryRaw;
+    }
+
+    it("the redelivery claim is ONE raw UPDATE on the DB clock — no app-clock Date is bound", async () => {
+      const $queryRaw = wire({ redelivery: true, claimed: true });
+      await controller.handle(rawReq, mockRes());
+      const q = ($queryRaw.mock.calls as any[])
+        .map((c) => c[0] as Prisma.Sql)
+        .find((x) => /^\s*UPDATE/i.test(x.sql));
+      expect(q).toBeDefined();
+      expect(q!.sql).toMatch(/CURRENT_TIMESTAMP/);
+      expect(q!.values.some((v) => v instanceof Date)).toBe(false);
+    });
+
+    it("the outcome write is fenced on this delivery's token (first delivery and claimed redelivery)", async () => {
+      wire();
+      await controller.handle(rawReq, mockRes());
+      expect(stripeConnectEvent.update).not.toHaveBeenCalled();
+      expect(stripeConnectEvent.updateMany).toHaveBeenCalledWith({
+        where: { id: "evt_dup", outcome: null, processedAt: T_INS },
+        data: { outcome: expect.any(String) },
+      });
+
+      jest.clearAllMocks();
+      wire({ redelivery: true, claimed: true });
+      await controller.handle(rawReq, mockRes());
+      expect(stripeConnectEvent.updateMany).toHaveBeenCalledWith({
+        where: { id: "evt_dup", outcome: null, processedAt: T_CLAIM },
+        data: { outcome: expect.any(String) },
+      });
+    });
+
+    it("a lost claim (the fenced write matches 0 rows) is logged", async () => {
+      wire({ outcomeCount: 0 });
+      const res = mockRes();
+      await controller.handle(rawReq, res);
+      expect(res.statusCode).toBe(200);
+      const errs = (Logger.prototype.error as jest.Mock).mock.calls;
+      expect(errs.some((c: any[]) => /claim/i.test(String(c[0])))).toBe(true);
+    });
+  });
 });

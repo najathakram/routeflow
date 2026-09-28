@@ -277,3 +277,108 @@ describe("#2476 BillingWebhookController — exclusive claim on redelivery (SA-4
     expect(err.mock.calls.some((c: any[]) => /outcome/i.test(String(c[0])))).toBe(true);
   });
 });
+
+// #2476 lead verdict "must" list (2026-09-28): the claim and the lease run on the DATABASE clock (one
+// standalone UPDATE, no app-clock Date), and the final outcome write lands only while this delivery
+// still holds its claim (fenced on outcome NULL + its own processedAt token). Written to hold whether
+// the insert stays a Prisma create or becomes raw SQL (that choice is with the SA).
+describe("#2476 BillingWebhookController — DB-clock claim and fenced outcome write", () => {
+  const T_INS = new Date("2026-09-28T06:00:00.000Z");
+  const T_CLAIM = new Date("2026-09-28T06:10:00.000Z");
+  const dup = () =>
+    new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+      code: "P2002",
+      clientVersion: "test",
+    });
+  const evt = () => ({ type: "invoice.payment_failed", id: "evt_pf", created: 1_700_000_000 });
+
+  function buildDb(
+    opts: {
+      redelivery?: boolean;
+      claimed?: boolean;
+      current?: string | null;
+      outcomeCount?: number;
+      claimThrows?: boolean;
+    } = {},
+  ) {
+    const b = build({
+      construct: evt,
+      create: async () => {
+        if (opts.redelivery) throw dup();
+        return { id: "evt_pf", processedAt: T_INS, outcome: null };
+      },
+      existing: { outcome: opts.current ?? null },
+      claimed: opts.claimed ? 1 : 0,
+    });
+    const $queryRaw = jest.fn(async (q: Prisma.Sql) => {
+      const s = q.sql.trim();
+      if (/^INSERT/i.test(s)) return opts.redelivery ? [] : [{ processedAt: T_INS }];
+      if (/^UPDATE/i.test(s)) {
+        if (opts.claimThrows) throw new Error("connection reset");
+        return opts.claimed ? [{ processedAt: T_CLAIM }] : [];
+      }
+      if (/^SELECT/i.test(s)) return [{ outcome: opts.current ?? null }];
+      return [];
+    });
+    (b.prisma as any).$queryRaw = $queryRaw;
+    b.prisma.stripeBillingEvent.updateMany.mockImplementation(async (arg: any) =>
+      arg?.data && "processedAt" in arg.data
+        ? { count: opts.claimed ? 1 : 0 }
+        : { count: opts.outcomeCount ?? 1 },
+    );
+    return { ...b, $queryRaw };
+  }
+
+  const claimSql = (m: jest.Mock) =>
+    (m.mock.calls as any[]).map((c) => c[0] as Prisma.Sql).find((q) => /^\s*UPDATE/i.test(q.sql));
+
+  it("the redelivery claim is ONE raw UPDATE on the DB clock — no app-clock Date is bound", async () => {
+    const { controller, prisma, $queryRaw, req, res } = buildDb({
+      redelivery: true,
+      claimed: true,
+    });
+    await controller.handleWebhook(req as never, res as never);
+    const q = claimSql($queryRaw);
+    expect(q).toBeDefined();
+    expect(q!.sql).toMatch(/CURRENT_TIMESTAMP/);
+    expect(q!.values.some((v) => v instanceof Date)).toBe(false);
+    const appClockClaim = (prisma.stripeBillingEvent.updateMany.mock.calls as any[]).some(
+      (c) => c[0]?.data && "processedAt" in c[0].data,
+    );
+    expect(appClockClaim).toBe(false);
+  });
+
+  it("a first delivery writes its outcome fenced on its own claim token (outcome NULL + processedAt)", async () => {
+    const { controller, prisma, req, res } = buildDb();
+    await controller.handleWebhook(req as never, res as never);
+    expect(prisma.stripeBillingEvent.update).not.toHaveBeenCalled();
+    expect(prisma.stripeBillingEvent.updateMany).toHaveBeenCalledWith({
+      where: { id: "evt_pf", outcome: null, processedAt: T_INS },
+      data: { outcome: "processed" },
+    });
+  });
+
+  it("a claimed redelivery writes its outcome fenced on the CLAIM's token", async () => {
+    const { controller, prisma, req, res } = buildDb({ redelivery: true, claimed: true });
+    await controller.handleWebhook(req as never, res as never);
+    expect(prisma.stripeBillingEvent.updateMany).toHaveBeenCalledWith({
+      where: { id: "evt_pf", outcome: null, processedAt: T_CLAIM },
+      data: { outcome: "processed" },
+    });
+  });
+
+  it("a lost claim (the fenced write matches 0 rows) is LOGGED and never changes the response", async () => {
+    const { controller, req, res } = buildDb({ outcomeCount: 0 });
+    const err = jest.spyOn((controller as any).logger, "error").mockImplementation(() => undefined);
+    await controller.handleWebhook(req as never, res as never);
+    expect(res.status).toHaveBeenCalledWith(HttpStatus.OK);
+    expect(err.mock.calls.some((c: any[]) => /claim/i.test(String(c[0])))).toBe(true);
+  });
+
+  it("a claim query failure is a 500 and the handler never runs", async () => {
+    const { controller, billing, req, res } = buildDb({ redelivery: true, claimThrows: true });
+    await controller.handleWebhook(req as never, res as never);
+    expect(billing.handleWebhookEvent).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(HttpStatus.INTERNAL_SERVER_ERROR);
+  });
+});
