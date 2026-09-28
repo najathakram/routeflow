@@ -1,11 +1,15 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { overdueCutoff } from "./calendar-date";
 
 /**
  * #2556: the owner-run, READ-ONLY count of what the first overdue sweep would flip
  * (apps/api/scripts/report-2520-first-overdue-sweep.mjs). Its cutoff and summary are checked by
- * its own `--self-test` (no database); the argument gates refuse before any connection.
+ * its own `--self-test` (no database); the argument gates refuse before any connection; and its
+ * hand-written mirror of `overdueCutoff` is pinned to the real helper here (#2567), so the two
+ * cannot drift.
  */
 const SCRIPT = path.resolve(__dirname, "../../scripts/report-2520-first-overdue-sweep.mjs");
 
@@ -28,6 +32,65 @@ function run(args: string[]) {
 }
 
 describe("report-2520-first-overdue-sweep.mjs (#2556)", () => {
+  it("its cutoffFor mirror agrees with common/calendar-date overdueCutoff (#2567)", () => {
+    // DST eves/days on both hemispheres, a half-hour DST zone, both date-line extremes, and the
+    // null / empty / invalid-zone fallbacks, each at instants either side of the local midnight.
+    const days = [
+      "2026-03-07",
+      "2026-03-08",
+      "2026-03-28",
+      "2026-03-29",
+      "2026-04-05",
+      "2026-10-04",
+      "2026-10-25",
+      "2026-10-31",
+      "2026-11-01",
+      "2026-12-31",
+    ];
+    const times = [
+      "00:00:00.000",
+      "00:30:00.000",
+      "05:59:59.999",
+      "06:00:00.000",
+      "11:59:59.999",
+      "12:00:00.000",
+      "14:00:00.000",
+      "23:59:59.999",
+    ];
+    const zones: Array<string | null> = [
+      "UTC",
+      "America/Chicago",
+      "America/New_York",
+      "Europe/London",
+      "Australia/Sydney",
+      "Australia/Lord_Howe",
+      "Asia/Tokyo",
+      "Pacific/Kiritimati",
+      "Pacific/Pago_Pago",
+      null,
+      "",
+      "Mars/Olympus_Mons",
+    ];
+    const cases = days.flatMap((d) =>
+      times.flatMap((t) => zones.map((z) => ({ at: `${d}T${t}Z`, z }))),
+    );
+    const child = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `import { cutoffFor } from ${JSON.stringify(pathToFileURL(SCRIPT).href)};
+         const cases = ${JSON.stringify(cases)};
+         console.log(JSON.stringify(cases.map((c) => cutoffFor(new Date(c.at), c.z).toISOString())));`,
+      ],
+      { encoding: "utf8", timeout: 60_000 },
+    );
+    expect(child.stderr).toBe("");
+    expect(JSON.parse(child.stdout)).toEqual(
+      cases.map((c) => overdueCutoff(new Date(c.at), c.z).toISOString()),
+    );
+  });
+
   it("--self-test passes with no database", () => {
     const r = run(["--self-test"]);
     expect(r.status).toBe(0);
