@@ -72,6 +72,10 @@ export class CreditNotesService {
       amount: number;
       items?: Array<{ invoiceItemId: string; amount: number; qty?: number }>;
     },
+    // #2648 / SA-535b(1): the reissue's pre-reserve DRY RUN only — leaves the note about to be
+    // voided out of BOTH caps, so the dry run counts exactly the headroom its void frees. create()
+    // never passes it, no DTO carries it, and the in-tx re-cap after the void runs without it.
+    opts: { excludeCreditNoteId?: string } = {},
   ): Promise<
     Array<{
       invoiceItemId: string;
@@ -114,7 +118,11 @@ export class CreditNotesService {
     }
 
     const existingCredits = await db.creditNote.aggregate({
-      where: { invoiceId: dto.invoiceId, status: { not: "VOID" } },
+      where: {
+        invoiceId: dto.invoiceId,
+        status: { not: "VOID" },
+        ...(opts.excludeCreditNoteId ? { id: { not: opts.excludeCreditNoteId } } : {}),
+      },
       _sum: { amount: true },
     });
     const totalExisting = Number(existingCredits._sum.amount ?? 0);
@@ -169,7 +177,11 @@ export class CreditNotesService {
     const priorLineItems = await db.creditNoteItem.findMany({
       where: {
         invoiceItemId: { in: [...mergedByLine.keys()] },
-        creditNote: { invoiceId: dto.invoiceId, status: { not: "VOID" } },
+        creditNote: {
+          invoiceId: dto.invoiceId,
+          status: { not: "VOID" },
+          ...(opts.excludeCreditNoteId ? { id: { not: opts.excludeCreditNoteId } } : {}),
+        },
       },
       select: { invoiceItemId: true, amount: true, qty: true },
     });
@@ -638,6 +650,8 @@ export class CreditNotesService {
       include: {
         customer: { select: { id: true, businessName: true } },
         invoice: { select: { id: true, invoiceNumber: true } },
+        // #2648: the line split, so the Edit form can prefill a line-linked reissue.
+        items: { select: { invoiceItemId: true, amount: true, qty: true } },
       },
     });
     if (!cn) throw new NotFoundException("Credit note not found");
@@ -1905,7 +1919,8 @@ export class CreditNotesService {
   ) {
     // #2648 / SA-535(a): the in-place edit is the NON-money fields only (reason, expiresAt). It never
     // touches amount/amountUsed/status/invoiceId/links (an amount edit is the reissue), a VOID note
-    // is not editable at all (409), and every save leaves an EDITED audit row with what changed.
+    // is not editable at all (409), and every save that changes something leaves an EDITED audit
+    // row with what changed.
     return this.prisma.tenantTransaction(async (tx: any) => {
       const cn = await tx.creditNote.findFirst({
         where: { id },
@@ -1932,6 +1947,16 @@ export class CreditNotesService {
           data.expiresAt = expiresAt;
         }
       }
+
+      // SA-535b: only fields whose value actually changes count; a no-op save writes nothing,
+      // not even the audit row.
+      const same = (a: unknown, b: unknown) =>
+        a instanceof Date || b instanceof Date
+          ? (a == null ? null : new Date(a as any).getTime()) ===
+            (b == null ? null : new Date(b as any).getTime())
+          : (a ?? null) === (b ?? null);
+      for (const k of Object.keys(data)) if (same((cn as any)[k], data[k])) delete data[k];
+      if (Object.keys(data).length === 0) return tx.creditNote.findFirst({ where: { id } });
 
       const updated = await tx.creditNote.update({ where: { id }, data });
       const before: Record<string, unknown> = {};

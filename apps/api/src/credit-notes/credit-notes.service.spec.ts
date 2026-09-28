@@ -1830,6 +1830,41 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
       });
     });
 
+    // SA-535b: a save that changes nothing writes nothing — no update, no EDITED row.
+    it("a no-op save (same reason, same expiry, or an empty body) writes nothing", async () => {
+      const exp = new Date("2031-05-01T00:00:00.000Z");
+      const note = { id: "cn-1", status: "ISSUED", reason: "same", expiresAt: exp };
+      prisma.creditNote.findFirst.mockResolvedValue(note);
+
+      await service.updateCreditNote("cn-1", { reason: "same", expiresAt: exp.toISOString() }, "u");
+      await service.updateCreditNote("cn-1", {}, "u");
+
+      expect(prisma.creditNote.update).not.toHaveBeenCalled();
+      expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it("only the fields that actually change reach the update and the audit row", async () => {
+      prisma.creditNote.findFirst.mockResolvedValueOnce({
+        id: "cn-1",
+        status: "ISSUED",
+        reason: "same",
+        expiresAt: null,
+      });
+      prisma.creditNote.update.mockResolvedValueOnce({ id: "cn-1" });
+      await service.updateCreditNote(
+        "cn-1",
+        { reason: "same", expiresAt: "2031-05-01T00:00:00.000Z" },
+        "u",
+      );
+      expect(prisma.creditNote.update.mock.calls[0][0].data).toEqual({
+        expiresAt: new Date("2031-05-01T00:00:00.000Z"),
+      });
+      expect(prisma.auditLog.create.mock.calls[0][0].data.meta).toEqual({
+        before: { expiresAt: null },
+        after: { expiresAt: new Date("2031-05-01T00:00:00.000Z") },
+      });
+    });
+
     it("throws NotFound for an unknown credit note id", async () => {
       prisma.creditNote.findFirst.mockResolvedValueOnce(null);
       await expect(service.updateCreditNote("cn-missing", { reason: "x" })).rejects.toThrow(
