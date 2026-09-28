@@ -737,9 +737,10 @@ export class GoogleOAuthService {
       );
     }
 
-    // REG-B141: this count decides the mobile Google-login branch (sellerCount === 0 shows the
-    // "not connected to any supplier" message), so it must use the SAME definition of a usable
-    // seller as BuyerService.getSellers — a link whose customer was removed is not one.
+    // REG-B141: the count of USABLE sellers the Google callback hands the client (web reads it
+    // from the redirect). It must use the SAME definition as BuyerService.getSellers' ACTIVE
+    // links — a link whose customer was removed is not one. Mobile no longer branches on it
+    // (#2546): it reads GET /buyer/sellers itself so a pending-only buyer lands on its seller list.
     const sellerCount = await this.prisma.customerLink.count({
       where: { buyerAccountId: buyer.id, status: "ACTIVE", customer: { deletedAt: null } },
     });
@@ -803,6 +804,13 @@ export class GoogleOAuthService {
     tenantSlug: string | null,
     deviceInfo?: DeviceInfo,
   ): Promise<TokenPair> {
+    // #2159 S1: a Google sign-in is an interactive sign-in too — stamp lastLoginAt exactly as
+    // AuthService.login() does (best-effort; a failed stamp never blocks the sign-in).
+    try {
+      await this.prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+    } catch (err) {
+      this.logger.warn(`lastLoginAt stamp failed for user ${user.id}: ${(err as Error).message}`);
+    }
     const jwtConfig = this.configService.get<{
       secret: string;
       refreshSecret: string;
@@ -818,6 +826,9 @@ export class GoogleOAuthService {
       tenantId: user.tenantId ?? null,
       tenantSlug: tenantSlug ?? null,
       hasPassword: !!user.password,
+      // #1534: the same capability claim password login and refresh mint (auth.service) — the
+      // staff socket re-check compares it with the user row.
+      canActAsDriver: user.canActAsDriver ?? false,
     };
     // Plans & Billing: embed the entitlement snapshot for Google-login users too.
     const claims = await this.entitlements.claimsFor(payload.tenantId);

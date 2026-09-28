@@ -153,7 +153,7 @@ describe("CustomersService — purge paths reverse the regulated ledger", () => 
     ]);
     primeInvoices();
 
-    await service.deleteImportedCustomers();
+    await service.runImportedCustomersCleanup();
 
     expect(ledger.reverseInvoiceEntries).toHaveBeenCalledTimes(2);
     expect(calls.indexOf("reverse:inv-1")).toBeLessThan(calls.indexOf("deleteItems"));
@@ -166,7 +166,7 @@ describe("CustomersService — purge paths reverse the regulated ledger", () => 
     ]);
     primeInvoices();
 
-    const result = await service.deleteImportedCustomers();
+    const result = await service.runImportedCustomersCleanup();
 
     expect(result).toEqual({ deleted: 0, preserved: 1 });
     expect(ledger.reverseInvoiceEntries).not.toHaveBeenCalled();

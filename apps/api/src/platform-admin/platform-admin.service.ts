@@ -893,7 +893,16 @@ export class PlatformAdminService {
         });
         if (count === 0) throw conflict();
       } else {
-        await tx.tenantSubscription.create({ data: { tenantId: id, ...subWrite } });
+        // #2549: two concurrent first-plan writes both read "no row"; the loser's create hits the
+        // tenantId unique key (P2002) — the same lost race as a guarded-update miss, so the same 409
+        // (the tx rolls back: nothing written, nothing booked).
+        await tx.tenantSubscription
+          .create({ data: { tenantId: id, ...subWrite } })
+          .catch((e: unknown) => {
+            if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002")
+              throw conflict();
+            throw e;
+          });
       }
 
       // Moving the snapshot run-rate without a matching ledger delta makes `mrr` and
@@ -1031,17 +1040,21 @@ export class PlatformAdminService {
       // else the catalog price — in this same tx, and books it below. A renewal of a row already in
       // the set writes no snapshot and books nothing (a legacy NULL stays NULL, reported as unpriced).
       const crossingIn = !wasPaying && isPaying;
+      // #2522 / SA-464f: a renewal of an already-paying row that also changes planKey is a ranked
+      // plan change — rebase the snapshot onto the NEW plan and book the difference below.
+      const planSwitch =
+        wasPaying &&
+        isPaying &&
+        normalizePlanKey(before.subscription?.planKey) !== definition.planKey;
       const override = before.subscription?.priceOverrideMonthly;
-      const snapshotWrite = crossingIn
-        ? {
-            basePriceSnapshot:
-              override != null
-                ? Number(override)
-                : definition.monthlyPrice != null
-                  ? Number(definition.monthlyPrice)
-                  : null,
-          }
-        : {};
+      // #2570: round every monetary write — the snapshot (and so the delta booked from it) at cents.
+      const newBase =
+        override != null
+          ? roundMoney(Number(override))
+          : definition.monthlyPrice != null
+            ? roundMoney(Number(definition.monthlyPrice))
+            : null;
+      const snapshotWrite = crossingIn || planSwitch ? { basePriceSnapshot: newBase } : {};
 
       const [updated] = await Promise.all([
         tx.tenant.update({
@@ -1103,7 +1116,7 @@ export class PlatformAdminService {
         const baseContribution = this.mrrService.priceSubscription(
           {
             basePriceSnapshot: crossingIn
-              ? (snapshotWrite as { basePriceSnapshot: number | null }).basePriceSnapshot
+              ? newBase
               : (before.subscription?.basePriceSnapshot ?? null),
             discount: before.subscription?.discount ?? null,
           },
@@ -1150,6 +1163,29 @@ export class PlatformAdminService {
           })),
           wasPaying,
           adminId,
+        );
+      }
+
+      // #2522 / SA-464f: already paying on both sides, so add-ons and the discount cancel — the
+      // base alone moves: Δ = newBase − (stored snapshot ?? 0). An override row books Δ0; a legacy
+      // NULL self-heals (books the full new base, as upgrade()/updatePlan do).
+      if (planSwitch) {
+        await this.billingEventService.emit(
+          id,
+          BILLING_EVENTS.PLAN_CHANGED,
+          {
+            fromPlan: before.subscription?.planKey ?? null,
+            toPlan: definition.planKey,
+            platformAdmin: true,
+            externalActivation: true,
+          },
+          {
+            amountDelta: roundMoney(
+              Number(newBase ?? 0) - Number(before.subscription?.basePriceSnapshot ?? 0),
+            ),
+            actorId: adminId,
+            tx,
+          },
         );
       }
 
