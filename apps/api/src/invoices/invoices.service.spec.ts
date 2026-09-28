@@ -112,6 +112,8 @@ describe("InvoicesService", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // #2070: createPartialFromOrder's invoicedQty bump is a CAS (updateMany); a clean read matches 1.
+    prisma.orderItem.updateMany.mockResolvedValue({ count: 1 } as any);
     prisma.invoice.findFirst.mockResolvedValue({ items: [] }); // units_v1 guard reads the parent invoice
     mockNumbering.reserveNext.mockClear();
     mockNumbering.reserveNext.mockResolvedValue("INV-2026-0001");
@@ -5565,7 +5567,10 @@ describe("InvoicesService", () => {
           })),
           findFirst: jest.fn().mockResolvedValue(null),
         },
-        orderItem: { update: jest.fn().mockResolvedValue({}) },
+        orderItem: {
+          update: jest.fn().mockResolvedValue({}),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        }, // #2070 CAS
         $executeRaw: jest.fn().mockResolvedValue(0),
         $queryRaw: jest.fn().mockResolvedValue([]),
       };

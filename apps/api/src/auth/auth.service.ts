@@ -109,6 +109,20 @@ export class AuthService {
     return result;
   }
 
+  /**
+   * #2159 S1: stamp `User.lastLoginAt` on every interactive session mint (password, Google,
+   * email-verification, set/change password) — the onboarding "admin / drivers have signed in"
+   * checks read it. Best-effort: a failed stamp never blocks a sign-in. Platform impersonation
+   * mints its own tokens elsewhere and deliberately does not come through here.
+   */
+  private async touchLastLogin(userId: string): Promise<void> {
+    try {
+      await this.prisma.user.update({ where: { id: userId }, data: { lastLoginAt: new Date() } });
+    } catch (err) {
+      this.logger.warn(`lastLoginAt stamp failed for user ${userId}: ${(err as Error).message}`);
+    }
+  }
+
   /** 10 consecutive failures → 15-minute lock. The per-IP login throttle
    *  (10/5min) bites first for single-IP attackers; this is layered defense
    *  against distributed guessing, tuned to avoid locking out real staff. */
@@ -143,6 +157,7 @@ export class AuthService {
     if (!user.tenantId && user.role !== "SUPER_ADMIN") {
       throw new UnauthorizedException("Tenant not found");
     }
+    await this.touchLastLogin(user.id);
 
     // Fetch tenant slug if user belongs to a tenant
     let tenantSlug: string | null = null;
@@ -678,6 +693,7 @@ export class AuthService {
    */
   private async mintSessionForUser(user: User, deviceInfo?: DeviceInfo) {
     await this.prisma.refreshToken.deleteMany({ where: { userId: user.id } });
+    await this.touchLastLogin(user.id);
 
     const jwtConfig = this.configService.get<AppConfig["jwt"]>("jwt")!;
 
