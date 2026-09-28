@@ -1,0 +1,8 @@
+/*
+ * #2653 / SA-542 Q3 — inside the RouteFlow app shell (<html data-shell="1">, set before paint by
+ * lib/in-shell.ts SHELL_MARK_SCRIPT), no Google sign-in may show: every Google entry point is
+ * wrapped in [data-google-signin]. Kept out of globals.css, which is hash-pinned (MKT-PIN T7).
+ */
+html[data-shell="1"] [data-google-signin] {
+  display: none !important;
+}
