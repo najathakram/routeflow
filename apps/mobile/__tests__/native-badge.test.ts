@@ -3,8 +3,10 @@
  * jest config stubs `@routeflow/ui/*`.
  */
 import {
+  BADGE_ENUMS,
   STATUS_TONES,
   TONE_COLORS,
+  UI_ONLY_STATUS_VALUES,
   resolveStatusTone,
   type BadgeStatus,
 } from "../../../packages/ui/src/status-tones";
@@ -12,8 +14,28 @@ import { BADGE_HEIGHT, resolveBadgeStyle } from "../../../packages/ui/src/native
 import { ledgerInk, ledgerStatus, ledgerSurface } from "../../../packages/ui/src/tokens/ledger";
 
 describe("shared status tones", () => {
-  it("covers the 30+ statuses web Badge knows", () => {
-    expect(Object.keys(STATUS_TONES).length).toBeGreaterThanOrEqual(30);
+  it("is exhaustive: every value of every badge enum (and every UI-only status) has a tone", () => {
+    const expected = new Set<string>([
+      ...Object.values(BADGE_ENUMS).flat(),
+      ...UI_ONLY_STATUS_VALUES,
+    ]);
+    const missing = [...expected].filter((v) => !(v in STATUS_TONES));
+    expect(missing).toEqual([]);
+    // …and nothing outside the derived union sneaks into the map.
+    expect(Object.keys(STATUS_TONES).filter((k) => !expected.has(k))).toEqual([]);
+  });
+
+  it("UI-only statuses really are not enum values (else they belong to the derived part)", () => {
+    const enumValues = new Set<string>(Object.values(BADGE_ENUMS).flat());
+    expect(UI_ONLY_STATUS_VALUES.filter((v) => enumValues.has(v))).toEqual([]);
+  });
+
+  it("the two statuses the derivation added have deliberate tones", () => {
+    expect(STATUS_TONES.PARTIALLY_DELIVERED).toEqual({
+      variant: "warning",
+      label: "Partially Delivered",
+    });
+    expect(STATUS_TONES.SKIPPED).toEqual({ variant: "neutral", label: "Skipped" });
   });
 
   it("keeps the tone and label web shipped for representative statuses", () => {

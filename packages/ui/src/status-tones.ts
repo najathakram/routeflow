@@ -1,8 +1,21 @@
 /**
- * The ONE status → tone map (#2332, plan §2.3 / §5 R2), consumed by both web `Badge`
- * (`./web/Badge.tsx`) and native `Badge` (`./native/Badge.tsx`). Before this, each side kept its
- * own map. Plain data only: no platform code.
+ * The ONE status → tone map (#2332, plan §2.3 / §5 R2). Native `Badge` (`./native/Badge.tsx`)
+ * reads it; web `Badge` will consume it via #2332b. Plain data only: no platform code.
+ *
+ * `BadgeStatus` is DERIVED from the Prisma-enum mirrors in `@routeflow/types` (the L-072 rule: a
+ * hand-typed mirror of a server enum drifts), plus the few UI-only statuses below. `STATUS_TONES`
+ * is typed over the whole union, so a new enum value without a tone fails the type-check.
  */
+import {
+  CREDIT_NOTE_STATUS_VALUES,
+  ESTIMATE_STATUS_VALUES,
+  INVOICE_STATUS_VALUES,
+  ORDER_STATUS_VALUES,
+  PAYMENT_STATUS_VALUES,
+  RETURN_STATUS_VALUES,
+  ROUTE_RUN_STATUS_VALUES,
+  ROUTE_RUN_STOP_STATUS_VALUES,
+} from "@routeflow/types/api/enums";
 import { ledgerInk, ledgerStatus, ledgerSurface } from "./tokens/ledger";
 
 /** The five badge tones (web `BadgeVariant`). */
@@ -13,50 +26,36 @@ export interface StatusToneEntry {
   label: string;
 }
 
+/** The server enums a badge renders, each pinned to `@prisma/client` by enum-parity.spec. */
+export const BADGE_ENUMS = {
+  order: ORDER_STATUS_VALUES,
+  invoice: INVOICE_STATUS_VALUES,
+  return: RETURN_STATUS_VALUES,
+  estimate: ESTIMATE_STATUS_VALUES,
+  creditNote: CREDIT_NOTE_STATUS_VALUES,
+  payment: PAYMENT_STATUS_VALUES,
+  routeRun: ROUTE_RUN_STATUS_VALUES,
+  routeRunStop: ROUTE_RUN_STOP_STATUS_VALUES,
+} as const;
+
+/**
+ * Statuses a badge shows that are not a value of those enums: account states, payment kinds and
+ * derived display states.
+ */
+export const UI_ONLY_STATUS_VALUES = [
+  "ACTIVE",
+  "INACTIVE",
+  "SUSPENDED",
+  "PROCESSING",
+  "FAILED",
+  "RETURNED",
+  "EXPIRED",
+  "ADVANCE",
+  "CREDIT_NOTE",
+] as const;
+
 export type BadgeStatus =
-  | "DRAFT"
-  | "ACTIVE"
-  | "INACTIVE"
-  | "SUSPENDED"
-  | "PENDING"
-  | "CONFIRMED"
-  | "OUT_FOR_DELIVERY"
-  | "DELIVERED"
-  | "CANCELLED"
-  | "SCHEDULED"
-  | "IN_PROGRESS"
-  | "COMPLETED"
-  // Finance / invoice statuses
-  | "SENT"
-  | "PAID"
-  | "VOID"
-  | "OVERDUE"
-  | "VIEWED"
-  | "PARTIAL"
-  | "PROCESSING"
-  | "FAILED"
-  // Returns / credit notes
-  | "RETURNED"
-  | "REFUNDED"
-  | "RECEIVED"
-  | "APPROVED"
-  | "REJECTED"
-  // Estimates
-  | "EXPIRED"
-  | "ACCEPTED"
-  | "DECLINED"
-  // Payments
-  | "ADVANCE"
-  | "CREDIT_NOTE"
-  // Credit notes
-  | "ISSUED"
-  | "APPLIED"
-  // Estimates
-  | "CONVERTED"
-  // Returns / logistics
-  | "IN_TRANSIT"
-  | "WRITTEN_OFF"
-  | "PROCESSED";
+  (typeof BADGE_ENUMS)[keyof typeof BADGE_ENUMS][number] | (typeof UI_ONLY_STATUS_VALUES)[number];
 
 export const STATUS_TONES: Record<BadgeStatus, StatusToneEntry> = {
   DRAFT: { variant: "neutral", label: "Draft" },
@@ -66,11 +65,13 @@ export const STATUS_TONES: Record<BadgeStatus, StatusToneEntry> = {
   PENDING: { variant: "warning", label: "Pending" },
   CONFIRMED: { variant: "info", label: "Confirmed" },
   OUT_FOR_DELIVERY: { variant: "info", label: "Out for Delivery" },
+  PARTIALLY_DELIVERED: { variant: "warning", label: "Partially Delivered" },
   DELIVERED: { variant: "success", label: "Delivered" },
   CANCELLED: { variant: "danger", label: "Cancelled" },
   SCHEDULED: { variant: "neutral", label: "Scheduled" },
   IN_PROGRESS: { variant: "info", label: "In Progress" },
   COMPLETED: { variant: "success", label: "Completed" },
+  SKIPPED: { variant: "neutral", label: "Skipped" },
   // Finance / invoice
   SENT: { variant: "warning", label: "Sent" },
   PAID: { variant: "success", label: "Paid" },
