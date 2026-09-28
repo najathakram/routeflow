@@ -116,6 +116,7 @@ import { MoneyInput, DecimalInput } from "@/components/MoneyInput";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { resolveProductByCode } from "@/lib/barcode-resolve";
+import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { ShipmentCard } from "@/components/ShipmentCard";
 import { SplitInvoiceModal } from "../_components/SplitInvoiceModal";
 import { InvoicePreviewModal, DivergenceNote } from "../../_components/LinkedDocPreviewModal";
@@ -1303,8 +1304,9 @@ export function EditableLineItems({
     scheduleScannerRefocus(addInputRef, [80, 200]);
   }
 
-  async function handleScanEnter() {
-    const code = addSearch.trim();
+  // #2715 PR-1: one resolve path for the field's Enter AND the shared scanner button (camera + wedge).
+  async function handleScanCode(raw: string) {
+    const code = raw.trim();
     if (!code) return;
     setAddLoading(true);
     try {
@@ -1435,16 +1437,21 @@ export function EditableLineItems({
             if (el) rowRefs.current.set(item.id, el);
             else rowRefs.current.delete(item.id);
           }}
+          // #2715 PR-1: the WHOLE line (row + price-edit row + note + substitute picker) is ONE
+          // bordered card — the price row and the note used to be bare ml-11 siblings under it.
+          className={cn(
+            "rounded-lg border px-3 py-2.5 transition-colors",
+            item.cancelled
+              ? "border-surface-border bg-surface-raised opacity-60"
+              : "border-surface-border bg-white",
+          )}
         >
           <div
             className={cn(
               // REG-B521: flex-wrap so Qty/price/actions overflow to a second line under
               // pressure instead of starving the name column to its min-w-0 floor (390px,
               // a long custom item name) — the name column below gets a real minimum instead.
-              "flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border px-3 py-2.5 transition-colors",
-              item.cancelled
-                ? "border-surface-border bg-surface-raised opacity-60"
-                : "border-surface-border bg-white",
+              "flex flex-wrap items-center gap-x-3 gap-y-2",
             )}
           >
             {/* Product icon */}
@@ -1756,16 +1763,29 @@ export function EditableLineItems({
               if (addSearch) setAddOpen(true);
             }}
             onKeyDown={(e) => {
+              // #2715 PR-1: the scanner button's wedge detector already handled (and
+              // preventDefault'd) a scan's Enter — standing down keeps ONE scan to ONE add.
+              if (e.defaultPrevented) return;
               if (e.key === "Enter") {
                 e.preventDefault();
                 e.stopPropagation();
-                handleScanEnter();
+                handleScanCode(addSearch);
               } else if (e.key === "Escape") {
                 setAddSearch("");
                 setAddOpen(false);
               }
             }}
             className="flex-1 bg-transparent text-sm text-navy placeholder:text-navy/70 outline-none"
+          />
+          <BarcodeScannerButton
+            inputRef={addInputRef}
+            onScan={(code) => {
+              setAddSearch(code);
+              void handleScanCode(code);
+            }}
+            onError={(message) => toast({ variant: "error", title: message })}
+            className="h-9 min-h-[44px] w-9 min-w-[44px] shrink-0"
+            title="Scan barcode"
           />
           {!pricingReady && (
             // shrink-0 + whitespace-nowrap keep this row exactly as tall as it is
