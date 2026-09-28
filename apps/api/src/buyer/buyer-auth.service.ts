@@ -256,6 +256,33 @@ export class BuyerAuthService {
     };
   }
 
+  /**
+   * #2653 in-app sign-in handoff (SA-542b): a FRESH pair for an account that BuyerHandoffService
+   * has already checked (isBuyerLoginEligible), minted by the SAME issuer as login() and returned
+   * in login()'s shape. Never the app's own pair.
+   */
+  async issueHandoffPair(
+    account: { id: string; email: string; name: string; passwordSet: boolean },
+    deviceInfo: BuyerDeviceInfo,
+  ) {
+    const tokens = await this.issueBuyerTokenPair(
+      account.id,
+      account.email,
+      account.name,
+      deviceInfo,
+      account.passwordSet,
+    );
+    return {
+      ...tokens,
+      buyer: {
+        id: account.id,
+        email: account.email,
+        name: account.name,
+        hasPassword: account.passwordSet,
+      },
+    };
+  }
+
   // ─── Refresh ──────────────────────────────────────────────────────────────────
 
   async refresh(incomingToken: string, deviceInfo?: BuyerDeviceInfo) {

@@ -122,6 +122,7 @@ const MODEL_DOMAIN = {
   PlatformConfig: "tenancy",
   BuyerAccount: "tenancy",
   BuyerRefreshToken: "tenancy",
+  AuthHandoffCode: "tenancy",
   BuyerPasswordResetToken: "tenancy",
   BuyerEmailVerificationToken: "tenancy",
   CustomerLink: "tenancy",

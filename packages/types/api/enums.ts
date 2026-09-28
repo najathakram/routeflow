@@ -448,3 +448,7 @@ export const ROUTE_RUN_STOP_STATUS_VALUES = [
   "SKIPPED",
 ] as const;
 export type RouteRunStopStatusValue = (typeof ROUTE_RUN_STOP_STATUS_VALUES)[number];
+
+/** #2653 (SA-542b): which realm minted a sign-in handoff code (Prisma `HandoffRealm`). */
+export const HANDOFF_REALM_VALUES = ["STAFF", "BUYER"] as const;
+export type HandoffRealm = (typeof HANDOFF_REALM_VALUES)[number];

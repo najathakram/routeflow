@@ -120,6 +120,7 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["ORDER_STATUS_VALUES", "OrderStatus"],
   ["ROUTE_RUN_STATUS_VALUES", "RouteRunStatus"],
   ["ROUTE_RUN_STOP_STATUS_VALUES", "RouteRunStopStatus"],
+  ["HANDOFF_REALM_VALUES", "HandoffRealm"],
   // #2169 (SA-395): brand-new Prisma enum, mirrored immediately as
   // `INVOICE_ITEM_SYSTEM_KIND_VALUES` — see the triage tripwire below.
   ["INVOICE_ITEM_SYSTEM_KIND_VALUES", "InvoiceItemSystemKind"],
@@ -222,7 +223,10 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // Triage for IntakeSectionKey + IntakeSectionStatus (#2159 S2, 2026-09-27): two brand-new Prisma
 // enums (migration 20260927070000_onboarding_s2_intake) — mirrored immediately in
 // packages/types/api/onboarding.ts + their `ENUM_TABLE` rows above (102 → 104).
-const PINNED_PRISMA_ENUM_COUNT = 104;
+// Triage for HandoffRealm (#2653, 2026-09-28): one brand-new Prisma enum (migration
+// 20260928120000_2653_auth_handoff_code), mirrored immediately as HANDOFF_REALM_VALUES in
+// packages/types/api/enums.ts + its `ENUM_TABLE` row above (104 → 105).
+const PINNED_PRISMA_ENUM_COUNT = 105;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {
