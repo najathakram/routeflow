@@ -408,6 +408,7 @@ describe("InvoicesService", () => {
           update: jest.fn().mockResolvedValue({}),
           updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         }, // #2612 CAS
+        deliveryMutation: { findMany: jest.fn().mockResolvedValue([]) },
         $executeRaw: jest.fn().mockResolvedValue(0),
         $queryRaw: jest.fn().mockResolvedValue([]),
       };
