@@ -9,6 +9,20 @@ import {
   Inter_700Bold,
   useFonts,
 } from "@expo-google-fonts/inter";
+import {
+  SplineSans_400Regular,
+  SplineSans_500Medium,
+  SplineSans_600SemiBold,
+  SplineSans_700Bold,
+} from "@expo-google-fonts/spline-sans";
+import {
+  SplineSansMono_400Regular,
+  SplineSansMono_500Medium,
+} from "@expo-google-fonts/spline-sans-mono";
+import {
+  InstrumentSerif_400Regular,
+  InstrumentSerif_400Regular_Italic,
+} from "@expo-google-fonts/instrument-serif";
 import * as SplashScreen from "expo-splash-screen";
 import * as Notifications from "expo-notifications";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -23,6 +37,7 @@ import { ConfirmModal } from "../components/ConfirmModal";
 import { initSentry } from "../lib/sentry";
 import { maybeDevParityLogin } from "../lib/dev-parity-login";
 import { queryClient } from "../lib/query-client";
+import { AppThemeProvider } from "../lib/theme";
 
 initSentry();
 
@@ -274,6 +289,15 @@ export default function RootLayout() {
     Inter_500Medium,
     Inter_600SemiBold,
     Inter_700Bold,
+    // Ledger faces (#2330). Inter stays until the last pre-Ledger screen is rebuilt.
+    SplineSans_400Regular,
+    SplineSans_500Medium,
+    SplineSans_600SemiBold,
+    SplineSans_700Bold,
+    SplineSansMono_400Regular,
+    SplineSansMono_500Medium,
+    InstrumentSerif_400Regular,
+    InstrumentSerif_400Regular_Italic,
   });
 
   useEffect(() => {
@@ -284,15 +308,17 @@ export default function RootLayout() {
   // (`if (!fontsLoaded) return null`) caused the web bundle to render an
   // empty <div id="root"> when expo-font's promise hung or errored. Render
   // immediately with the system font fallback; the tree re-renders once the
-  // Inter family is available. fontsError unblocks the splash screen so it
+  // font families are available. fontsError unblocks the splash screen so it
   // can never sit forever if font loading genuinely fails.
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <QueryClientProvider client={queryClient}>
-          <RootLayoutNav />
-          <ConfirmModal />
+          <AppThemeProvider>
+            <RootLayoutNav />
+            <ConfirmModal />
+          </AppThemeProvider>
         </QueryClientProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
