@@ -12,6 +12,8 @@
 //   MAILBOX_*        — the ForbiddenException MESSAGE (`body.message`), mailbox connect/confirm.
 //   ADDON_GATE       — `body.code` of AddonGuard's 403.
 //   UNLINKED_ITEMS, PACK_SIZE_UNKNOWN, DUPLICATE_VENDOR_BILL — `body.code` of vendor-bill 409s.
+//   INVOICED_QTY_CHANGED — `body.code` of the invoicedQty CAS 409 (invoice-from-order paths);
+//                    nothing was billed, so a client may retry it (mobile's queue drain does).
 
 export const API_ERROR_CODES = {
   ADDON_GATE: "ADDON_GATE",
@@ -20,6 +22,7 @@ export const API_ERROR_CODES = {
   UNLINKED_ITEMS: "UNLINKED_ITEMS",
   PACK_SIZE_UNKNOWN: "PACK_SIZE_UNKNOWN",
   DUPLICATE_VENDOR_BILL: "DUPLICATE_VENDOR_BILL",
+  INVOICED_QTY_CHANGED: "INVOICED_QTY_CHANGED",
 } as const;
 
 export type ApiErrorCode = (typeof API_ERROR_CODES)[keyof typeof API_ERROR_CODES];

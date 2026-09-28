@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * #2070 / SA-523: partial invoices must never over-bill an order line.
@@ -43,7 +44,13 @@ export async function bumpInvoicedQtyCas(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the order's line rows as read
   itemById: Map<string, any>,
 ): Promise<void> {
-  for (const req of items) {
+  // #2645: a deterministic lock order — callers pass lines in dto / unordered-read order, and two
+  // multi-line creations locking {A,B} and {B,A} deadlock (40P01 / P2034 → 500). Sorted copy; the
+  // caller's array is untouched.
+  const ordered = [...items].sort((a, b) =>
+    a.orderItemId < b.orderItemId ? -1 : a.orderItemId > b.orderItemId ? 1 : 0,
+  );
+  for (const req of ordered) {
     const li = itemById.get(req.orderItemId);
     const readInvoicedQty = li?.invoicedQty;
     const readQty = li?.qty;
@@ -62,9 +69,13 @@ export async function bumpInvoicedQtyCas(
       },
       data: { invoicedQty: { increment: req.qty } },
     });
+    // #2645: machine-readable and RETRIABLE — the throw rolls back the whole invoice, so nothing
+    // was billed. Neutral wording: this guards the full/split paths too, not only a partial.
     if (res.count !== 1)
-      throw new ConflictException(
-        "An order line changed while this partial invoice was being created — nothing was billed; please retry.",
-      );
+      throw new ConflictException({
+        code: API_ERROR_CODES.INVOICED_QTY_CHANGED,
+        message:
+          "An order line changed while this invoice was being created — nothing was billed; please retry.",
+      });
   }
 }

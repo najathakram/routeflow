@@ -230,6 +230,79 @@ describe("partial invoices: the invoicedQty bump is a compare-and-set (#2070, SA
       expect(tx.orderItem.updateMany).not.toHaveBeenCalled();
     });
 
+    // #2645 (1): the CAS miss is RETRIABLE (nothing was billed), so it carries a machine code the
+    // mobile queue drain branches on, and neutral wording (it also guards the full/split path).
+    it("#2645: a CAS miss is a 409 with code INVOICED_QTY_CHANGED and neutral wording", async () => {
+      const tx = { orderItem: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) } };
+      const caught: any = await bumpInvoicedQtyCas(
+        tx,
+        [{ orderItemId: "oi-1", qty: 1 }],
+        new Map([["oi-1", { id: "oi-1", qty: 96, invoicedQty: 0 }]]),
+      ).catch((e) => e);
+      expect(caught).toBeInstanceOf(ConflictException);
+      expect(caught.getResponse()).toMatchObject({ code: "INVOICED_QTY_CHANGED" });
+      expect(String(caught.message)).not.toMatch(/partial/i);
+    });
+
+    // #2645 (2): lines are bumped in orderItemId order, whatever the caller's order — two
+    // multi-line creations can then never lock {A,B} / {B,A} (40P01 / P2034 → 500).
+    it("#2645: bumps in orderItemId order regardless of caller order", async () => {
+      const tx = { orderItem: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) } };
+      const read = (id: string) => [id, { id, qty: 10, invoicedQty: 0 }] as [string, any];
+      await bumpInvoicedQtyCas(
+        tx,
+        [
+          { orderItemId: "oi-c", qty: 1 },
+          { orderItemId: "oi-a", qty: 1 },
+          { orderItemId: "oi-b", qty: 1 },
+        ],
+        new Map([read("oi-a"), read("oi-b"), read("oi-c")]),
+      );
+      expect(tx.orderItem.updateMany.mock.calls.map((c: any[]) => c[0].where.id)).toEqual([
+        "oi-a",
+        "oi-b",
+        "oi-c",
+      ]);
+    });
+
+    it("#2645: the caller's items array is not reordered in place", async () => {
+      const tx = { orderItem: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) } };
+      const items = [
+        { orderItemId: "oi-b", qty: 1 },
+        { orderItemId: "oi-a", qty: 1 },
+      ];
+      await bumpInvoicedQtyCas(
+        tx,
+        items,
+        new Map([
+          ["oi-a", { id: "oi-a", qty: 10, invoicedQty: 0 }],
+          ["oi-b", { id: "oi-b", qty: 10, invoicedQty: 0 }],
+        ]),
+      );
+      expect(items.map((i) => i.orderItemId)).toEqual(["oi-b", "oi-a"]);
+    });
+
+    it("#2645 (4): a miss on a LATER sibling throws after the earlier bumps — the tx rolls them all back", async () => {
+      const tx = {
+        orderItem: {
+          updateMany: jest
+            .fn()
+            .mockResolvedValueOnce({ count: 1 })
+            .mockResolvedValueOnce({ count: 0 })
+            .mockResolvedValue({ count: 1 }),
+        },
+      };
+      const read = (id: string) => [id, { id, qty: 10, invoicedQty: 0 }] as [string, any];
+      const caught: any = await bumpInvoicedQtyCas(
+        tx,
+        ["oi-a", "oi-b", "oi-c"].map((orderItemId) => ({ orderItemId, qty: 1 })),
+        new Map([read("oi-a"), read("oi-b"), read("oi-c")]),
+      ).catch((e) => e);
+      expect(caught.getResponse()).toMatchObject({ code: "INVOICED_QTY_CHANGED" });
+      // Stops at the miss: the third line is never bumped, and the throw aborts the enclosing tx.
+      expect(tx.orderItem.updateMany).toHaveBeenCalledTimes(2);
+    });
+
     it("assertPartialRequestShape accepts distinct lines with positive qty", () => {
       expect(() =>
         assertPartialRequestShape([

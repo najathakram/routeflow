@@ -17,6 +17,7 @@
  *    dequeued with zero signal (REG-B143 / REG-B111).
  */
 import axios from "axios";
+import { API_ERROR_CODES } from "@routeflow/types";
 import type { QueuedAction } from "../store/offlineQueue";
 
 export const MAX_RETRIES = 3;
@@ -137,6 +138,8 @@ function isRetriableLockContention(err: unknown, status: number | undefined): bo
   const code = typeof data?.code === "string" ? data.code : undefined;
   if (status === 409 && code === "MERGE_IN_PROGRESS") return true;
   if (status === 503 && code === "LOCK_UNAVAILABLE") return true;
+  // #2645: the invoicedQty CAS miss rolls the whole invoice back (nothing billed) — safe to retry.
+  if (status === 409 && code === API_ERROR_CODES.INVOICED_QTY_CHANGED) return true;
   return false;
 }
 

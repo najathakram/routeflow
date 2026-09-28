@@ -292,4 +292,48 @@ describeDb("partial invoices: concurrent partials never over-bill a line (#2070,
     expect(Number(line.invoicedQty)).toBe(0); // pre-fix: 96 on a cancelled line
     expect(await prisma.invoice.count({ where: { orderId: s.orderId } })).toBe(0);
   });
+
+  // #2645 (4): a multi-SIBLING partial. Lines are bumped in orderItemId order, so the first sibling
+  // is bumped before the partial blocks on the second; T2 then moves the second's invoicedQty, its
+  // CAS misses, and the whole partial rolls back — the FIRST sibling's bump included, no invoice.
+  it("#2645: the second sibling's CAS misses ⇒ 409 INVOICED_QTY_CHANGED, the first sibling's bump rolled back, no invoice", async () => {
+    const s = await seedLine();
+    const second = await prisma.orderItem.create({
+      data: {
+        orderId: s.orderId,
+        productId: (await prisma.orderItem.findUniqueOrThrow({ where: { id: s.orderItemId } }))
+          .productId,
+        qty: 96,
+        unitPrice: 10,
+        subtotal: 960,
+        status: "CONFIRMED",
+        tenantId: s.tenantId,
+      } as any,
+    });
+    const [first, later] = [s.orderItemId, second.id].sort();
+    const both = () =>
+      tenantCtx.run(s.tenantId, () =>
+        invoicesService.createPartialFromOrder(s.orderId, {
+          // Caller order deliberately reversed: the helper sorts.
+          items: [
+            { orderItemId: later, qty: 10 },
+            { orderItemId: first, qty: 10 },
+          ],
+        } as any),
+      );
+    const { waiting, results } = await holdLine(later, [both], async (t2) => {
+      await t2.query(`UPDATE "OrderItem" SET "invoicedQty" = 1 WHERE id = $1`, [later]);
+    });
+    expect(waiting).toBe(1);
+    expect(results[0].ok).toBe(false);
+    const e = (results[0] as { e: any }).e;
+    expect(e).toBeInstanceOf(ConflictException);
+    expect(e.getResponse()).toMatchObject({ code: "INVOICED_QTY_CHANGED" });
+
+    const firstRow = await prisma.orderItem.findUniqueOrThrow({ where: { id: first } });
+    const laterRow = await prisma.orderItem.findUniqueOrThrow({ where: { id: later } });
+    expect(Number(firstRow.invoicedQty)).toBe(0); // its bump rolled back with the partial
+    expect(Number(laterRow.invoicedQty)).toBe(1); // T2's write only
+    expect(await prisma.invoice.count({ where: { orderId: s.orderId } })).toBe(0);
+  });
 });
