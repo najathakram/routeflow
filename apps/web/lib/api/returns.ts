@@ -181,6 +181,9 @@ export function useMarkReturnReceived() {
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["returns"] });
       qc.invalidateQueries({ queryKey: ["returns", id] });
+      // #1528 (B86): the server restocks / un-stocks here — refresh the stock views too.
+      qc.invalidateQueries({ queryKey: ["products"] });
+      qc.invalidateQueries({ queryKey: ["inventory"] });
     },
   });
 }
@@ -211,6 +214,9 @@ export function useCancelReturn() {
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ["returns"] });
       qc.invalidateQueries({ queryKey: ["returns", id] });
+      // #1528 (B86): the server restocks / un-stocks here — refresh the stock views too.
+      qc.invalidateQueries({ queryKey: ["products"] });
+      qc.invalidateQueries({ queryKey: ["inventory"] });
     },
   });
 }
