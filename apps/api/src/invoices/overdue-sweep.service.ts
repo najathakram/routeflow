@@ -32,7 +32,9 @@ export function overdueSweepMode(env: NodeJS.ProcessEnv = process.env): {
     .toLowerCase();
   if ((OVERDUE_SWEEP_MODES as readonly string[]).includes(v))
     return { mode: v as OverdueSweepMode, unknown: null };
-  return { mode: OVERDUE_SWEEP_DEFAULT, unknown: v === "" ? null : String(raw) };
+  // #2567: only an UNSET variable is the silent default; a set-but-blank value warns like any
+  // other unrecognised one.
+  return { mode: OVERDUE_SWEEP_DEFAULT, unknown: raw === undefined ? null : String(raw) };
 }
 
 /** The tenant statuses whose open invoices are aged (billing-live tenants only). */
