@@ -148,7 +148,7 @@ describe("CustomersService.deleteAllCustomers — PAID/SENT pre-flight (B127)", 
         by: ["customerId"],
         where: expect.objectContaining({
           customerId: { in: ["cust-1", "cust-2"] },
-          status: { in: ["SENT", "VIEWED", "PARTIAL", "PAID", "OVERDUE", "WRITTEN_OFF"] },
+          status: { in: ["SENT", "VIEWED", "PARTIAL", "PAID", "OVERDUE", "VOID", "WRITTEN_OFF"] },
         }),
       }),
     );
@@ -186,7 +186,7 @@ describe("CustomersService.deleteAllCustomers — PAID/SENT pre-flight (B127)", 
         by: ["customerId"],
         where: expect.objectContaining({
           customerId: { in: ["cust-1", "cust-2"] },
-          status: { in: ["SENT", "VIEWED", "PARTIAL", "PAID", "OVERDUE", "WRITTEN_OFF"] },
+          status: { in: ["SENT", "VIEWED", "PARTIAL", "PAID", "OVERDUE", "VOID", "WRITTEN_OFF"] },
         }),
       }),
     );
@@ -216,7 +216,7 @@ describe("CustomersService.deleteAllCustomers — PAID/SENT pre-flight (B127)", 
         by: ["customerId"],
         where: expect.objectContaining({
           customerId: { in: ["cust-1", "cust-2"] },
-          status: { in: ["SENT", "VIEWED", "PARTIAL", "PAID", "OVERDUE", "WRITTEN_OFF"] },
+          status: { in: ["SENT", "VIEWED", "PARTIAL", "PAID", "OVERDUE", "VOID", "WRITTEN_OFF"] },
         }),
         _count: { _all: true },
       }),
