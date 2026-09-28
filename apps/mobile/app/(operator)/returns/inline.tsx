@@ -21,11 +21,14 @@ import { NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import {
   applyCoveredPiecesToLines,
   buildQuoteRequest,
+  canReturnOnlyPurchased,
   dropExcessAndRequote,
   extractRefusalMessage,
   groupQuoteChunks,
   isBoxedProduct,
   keyReusedReturnOf,
+  NOTHING_BOUGHT_BEFORE_MESSAGE,
+  notBoughtBeforeNames,
   RETURNS_NOT_ENABLED_MESSAGE,
   sumChunkTotals,
   type ExcessOption,
@@ -146,6 +149,8 @@ export default function InlineReturnScreen() {
       dispatch({ ...quotedEvent(screen), excessOption: option });
       return;
     }
+    // #2693: nothing matched to an invoice ⇒ the re-quote would be EMPTY; never send it.
+    if (!canReturnOnlyPurchased(screen.quote)) return;
     requote(dropExcessAndRequote(customerId, screen.quote), (quote) => {
       // Capture reads the quoted snapshot, so the reduced amount goes into the snapshot too.
       const reduced = applyCoveredPiecesToLines(screen.quotedLines, quote);
@@ -296,6 +301,7 @@ export default function InlineReturnScreen() {
         {(screen.step === "quote" || screen.step === "capturing") && (
           <QuoteView
             quote={screen.quote}
+            lines={screen.quotedLines}
             excessOption={screen.excessOption}
             onExcessOption={changeExcess}
             reason={reason}
@@ -373,6 +379,8 @@ function quotedEvent(
 
 function QuoteView(props: {
   quote: import("@routeflow/types").InlineReturnQuoteResponse;
+  /** The quoted lines, for naming products option 3 would drop (#2693). */
+  lines: ReadonlyArray<Pick<InlineReturnLineDraft, "productId" | "productName">>;
   excessOption: ExcessOption;
   onExcessOption: (o: ExcessOption) => void;
   reason: ReturnReason | "";
@@ -385,6 +393,10 @@ function QuoteView(props: {
   const { quote } = props;
   const { covered, excess } = groupQuoteChunks(quote);
   const excessTotals = sumChunkTotals(excess);
+  const onlyBoughtPossible = canReturnOnlyPurchased(quote);
+  const notBoughtBefore = onlyBoughtPossible ? notBoughtBeforeNames(quote, props.lines) : [];
+  const optionDisabled = (value: ExcessOption) =>
+    props.locked || (value === "RETURN_ONLY_PURCHASED" && !onlyBoughtPossible);
   return (
     <>
       <Text style={styles.section}>Matched to earlier orders</Text>
@@ -412,13 +424,17 @@ function QuoteView(props: {
           ).map(([value, label]) => (
             <Pressable
               key={value}
-              style={[styles.chip, props.excessOption === value && styles.chipActive]}
-              disabled={props.locked}
+              style={[
+                styles.chip,
+                props.excessOption === value && styles.chipActive,
+                optionDisabled(value) && !props.locked && styles.chipDisabled,
+              ]}
+              disabled={optionDisabled(value)}
               accessibilityRole="radio"
               accessibilityLabel={label}
               accessibilityState={{
                 selected: props.excessOption === value,
-                disabled: props.locked,
+                disabled: optionDisabled(value),
               }}
               onPress={() => props.onExcessOption(value)}
             >
@@ -429,6 +445,10 @@ function QuoteView(props: {
               </Text>
             </Pressable>
           ))}
+          {!onlyBoughtPossible && <Text style={styles.hint}>{NOTHING_BOUGHT_BEFORE_MESSAGE}</Text>}
+          {notBoughtBefore.length > 0 && (
+            <Text style={styles.hint}>Not bought before: {notBoughtBefore.join(", ")}</Text>
+          )}
         </View>
       )}
       <View style={styles.card}>
@@ -554,6 +574,7 @@ const styles = StyleSheet.create({
   },
   chipActive: { backgroundColor: ios.brand },
   chipText: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label },
+  chipDisabled: { opacity: 0.4 },
   chipTextActive: { color: "#fff" },
   error: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.system.red },
   btn: {

@@ -23,12 +23,15 @@ import type {
 import {
   applyCoveredPiecesToLines,
   buildQuoteRequest,
+  canReturnOnlyPurchased,
   DEFAULT_EXCESS_OPTION,
   dropExcessAndRequote,
   extractRefusalMessage,
   groupQuoteChunks,
   hasAnyQtyEntered,
   isBoxedProduct,
+  NOTHING_BOUGHT_BEFORE_MESSAGE,
+  notBoughtBeforeNames,
   sumChunkTotals,
   type ExcessOption,
   type InlineReturnLineDraft,
@@ -207,6 +210,9 @@ export function InlineReturnSection({
   }
 
   function handleExcessOptionChange(option: ExcessOption) {
+    // #2693: with nothing matched to an invoice, option 3's re-quote would be EMPTY (the API's
+    // raw ArrayMinSize refusal); the option is disabled and never sent.
+    if (option === "RETURN_ONLY_PURCHASED" && quote && !canReturnOnlyPurchased(quote)) return;
     const previousOption = excessOption;
     setExcessOption(option);
     if (option !== "RETURN_ONLY_PURCHASED" || !quote) return;
@@ -233,6 +239,8 @@ export function InlineReturnSection({
     ? groupQuoteChunks(quote)
     : { covered: [] as InlineReturnQuoteChunk[], excess: [] as InlineReturnQuoteChunk[] };
   const excessTotals = sumChunkTotals(excess);
+  const onlyBoughtPossible = quote ? canReturnOnlyPurchased(quote) : false;
+  const notBoughtBefore = quote && onlyBoughtPossible ? notBoughtBeforeNames(quote, lines) : [];
   const canGetQuote = hasAnyQtyEntered(lines) && getQuoteEnabled;
 
   if (hidden) return null;
@@ -436,15 +444,29 @@ export function InlineReturnSection({
                   />
                   Credit at current price
                 </label>
-                <label className="flex items-center gap-2 text-sm text-navy">
+                <label
+                  className={`flex items-center gap-2 text-sm ${onlyBoughtPossible ? "text-navy" : "text-navy/50"}`}
+                >
                   <input
                     type="radio"
                     name="excess-option"
                     checked={excessOption === "RETURN_ONLY_PURCHASED"}
+                    disabled={!onlyBoughtPossible}
+                    aria-describedby={onlyBoughtPossible ? undefined : "excess-nothing-bought"}
                     onChange={() => handleExcessOptionChange("RETURN_ONLY_PURCHASED")}
                   />
                   Return only what was bought
                 </label>
+                {!onlyBoughtPossible && (
+                  <p id="excess-nothing-bought" className="text-xs text-navy/70">
+                    {NOTHING_BOUGHT_BEFORE_MESSAGE}
+                  </p>
+                )}
+                {notBoughtBefore.length > 0 && (
+                  <p className="text-xs text-navy/70">
+                    Not bought before: {notBoughtBefore.join(", ")}
+                  </p>
+                )}
               </div>
             </div>
           )}
