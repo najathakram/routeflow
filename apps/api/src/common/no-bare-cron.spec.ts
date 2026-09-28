@@ -114,7 +114,7 @@ describe("no bare @Cron in apps/api/src (T2, R2)", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("has exactly 19 `@LeaderCron(` sites, every one of them well-formed", () => {
+  it("has exactly 20 `@LeaderCron(` sites, every one of them well-formed", () => {
     const declared = sources.reduce((n, s) => n + countMatches(s.text, LEADER_CRON), 0);
     const wellFormed = sources.reduce((n, s) => n + countMatches(s.text, LEADER_CRON_SITE), 0);
 
