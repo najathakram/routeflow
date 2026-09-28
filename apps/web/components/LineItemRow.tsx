@@ -436,7 +436,7 @@ export function LineItemRow({
                         closeLooseUnits();
                       }}
                       aria-label="Remove extra units"
-                      className="text-xs text-navy/50 hover:text-danger"
+                      className="relative before:absolute before:-inset-2 before:content-[''] text-xs text-navy/50 hover:text-danger"
                     >
                       ×
                     </button>
@@ -446,7 +446,8 @@ export function LineItemRow({
                 <button
                   type="button"
                   onClick={openLooseUnits}
-                  className="whitespace-nowrap rounded border border-dashed border-surface-border px-1.5 py-0.5 text-[10px] font-medium text-navy/60 hover:bg-surface-raised"
+                  // hitSlop 8 (mobile parity, #2706): the pseudo-element grows the tap target, not the layout.
+                  className="relative before:absolute before:-inset-2 before:content-[''] whitespace-nowrap rounded border border-dashed border-surface-border px-1.5 py-0.5 text-[10px] font-medium text-navy/60 hover:bg-surface-raised"
                 >
                   + units
                 </button>

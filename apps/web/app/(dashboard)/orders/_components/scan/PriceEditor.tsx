@@ -186,7 +186,7 @@ export function PriceEditor({
                             closeLooseUnits();
                           }}
                           aria-label="Remove extra units"
-                          className="text-navy/50 hover:text-danger"
+                          className="relative before:absolute before:-inset-2 before:content-[''] text-navy/50 hover:text-danger"
                         >
                           ×
                         </button>
@@ -196,7 +196,7 @@ export function PriceEditor({
                     <button
                       type="button"
                       onClick={openLooseUnits}
-                      className="rounded border border-dashed border-surface-border px-2 py-1 text-xs font-medium text-navy/60 hover:bg-surface-raised"
+                      className="relative before:absolute before:-inset-2 before:content-[''] rounded border border-dashed border-surface-border px-2 py-1 text-xs font-medium text-navy/60 hover:bg-surface-raised"
                     >
                       + units
                     </button>

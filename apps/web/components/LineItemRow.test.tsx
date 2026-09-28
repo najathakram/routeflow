@@ -240,3 +240,15 @@ describe("SA-563: the remove-extra-units control needs at least one case", () =>
     expect(props.onRemove).not.toHaveBeenCalled();
   });
 });
+
+// #2706 parity: mobile's "+ units" carries hitSlop={8}; web grows the tap target by the same 8px
+// with a pseudo-element (layout unchanged).
+it("the '+ units' and remove-units controls carry an 8px hit-area extension", () => {
+  renderRow(makeProps({ ...boxedItem, boxes: 1, pieces: 0 }));
+  expect(screen.getByRole("button", { name: "+ units" })).toHaveClass(
+    "relative",
+    "before:-inset-2",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "+ units" }));
+  expect(screen.getByLabelText("Remove extra units")).toHaveClass("relative", "before:-inset-2");
+});
