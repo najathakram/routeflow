@@ -197,6 +197,24 @@ export function payingGate({
   return { ok: true };
 }
 
+/**
+ * Pure (#2639, lead's Opus HIGH-1): THE plan-file shape, written by the dry run and verified by the
+ * apply. The hash covers the plan BODY only; `planHash`, `review` and `held` ride along unhashed. One
+ * pair of functions on both sides, so the dry run and the apply can never disagree on what is hashed
+ * (a `held` key hashed out but not stripped back made every --apply refuse).
+ */
+const UNHASHED_PLAN_KEYS = ["planHash", "review", "held"];
+export function planFileOf(plan, review, held) {
+  return { ...plan, planHash: sha256(plan), review, held };
+}
+/** The plan body when `saved` is intact and `confirmPlan` is its hash; null otherwise. */
+export function verifyPlanFile(saved, confirmPlan) {
+  const plan = Object.fromEntries(
+    Object.entries(saved).filter(([k]) => !UNHASHED_PLAN_KEYS.includes(k)),
+  );
+  return sha256(plan) === confirmPlan && saved.planHash === confirmPlan ? plan : null;
+}
+
 const DERIVED_INVOICES_SQL = `
   SELECT i.id, i."tenantId", i.subtotal, i."taxAmount", i."createdAt", i."updatedAt"
   FROM "Invoice" i
@@ -292,11 +310,12 @@ async function dryRun() {
       admittedProtectedTenantIds,
       apply,
     };
-    const hash = sha256(plan);
+    const planFile = planFileOf(plan, review, held);
+    const hash = planFile.planHash;
     const dir = resolve(REPO_ROOT, "local-assets/handoff", new Date().toISOString().slice(0, 10));
     mkdirSync(dir, { recursive: true });
     const file = resolve(dir, `b294-plan-${Date.now()}.json`);
-    writeFileSync(file, JSON.stringify({ ...plan, planHash: hash, review, held }, null, 2));
+    writeFileSync(file, JSON.stringify(planFile, null, 2));
 
     console.log(`\n${TAG}: ${invoices.length} derived invoice(s) scanned`);
     console.log(
@@ -349,8 +368,8 @@ async function apply() {
     return 1;
   }
   const saved = JSON.parse(readFileSync(planFile, "utf8"));
-  const { planHash, review: _review, ...plan } = saved;
-  if (sha256(plan) !== confirmPlan || planHash !== confirmPlan) {
+  const plan = verifyPlanFile(saved, confirmPlan);
+  if (!plan) {
     console.error(`${TAG}: --confirm-plan does not match the plan file's own hash -- refusing`);
     return 1;
   }

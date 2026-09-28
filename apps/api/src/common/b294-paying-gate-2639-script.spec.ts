@@ -29,7 +29,32 @@ const prot = b.protectedTenants([
 ]);
 const cands = ["t-paying", "t-stripe", "t-plain"].map((tenantId, i) => ({ invoiceId: "inv-" + i, tenantId }));
 const now = (ids) => new Map(ids.map((id) => [id, { arm: "paying", slug: "qa-2639-" + id.slice(2) }]));
+// Lead's Opus HIGH-1: the plan file the DRY RUN writes must verify at APPLY (it never did: \`held\` was
+// written but hashed out and never stripped back). Built by the script's own functions, round-tripped
+// through JSON exactly as the file is.
+const plan = { generatedAt: "2026-09-28T00:00:00.000Z", fingerprint: { database: "rf_qa", tenantIds: ["t-plain"] },
+  allowPayingTenant: false, admittedProtectedTenantIds: [], apply: [{ invoiceId: "inv-2", tenantId: "t-plain" }] };
+// Tolerates the functions being ABSENT (the pre-fix tree), so a red fails on the round-trip assertion
+// itself instead of crashing this whole child (which would mask every other pin).
+const roundTrip =
+  typeof b.planFileOf === "function" && typeof b.verifyPlanFile === "function"
+    ? (() => {
+        const file = JSON.parse(
+          JSON.stringify(
+            b.planFileOf(plan, [{ invoiceId: "inv-9" }], [{ invoiceId: "inv-0", tenantId: "t-paying" }]),
+          ),
+        );
+        const tampered = { ...file, apply: [...file.apply, { invoiceId: "inv-x", tenantId: "t-paying" }] };
+        return {
+          verifies: JSON.stringify(b.verifyPlanFile(file, file.planHash)) === JSON.stringify(plan),
+          heldEditedStillVerifies: b.verifyPlanFile({ ...file, held: [] }, file.planHash) !== null,
+          tamperedApplyRefused: b.verifyPlanFile(tampered, file.planHash) === null,
+          wrongConfirmRefused: b.verifyPlanFile(file, "0".repeat(64)) === null,
+        };
+      })()
+    : { missing: "planFileOf / verifyPlanFile are not exported" };
 console.log(JSON.stringify({
+  roundTrip,
   prot: [...prot.entries()],
   noFlag: b.splitProtected(cands, prot, false),
   withFlag: b.splitProtected(cands, prot, true),
@@ -54,6 +79,28 @@ describe("#2639 part C — b294 holds and gates protected tenants (SA-547)", () 
     });
     expect(res.stderr).toBe("");
     r = JSON.parse(res.stdout.trim());
+  });
+
+  it("HIGH-1: the dry run's plan file verifies at apply (round trip); tampering the hashed body or the confirm refuses", () => {
+    expect(r.roundTrip).toEqual({
+      verifies: true,
+      heldEditedStillVerifies: true,
+      tamperedApplyRefused: true,
+      wrongConfirmRefused: true,
+    });
+  });
+
+  it("HIGH-1 source: the dry run writes planFileOf(...) and the apply verifies with verifyPlanFile — one shape", () => {
+    const src = readFileSync(SCRIPT, "utf8");
+    const dry = src.slice(
+      src.indexOf("async function dryRun()"),
+      src.indexOf("async function apply()"),
+    );
+    const applyBody = src.slice(src.indexOf("async function apply()"));
+    expect(dry).toMatch(/planFileOf\(plan, review, held\)/);
+    expect(dry).toMatch(/writeFileSync\(file, JSON\.stringify\(planFile/);
+    expect(applyBody).toMatch(/verifyPlanFile\(saved, confirmPlan\)/);
+    expect(applyBody).not.toMatch(/sha256\(plan\)/);
   });
 
   it("paying and the Stripe arm alone (TEST, READ_ONLY, no planKey) are protected; plain and soft-deleted are not", () => {
