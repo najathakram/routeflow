@@ -344,6 +344,19 @@ function createEmptyItem(): LineItemState {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+/** B890: a line field with its own label below sm (the column header row is sm+ only). The input
+ *  carries the same name as its aria-label, so it is named at every width. */
+function MobileField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-0.5">
+      <span aria-hidden="true" className="text-[11px] font-medium text-navy/60 sm:hidden">
+        {label}
+      </span>
+      {children}
+    </div>
+  );
+}
+
 export default function EditInvoicePage() {
   const params = useParams();
   const id = params.id as string;
@@ -722,7 +735,8 @@ export default function EditInvoicePage() {
             <div className="space-y-2">
               {errors.items && <p className="text-xs text-danger">{errors.items}</p>}
               {/* Table header */}
-              <div className="grid grid-cols-[1fr_70px_90px_70px_70px_32px] gap-2 px-1">
+              {/* B890: the column header is sm+ only; below sm each field carries its own label. */}
+              <div className="hidden gap-2 px-1 sm:grid sm:grid-cols-[1fr_70px_90px_70px_70px_32px]">
                 <span className="text-xs font-medium text-navy/70">Description</span>
                 <span className="text-xs font-medium text-navy/70 text-right">Qty</span>
                 <span className="text-xs font-medium text-navy/70 text-right">Unit Price</span>
@@ -734,46 +748,51 @@ export default function EditInvoicePage() {
               {items.map((item) => (
                 <div
                   key={item.key}
-                  className="grid grid-cols-[1fr_70px_90px_70px_70px_32px] items-center gap-2"
+                  // B890: below sm a line wraps — description + delete, then Qty / Unit Price / Disc. $ /
+                  // Tax % — so nothing is clipped inside the overflow-x-hidden main at 390px; the fixed
+                  // six-column grid applies from sm up.
+                  className="grid grid-cols-4 items-end gap-2 border-b border-surface-border pb-3 sm:grid-cols-[1fr_70px_90px_70px_70px_32px] sm:items-center sm:border-0 sm:pb-0"
                 >
-                  <ProductSearchInput
-                    value={item.description}
-                    tierPriceFor={tierPriceFor}
-                    pricingPending={tierPricingPending}
-                    onCreateProduct={(searchTerm) => {
-                      const idx = items.findIndex((it) => it.key === item.key);
-                      const looksLikeSku = /^\d{6,}$/.test(searchTerm.trim());
-                      setCreateProductInitialName(looksLikeSku ? "" : searchTerm);
-                      setCreateProductInitialSku(looksLikeSku ? searchTerm.trim() : "");
-                      setCreateProductTargetIdx(idx);
-                      setCreateProductOpen(true);
-                    }}
-                    onBarcodeNotFound={(barcode) => {
-                      const idx = items.findIndex((it) => it.key === item.key);
-                      setCreateProductInitialName("");
-                      setCreateProductInitialSku(barcode);
-                      setCreateProductTargetIdx(idx);
-                      setCreateProductOpen(true);
-                    }}
-                    onChange={(description, productId, unitPrice, unitsPerBox) => {
-                      // Re-picking the SAME product keeps the row's own pack (never the live one); a real swap is a
-                      // NEW line (SA-186): no stored id, and the picker's pack.
-                      const swapped = productId !== item.productId;
-                      updateItem(item.key, {
-                        ...(swapped
-                          ? { id: undefined, locked: undefined, attestedPack: undefined }
-                          : {}),
-                        description,
-                        productId,
-                        unitPrice: unitPrice !== undefined ? unitPrice : item.unitPrice,
-                        unitsPerBox: swapped
-                          ? unitsPerBox && unitsPerBox > 1
-                            ? unitsPerBox
-                            : undefined
-                          : item.unitsPerBox,
-                      });
-                    }}
-                  />
+                  <div className="col-span-3 row-start-1 min-w-0 sm:col-span-1 sm:row-start-auto">
+                    <ProductSearchInput
+                      value={item.description}
+                      tierPriceFor={tierPriceFor}
+                      pricingPending={tierPricingPending}
+                      onCreateProduct={(searchTerm) => {
+                        const idx = items.findIndex((it) => it.key === item.key);
+                        const looksLikeSku = /^\d{6,}$/.test(searchTerm.trim());
+                        setCreateProductInitialName(looksLikeSku ? "" : searchTerm);
+                        setCreateProductInitialSku(looksLikeSku ? searchTerm.trim() : "");
+                        setCreateProductTargetIdx(idx);
+                        setCreateProductOpen(true);
+                      }}
+                      onBarcodeNotFound={(barcode) => {
+                        const idx = items.findIndex((it) => it.key === item.key);
+                        setCreateProductInitialName("");
+                        setCreateProductInitialSku(barcode);
+                        setCreateProductTargetIdx(idx);
+                        setCreateProductOpen(true);
+                      }}
+                      onChange={(description, productId, unitPrice, unitsPerBox) => {
+                        // Re-picking the SAME product keeps the row's own pack (never the live one); a real swap is a
+                        // NEW line (SA-186): no stored id, and the picker's pack.
+                        const swapped = productId !== item.productId;
+                        updateItem(item.key, {
+                          ...(swapped
+                            ? { id: undefined, locked: undefined, attestedPack: undefined }
+                            : {}),
+                          description,
+                          productId,
+                          unitPrice: unitPrice !== undefined ? unitPrice : item.unitPrice,
+                          unitsPerBox: swapped
+                            ? unitsPerBox && unitsPerBox > 1
+                              ? unitsPerBox
+                              : undefined
+                            : item.unitsPerBox,
+                        });
+                      }}
+                    />
+                  </div>
                   {/* Editable while typing — commit numbers live, format on blur only
                       (the old parseFloat(...) || 0 bindings collapsed "2." and turned
                       a cleared field into 0). */}
@@ -807,44 +826,56 @@ export default function EditInvoicePage() {
                     </div>
                   ) : (
                     <>
-                      <DecimalInput
-                        decimals={3}
-                        min={0}
-                        value={item.qty}
-                        onChange={(v) => updateItem(item.key, { qty: v ?? 0 })}
-                        className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                      />
-                      <MoneyInput
-                        min={0}
-                        value={item.unitPrice}
-                        onChange={(v) => updateItem(item.key, { unitPrice: v ?? 0 })}
-                        className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                      />
-                      <MoneyInput
-                        min={0}
-                        value={item.discount}
-                        onChange={(v) => updateItem(item.key, { discount: v ?? 0 })}
-                        className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                      />
+                      <MobileField label="Qty">
+                        <DecimalInput
+                          aria-label="Qty"
+                          decimals={3}
+                          min={0}
+                          value={item.qty}
+                          onChange={(v) => updateItem(item.key, { qty: v ?? 0 })}
+                          className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                        />
+                      </MobileField>
+                      <MobileField label="Unit Price">
+                        <MoneyInput
+                          aria-label="Unit Price"
+                          min={0}
+                          value={item.unitPrice}
+                          onChange={(v) => updateItem(item.key, { unitPrice: v ?? 0 })}
+                          className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                        />
+                      </MobileField>
+                      <MobileField label="Disc. $">
+                        <MoneyInput
+                          aria-label="Disc. $"
+                          min={0}
+                          value={item.discount}
+                          onChange={(v) => updateItem(item.key, { discount: v ?? 0 })}
+                          className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                        />
+                      </MobileField>
                     </>
                   )}
-                  <DecimalInput
-                    decimals={4}
-                    min={0}
-                    max={1}
-                    value={isNsfLine(item) ? 0 : item.taxRate}
-                    placeholder="0.10"
-                    // #2656: the NSF fee line is never taxed — locked at 0 (the API refuses > 0).
-                    disabled={isNsfLine(item)}
-                    title={isNsfLine(item) ? "The NSF fee is never taxed" : undefined}
-                    aria-label={isNsfLine(item) ? "Tax rate (NSF fee: never taxed)" : undefined}
-                    onChange={(v) => updateItem(item.key, { taxRate: v ?? 0 })}
-                    className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                  />
+                  <MobileField label="Tax %">
+                    <DecimalInput
+                      decimals={4}
+                      min={0}
+                      max={1}
+                      value={isNsfLine(item) ? 0 : item.taxRate}
+                      placeholder="0.10"
+                      // #2656: the NSF fee line is never taxed — locked at 0 (the API refuses > 0).
+                      disabled={isNsfLine(item)}
+                      title={isNsfLine(item) ? "The NSF fee is never taxed" : undefined}
+                      aria-label={isNsfLine(item) ? "Tax rate (NSF fee: never taxed)" : "Tax %"}
+                      onChange={(v) => updateItem(item.key, { taxRate: v ?? 0 })}
+                      className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    />
+                  </MobileField>
                   <button
                     onClick={() => removeItem(item.key)}
                     disabled={items.length === 1}
-                    className="flex items-center justify-center rounded p-1 text-navy/30 hover:text-danger transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                    aria-label="Remove line"
+                    className="col-start-4 row-start-1 flex items-center justify-end self-center rounded p-1 text-navy/30 transition-colors hover:text-danger disabled:cursor-not-allowed disabled:opacity-30 sm:col-start-auto sm:row-start-auto sm:justify-center"
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>
