@@ -605,3 +605,30 @@ export function tenantOnboardingSignOffErrorCopy(err: unknown): string {
   if (res?.status === 400) return "Type your full name to sign off.";
   return "Couldn't record your sign-off. Please try again.";
 }
+
+// ─── Funnel metrics (#2159 S5) ────────────────────────────────────────────────────
+
+export interface OnboardingFunnelStageDays {
+  /** Cases (of the cohort) that have LEFT this stage. */
+  cases: number;
+  /** Median days spent in the stage, one decimal; null when no case has left it. */
+  medianDays: number | null;
+}
+
+/**
+ * `GET /platform-admin/onboarding/funnel?from=&to=` — the cohort is the cases OPENED in
+ * [from, to); demos are the bookings created in the same window.
+ */
+export interface OnboardingFunnel {
+  from: string;
+  to: string;
+  demosBooked: number;
+  casesOpened: number;
+  /** Cases with a current (non-superseded) order acceptance. */
+  signed: number;
+  /** Cases past the ACTIVATE gate (payment is one of its required steps), or LIVE. */
+  paid: number;
+  live: number;
+  lost: number;
+  stageDays: Record<OnboardingStage, OnboardingFunnelStageDays>;
+}

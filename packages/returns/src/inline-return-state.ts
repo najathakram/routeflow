@@ -304,6 +304,28 @@ export function refundAmountOf(value: unknown): number | null {
   return null;
 }
 
+/** #2424: the capture key was reused with DIFFERENT items; the earlier return WAS recorded. */
+export const INLINE_RETURN_KEY_REUSED_CODE = "INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS";
+
+/**
+ * #2647: the return the server says was ALREADY recorded under this capture key (its 409 body
+ * carries `returnId` / `returnNumber`), or null for any other error. Both clients use it to offer
+ * "Open RET-…" and clear the draft, so the same goods are never re-entered as a "new" return and
+ * credited twice. Shared by web and mobile: never a second hand-rolled copy.
+ */
+export function keyReusedReturnOf(
+  error: unknown,
+): { returnId: string; returnNumber: string | null } | null {
+  const body = (error as ApiErrorLike | undefined)?.response?.data as
+    { code?: string; returnId?: unknown; returnNumber?: unknown } | undefined;
+  if (body?.code !== INLINE_RETURN_KEY_REUSED_CODE) return null;
+  if (typeof body.returnId !== "string" || body.returnId === "") return null;
+  return {
+    returnId: body.returnId,
+    returnNumber: typeof body.returnNumber === "string" ? body.returnNumber : null,
+  };
+}
+
 export function extractRefusalMessage(error: unknown, fallback = "Something went wrong"): string {
   const body = (error as ApiErrorLike | undefined)?.response?.data;
   const status = (error as ApiErrorLike | undefined)?.response?.status;
