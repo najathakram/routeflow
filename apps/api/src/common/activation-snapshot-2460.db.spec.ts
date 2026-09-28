@@ -362,5 +362,56 @@ describeDb(
 
       expect(await figures(id)).toEqual({ snapshot: price.GROWTH, ledger: price.GROWTH });
     });
+
+    // #2522 / SA-464f: a renewal of an already-paying row that also switches plan is a ranked plan
+    // change — rebase the snapshot onto the new plan and book Δ = newBase − (stored ?? 0), same tx.
+    it("#2522 STARTER → GROWTH activation on an ACTIVE row: snapshot = GROWTH, figures equal", async () => {
+      const id = await makeTenant("switch", TenantStatus.TRIAL);
+      await activate(id);
+      expect(await figures(id)).toEqual({ snapshot: price.STARTER, ledger: price.STARTER });
+
+      await activate(id, "GROWTH");
+
+      const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: id } });
+      expect(sub.planKey).toBe("GROWTH");
+      expect(Number(sub.basePriceSnapshot)).toBe(price.GROWTH);
+      expect(await figures(id)).toEqual({ snapshot: price.GROWTH, ledger: price.GROWTH });
+    });
+
+    it("#2522 an override row switching plan on activation keeps its fee and books Δ0", async () => {
+      const id = await makeTenant("switchfee", TenantStatus.TRIAL, {
+        planKey: "STARTER",
+        basePriceSnapshot: null,
+      });
+      await platformAdmin.updateTenantPriceOverride(id, { monthly: 123 } as any, "admin-2460");
+      await activate(id);
+      const seen = (
+        await prisma.billingEvent.findMany({ where: { tenantId: id }, select: { id: true } })
+      ).map((e) => e.id);
+
+      await activate(id, "GROWTH");
+
+      const deltas = await prisma.billingEvent.findMany({
+        where: { tenantId: id, id: { notIn: seen } },
+        select: { amountDelta: true },
+      });
+      expect(deltas.map((d) => Number(d.amountDelta ?? 0))).toEqual([0]);
+      expect(await figures(id)).toEqual({ snapshot: 123, ledger: 123 });
+    });
+
+    it("#2522 a legacy NULL-snapshot ACTIVE row switching plan self-heals; same-plan renewal after writes nothing", async () => {
+      const id = await makeTenant("switchnull", TenantStatus.ACTIVE, {
+        planKey: "STARTER",
+        basePriceSnapshot: null,
+      });
+
+      await activate(id, "GROWTH");
+      expect(await figures(id)).toEqual({ snapshot: price.GROWTH, ledger: price.GROWTH });
+
+      const count = await prisma.billingEvent.count({ where: { tenantId: id } });
+      await activate(id, "GROWTH"); // same-plan renewal
+      expect(await prisma.billingEvent.count({ where: { tenantId: id } })).toBe(count);
+      expect(await figures(id)).toEqual({ snapshot: price.GROWTH, ledger: price.GROWTH });
+    });
   },
 );
