@@ -23,7 +23,6 @@ import {
   computeLineSubtotal,
   roundMoney,
   normalizeBoxesPieces,
-  isBlockingPayment,
   remainingCapacity,
 } from "@routeflow/pricing";
 import { computeDepositFields } from "./deposit-fields";
@@ -126,6 +125,7 @@ import { lockRowsNoWait } from "../common/db-locks";
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
+import { flagSplitRestrictedLines } from "../selling-restrictions/restricted-lines-flag";
 import {
   addedRestrictionLines,
   assertEditStillJudged,
@@ -147,6 +147,7 @@ import {
   paymentRefusal,
   sendRefusal,
   voidRefusal,
+  externalPaidOn,
   writeOffRefusal,
 } from "./invoice-send-guard";
 import { selectEditRevertedInvoices } from "./order-edit-revert-set";
@@ -1054,10 +1055,20 @@ export class InvoicesService {
 
     const groups = await this.groupOrderLinesForInvoicing(remainingItems, db);
 
+    // F-05 #2093: flag (never block) + ONE audit row outside any tx; children inherit the flags.
+    const flagged = await flagSplitRestrictedLines(
+      this.sellingRestrictions,
+      this.prisma,
+      this.logger,
+      {
+        ...{ tenantId, order, remainingItems },
+      },
+    );
     const orderSubtotal = Number(order.subtotal) || 1;
     const orderTax = Number(order.tax) || 0;
 
     const groupData = groups.map((g) => {
+      const pids = new Set(g.items.map(({ li }: any) => li.productId));
       const itemsData = g.items.map(({ li, remainingQty }: any) =>
         // remainingQty = qty − invoicedQty, so prior + bill reaches the full line
         // qty and the stored subtotal is copied exactly (minus what prior invoices
@@ -1084,6 +1095,7 @@ export class InvoicesService {
         taxAmount: 0,
         shippingFee: 0,
         total: 0,
+        restrictedLines: flagged.filter((f) => pids.has(f.productId)),
       };
     });
     // Snapshot MSRP on every group's lines (each sibling invoice bills the same
@@ -1232,6 +1244,7 @@ export class InvoicesService {
           },
           include,
         });
+        (inv as any).restrictedLines = gd.restrictedLines; // F-05 #2093: children inherit the flag
         out.push(inv);
         // W5: write the regulated-sales ledger from this invoice's regulated lines
         // (built off the created items, so invoiceItemId is real). orderItemId
@@ -3873,36 +3886,6 @@ export class InvoicesService {
   }
 
   /**
-   * Money on an invoice comes in two flavours and they unwind differently:
-   *
-   *  - **Wallet money** (CREDIT_NOTE, ADVANCE) came from a balance this system
-   *    owns, so voiding can simply put it back — and MUST, or the customer's
-   *    credit is silently consumed by an invoice that no longer exists.
-   *  - **External money** (cash, check, card) left the customer's hands. Software
-   *    cannot un-take it, so it still blocks the void until a human refunds or
-   *    reverses it.
-   *
-   * Returns the external total so callers can decide whether to block.
-   */
-  private externalPaidOn(payments: Array<{ method?: unknown; amount: unknown; status?: string }>) {
-    // PR-2 (check-payments B1 hardening, N4 owner ruling): isBlockingPayment (NOT
-    // isHeldPayment) — a DRAFT external payment is money in flight and must keep
-    // blocking the void exactly as it does today; HELD (PAID ∪ PENDING) is for money
-    // TOTALS only, never an existence/blocking check. See orders.service.ts's
-    // cancelImpact for the identical conversion.
-    return roundMoney(
-      payments
-        .filter(
-          (p) =>
-            isBlockingPayment(p) &&
-            (p.method as any) !== "CREDIT_NOTE" &&
-            (p.method as any) !== "ADVANCE",
-        )
-        .reduce((s, p) => s + Number(p.amount), 0),
-    );
-  }
-
-  /**
    * Hand an invoice's wallet-funded payments back to the balances they came from:
    * credit notes via the credit-note restore primitive, advances by re-crediting
    * `AdvancePayment.balance` (mirroring voidPayment's inverse). Returns what moved
@@ -3996,7 +3979,7 @@ export class InvoicesService {
     });
     if (!inv) throw new NotFoundException("Invoice not found");
     // #2255 / SA-404: fast pre-tx refusal; the tx re-checks it on the locked row.
-    const refusal = voidRefusal(this.externalPaidOn(inv.payments ?? []));
+    const refusal = voidRefusal(externalPaidOn(inv.payments ?? []));
     if (refusal) throw new BadRequestException(refusal);
 
     // Wrap in a transaction so the void + invoicedQty decrements are atomic.
@@ -4012,7 +3995,7 @@ export class InvoicesService {
           // SA-404: FIRST statement — lock (Order →) Invoice, re-read payments, re-check the guard.
           const locked = await lockInvoiceRow(tx, id, inv.orderId);
           if (!locked) throw new NotFoundException("Invoice not found");
-          const lockedRefusal = voidRefusal(this.externalPaidOn(locked.payments ?? []));
+          const lockedRefusal = voidRefusal(externalPaidOn(locked.payments ?? []));
           if (lockedRefusal) throw new BadRequestException(lockedRefusal);
           // Wallet money first: a credit applied to this invoice goes back to its note
           // (spendable again) instead of being stranded on a dead invoice.

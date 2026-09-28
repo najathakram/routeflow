@@ -10,6 +10,7 @@ import { Test } from "@nestjs/testing";
 import { ConflictException } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
 import { ImportService } from "./import.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { CustomersService } from "../customers/customers.service";
@@ -57,6 +58,13 @@ describe("#2468 invoice re-import never resurrects a VOID / WRITTEN_OFF invoice 
         // idempotency for source-numberless rows). `findLocalId` → null is
         // "never imported before", the state every suite here assumes.
         { provide: ExternalRefService, useValue: externalRefs },
+        // #2093: importInvoices flags banned lines (never blocks); ALLOW keeps this suite's rows unflagged.
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
       ],
     }).compile();
     service = mod.get(ImportService);
