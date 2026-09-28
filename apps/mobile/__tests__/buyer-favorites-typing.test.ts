@@ -28,3 +28,14 @@ describe("buyer favorites (#2703): typed as BuyerFavoriteProduct, keyed on produ
     expect(screen).toMatch(/productId: id,\s*name: p\.name,\s*unitPrice: price,/);
   });
 });
+
+// #2703 lead fold: GET /buyer/orders returns LIST rows (OrdersService.findAll), so the list hook
+// is typed BuyerOrderListItem[] — never the detail's BuyerOrder.
+describe("buyer orders list (#2703): typed as the list row", () => {
+  const api = readFileSync(join(__dirname, "..", "lib/api/buyer.ts"), "utf8");
+  it("useBuyerOrders is typed BuyerOrderListItem[]", () => {
+    const at = api.indexOf("export function useBuyerOrders(");
+    expect(at).toBeGreaterThan(-1);
+    expect(api.slice(at, at + 400)).toMatch(/useQuery<\{ data: BuyerOrderListItem\[\];/);
+  });
+});

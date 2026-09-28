@@ -20,6 +20,7 @@ import type {
   BuyerInvoiceItem,
   BuyerInvoicePayment,
   BuyerOrder,
+  BuyerOrderListItem,
   BuyerPayment,
   BuyerProduct,
   ChangeRequest,
@@ -442,7 +443,8 @@ export function useAddAllLow() {
 // ─── Orders ───────────────────────────────────────────────────────────────────
 
 export function useBuyerOrders(params?: { status?: string; page?: number; limit?: number }) {
-  return useQuery<{ data: BuyerOrder[]; meta: any }>({
+  // #2703 lead fold: GET /buyer/orders returns LIST rows (OrdersService.findAll), not the detail.
+  return useQuery<{ data: BuyerOrderListItem[]; meta: any }>({
     queryKey: ["buyer-orders", params],
     queryFn: () =>
       buyerApiClient.get("/buyer/orders", { params: { limit: 30, ...params } }).then((r) => r.data),
