@@ -4,8 +4,8 @@
  * the (planKey, snapshot) it read, and emits PLAN_CHANGED in the SAME transaction.
  *
  * ENTRY (asserted, never timed): T2 holds the TenantSubscription row with an uncommitted write; the
- * reconcile has read the committed row and is BLOCKED on its compare-and-set (pg_blocking_pids; the
- * stats snapshot is cleared before each poll, since T2 polls inside its own open tx). T2 commits; under
+ * reconcile has read the committed row and is BLOCKED on its compare-and-set (pg_blocking_pids, polled
+ * from the pool until blocked or settled — #2666: condition-based, asserted before T2 is released). T2 commits; under
  * READ COMMITTED the blocked UPDATE re-checks its WHERE against the committed row.
  *   - A concurrent upgrade (planKey + snapshot moved) ⇒ the CAS misses, the re-read sees another plan
  *     ⇒ the reconcile writes NOTHING and books NOTHING (pre-#2509 it overwrote the upgrade's snapshot
@@ -93,34 +93,52 @@ describeDb("#2509 reconcilePriceLedger compare-and-set (real Postgres, two conne
       select: { amountDelta: true, payload: true },
     });
 
+  /** The reconcile's own Tenant lock (lockTenantForLedger), as pg_stat_activity shows it. */
+  const TENANT_LOCK = /FROM "Tenant" WHERE .* FOR UPDATE/;
+
   /** T2 runs `statements` (uncommitted) while the sync's reconcile blocks on T2; then commits.
-   *  `waitingOn` = the statement the reconcile was blocked in (SA-503a: it must be the Tenant lock). */
+   *  #2666: the ENTRY is condition-based, never timed. Poll (from the pool, a fresh stats snapshot per
+   *  statement, as #2659) until a session is blocked on T2 OR the sync has settled; only a deadline
+   *  under the test timeout ends it otherwise, and then it FAILS with what it saw. The entry is asserted
+   *  BEFORE T2 is released. `tenantLock` is read only from sessions that are actually blocked, and
+   *  from ALL of them (never rows[0]). SA-503a: it must be the Tenant lock. */
   async function raceSync(tenantId: string, statements: string[]) {
     const t2 = new Client({ connectionString: url });
     await t2.connect();
-    let blocked = false;
-    let waitingOn = "";
+    let waiters: string[] = [];
+    let settled = false;
+    let sync: Promise<unknown> | undefined;
     try {
       await t2.query("BEGIN");
       for (const sql of statements) await t2.query(sql, [tenantId]);
       const pid = (await t2.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
-      const p1 = svc.syncStripeSubscriptionPrice(tenantId);
-      for (let i = 0; i < 400 && !blocked; i++) {
-        await t2.query("SELECT pg_stat_clear_snapshot()");
-        const q = await t2.query(
+      sync = svc.syncStripeSubscriptionPrice(tenantId).then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      void sync.then(() => (settled = true));
+      const deadline = Date.now() + 25_000;
+      while (!waiters.length && !settled && Date.now() < deadline) {
+        const q = await pool.query(
           `SELECT query FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
           [pid],
         );
-        blocked = q.rows.length > 0;
-        if (blocked) waitingOn = q.rows[0].query;
-        if (!blocked) await new Promise((x) => setTimeout(x, 25));
+        waiters = q.rows.map((r: { query: string }) => r.query);
+        if (!waiters.length && !settled) await new Promise((x) => setTimeout(x, 25));
       }
-      await t2.query("COMMIT");
-      await p1;
+      // ENTRY, before the release: the sync is blocked on T2 (it cannot finish while T2 holds a lock
+      // it needs — settling first would itself be the bug). Waiters are printed on a miss.
+      expect({ blocked: waiters.length > 0, settledFirst: settled, waiters }).toMatchObject({
+        blocked: true,
+        settledFirst: false,
+      });
     } finally {
-      await t2.end();
+      await t2.query("COMMIT").catch(() => undefined);
+      const err = sync ? await sync : undefined;
+      await t2.end().catch(() => undefined);
+      if (err) throw err;
     }
-    return { blocked, tenantLock: /FROM "Tenant" WHERE .* FOR UPDATE/.test(waitingOn) };
+    return { blocked: waiters.length > 0, tenantLock: waiters.some((w) => TENANT_LOCK.test(w)) };
   }
 
   it("a concurrent upgrade (GROWTH 249 → SCALE 499) during the reconcile ⇒ the reconcile writes and books nothing", async () => {
