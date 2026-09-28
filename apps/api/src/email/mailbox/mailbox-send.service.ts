@@ -875,7 +875,9 @@ export class MailboxSendService {
   private emitStateChange(change: MailboxStateChange): void {
     if (this.stateChangeListeners.size === 0) {
       this.logger.warn(
-        `Mailbox ${change.status} for tenant ${change.tenantId}: no subscriber — the tenant's admins were not notified.`,
+        // #2113: the alert is still owed (alertPendingAt, committed with the transition), so it is
+        // delayed, not lost — `mailbox-alert.sweepPending` delivers it on its next tick.
+        `Mailbox ${change.status} for tenant ${change.tenantId}: no subscriber — the admin alert stays owed and the sweep will deliver it.`,
       );
       return;
     }

@@ -127,11 +127,20 @@ export class MailboxAlertService implements OnModuleInit, OnModuleDestroy {
         MAILBOX_ALERT_DELIVERY_DEADLINE_MS,
       );
       if (!finished) {
+        // AT-LEAST-ONCE here (#2650 review): a timed-out `deliver` cannot be cancelled and may
+        // still finish sending after this returns, and the sweep re-delivers once the lease has
+        // passed — so a delivery slower than the deadline can reach an admin twice. Accepted:
+        // a duplicate alert is far cheaper than a lost one (SA-528).
         this.logger.warn(
           `Mailbox ${row.status} alert for tenant ${row.tenantId} overran its deadline — left owed; the sweep retries after the lease.`,
         );
         return "abandoned";
       }
+      // Cleared even if every per-admin push/email failed (#2650 review, deliberate): those
+      // failures are per-recipient and often permanent — push opted out (B04), no deliverable
+      // email — so re-owing them would retry forever every lease. Only a failure of the delivery
+      // ITSELF (admin lookup, fallback check, deadline) leaves the alert owed. The audit row and
+      // the mailbox's own status in Settings → Email remain the durable record either way.
       await this.outbox.clear(connectionId, lease);
       return "delivered";
     } catch (err) {
