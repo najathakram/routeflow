@@ -91,6 +91,7 @@ import { UpdateShipmentDto } from "../orders/dto/update-shipment.dto";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { EmailService } from "../email/email.service";
+import { isTxTimeout, splitInvoiceRetry } from "./split-invoice-retry";
 import { InvoicePdfService } from "./invoice-pdf.service";
 import { invoiceItemQtyFields } from "./invoice-pdf-item";
 import { buildInvoiceEmailAttachment, InvoiceEmailAttachment } from "./invoice-attachment";
@@ -1244,6 +1245,7 @@ export class InvoicesService {
           },
           include,
         });
+        if (!inv) throw splitInvoiceRetry(); // #2662: stop before anything reads or flags it
         (inv as any).restrictedLines = gd.restrictedLines; // F-05 #2093: children inherit the flag
         out.push(inv);
         // W5: write the regulated-sales ledger from this invoice's regulated lines
@@ -1281,6 +1283,7 @@ export class InvoicesService {
     } catch (err: any) {
       if (err?.code === "P2002")
         throw new ConflictException("Invoice number conflict — please retry.");
+      if (isTxTimeout(err)) throw splitInvoiceRetry(); // #2662: rolled back — a retryable 503
       throw err;
     }
   }
