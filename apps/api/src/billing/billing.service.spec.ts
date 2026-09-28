@@ -1075,7 +1075,7 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
 
       // #2560 / SA-508: the house lock order inside the snapshot-on checkout tx — the per-session
       // advisory lock, the hook, THEN the Tenant row lock, then the subscription writes + AuditLog.
-      it("#2560: advisory lock → hook → Tenant lock → subscription write → AuditLog", async () => {
+      it("#2560: advisory lock → hook → Tenant lock → CAS → subscription write → AuditLog", async () => {
         const { svc, tx, planTransition } = make({ transitionCount: 1 });
         const order: string[] = [];
         tx.$executeRaw.mockImplementation(async () => {
@@ -1091,6 +1091,11 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
             order.push("tenant-lock");
           return [];
         });
+        // #2581: the compare-and-set on an existing row is a subscription write too — after the lock.
+        tx.tenantSubscription.updateMany.mockImplementation(async () => {
+          order.push("cas");
+          return { count: 1 };
+        });
         const realUpsert = tx.tenantSubscription.upsert.getMockImplementation()!;
         tx.tenantSubscription.upsert.mockImplementation(async (a: any) => {
           order.push("sub-write");
@@ -1103,7 +1108,7 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
 
         await (svc as any).onCheckoutCompleted(withId("cs_order"));
 
-        expect(order).toEqual(["advisory", "hook", "tenant-lock", "sub-write", "audit"]);
+        expect(order).toEqual(["advisory", "hook", "tenant-lock", "cas", "sub-write", "audit"]);
       });
 
       it("#2560: a single 40P01 on the checkout tx is retried and the checkout applies once, no alarm row", async () => {
