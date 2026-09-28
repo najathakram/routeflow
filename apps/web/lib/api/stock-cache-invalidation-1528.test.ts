@@ -41,11 +41,15 @@ const hasAny = (keys: Keys, want: Keys) =>
   want.some((w) => keys.some((k) => JSON.stringify(k) === JSON.stringify(w)));
 
 describe("#1528 web returns hooks", () => {
-  it.each(["useMarkReturnReceived", "useCancelReturn"])(
+  // Each hook's real variables shape: receive takes { id, ... }, cancel takes the bare id.
+  it.each([
+    ["useMarkReturnReceived", { id: "r1" }],
+    ["useCancelReturn", "r1"],
+  ] as const)(
     "%s invalidates products + inventory (receive restocks; cancel undoes it)",
-    async (hook) => {
+    async (hook, variables) => {
       const { mod, run } = load("./returns");
-      const keys = await run(mod[hook], "r1");
+      const keys = await run(mod[hook], variables);
       expect(keys).toContainEqual(["returns", "r1"]);
       expect(hasAll(keys, STOCK)).toBe(true);
     },
