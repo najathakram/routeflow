@@ -174,6 +174,9 @@ export default function WebShellScreen() {
         allowFileAccessFromFileURLs={false}
         allowUniversalAccessFromFileURLs={false}
         mediaCapturePermissionGrantType="grantIfSameHostElsePrompt"
+        // Sim proof F2: without these the camera video goes fullscreen and stalls.
+        allowsInlineMediaPlayback
+        mediaPlaybackRequiresUserAction={false}
         allowsBackForwardNavigationGestures
         pullToRefreshEnabled
         sharedCookiesEnabled

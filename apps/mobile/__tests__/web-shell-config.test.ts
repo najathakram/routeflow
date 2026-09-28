@@ -58,7 +58,7 @@ describe("usesShell / shellEntryUrl", () => {
     expect(shellEntryUrl(config!, "buyer")).toBe(`${WEB}/buyer/login`);
   });
 
-  it("staff enter at the web root", () => {
-    expect(shellEntryUrl(config!, "operator")).toBe(`${WEB}/`);
+  it("staff enter at the web's login, never the root (sim proof F1: '/' is the marketing page)", () => {
+    expect(shellEntryUrl(config!, "operator")).toBe(`${WEB}/login`);
   });
 });
