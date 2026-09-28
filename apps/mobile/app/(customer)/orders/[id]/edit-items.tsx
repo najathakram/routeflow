@@ -15,6 +15,8 @@ import { showToast } from "../../../../lib/toast";
 import { invoiceLineUnitNoun } from "../../../../lib/invoice-line-display";
 import {
   buyerSavePlan,
+  CUSTOM_LINES_NOTE,
+  customLineCount,
   hydrateBuyerDraft,
   orderUnitLabel,
   readOnlyNotice,
@@ -123,6 +125,10 @@ export default function BuyerEditItemsScreen() {
 
       <ScrollView showsVerticalScrollIndicator={false}>
         {readOnly ? <Text style={styles.notice}>{readOnlyNotice(unitLabel)}</Text> : null}
+        {/* B889: seller-added custom lines aren't editable here — say so, as web does. */}
+        {customLineCount(order.lineItems) > 0 ? (
+          <Text style={styles.notice}>{CUSTOM_LINES_NOTE}</Text>
+        ) : null}
         {items.length === 0 ? (
           <Text style={styles.empty}>No items — add from catalog below.</Text>
         ) : (

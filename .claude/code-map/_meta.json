@@ -1,5 +1,5 @@
 {
-  "mappedSha": "2f8a155f77e782ddaa3460b7e38250536cc876f4",
+  "mappedSha": "297a9887fb43a40684eca310d63d90541538db93",
   "generatedAt": "2026-09-28T01:03:32.671Z",
   "layout": "split-2026-09-13",
   "areas": [
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1045,
-  "notes": "**2026-09-28 — morning landings (46 code PRs after `3d9b027b`, through `2f8a155f`; docs-only bookkeeping).** New `api/landing-2026-09-28-morning.md` (TOC row in `api.md`), one bullet per PR keyed by PR number, each grepped in the merged tree. Registry: B01, B86, B87, B669, B749, B750, B770, B850 closed already-fixed with their merge shas. Also the live board moves #938 -> #2554 in `fleet-lead` (SKILL.md + one `BOARD_ISSUE` constant in `fleet-status.mjs`) and lesson L-240 (a board issue has a 2,500-comment cap). mappedSha -> 2f8a155f (coverage 50/50). No source changed. See CHANGELOG.md for the full landing list."
+  "notes": "**2026-09-28 — evening landing #2673 (docs-only bookkeeping).** New `api/landing-2026-09-28-evening.md` (TOC row in `api.md`): NSF follow-ups (one goods-only inferred rate in `@routeflow/pricing`, 400 `NSF_LINE_UNTAXED`, b294 REVIEW). B876 closed already-fixed (#2673). Skills: the lead's \"never brief from an issue or PR title\" rule promoted into fleet-lead §2; LEAD-LOG (+8, 183) and RULE-CANDIDATES (+1) unioned from the lead's current copy. mappedSha -> 297a9887. No source changed. See CHANGELOG.md for the full landing list."
 }

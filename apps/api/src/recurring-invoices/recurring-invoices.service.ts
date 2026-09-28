@@ -13,6 +13,7 @@ import { CreateRecurringInvoiceDto } from "./dto/create-recurring-invoice.dto";
 import { UpdateRecurringInvoiceDto } from "./dto/update-recurring-invoice.dto";
 import { RecurringFrequency } from "@prisma/client";
 import { recurringLineSplit } from "./recurring-line-split";
+import { assertNsfLinesUntaxed, nsfSafeTaxRate } from "../invoices/nsf-line-tax-guard";
 
 /** REG-B106: RecurringInvoice.lastRunStatus values (schema comment: "SUCCESS" | "FAILED"). */
 export const RUN_STATUS_SUCCESS = "SUCCESS";
@@ -55,6 +56,7 @@ export class RecurringInvoicesService {
   // ─── CRUD ─────────────────────────────────────────────────────────────────
 
   async create(dto: CreateRecurringInvoiceDto) {
+    assertNsfLinesUntaxed(dto.items ?? []); // #2656: a template's NSF-described line is never taxed
     // REG-B131: a removed (soft-deleted) customer is not a recurring-invoice target — the sweep
     // already skips their schedules, so creating one would only schedule a silent no-op. Refuse
     // through the existing not-found branch so no customer state leaks.
@@ -109,6 +111,7 @@ export class RecurringInvoicesService {
   }
 
   async update(id: string, dto: UpdateRecurringInvoiceDto) {
+    assertNsfLinesUntaxed(dto.items ?? []); // #2656: 400 before any read or write
     await this.findOne(id);
     const include = { customer: { select: { id: true, businessName: true } }, items: true };
     const data = {
@@ -322,7 +325,21 @@ export class RecurringInvoicesService {
     return split;
   }
 
+  /** #2656 / B142: billing never pauses — a legacy NSF template line's rate is billed at 0 and logged. */
+  private runLineTaxRate(ri: any, item: any): number {
+    const { taxRate, zeroed } = nsfSafeTaxRate(item);
+    if (zeroed)
+      this.logger.warn(
+        `Recurring invoice ${ri.id}: NSF fee line carried taxRate ${String(item.taxRate)}; billed at 0 (#2656)`,
+      );
+    return taxRate;
+  }
+
   private async generateInvoiceFromTemplate(ri: any, unattended = true) {
+    // #2656 / SA-549e: "Run now" is an operator deciding — a template whose NSF line carries a rate is
+    // refused (400 NSF_LINE_UNTAXED) before the cycle is claimed, so nothing is issued or written.
+    // Only the UNATTENDED run bills that line at 0 and logs it (B142: billing never pauses).
+    if (!unattended) assertNsfLinesUntaxed(ri.items ?? []);
     // F-05 (SA-205): a banned line refuses the whole document — it is never dropped so the rest issues, since
     // that would change the invoice's money with nobody deciding. "Run now" is an operator deciding (409, the
     // template is untouched); the unattended run skips the cycle BEFORE it is claimed, notifies once and
@@ -406,7 +423,7 @@ export class RecurringInvoicesService {
           qty: Number(item.qty),
           unitPrice: Number(item.unitPrice),
           discount: Number(item.discount),
-          taxRate: Number(item.taxRate),
+          taxRate: unattended ? this.runLineTaxRate(ri, item) : Number(item.taxRate),
           // B646: a boxed pack count carries its split, so qty is stored in PIECES (boxes x pack), and
           // SA-135: the pack it was split with rides along as packSnapshot (ONE read, never re-read).
           ...this.boxedSplitOrWarn(ri, item, packByProduct.get(item.productId)),

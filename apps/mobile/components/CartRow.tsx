@@ -19,6 +19,7 @@ import { SellByToggle } from "./SellByToggle";
 import { CostHistorySheet } from "./CostHistorySheet";
 import { UnitPickerRow } from "./UnitPickerRow";
 import { CartStepperRow } from "./CartStepperRow";
+import { canRemoveLooseUnits, looseUnitsVisible } from "../lib/loose-units";
 
 /**
  * Moved out of NewOrderScreen.tsx (size-ratchet: that file was 3 lines under its cap before
@@ -102,6 +103,9 @@ export function CartRow({
   // averageCost, else standardCost. Cost eye is hidden by default (session-local);
   // the margin pill (classifyMargin vs the category floor) hides when no cost.
   const [costVisible, setCostVisible] = useState(false);
+  // #2698 (#2696(d) parity): one unit sold — loose units on a Case line are opt-in.
+  const [looseUnitsOpen, setLooseUnitsOpen] = useState(false);
+  const showLooseUnits = looseUnitsVisible(looseUnitsOpen, line.pieces);
   const pieceCost =
     product.averageCost != null
       ? toNumber(product.averageCost)
@@ -253,13 +257,43 @@ export function CartRow({
           ) : (
             <>
               <CartStepperRow label="Cases" value={line.boxes ?? 0} onChange={onChangeBoxes} />
-              <CartStepperRow
-                label={`Loose ${product.unit ?? "units"}`}
-                value={line.pieces ?? 0}
-                onChange={onChangePieces}
-                max={upb - 1}
-                hint={`${upb} per case`}
-              />
+              {showLooseUnits ? (
+                <View style={styles.looseRow}>
+                  <View style={{ flex: 1 }}>
+                    <CartStepperRow
+                      label="Extra loose units"
+                      value={line.pieces ?? 0}
+                      onChange={onChangePieces}
+                      max={upb - 1}
+                      hint={`${product.unit ?? "units"} · ${upb} per case`}
+                    />
+                  </View>
+                  {canRemoveLooseUnits(line.boxes) ? (
+                    <Pressable
+                      onPress={() => {
+                        onChangePieces(0);
+                        setLooseUnitsOpen(false);
+                      }}
+                      hitSlop={8}
+                      style={styles.looseRemove}
+                      accessibilityRole="button"
+                      accessibilityLabel="Remove extra units"
+                    >
+                      <Ionicons name="close" size={16} color={ios.label2} />
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : (
+                <Pressable
+                  onPress={() => setLooseUnitsOpen(true)}
+                  hitSlop={8}
+                  style={styles.looseAdd}
+                  accessibilityRole="button"
+                  accessibilityLabel="Add extra loose units"
+                >
+                  <Text style={styles.looseAddText}>+ units</Text>
+                </Pressable>
+              )}
             </>
           )}
         </>
@@ -498,4 +532,27 @@ const styles = StyleSheet.create({
     color: ios.label,
     fontVariant: ["tabular-nums"],
   },
+  // #2698: the opt-in loose-units control (dashed, small) and its remove button.
+  looseRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  looseRemove: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: ios.fill,
+  },
+  looseAdd: {
+    alignSelf: "flex-start",
+    marginTop: 2,
+    marginBottom: 6,
+    paddingHorizontal: 12,
+    minHeight: 32,
+    justifyContent: "center",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderColor: ios.separator,
+  },
+  looseAddText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.brand },
 });
