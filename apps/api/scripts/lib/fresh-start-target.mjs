@@ -170,9 +170,10 @@ export function checkExcludedTenants({ exclude, found, tenant }) {
   if (excluded.some((t) => t.id === tenant.id))
     return {
       ok: false,
-      reason: `${tenant.name} (${tenant.id}) is excluded: it is never wiped, in any mode`,
+      // SA-547b: id only — a business name is a client identifier, like a slug.
+      reason: `tenant ${tenant.id} is excluded: it is never wiped, in any mode`,
     };
-  return { ok: true, lines: excluded.map((t) => `EXCLUDED (never wiped): ${t.name} (${t.id})`) };
+  return { ok: true, lines: excluded.map((t) => `EXCLUDED (never wiped): tenant ${t.id}`) };
 }
 
 /**
