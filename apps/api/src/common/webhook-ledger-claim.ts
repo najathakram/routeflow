@@ -25,8 +25,10 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 
 /**
  * The lease must outlast one delivery's whole handler, or a slow-but-alive worker is re-claimed and the
- * event runs twice. The slowest handler path is onPaymentFailed's admin email: at most ~35 s of SMTP
- * timeouts (email.service.ts: connection 10 s + greeting 10 s + socket 15 s) plus a few DB round trips.
+ * event runs twice. The slowest handler path is onPaymentFailed's admin email: its billing-portal call is
+ * capped at 10 s with no network retries (billing.service.ts PAYMENT_FAILED_PORTAL_REQUEST; stripe-node's
+ * defaults would allow minutes), then at most ~35 s of SMTP timeouts (email.service.ts: connection 10 s +
+ * greeting 10 s + socket 15 s), plus a few DB round trips — well under a minute in all.
  * Stripe abandons an unanswered delivery long before five minutes, so an expired lease only ever
  * belongs to a worker that crashed or hung — never to one Stripe is still waiting on.
  */

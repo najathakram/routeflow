@@ -45,6 +45,9 @@ import {
 
 /** Grace period (in days) after a payment failure before suspending the tenant. */
 const PAYMENT_GRACE_DAYS = 3;
+/** #2476: the payment-failed email's portal call runs inside the webhook's claim lease — cap it so a
+ *  slow Stripe can never hold the claim for minutes; on timeout the email falls back to plain text. */
+const PAYMENT_FAILED_PORTAL_REQUEST = { timeoutMs: 10_000, maxNetworkRetries: 0 };
 
 /** Returned by the checkout transaction when the session was already applied (a redelivery). */
 const ALREADY_APPLIED = Symbol("checkout-session-already-applied");
@@ -595,6 +598,7 @@ export class BillingService {
   async createBillingPortalSession(
     tenantId: string,
     returnUrl?: string,
+    request?: { timeoutMs: number; maxNetworkRetries: number },
   ): Promise<{ portalUrl: string }> {
     const sub = await this.prisma.tenantSubscription.findUnique({
       where: { tenantId },
@@ -607,10 +611,13 @@ export class BillingService {
 
     const baseUrl = process.env.FRONTEND_URL ?? "http://localhost:3001";
 
-    const portalSession = await this.stripe.createBillingPortalSession({
-      customerId: sub.stripeCustomerId,
-      returnUrl: returnUrl ?? `${baseUrl}/settings/billing`,
-    });
+    const portalSession = await this.stripe.createBillingPortalSession(
+      {
+        customerId: sub.stripeCustomerId,
+        returnUrl: returnUrl ?? `${baseUrl}/settings/billing`,
+      },
+      request,
+    );
 
     return { portalUrl: portalSession.url };
   }
@@ -1254,7 +1261,10 @@ ${updateLine}
   /** #2440: the tenant's billing-portal URL, or "" on any portal error (logged, never thrown). */
   private async portalUrlOrEmpty(tenantId: string): Promise<string> {
     try {
-      return (await this.createBillingPortalSession(tenantId)).portalUrl;
+      // #2476: capped — this runs inside the webhook's claim lease, and the link is best-effort.
+      return (
+        await this.createBillingPortalSession(tenantId, undefined, PAYMENT_FAILED_PORTAL_REQUEST)
+      ).portalUrl;
     } catch (e) {
       this.logger.warn(
         `Billing portal link unavailable for tenant ${tenantId}: ${(e as Error).message}`,

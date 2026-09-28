@@ -2052,7 +2052,8 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
     it("the warning email carries the billing-portal link", async () => {
       const { svc, stripe, email } = make({ sub: FAILING });
       await (svc as any).onPaymentFailed(failed());
-      expect(stripe.createBillingPortalSession).toHaveBeenCalledWith(
+      // The second argument (#2476's request cap) is pinned by its own test below.
+      expect(stripe.createBillingPortalSession.mock.calls[0][0]).toEqual(
         expect.objectContaining({ customerId: "cus_1" }),
       );
       expect(email.send).toHaveBeenCalledTimes(1);
