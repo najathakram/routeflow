@@ -23,6 +23,11 @@
  * body onto a validated DTO, MED-5/6/7 are documented at their own call sites below.
  */
 import {
+  INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS,
+  assertReplayItems,
+  inlineReturnItemsFingerprint,
+} from "./inline-return-fingerprint";
+import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
@@ -67,13 +72,12 @@ export const INLINE_RETURN_ERROR_CODES = {
   RETURN_KEY_CONFLICT: "INLINE_RETURN_KEY_CONFLICT",
   // #2424: the same key, the same customer/order, but DIFFERENT items: not a replay. The client
   // treats it as a definite refusal (settles its nonce), so its next capture mints a new key.
-  RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS: "INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS",
+  RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS: INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS,
 } as const;
 
 /** The 409 code of a returnKey already held (create's preflight: a replay, or a real collision). */
 export const INLINE_RETURN_KEY_TAKEN = "INLINE_RETURN_KEY_TAKEN";
 
-import { inlineReturnItemsFingerprint, replayItemsMatch } from "./inline-return-fingerprint";
 @Injectable()
 export class InlineReturnsService {
   private readonly logger = new Logger(InlineReturnsService.name);
@@ -108,13 +112,11 @@ export class InlineReturnsService {
    * index — permissive on an empty/unreported target (mirrors credit-notes.service.ts's
    * `create()` P2002 handling), but never true for an unrelated unique violation. */
   /** #2424: a same-pair replay must carry the same items as the stored capture, else 409. */
-  private assertReplaySameItems(existing: { capturePayload?: unknown }, dto: { items: any[] }) {
-    if (!replayItemsMatch(existing.capturePayload, dto.items))
-      throw new ConflictException({
-        code: INLINE_RETURN_ERROR_CODES.RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS,
-        message:
-          "This capture key was already used for a return with different items. Nothing was recorded; start the return again.",
-      });
+  private assertReplaySameItems(
+    existing: { id: string; returnNumber?: string | null; capturePayload?: unknown },
+    dto: { items: any[]; reason?: string | null },
+  ) {
+    assertReplayItems(existing, dto, this.logger);
   }
 
   private isReturnKeyConflict(err: any): boolean {
@@ -387,7 +389,7 @@ export class InlineReturnsService {
         status: "RECEIVED",
         kind: "INLINE",
         returnKey: dto.returnKey,
-        capturePayload: inlineReturnItemsFingerprint(dto.items), // #2424: what a replay must match
+        capturePayload: inlineReturnItemsFingerprint(dto.items, dto.reason), // #2424: what a replay must match
         capturedById: user.sub,
         capturedRole: user.role,
         routeRunStopId: dto.routeRunStopId,
@@ -465,7 +467,13 @@ export class InlineReturnsService {
     if (dto.returnKey) {
       const pre = await db.return.findFirst({
         where: { returnKey: dto.returnKey, kind: "INLINE" },
-        select: { customerId: true, orderId: true, capturePayload: true },
+        select: {
+          id: true,
+          returnNumber: true,
+          customerId: true,
+          orderId: true,
+          capturePayload: true,
+        },
       });
       if (pre) {
         if (pre.customerId !== dto.customerId || pre.orderId !== dto.orderId) {

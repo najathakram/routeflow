@@ -401,6 +401,11 @@ describeDb("B467 — InlineReturnsService.capture() concurrency, real Postgres",
     const refused: any = await captureWith(5).catch((e: unknown) => e); // a DIFFERENT capture, same key
     expect(refused?.status ?? refused?.getStatus?.()).toBe(409);
     expect(refused?.getResponse?.()?.code).toBe("INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS");
+    // the body names the return that WAS recorded (never "nothing was recorded")
+    expect(refused?.getResponse?.()).toMatchObject({
+      returnId: first.id,
+      returnNumber: first.returnNumber,
+    });
 
     expect(await raw.return.count({ where: { returnKey: key, kind: "INLINE" } })).toBe(1);
     expect(await raw.creditNote.count({ where: { customerId: f.customerId } })).toBe(1);

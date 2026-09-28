@@ -527,6 +527,7 @@ describe("InlineReturnsService", () => {
   describe("#2424: a returnKey replay must carry the same items", () => {
     const stored = (items: any[] | null, over: any = {}) => ({
       id: "ret-first",
+      returnNumber: "RET-2026-0042",
       returnKey: "nonce-1",
       kind: "INLINE",
       customerId: "cust-1",
@@ -564,6 +565,13 @@ describe("InlineReturnsService", () => {
       );
       expect(prisma.tenantTransaction).not.toHaveBeenCalled();
       expect(prisma.return.create).not.toHaveBeenCalled();
+      // the lead's fold (2): the body says the earlier return WAS recorded, and names it
+      prisma.return.findFirst.mockResolvedValueOnce(stored(CAPTURE_DTO.items));
+      const body = await service
+        .capture(DIFFERENT as any, OPERATOR)
+        .catch((e: any) => e.getResponse());
+      expect(body).toMatchObject({ returnId: "ret-first", returnNumber: "RET-2026-0042" });
+      expect(body.message).toMatch(/RET-2026-0042 was already recorded/);
     });
 
     it("the same items in a different order are the same capture (replay)", async () => {
