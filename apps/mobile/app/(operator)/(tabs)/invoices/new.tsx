@@ -33,6 +33,11 @@ import { mergeProductIndex } from "../../../../lib/paged-rows";
 import { useCreateInvoice, type CreateInvoiceItem } from "../../../../lib/api/invoices";
 import { depositErrors, depositPayload } from "../../../../lib/invoice-deposit";
 import { useCreateSale, type CreateSaleItemInput } from "../../../../lib/api/orders";
+import {
+  decideTrayPrice,
+  reasonRequiredMessage,
+  saleLinePriceFields,
+} from "../../../../lib/staff-price-override";
 import { useTrackedCategories } from "../../../../lib/api/tracked-categories";
 import { saleModeGate } from "../../../../lib/sale-mode";
 import { showToast } from "../../../../lib/toast";
@@ -150,6 +155,8 @@ type LineState = {
   boxes?: number;
   pieces?: number;
   unitPrice?: number;
+  /** #2696(c) SA-558e: why a New-sale line's price moves off the customer's special price. */
+  overrideReason?: string;
   discount?: number;
   taxable?: boolean;
   note?: string;
@@ -432,6 +439,8 @@ function InvoiceComposer({
     return m;
   }, [customerPrices]);
   const tierPriceFor = (p: Product) => getTierPrice(p, cpMap.get(p.id) ?? customerTier ?? 1);
+  // #2696(c): the server's "special" — the tier it prices this product at is not tier 1.
+  const isSpecialFor = (p: Product) => (cpMap.get(p.id) ?? customerTier ?? 1) !== 1;
   const tenantTaxRate = (Number(settings?.taxRate) || 0) / 100;
   // Rate the row toggles actually offer: hidden entirely for exempt customers.
   const taxRateFraction = isTaxExempt ? 0 : tenantTaxRate;
@@ -574,10 +583,13 @@ function InvoiceComposer({
       if (!prev) return m;
       if (value == null || value < 0) {
         const { unitPrice: _drop, ...rest } = prev;
+        delete rest.overrideReason;
         return { ...m, [id]: rest };
       }
       return { ...m, [id]: { ...prev, unitPrice: value } };
     });
+  const setLineReason = (id: string, overrideReason: string) =>
+    setItems((m) => (m[id] ? { ...m, [id]: { ...m[id], overrideReason } } : m));
 
   // Flat $ off one line (comes off BEFORE tax). Empty/invalid clears it.
   const setLineDiscount = (id: string, value: number | null) =>
@@ -1229,10 +1241,22 @@ function InvoiceComposer({
         const qty = effectiveQty(line, p.unitsPerBox);
         if (qty <= 0) continue;
         const upb = Number(p.unitsPerBox ?? 0);
+        // #2696(c) SA-558e: the server's rule A — a special price moves only with a reason.
+        const price = saleLinePriceFields({
+          effective: effectiveUnitPrice(line, p, tierPriceFor(p)),
+          base: tierPriceFor(p),
+          listPrice: toNumber(p.pricePerUnit),
+          isSpecial: isSpecialFor(p),
+          reason: line.overrideReason,
+        });
+        if ("refused" in price) {
+          alertInfo("Reason needed", reasonRequiredMessage(displayName(p)));
+          return;
+        }
         saleItems.push({
           productId,
           qty,
-          unitPrice: effectiveUnitPrice(line, p, tierPriceFor(p)),
+          ...price,
           ...(upb > 1 && line.boxes != null ? { boxes: line.boxes } : {}),
           ...(upb > 1 && line.pieces != null ? { pieces: line.pieces } : {}),
           ...(line.note?.trim() ? { notes: line.note.trim() } : {}),
@@ -1592,6 +1616,8 @@ function InvoiceComposer({
         totalItems={totalItems}
         taxRateFraction={taxRateFraction}
         tierPriceFor={tierPriceFor}
+        isSpecialFor={isSpecialFor}
+        onChangeReason={setLineReason}
         saving={saving}
         onClose={() => setReviewOpen(false)}
         onIncrement={addOne}
@@ -1744,6 +1770,8 @@ function ReviewSheet({
   totalItems,
   taxRateFraction,
   tierPriceFor,
+  isSpecialFor,
+  onChangeReason,
   saving,
   onClose,
   onIncrement,
@@ -1775,6 +1803,9 @@ function ReviewSheet({
   taxRateFraction: number;
   /** The customer's effective (tier / customer-price) catalog price per product. */
   tierPriceFor: (p: Product) => number;
+  /** #2696(c): the server's "special" for this customer (tier ≠ 1). */
+  isSpecialFor: (p: Product) => boolean;
+  onChangeReason: (id: string, reason: string) => void;
   saving: boolean;
   onClose: () => void;
   onIncrement: (id: string) => void;
@@ -1842,6 +1873,8 @@ function ReviewSheet({
                     line={line}
                     taxRateFraction={taxRateFraction}
                     catalogPrice={tierPriceFor(product)}
+                    isSpecial={details.saleEligible && isSpecialFor(product)}
+                    onChangeReason={(t) => onChangeReason(id, t)}
                     onIncrement={() => onIncrement(id)}
                     onDecrement={() => onDecrement(id)}
                     onChangeQty={(n) => onChangeQty(id, n)}
@@ -1950,6 +1983,8 @@ function ReviewRow({
   line,
   taxRateFraction,
   catalogPrice: catalogPriceProp,
+  isSpecial = false,
+  onChangeReason,
   onIncrement,
   onDecrement,
   onChangeQty,
@@ -1967,6 +2002,9 @@ function ReviewRow({
   taxRateFraction: number;
   /** Customer-resolved (tier / customer-price) catalog price; list when absent. */
   catalogPrice?: number;
+  /** #2696(c) SA-558e: a New-sale line at a special (tier) price — moving it takes a reason. */
+  isSpecial?: boolean;
+  onChangeReason?: (reason: string) => void;
   onIncrement: () => void;
   onDecrement: () => void;
   onChangeQty: (n: number) => void;
@@ -1987,6 +2025,15 @@ function ReviewRow({
   const catalogPrice = catalogPriceProp ?? toNumber(product.pricePerUnit);
   const effUnit = effectiveUnitPrice(line, product, catalogPrice);
   const isOverridden = line.unitPrice != null && line.unitPrice !== catalogPrice;
+  // #2696(c): off the special price by more than half a cent (pricing's own band).
+  const movedOffSpecial =
+    decideTrayPrice({
+      typed: line.unitPrice ?? null,
+      base: catalogPrice,
+      listPrice: toNumber(product.pricePerUnit),
+      isSpecial,
+      reason: "x",
+    }).kind === "set";
   const qty = effectiveQty(line, product.unitsPerBox);
   // Post-discount, matching the server's stored line subtotal (tax rides in the
   // sheet footer, never on the row).
@@ -2038,6 +2085,17 @@ function ReviewRow({
           ) : null}
         </View>
       </View>
+      {isSpecial && onChangeReason && movedOffSpecial ? (
+        <TextInput
+          style={styles.cartPriceInput}
+          value={line.overrideReason ?? ""}
+          onChangeText={onChangeReason}
+          maxLength={200}
+          placeholder="Reason (required)"
+          placeholderTextColor={ios.label3}
+          accessibilityLabel="Reason (required)"
+        />
+      ) : null}
 
       {isBoxed ? (
         <>

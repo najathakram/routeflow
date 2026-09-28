@@ -36,3 +36,23 @@ export function decideTrayPrice(input: {
   if (d.priceType === "SPECIAL" || d.priceType === "STANDARD") return { kind: "clear" };
   return { kind: "set", price: d.unitPrice, ...(reason ? { overrideReason: reason } : {}) };
 }
+
+/**
+ * #2696(c) SA-558e — a New-sale line's price fields for POST /orders/sell (the server's create(),
+ * rule A). The screen always sends the EFFECTIVE price it shows (unchanged); off a special price
+ * it also sends the trimmed reason, and with no reason it is refused (the screen blocks the sale).
+ */
+export function saleLinePriceFields(input: {
+  effective: number;
+  base: number;
+  listPrice: number;
+  isSpecial: boolean;
+  reason?: string;
+}): { refused: true } | { unitPrice: number; overrideReason?: string } {
+  const d = decideTrayPrice({ ...input, typed: input.effective, reason: input.reason });
+  if (d.kind === "refused") return { refused: true };
+  return {
+    unitPrice: input.effective,
+    ...(d.kind === "set" && d.overrideReason ? { overrideReason: d.overrideReason } : {}),
+  };
+}

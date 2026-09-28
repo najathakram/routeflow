@@ -365,6 +365,8 @@ export type CreateSaleItemInput =
       boxes?: number;
       pieces?: number;
       unitPrice?: number;
+      /** #2696(c) SA-558e: required when unitPrice moves off a special (tier) price. */
+      overrideReason?: string;
       notes?: string;
     }
   | { name: string; qty: number; unitPrice: number; notes?: string };
