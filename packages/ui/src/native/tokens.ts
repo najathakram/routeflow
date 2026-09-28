@@ -62,7 +62,7 @@ export const nativeMoney: TextStyle = {
   letterSpacing: -0.01 * ledgerTypeScale.body.size,
 };
 
-/** Web `.overline`: 11px, 600, 0.08em, uppercase, ink-500. */
+/** Web `.eyebrow-label` (was `.overline`, #2497): 11px, 600, 0.08em, uppercase, ink-500. */
 export const nativeOverline: TextStyle = {
   fontFamily: nativeFonts.ui[600],
   fontSize: 11,

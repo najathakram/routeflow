@@ -154,7 +154,10 @@ describe("InvoicesService", () => {
         InvoicesService,
         {
           provide: SellingRestrictionsService,
-          useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
         },
         { provide: PrismaService, useValue: prisma },
         { provide: RouteFlowGateway, useValue: mockGateway },
@@ -2595,6 +2598,7 @@ describe("InvoicesService", () => {
     });
   });
 
+  // F-05 (#2093, owner ruling 2026-09-25): SPLIT IS EXEMPT — flag, never block. Siblings inherit.
   describe("updateInvoiceShipment", () => {
     it("sets carrier + tracking + shippedAt on a non-void invoice", async () => {
       prisma.invoice.findFirst.mockResolvedValue({ id: "inv-1", status: "SENT", shippedAt: null });
