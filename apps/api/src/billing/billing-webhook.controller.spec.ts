@@ -53,7 +53,7 @@ function build(
       create,
       update: jest.fn(async () => ({})),
       // #2476: the fenced outcome write — 1 = this delivery still held its claim.
-      updateMany: jest.fn(async () => ({ count: 1 })),
+      updateMany: jest.fn(async (_arg?: unknown) => ({ count: 1 })),
     },
   };
   const controller = new BillingWebhookController(
