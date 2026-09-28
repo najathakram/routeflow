@@ -1013,6 +1013,24 @@ export function isUpsellLine(line: PriceOverrideLine): boolean {
 /** The half-cent band inside which a typed price IS the baseline (no repricing decision). */
 export const STAFF_OVERRIDE_TOLERANCE = 0.005;
 
+/**
+ * SA-558b (3) — THE predicate for "this staff-typed price needs a reason": a special-tier line whose
+ * price moves more than ½¢ from the action's baseline, with no reason sent or on file. Each caller
+ * passes its own baseline: the customer's TIER price for create / substitute / add-during-edit, the
+ * line's STORED price (and `hasReason` = sent-or-stored) for an existing-line edit. The band test is
+ * the api's `Math.abs(p - base) <= 0.005` verbatim.
+ */
+export function needsOverrideReason(input: {
+  overridePrice: number;
+  baselinePrice: number;
+  isSpecialTier: boolean;
+  hasReason: boolean;
+}): boolean {
+  const { overridePrice, baselinePrice, isSpecialTier, hasReason } = input;
+  if (!isSpecialTier || hasReason) return false;
+  return Math.abs(overridePrice - baselinePrice) > STAFF_OVERRIDE_TOLERANCE;
+}
+
 export type StaffOverrideDecision =
   | {
       priceType: "SPECIAL" | "STANDARD" | "DISCOUNTED" | "MANUAL";
@@ -1046,7 +1064,9 @@ export function decideStaffOverride(input: {
       ? { priceType: "SPECIAL", unitPrice: baselinePrice, originalPrice: listPrice }
       : { priceType: "STANDARD", unitPrice: baselinePrice, originalPrice: null };
   }
-  if (isSpecialTier && !hasReason) return { refused: "REASON_REQUIRED" };
+  if (needsOverrideReason({ overridePrice, baselinePrice, isSpecialTier, hasReason })) {
+    return { refused: "REASON_REQUIRED" };
+  }
   return {
     priceType: overridePrice < listPrice ? "DISCOUNTED" : "MANUAL",
     unitPrice: roundMoney(overridePrice),
