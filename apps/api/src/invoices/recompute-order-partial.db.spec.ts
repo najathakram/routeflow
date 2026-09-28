@@ -1915,6 +1915,11 @@ describeDb(
             tenantId: tenant.id,
           },
         });
+        // SA-539d: the office bills FIRST (no evidence yet ⇒ the draft bills the full line), then the
+        // door refuses, then the at-door reconcile. Seeding the REFUSED row before the create made
+        // B760 bill min(10, 0) = 0 ⇒ no draft at all (the owner-closed "no fee on a fully refused
+        // delivery"), which is not the path this case pins.
+        await tenantCtx.run(tenant.id, () => invoicesService.createInvoiceFromOrder(order.id));
         await prisma.deliveryMutation.create({
           data: {
             orderId: order.id,
@@ -1925,7 +1930,6 @@ describeDb(
             tenantId: tenant.id,
           },
         });
-        await tenantCtx.run(tenant.id, () => invoicesService.createInvoiceFromOrder(order.id));
 
         await tenantCtx.run(tenant.id, () =>
           invoicesService.reconcileOrderDraftInvoice(order.id, { basis: "delivered" }),

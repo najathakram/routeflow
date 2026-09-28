@@ -57,7 +57,11 @@ import {
   resolveProductMatches,
   withOrderRecomputeLock,
 } from "./finalize-order-recompute";
-import { deliveredBasisByLine, deliveredQtyFromBasis } from "./delivered-basis-by-line";
+import {
+  billableQtyFromBasis,
+  deliveredBasisByLine,
+  deliveredQtyFromBasis,
+} from "./delivered-basis-by-line";
 import { assertOrderItemIdsBelongToOrder, logSkippedMatches } from "./order-item-provenance";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
@@ -538,13 +542,14 @@ export class InvoicesService {
     });
     if (!order) throw new NotFoundException("Order not found");
 
-    // Build per-item remaining qty (qty - invoicedQty). If all items are fully invoiced,
-    // skip — the order has already been split-invoiced by the operator/driver and there's
-    // nothing left to bill.
+    // B760/SA-113(ii): remaining = min(qty, delivered basis) - invoicedQty via the ONE shared
+    // evidence-keyed basis; no evidence keeps qty (today's qty - invoicedQty). Nothing left to
+    // bill (fully invoiced) ⇒ return the existing invoice(s).
+    const deliveredBasis = await deliveredBasisByLine(db, orderId);
     const remainingItems = order.lineItems
       .map((li: any) => ({
         li,
-        remainingQty: Number(li.qty) - Number(li.invoicedQty ?? 0),
+        remainingQty: billableQtyFromBasis(li, deliveredBasis) - Number(li.invoicedQty ?? 0),
       }))
       .filter((x: any) => x.remainingQty > 0.001);
 
@@ -1074,9 +1079,10 @@ export class InvoicesService {
     const groupData = groups.map((g) => {
       const pids = new Set(g.items.map(({ li }: any) => li.productId));
       const itemsData = g.items.map(({ li, remainingQty }: any) =>
-        // remainingQty = qty − invoicedQty, so prior + bill reaches the full line
-        // qty and the stored subtotal is copied exactly (minus what prior invoices
-        // already billed, via the telescoping rounding in buildInvoiceItemData).
+        // B760: remainingQty = min(qty, delivered basis) − invoicedQty, so prior + bill
+        // reaches the billable qty; for an undelivered/fully delivered line that is the full
+        // line and the stored subtotal is copied exactly (telescoping rounding in
+        // buildInvoiceItemData).
         this.buildInvoiceItemData(li, remainingQty, tenantId, {
           priorBilledQty: Number(li.invoicedQty ?? 0),
         }),
@@ -2652,6 +2658,9 @@ export class InvoicesService {
 
     // Validate every requested item exists on the order and qty is within remaining.
     assertPartialRequestShape(dto.items); // #2070 / SA-523: no duplicate lines, qty > 0
+    // B760/SA-106/SA-113(ii): same evidence-keyed basis as createInvoiceFromOrder — see its
+    // own comment. One derivation, shared; read only after the request shape is valid.
+    const deliveredBasis = await deliveredBasisByLine(this.prisma.forTenant(), orderId);
     const itemsData: any[] = [];
     let subtotal = 0;
     for (const req of dto.items) {
@@ -2661,10 +2670,13 @@ export class InvoicesService {
           `Order item ${req.orderItemId} not found on order ${orderId}`,
         );
       }
-      const remaining = Number(li.qty) - Number(li.invoicedQty ?? 0);
+      const billable = billableQtyFromBasis(li, deliveredBasis);
+      const remaining = billable - Number(li.invoicedQty ?? 0);
       if (req.qty > remaining + 0.001) {
+        // SA-106: when the delivered basis is what caps the line, say so.
+        const delivered = billable < Number(li.qty) ? ` (delivered ${billable})` : "";
         throw new BadRequestException(
-          `Requested qty ${req.qty} exceeds remaining ${remaining} for ${li.product?.name ?? li.productId}`,
+          `Requested qty ${req.qty} exceeds remaining ${Math.max(0, remaining)} for ${li.product?.name ?? li.productId}${delivered}`,
         );
       }
       // Reuse the shared builder. It copies the order line's stored money and
