@@ -520,14 +520,29 @@ export class GoogleOAuthService {
   // can never reach this lookup or the auto-link branches below it. Pinned,
   // not re-checked here, to avoid duplicating that gate.
   private async resolveBySubThenEmail<T extends { googleId: string | null }>(
-    findFirst: (where: Record<string, unknown>) => Promise<T | null>,
+    findFirst: (args: Record<string, unknown>) => Promise<T | null>,
     baseWhere: Record<string, unknown>,
     profile: GoogleProfile,
   ): Promise<T | null> {
-    const bySub = await findFirst({ ...baseWhere, googleId: profile.googleId });
+    // #2664: fail closed before touching the DB at all — a falsy sub or email means
+    // `verifyCallback`'s profile is malformed (should never happen downstream of a real
+    // Google ID token), and querying with an undefined/empty filter would turn `where`
+    // into an unscoped match instead of refusing outright.
+    if (!profile.googleId || !profile.email) {
+      throw new ForbiddenException("unauthorized");
+    }
+
+    const bySub = await findFirst({ where: { ...baseWhere, googleId: profile.googleId } });
     if (bySub) return bySub;
 
-    const byEmail = await findFirst({ ...baseWhere, email: profile.email });
+    // #2664: SUPER_ADMIN rows are scoped by `tenantId: null`, and Postgres treats every
+    // NULL as distinct under `@@unique([tenantId, email])` — two platform admins CAN share
+    // an email. `findFirst` with no `orderBy` has no defined row order, so pin one:
+    // oldest-created row wins, `id` as the final tiebreak for rows created in the same tick.
+    const byEmail = await findFirst({
+      where: { ...baseWhere, email: profile.email },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    });
     if (byEmail && byEmail.googleId && byEmail.googleId !== profile.googleId) {
       // A different Google account is already bound to this email — no sign-in,
       // no update. The caller must resolve the conflict out-of-band.
@@ -590,7 +605,7 @@ export class GoogleOAuthService {
     deviceInfo?: DeviceInfo,
   ): Promise<GoogleAuthResult> {
     const user = await this.resolveBySubThenEmail(
-      (where) => this.prisma.user.findFirst({ where }),
+      (args: any) => this.prisma.user.findFirst(args),
       { tenantId: null, role: "SUPER_ADMIN", deletedAt: null },
       profile,
     );
@@ -648,7 +663,7 @@ export class GoogleOAuthService {
 
     // Check for a matching staff user in this tenant first
     let staffUser = await this.resolveBySubThenEmail(
-      (where) => this.prisma.user.findFirst({ where }),
+      (args: any) => this.prisma.user.findFirst(args),
       {
         tenantId: tenant.id,
         deletedAt: null,
@@ -695,7 +710,7 @@ export class GoogleOAuthService {
 
   private async handleBuyerPortalAuth(profile: GoogleProfile): Promise<GoogleAuthResult> {
     let buyer = await this.resolveBySubThenEmail(
-      (where) => this.prisma.buyerAccount.findFirst({ where }),
+      (args: any) => this.prisma.buyerAccount.findFirst(args),
       { deletedAt: null },
       profile,
     );

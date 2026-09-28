@@ -1,6 +1,6 @@
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
-import { ConflictException } from "@nestjs/common";
+import { ConflictException, ForbiddenException } from "@nestjs/common";
 import { GoogleOAuthService } from "./google-oauth.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
@@ -484,5 +484,31 @@ describe("GoogleOAuthService — lookup order & claims (#2495)", () => {
       new ConflictException("google_account_mismatch"),
     );
     expect(emailService.send).not.toHaveBeenCalled();
+  });
+
+  // ─── #2664: fail closed on a falsy sub/email BEFORE any query ─────────────
+
+  it("a falsy googleId is refused before any Prisma call", async () => {
+    const prisma = createMockPrisma();
+    const { service } = buildService(prisma);
+    const profile = { type: "platform" as const, googleId: "", email: PROFILE_EMAIL, name: "P" };
+
+    await expect(service.findOrCreateUser(profile as any)).rejects.toThrow(
+      new ForbiddenException("unauthorized"),
+    );
+    expect(prisma.user.findFirst).not.toHaveBeenCalled();
+    expect(prisma.user.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("a falsy email is refused before any Prisma call", async () => {
+    const prisma = createMockPrisma();
+    const { service } = buildService(prisma);
+    const profile = { type: "platform" as const, googleId: "google-1", email: "", name: "P" };
+
+    await expect(service.findOrCreateUser(profile as any)).rejects.toThrow(
+      new ForbiddenException("unauthorized"),
+    );
+    expect(prisma.user.findFirst).not.toHaveBeenCalled();
+    expect(prisma.user.updateMany).not.toHaveBeenCalled();
   });
 });
