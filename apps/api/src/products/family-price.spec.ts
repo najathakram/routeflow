@@ -550,7 +550,10 @@ describe("InventoryService assignToVariants new variant (test 20)", () => {
     const providers: any[] = [
       InventoryService,
       { provide: PrismaService, useValue: prisma },
-      { provide: StockAlertService, useValue: { fireForProducts: jest.fn() } },
+      {
+        provide: StockAlertService,
+        useValue: { fireForProducts: jest.fn().mockResolvedValue({ notified: 0 }) },
+      },
     ];
     if (mode === "on") {
       providers.push({
@@ -563,7 +566,7 @@ describe("InventoryService assignToVariants new variant (test 20)", () => {
     await service.assignToVariants(
       {
         parentProductId: "fam",
-        assignments: [{ newVariantName: "Cherry", qty: 2 }],
+        assignments: [{ newVariant: { name: "Cherry" }, qty: 2 }],
       } as any,
       "user-1",
     );
