@@ -213,8 +213,6 @@ export class RecipesService {
       familyId: string;
       recipeProductId: string;
       inputs: Array<{ componentProductId: string; qty: number }>;
-      /** createVersion only: clone the recipe as-is, inactive components included (SA-584b). */
-      allowInactiveComponents?: boolean;
     },
   ): Promise<void> {
     const ids = Array.from(
@@ -242,7 +240,6 @@ export class RecipesService {
       family,
       recipeProduct,
       recipeProductVariantCount,
-      allowInactiveComponents: input.allowInactiveComponents,
       components: input.inputs.map((c) => ({
         componentProductId: c.componentProductId,
         qty: c.qty,
@@ -446,8 +443,8 @@ export class RecipesService {
     const tenantId = await this.assertOn();
     const { source, nextVersion } = await this.loadVersionPlan(id);
     const created = await this.prisma.tenantTransaction(async (tx: CatalogTx) => {
-      // Lead fold (item 1): the copied set's STRUCTURE is re-validated under the locks. SA-584b: an
-      // inactive component is NOT refused here (cloning repairs a broken ACTIVE recipe); activate is the gate.
+      // SA-584b: clone AS-IS under the locks, with NO shape validation (cloning is how a broken ACTIVE
+      // recipe gets repaired); `activate` is the only gate.
       const rows = (await this.lockRecipeRows(tx, tenantId, {
         familyId: source.familyProductId,
         recipeProductId: source.productId,
@@ -463,13 +460,6 @@ export class RecipesService {
         select: { unitsPerPack: true },
       });
       if (!fresh) throw new NotFoundException("Recipe not found");
-      await this.revalidateShape(tx, {
-        unitsPerPack: fresh.unitsPerPack,
-        familyId: source.familyProductId,
-        recipeProductId: source.productId,
-        inputs: rows,
-        allowInactiveComponents: true,
-      });
       let recipe: { id: string; status: string };
       try {
         recipe = await tx.recipe.create({
