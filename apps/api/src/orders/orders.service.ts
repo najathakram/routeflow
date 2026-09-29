@@ -15,6 +15,7 @@ import { LeaderCron } from "../common/cron-lock";
 import { withAfterCommit } from "../common/after-commit";
 import { InlineReturnsService } from "../returns/inline-returns.service";
 import * as inlineReturn from "./order-inline-return";
+import { attachPaymentCreditNotes } from "./order-payment-credit-notes";
 import { prepareInlineReturn, replayAfterCheck } from "./order-inline-return";
 import { reserveInlineReturnNumber as reserveReturnNo } from "./order-inline-return";
 import { applyInlineReturnInTx as applyReturn } from "./order-inline-return";
@@ -478,7 +479,8 @@ export class OrdersService implements OnApplicationBootstrap {
             // scan-ok: draft-payment-not-void — pending F03 classification, see above.
             payments: {
               where: { method: "CREDIT_NOTE", status: { not: "VOID" } },
-              select: { id: true, amount: true, creditNoteId: true },
+              // #2404: autoApplied (SA-436 PR-1) labels each credit Automatic / Manual.
+              select: { id: true, amount: true, creditNoteId: true, autoApplied: true },
             },
           },
         },
@@ -537,6 +539,8 @@ export class OrdersService implements OnApplicationBootstrap {
     // routes-cutoff config lands — the HARD close is dispatch, which is authoritative.
     (order as any).editWindow = computeEditWindow(order, user.role);
     order.lineItems = withComponentViews(order.lineItems) as typeof order.lineItems; // #2717 M3
+
+    await attachPaymentCreditNotes(this.prisma.forTenant(), order); // #2404
 
     return order;
   }

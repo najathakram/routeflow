@@ -12,13 +12,13 @@ export async function stampMsrpSnapshots<
   T extends { productId?: string | null; msrp?: number | null; unitLabel?: string | null },
 >(
   prisma: { getTenantId(): string | null },
-  entitlements: { hasFlag(tenantId: string, flag: string): Promise<boolean> },
+  authority: { can(tenantId: string, flag: string): Promise<boolean> },
   db: any,
   customerId: string,
   itemsData: T[],
 ): Promise<void> {
   const tenantId = prisma.getTenantId();
-  if (!tenantId || !(await entitlements.hasFlag(tenantId, "flag.msrp"))) return;
+  if (!tenantId || !(await authority.can(tenantId, "flag.msrp"))) return;
   const ids = [...new Set(itemsData.map((i) => i.productId).filter(Boolean))] as string[];
   if (ids.length === 0) return;
   const map = await loadMsrpMap(db, customerId, ids);

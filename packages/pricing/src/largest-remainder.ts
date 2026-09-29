@@ -1,5 +1,5 @@
 import { MoneyInvariantError } from "./money-invariants";
-import { roundMoney } from "./pricing";
+import { isWholeCents, roundMoney } from "./pricing";
 
 const toCents = (n: number): number => Math.round(roundMoney(n) * 100);
 
@@ -9,16 +9,16 @@ const toCents = (n: number): number => Math.round(roundMoney(n) * 100);
  * drift a cent). Works in integer cents. Leftover cents go by remainder desc, then weight desc,
  * then index asc.
  *
- * Precondition (lead condition 2): callers pass `roundMoney(total)`. `isWholeCents` has no tolerance,
- * so an unrounded float sum must be rounded at the call site; this function also rounds `total`
- * defensively (`toCents`), so 0.1 + 0.2 splits as 0.30 and never throws.
- *
- * Total 0 gives zeros. Throws MoneyInvariantError on a negative or non-finite total, a
- * negative, non-finite or non-integer weight, or a positive total with no positive weight.
+ * Total 0 gives zeros. Throws MoneyInvariantError on a negative or non-finite total, a total that
+ * is not whole cents (a sub-cent 0.005, a 10.005: refused, never silently rounded), a negative,
+ * non-finite or non-integer weight, or a positive total with no positive weight.
  */
 export function allocateCentsLargestRemainder(total: number, weights: number[]): number[] {
   if (!Number.isFinite(total) || total < 0) {
     throw new MoneyInvariantError(`allocation total must be a finite amount >= 0 (got ${total})`);
+  }
+  if (!isWholeCents(total)) {
+    throw new MoneyInvariantError(`allocation total must be whole cents (got ${total})`);
   }
   for (const w of weights) {
     if (!Number.isInteger(w) || w < 0) {
@@ -68,7 +68,7 @@ export interface ComponentCredit {
  * `prorateLineSubtotal(S, now, P)`. Deliberately NOT built on `prorateLineSubtotal`'s free-unit
  * path, which is non-monotone.
  *
- * Throws MoneyInvariantError on a negative/non-finite subtotal, linePieces not an integer > 0,
+ * Throws MoneyInvariantError on a negative/non-finite or non-whole-cents subtotal, linePieces not an integer > 0,
  * a negative or non-integer prior or part, or prior + sum(parts) > linePieces.
  */
 export function prorateComponentCredit(input: ComponentCreditInput): ComponentCredit {
@@ -77,6 +77,9 @@ export function prorateComponentCredit(input: ComponentCreditInput): ComponentCr
     throw new MoneyInvariantError(
       `stored subtotal must be a finite amount >= 0 (got ${storedSubtotal})`,
     );
+  }
+  if (!isWholeCents(storedSubtotal)) {
+    throw new MoneyInvariantError(`stored subtotal must be whole cents (got ${storedSubtotal})`);
   }
   if (!Number.isInteger(linePieces) || linePieces <= 0) {
     throw new MoneyInvariantError(`linePieces must be an integer > 0 (got ${linePieces})`);

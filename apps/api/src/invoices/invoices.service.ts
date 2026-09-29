@@ -72,6 +72,7 @@ import {
 } from "./delivered-basis-by-line";
 import { assertOrderItemIdsBelongToOrder, logSkippedMatches } from "./order-item-provenance";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import {
   CheckStatus,
   CreditNoteStatus,
@@ -207,12 +208,14 @@ export class InvoicesService {
     private readonly commissionEngine: CommissionEngineService,
     private readonly numbering: NumberingService,
     private readonly sellingRestrictions: SellingRestrictionsService,
+    // #2198/SA-397: flag.msrp asks the same evaluation point as the route guard.
+    private readonly authority: EntitlementAuthority,
     @Optional() private readonly featureConfig?: FeatureConfigService,
   ) {}
 
   /** Extracted to msrp-snapshots.ts (size ratchet); stamps each line's MSRP at creation time. */
   private applyMsrpSnapshots(db: any, customerId: string, itemsData: any[]): Promise<void> {
-    return stampMsrpSnapshots(this.prisma, this.entitlements, db, customerId, itemsData);
+    return stampMsrpSnapshots(this.prisma, this.authority, db, customerId, itemsData);
   }
 
   /**
