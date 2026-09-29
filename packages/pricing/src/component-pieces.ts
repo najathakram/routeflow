@@ -7,52 +7,71 @@ export interface ComponentPiecesInput {
   qty: number;
 }
 
+/** The first `count` picks of the deterministic pick sequence for `comps`, per component. */
+function picksThrough(comps: ComponentPiecesInput[], count: number): number[] {
+  const total = comps.reduce((a, c) => a + c.qty, 0);
+  const picked = comps.map(() => 0);
+  for (let k = 1; k <= count; k++) {
+    let best = -1;
+    let bestDeficit = 0;
+    for (let i = 0; i < comps.length; i++) {
+      if (picked[i] >= comps[i].qty) continue;
+      // deficit x total, in integers: qty*k - picked*total (the quota is qty*k/total).
+      const deficit = comps[i].qty * k - picked[i] * total;
+      if (
+        best < 0 ||
+        deficit > bestDeficit ||
+        (deficit === bestDeficit && comps[i].qty > comps[best].qty)
+      ) {
+        best = i;
+        bestDeficit = deficit;
+      }
+    }
+    picked[best] += 1;
+  }
+  return picked;
+}
+
 /**
  * #2717 M3 (SA-572 A2, SA-579 Q7): the pieces of each component on ONE invoice bill of a FIXED
- * order line. `comps` are the order line's components, `billed[i]` the pieces of `comps[i]`
- * already billed on earlier invoices, `bill` the pieces billed now (an integer >= 0).
+ * order line. `comps` are the order line's components (whole pieces, summing to the line's
+ * pieces), `prior` the pieces billed by earlier invoices and `bill` the pieces billed now
+ * (integers >= 0, prior + bill <= the line's pieces).
  *
- * The bill is split over what is still unbilled (weight = unbilled pieces) by largest remainder
- * (remainder desc, then weight desc, then index asc): a full bill of what is left copies the
- * unbilled components verbatim, a whole-box partial of an untouched line is per-box x boxes,
- * and because each part is capped by its unbilled pieces the bills telescope back to the order
- * components exactly. A delivery shortfall never blocks invoicing (Q7). Display only: these are
- * pieces, never money (I5). Throws MoneyInvariantError on a bad input or a bill above the
- * unbilled total.
+ * The result is `through(prior + bill) - through(prior)` where `through(c)` is the first c picks
+ * of ONE fixed pick sequence: every step picks the component furthest below its exact share
+ * (qty * k / total), ties to the larger component then the lower index (largest remainder, made
+ * cumulative). A prefix of one sequence is monotone, so no part is ever negative or above its
+ * component, each bill sums to `bill`, the bills telescope to the order components exactly, a
+ * full bill copies them verbatim and a whole-box partial of an untouched line is per-box x boxes.
+ * A delivery shortfall never blocks invoicing (Q7). Pieces only, display only (I5). Throws
+ * MoneyInvariantError on bad input or a bill past the order's pieces.
  */
 export function allocateComponentPieces(input: {
   comps: ComponentPiecesInput[];
-  billed: number[];
+  prior: number;
   bill: number;
 }): ComponentPiecesInput[] {
-  const { comps, billed, bill } = input;
-  if (!Number.isInteger(bill) || bill < 0) {
-    throw new MoneyInvariantError(`bill pieces must be an integer >= 0 (got ${bill})`);
-  }
-  if (billed.length !== comps.length) {
-    throw new MoneyInvariantError("billed must have one entry per component");
-  }
-  const unbilled = comps.map((c, i) => {
-    const left = c.qty - billed[i];
-    if (!Number.isInteger(c.qty) || !Number.isInteger(billed[i]) || billed[i] < 0 || left < 0) {
-      throw new MoneyInvariantError(`component ${c.componentProductId} has invalid pieces`);
+  const { comps, prior, bill } = input;
+  for (const [label, n] of [
+    ["prior", prior],
+    ["bill", bill],
+  ] as const) {
+    if (!Number.isInteger(n) || n < 0) {
+      throw new MoneyInvariantError(`${label} pieces must be an integer >= 0 (got ${n})`);
     }
-    return left;
-  });
-  const total = unbilled.reduce((a, w) => a + w, 0);
-  if (bill > total) {
-    throw new MoneyInvariantError(`bill ${bill} exceeds the ${total} unbilled pieces`);
   }
-  if (bill === 0 || total === 0) return comps.map((c) => ({ ...c, qty: 0 }));
-  const shares = unbilled.map((w, index) => {
-    const num = bill * w;
-    return { index, w, floor: Math.floor(num / total), rem: num % total };
-  });
-  let leftover = bill - shares.reduce((a, s) => a + s.floor, 0);
-  const order = [...shares].sort((a, b) => b.rem - a.rem || b.w - a.w || a.index - b.index);
-  const out = shares.map((s) => s.floor);
-  for (let i = 0; leftover > 0; i++, leftover--) out[order[i].index] += 1;
-  return comps.map((c, i) => ({ ...c, qty: out[i] }));
+  if (comps.some((c) => !Number.isInteger(c.qty) || c.qty < 0)) {
+    throw new MoneyInvariantError("component pieces must be integers >= 0");
+  }
+  const total = comps.reduce((a, c) => a + c.qty, 0);
+  if (prior + bill > total) {
+    throw new MoneyInvariantError(`prior ${prior} + bill ${bill} exceeds the line's ${total} pieces`);
+  }
+  if (bill === 0) return comps.map((c) => ({ ...c, qty: 0 }));
+  const before = picksThrough(comps, prior);
+  const after = picksThrough(comps, prior + bill);
+  return comps.map((c, i) => ({ ...c, qty: after[i] - before[i] }));
 }
 
 export interface ComponentSubLineInput {
