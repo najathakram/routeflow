@@ -2,6 +2,12 @@
 
 import * as React from "react";
 import type { useToast } from "@routeflow/ui/web";
+import {
+  levelsForScannedCode,
+  resolveScanSellLevel,
+  type ScanBarcodeRow,
+} from "@routeflow/scanning";
+import type { SellLevel } from "@routeflow/pricing";
 import { resolveProductByCode, type BarcodeResolveResult } from "@/lib/barcode-resolve";
 
 type ToastFn = ReturnType<typeof useToast>["toast"];
@@ -36,13 +42,33 @@ export function isConnectivityError(err: unknown): boolean {
   );
 }
 
+/**
+ * #2717 M4a-1 (SA-580 R1/R2/R4): the level the scanned `code` carries on `product`. The server's
+ * `scanMatch.levels` wins when present (it saw the row that hit); otherwise the levels are worked
+ * out from the product's cached `barcodes[]` / legacy columns. The line's mode never matters.
+ */
+export function scanLevelForHit(code: string, product: any): SellLevel {
+  const sm = product?.scanMatch as { levels?: SellLevel[] } | undefined;
+  const levels: SellLevel[] =
+    sm?.levels && sm.levels.length > 0
+      ? sm.levels
+      : levelsForScannedCode(code, {
+          barcode: product?.barcode,
+          sku: product?.sku,
+          unitSku: product?.unitSku,
+          unitsPerBox: product?.unitsPerBox,
+          barcodes: product?.barcodes as ScanBarcodeRow[] | undefined,
+        });
+  return resolveScanSellLevel({ unitsPerBox: product?.unitsPerBox }, levels);
+}
+
 export interface ScanCodeHandlerDeps {
   /**
    * Adds (or increments) a resolved product on the order. May report whether it CREATED the line
    * (vs incremented an existing one) so a caller can undo the scan; a caller that does not care
    * returns nothing and `created` defaults to true.
    */
-  addLineItem: (product: any) => { created: boolean } | void;
+  addLineItem: (product: any, level: SellLevel) => { created: boolean } | void;
   /** Nothing in the catalog matched — the caller opens create-product with `code` as the SKU. */
   onUnknownCode: (code: string) => void;
   toast: ToastFn;
@@ -110,7 +136,7 @@ export function useScanCodeHandler(deps: ScanCodeHandlerDeps) {
     if (!result.notFound && result.product) {
       // addLineItem clears search + refocuses — outside the try above: a throw here is a real
       // bug, never a connectivity failure, and must never be silently queued/re-added.
-      const added = deps.addLineItem(result.product);
+      const added = deps.addLineItem(result.product, scanLevelForHit(code, result.product));
       return { kind: "added", product: result.product, created: added?.created ?? true };
     }
     // Nothing found — let the caller open create-product with the scanned barcode as SKU. Not for a

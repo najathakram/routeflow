@@ -11,7 +11,10 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
 import { SearchBar } from "@routeflow/ui/mobile/ios";
+import type { SellLevel } from "@routeflow/pricing";
+import { resolveScanSellLevel } from "@routeflow/scanning";
 import { type AdminProduct } from "../lib/api/admin";
+import { levelsForScan } from "../lib/wedge-scan";
 import { useAdminProductSearch } from "../lib/use-product-search";
 import { BarcodeScanner } from "./BarcodeScanner";
 import { archivedMessage, resolveProductByCode } from "../lib/barcode-resolve";
@@ -37,7 +40,11 @@ export function ProductPickerSheet({
   visible: boolean;
   selectedId?: string;
   onClose: () => void;
-  onSelect: (product: AdminProduct) => void;
+  /**
+   * `level` is set ONLY for a scan (SA-580: the level the scanned code carries); a tapped row
+   * passes none. Callers that add a sales-document line honour it, every other caller ignores it.
+   */
+  onSelect: (product: AdminProduct, level?: SellLevel) => void;
   title?: string;
   /** Only offer standalone products (e.g. picking a variant PARENT). */
   standaloneOnly?: boolean;
@@ -90,9 +97,9 @@ export function ProductPickerSheet({
     else setBrowsing(false);
   }, [visible, initialSearch, setSearch]);
 
-  const pick = (p: AdminProduct) => {
+  const pick = (p: AdminProduct, level?: SellLevel) => {
     setSearch("");
-    onSelect(p);
+    onSelect(p, level);
   };
 
   const onScanned = async (code: string) => {
@@ -122,7 +129,8 @@ export function ProductPickerSheet({
             return;
           }
         } else {
-          pick(hit as AdminProduct);
+          const scanned = hit as AdminProduct & { unitsPerBox?: number | null };
+          pick(scanned, resolveScanSellLevel(scanned, levelsForScan(trimmed, scanned)));
           return;
         }
       }

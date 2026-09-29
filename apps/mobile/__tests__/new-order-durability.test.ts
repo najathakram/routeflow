@@ -51,7 +51,7 @@ describe("NewOrderScreen scan accept guard (REG-NEWORDER-GUARD)", () => {
     // Order matters: the REG-B201 nonce is consumed FIRST so a parked attempt
     // cannot re-park on a later settle of the same attempt.
     expect(screen).toMatch(
-      /shouldAutoAdd\(code\)\)\s*return;[\s\S]{0,400}?if\s*\(!scanGuardRef\.current\.offer\(code,\s*match,\s*kind\)\)\s*return;/,
+      /shouldAutoAdd\(code\)\)\s*return;[\s\S]{0,400}?if\s*\(!scanGuardRef\.current\.offer\(code,\s*match,\s*level\)\)\s*return;/,
     );
     // The nonce itself must survive — a guard is not a reason to "simplify" it
     // away, and neither may a time window come back in its place.
@@ -248,7 +248,7 @@ describe("NewOrderScreen piece-scan-on-a-unit-line confirm (SA-085h LOW)", () =>
   it("gates a piece-kind accept on the line's unitLabel before calling addOne, via the confirm dialog", () => {
     const fn = (screen.match(/const acceptScannedProduct = \([\s\S]*?\n  \};/) ?? [""])[0];
     expect(fn).toBeTruthy();
-    expect(fn).toMatch(/unitKind !== "piece" \|\| !label\) return finishAccept/);
+    expect(fn).toMatch(/level !== "UNIT" \|\| !label\) return finishAccept/);
     expect(fn).toMatch(/confirm\(/);
     // Declining does nothing: addOne only happens inside finishAccept, called from onYes.
     expect(fn).not.toMatch(/^\s*addOne\(/m);
@@ -256,7 +256,7 @@ describe("NewOrderScreen piece-scan-on-a-unit-line confirm (SA-085h LOW)", () =>
 
   it("a non-unit line's piece scan is unaffected — no confirm, straight to finishAccept", () => {
     const fn = (screen.match(/const acceptScannedProduct = \([\s\S]*?\n  \};/) ?? [""])[0];
-    expect(fn).toMatch(/return finishAccept\(product, unitKind\);/);
+    expect(fn).toMatch(/return finishAccept\(product, level\);/);
   });
 });
 

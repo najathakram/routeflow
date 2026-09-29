@@ -8,7 +8,7 @@
  * wiping the operator's price/note on a repeat scan or a +/- tap. Spreading
  * `...prev` fixes that and matches web's `{ ...li, qty: li.qty + 1 }`.
  */
-import { normalizeBoxesPieces } from "@routeflow/pricing";
+import { normalizeBoxesPieces, type SellLevel } from "@routeflow/pricing";
 
 export interface SaleLineQty {
   qty?: number;
@@ -81,6 +81,24 @@ export function incrementLinePiece<T extends SaleLineQty>(
     unitsPerBox: upb,
   });
   return { ...prev, qty: normalized.qty, boxes: normalized.boxes, pieces: normalized.pieces };
+}
+
+/**
+ * #2717 M4a-1 (SA-580 R1/R4): add what a scan LANDED to the ONE line. The level comes from the
+ * scanned code: UNIT adds one loose piece (rolled into boxes by `normalizeBoxesPieces`), BOX adds
+ * one box. A unit-sold line (units_v1) steps its COUNT; a non-boxed product has no box/unit
+ * distinction (R4), so either level is today's plain +1. Every other field on the line survives.
+ */
+export function addScannedLevelToLine<T extends SaleLineQty & { unitLabel?: string | null }>(
+  prev: T,
+  level: SellLevel,
+  isBoxed: boolean,
+  unitsPerBox: number,
+): T & { qty: number; boxes?: number | null; pieces?: number | null } {
+  if (isUnitLine(prev)) return { ...prev, qty: (prev.qty ?? 0) + 1 };
+  return level === "UNIT"
+    ? incrementLinePiece(prev, isBoxed, unitsPerBox)
+    : incrementLine(prev, isBoxed, unitsPerBox);
 }
 
 /**

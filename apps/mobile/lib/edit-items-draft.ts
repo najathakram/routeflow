@@ -19,7 +19,13 @@
  * screen's BUY_N_GET_M netting through so the drawer, the line card and the
  * footer cannot disagree.
  */
-import { roundMoney, effectiveQty, unitLineCount, type LadderProduct } from "@routeflow/pricing";
+import {
+  roundMoney,
+  effectiveQty,
+  unitLineCount,
+  type LadderProduct,
+  type SellLevel,
+} from "@routeflow/pricing";
 import {
   buildOrderItemDiff,
   type DiffCatalogLine,
@@ -423,7 +429,7 @@ export interface PickInput {
   catalogPrice: number;
   name: string;
   unit?: string;
-  kind: "case" | "piece";
+  level: SellLevel;
   /** The fresh-add ladder snapshot (`ladderProductFor`'s real-tier-prices
    *  input) — only used on a fresh add; an existing entry keeps its own. */
   packLadder?: LadderProduct;
@@ -459,7 +465,7 @@ export function applyPickToDraft(
     // its COUNT — never the pack's box math, regardless of scan kind.
     if (boxed && !isUnitLine(existing)) {
       const line =
-        input.kind === "piece"
+        input.level === "UNIT"
           ? incrementLinePiece(existing, true, upb)
           : incrementLine(existing, true, upb);
       return { ...draft, [key]: { ...line, boxSplit: true } };
@@ -477,7 +483,7 @@ export function applyPickToDraft(
   };
   if (boxed) {
     // 1 box for a case scan/tap; 1 LOOSE piece for a piece-code scan.
-    return input.kind === "piece"
+    return input.level === "UNIT"
       ? { ...draft, [key]: { ...base, qty: 1, boxes: 0, pieces: 1, boxSplit: true } }
       : { ...draft, [key]: { ...base, qty: upb, boxes: 1, pieces: 0, boxSplit: true } };
   }
@@ -490,7 +496,7 @@ export interface ResolvePickTargetInput {
   name: string;
   unit?: string;
   unitsPerBox: number | null;
-  kind: "case" | "piece";
+  level: SellLevel;
   startPrice: number;
   catalogPrice: number;
   packLadder?: LadderProduct;
@@ -522,7 +528,7 @@ export function resolvePickTarget(
   );
   const existingLabel = existingUnitEntry?.[1].unitLabel ?? undefined;
   const key =
-    input.kind === "piece" && existingUnitEntry
+    input.level === "UNIT" && existingUnitEntry
       ? existingUnitEntry[0]
       : resolveDraftKeyForPick(draft, input.productId, null);
   const apply = (d: Record<string, DraftItem>) =>
@@ -533,7 +539,7 @@ export function resolvePickTarget(
       catalogPrice: input.catalogPrice,
       name: input.name,
       unit: input.unit,
-      kind: input.kind,
+      level: input.level,
       packLadder: input.packLadder,
     });
   return { key, existingLabel, apply };

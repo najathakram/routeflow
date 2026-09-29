@@ -20,8 +20,10 @@ const editItemsSrc = readFileSync(
 const editItemsDraftSrc = readFileSync(join(__dirname, "..", "lib", "edit-items-draft.ts"), "utf8");
 
 describe("NewOrderScreen.tsx routes every +/- through stepLineQty (create flow)", () => {
-  it("addOne/removeOne call stepLineQty, never the raw pack box math", () => {
-    expect(newOrderSrc).toMatch(/stepLineQty\(prev, 1, isBoxed, upb\)/);
+  it("addOne/removeOne route through the unit-aware writers, never the raw pack box math", () => {
+    // addOne goes through addScannedLevelToLine (SA-580: the scanned level decides), which itself
+    // steps a unit line's COUNT — pinned in the next test.
+    expect(newOrderSrc).toMatch(/addScannedLevelToLine\(prev, level, isBoxed, upb\)/);
     expect(newOrderSrc).toMatch(/stepLineQty\(prev, -1, isBoxed, upb\)/);
     // incrementLine/decrementLine are no longer imported or called directly anywhere in this
     // screen — every case a unit-aware line could reach them is gone, not just guarded.
@@ -29,8 +31,11 @@ describe("NewOrderScreen.tsx routes every +/- through stepLineQty (create flow)"
     expect(newOrderSrc).not.toMatch(/\bdecrementLine\(/);
   });
 
-  it("the remaining incrementLinePiece call (a PIECE-barcode scan) is unit-guarded", () => {
-    expect(newOrderSrc).toMatch(/kind === "piece" && !isUnitLine\(prev\)/);
+  it("a scan's level goes through addScannedLevelToLine, which steps a unit line's COUNT (never box math)", () => {
+    expect(newOrderSrc).toMatch(/addScannedLevelToLine\(prev, level, isBoxed, upb\)/);
+    expect(
+      readFileSync(join(__dirname, "..", "lib", "sale-line.ts"), "utf8"),
+    ).toMatch(/export function addScannedLevelToLine[\s\S]*?if \(isUnitLine\(prev\)\)/);
   });
 
   it("the tray sends a unit line's typed total through setQty, never setUnits", () => {
@@ -64,7 +69,7 @@ describe("edit-items.tsx routes every +/- through unit-aware helpers (edit flow)
   });
 
   it("a piece-code scan on an already unit-sold line confirms before committing (SA-085i)", () => {
-    expect(editItemsSrc).toMatch(/kind === "piece" && existingLabel/);
+    expect(editItemsSrc).toMatch(/level === "UNIT" && existingLabel/);
     expect(editItemsSrc).toMatch(/confirm\(/);
   });
 });

@@ -23,7 +23,7 @@ import { useCustomerPriceHistory, useUpdateOrderItems } from "../../../../../lib
 import { useCustomer, useCustomerPrices } from "../../../../../lib/api/customers";
 import { showToast } from "../../../../../lib/toast";
 import { confirm } from "../../../../../lib/confirm";
-import { computeLineSubtotal, effectiveQty, getTierPrice } from "@routeflow/pricing";
+import { computeLineSubtotal, effectiveQty, getTierPrice, type SellLevel } from "@routeflow/pricing";
 import { marginFloorPrice } from "../../../../../lib/margin-floor-price";
 import { isUnitLine, setLineUnits } from "../../../../../lib/sale-line";
 import { buildSubstituteLine } from "../../../../../lib/substitute-line";
@@ -627,7 +627,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
 
   /**
    * Add a picked/scanned product to the draft (shared by tap-pick and
-   * add-and-stay). `kind === "piece"` rolls one loose unitSku piece into a
+   * add-and-stay). `level === "UNIT"` (from the scanned code, SA-580) rolls one loose piece into a
    * box. Returns the draft KEY (B775: never `p.id`) for callers tracking
    * "the last thing added" (the picker's price-edit affordance).
    */
@@ -643,7 +643,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       unit?: string;
       unitsPerBox?: number | null;
     },
-    kind: "case" | "piece" = "case",
+    level: SellLevel = "BOX",
   ): string => {
     const catalogPrice = tierPriceFor(p);
     const listPrice = toNumber(p.pricePerUnit);
@@ -663,14 +663,14 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       name: p.name,
       unit: p.unit,
       unitsPerBox,
-      kind,
+      level,
       startPrice,
       catalogPrice,
       packLadder: buildPackLadder({ ...p, unitsPerBox }),
     });
     // B805: the pick commits through updateDraft like every other writer.
     const commit = () => updateDraft(apply);
-    if (kind === "piece" && existingLabel) {
+    if (level === "UNIT" && existingLabel) {
       confirm(`Add 1 ${existingLabel}?`, `${p.name} is sold by ${existingLabel}.`, commit, {
         confirmText: `Add 1 ${existingLabel}`,
       });
@@ -1048,9 +1048,9 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
           onPickAndStay={
             substituteFor
               ? undefined
-              : (p, kind) => {
+              : (p, level) => {
                   // B775: track the draft KEY (addPickedToDraft's return), not p.id.
-                  const key = addPickedToDraft(p, kind);
+                  const key = addPickedToDraft(p, level);
                   setLastScannedId(key);
                   setScanOrder((o) => bumpScanOrder(o, key));
                   setTrayFlash((f) => nextFlash(f, key));
@@ -1104,7 +1104,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
           // an add made with the camera shut (a wedge scanner, a typed code).
           // Only the row flash, which belongs to the camera session, is cleared.
           onScanSessionEnd={() => setTrayFlash(null)}
-          onPick={(p, kind) => {
+          onPick={(p, level) => {
             if (substituteFor) {
               const tierPrice = tierPriceFor(p);
               const listPrice = toNumber(p.pricePerUnit);
@@ -1128,7 +1128,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
               setSubstituteFor(null);
             } else {
               // B775: track the draft KEY, not p.id — see the onPickAndStay note above.
-              const key = addPickedToDraft(p, kind);
+              const key = addPickedToDraft(p, level);
               setScanOrder((o) => bumpScanOrder(o, key));
               setTrayFlash((f) => nextFlash(f, key));
             }

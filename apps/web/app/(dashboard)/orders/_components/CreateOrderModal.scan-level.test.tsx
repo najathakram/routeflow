@@ -103,9 +103,14 @@ type ScanScreenResolve = (
   opts?: { quiet?: boolean; background?: boolean },
 ) => Promise<unknown>;
 let capturedScanScreenResolve: ScanScreenResolve | undefined;
+let capturedScanScreenLines: Array<{ boxes?: number; pieces?: number; qty: number }> = [];
 jest.mock("./scan/ScanOrderScreen", () => ({
-  ScanOrderScreen: (props: { resolveCode: ScanScreenResolve }) => {
+  ScanOrderScreen: (props: {
+    resolveCode: ScanScreenResolve;
+    lines: Array<{ boxes?: number; pieces?: number; qty: number }>;
+  }) => {
     capturedScanScreenResolve = props.resolveCode;
+    capturedScanScreenLines = props.lines;
     return null;
   },
 }));
@@ -149,6 +154,7 @@ async function scan(product: any, code: string, levels?: Level[]) {
 beforeEach(() => {
   jest.clearAllMocks();
   capturedOnScan = undefined;
+  capturedScanScreenLines = [];
   mockOrderUiV2 = true;
   mockScanV2 = false;
 });
@@ -210,9 +216,10 @@ describe("R1: a UNIT code adds one PIECE — never a hidden case", () => {
     await act(async () => {
       await capturedScanScreenResolve!("UNITCODE", { quiet: true });
     });
-    await waitFor(() => expect(lineFor("Sample Chips")).toBeTruthy());
-    expect(casesInput().value).toBe("0");
-    expect(looseInput()?.value).toBe("1");
+    // The order dialog is closed while the scan screen is up (the screen renders the lines, and it
+    // is mocked here), so the line is read from the `lines` prop the screen is handed.
+    await waitFor(() => expect(capturedScanScreenLines).toHaveLength(1));
+    expect(capturedScanScreenLines[0]).toMatchObject({ boxes: 0, pieces: 1, qty: 1 });
   });
 });
 

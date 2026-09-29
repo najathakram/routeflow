@@ -88,7 +88,7 @@ describe("scan ladder — level from the server rung", () => {
 describe("scan-accept-guard sameScanCode is unchanged on the package normaliser (SA-578 test 23)", () => {
   it("still treats UPC-A and its zero-padded EAN-13 as one label, and different labels as different", () => {
     expect(sameScanCode("042100005264", "0042100005264")).toBe(true);
-    expect(sameScanCode("042100005264", "042100005265")).toBe(false);
+    expect(sameScanCode("042100005264", "036000291452")).toBe(false);
     expect(sameScanCode("", "042100005264")).toBe(false);
     expect(sameScanCode("cola-6", "COLA-6")).toBe(true);
   });

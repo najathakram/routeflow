@@ -303,7 +303,7 @@ describe("edit-items.tsx scan-accept guard on the picker (REG-EDIT-SCAN-GUARD)",
     // Consume the attempt FIRST, then offer — a parked attempt must not
     // re-park on a later settle.
     expect(pickerSrc).toMatch(
-      /shouldAutoAdd\(code\)\) return;[\s\S]*?if \(!scanGuardRef\.current\.offer\(code, match, kind\)\) return;/,
+      /shouldAutoAdd\(code\)\) return;[\s\S]*?if \(!scanGuardRef\.current\.offer\(code, match, level\)\) return;/,
     );
   });
 
