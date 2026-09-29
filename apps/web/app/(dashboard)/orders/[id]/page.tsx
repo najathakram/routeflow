@@ -1252,7 +1252,6 @@ export function EditableLineItems({
   }, []);
 
   function addProduct(p: any, level?: scan.SellLevel) {
-    // If this product is already in the list (not cancelled), increment qty instead of adding duplicate
     const existing = items.find((it) => it.productId === p.id && !it.cancelled);
     const unitScan = scan.isUnitScanOnBoxed(p, level ?? "BOX");
     if (existing) {

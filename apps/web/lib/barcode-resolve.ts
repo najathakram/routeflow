@@ -24,6 +24,7 @@
  * Errors other than 404 (network / 5xx) propagate so the caller can show
  * a transient retry toast instead of falsely jumping to "not found".
  */
+import type { ScanMatchView } from "@routeflow/types";
 import { apiClient } from "./api-client";
 
 export type BarcodeResolveSource = "barcode" | "sku" | "unitSku" | "search";
@@ -33,6 +34,8 @@ export interface BarcodeResolveHit<T = any> {
   source: BarcodeResolveSource;
   notFound?: false;
   archived?: false;
+  /** #2717 M4a-1: the server's additive scan-lookup verdict (which levels the scanned code has). */
+  scanMatch?: ScanMatchView;
   /** True when several substring hits matched with no exact code match —
    *  `product` is the first row, `matches` carries the alternatives so the
    *  caller can offer a choice instead of committing to row #1 (mirrors
