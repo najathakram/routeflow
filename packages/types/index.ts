@@ -136,6 +136,7 @@ export * from "./trip-grouping";
 // ─── Post-delivery invoice prompt (#2089) ─────────────────────────────────────
 
 export * from "./post-delivery-invoice-prompt";
+export * from "./order-applied-credits";
 
 // ─── Shared API DTOs + Prisma-enum parity (wave E / imp-10b) ──────────────────
 //

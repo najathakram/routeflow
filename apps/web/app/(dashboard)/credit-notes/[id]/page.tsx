@@ -425,7 +425,8 @@ export default function CreditNoteDetailPage() {
                 </p>
                 {cn.invoiceId && (
                   <p className="mt-1 text-sm text-navy/70">
-                    <span className="font-medium text-navy">Applied to Invoice:</span>{" "}
+                    {/* #2404: cn.invoiceId is the ORIGIN invoice; applications are InvoicePayments. */}
+                    <span className="font-medium text-navy">Issued against invoice:</span>{" "}
                     <Link
                       href={`/invoices/${cn.invoiceId}`}
                       className="text-brand-600 hover:underline"
