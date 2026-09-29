@@ -14,6 +14,7 @@ import {
   candidateSpecs,
   constructorDeps,
   findMissingProviders,
+  parseStats,
   toPosix,
   type ReadFile,
 } from "./testing/provider-completeness";
@@ -288,18 +289,36 @@ describe("negative controls: the analysis fails a spec that leaves a dependency 
     });
   });
 
-  it("candidateSpecs keeps only the files that mention a guarded service (the rest are never parsed)", () => {
-    const files = {
-      "/a/x.spec.ts": "uses ProductsService here",
-      "/a/y.spec.ts": "nothing relevant",
-      "/a/z.spec.ts": "CustomersService",
+  it("candidateSpecs keeps only the files that mention a guarded service AND a `providers` list (the rest are never parsed)", () => {
+    const files: Record<string, string> = {
+      "/a/x.spec.ts": "Test.createTestingModule({ providers: [ProductsService] })",
+      "/a/y.spec.ts": "providers: [SomethingElse]", // no guarded service
+      "/a/z.spec.ts": "x({ providers: [CustomersService] })",
+      "/a/w.spec.ts": "new ProductsService(a, b, c)", // mentions one, has no providers list (built with `new`)
     };
     expect(
-      candidateSpecs(Object.keys(files), (f) => files[f as keyof typeof files], [
-        "ProductsService",
-        "CustomersService",
-      ]),
+      candidateSpecs(Object.keys(files), (f) => files[f], ["ProductsService", "CustomersService"]),
     ).toEqual(["/a/x.spec.ts", "/a/z.spec.ts"]);
+  });
+
+  it("speed pin: a spec importing several provider classes parses only ITSELF, and asking again parses nothing (parse cache; class imports are never opened as ASTs)", () => {
+    const reads: string[] = [];
+    const rf: ReadFile = (f) => {
+      reads.push(f);
+      return "export class Whatever {}"; // a production class file: no `const NAME`, so it is never parsed
+    };
+    const src = `import { PrismaService } from "../prisma/prisma.service";
+      import { StorageService } from "../storage/storage.service";
+      import { MeterService } from "../meter/meter.service";
+      x({ providers: [ProductsService, PrismaService, StorageService, MeterService] });`;
+    const file = "/repo/src/products/cache-pin-unique.spec.ts";
+    const before = parseStats.parses;
+    findMissingProviders(file, src, deps, rf);
+    expect(parseStats.parses - before).toBe(1); // the spec, and no imported class file
+    const mid = parseStats.parses;
+    findMissingProviders(file, src, deps, rf);
+    analyseSpec(file, src, rf);
+    expect(parseStats.parses).toBe(mid); // same path + text: served from the cache
   });
 
   it("analyseSpec reports real vs provided", () => {

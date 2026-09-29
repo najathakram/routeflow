@@ -45,8 +45,31 @@ export interface MissingProvider {
 
 export type ReadFile = (absolutePath: string) => string | null;
 
-const parse = (fileName: string, text: string) =>
-  ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+// A file is parsed AT MOST ONCE per (path, text): the repo scan asks about the same spec several times
+// (analysis, then the completeness check), and every spec imports shared provider files. Re-parsing
+// them was most of the run time (several seconds on a PC).
+const parseCache = new Map<string, { text: string; sf: ts.SourceFile }>();
+/** How many real parses have run (a test pins that the caches keep this small). */
+export const parseStats = { parses: 0 };
+const parse = (fileName: string, text: string) => {
+  const hit = parseCache.get(fileName);
+  if (hit && hit.text === text) return hit.sf;
+  parseStats.parses += 1;
+  const sf = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  parseCache.set(fileName, { text, sf });
+  return sf;
+};
+
+// Text of a file read through an injected reader, read once per reader.
+const readMemos = new WeakMap<ReadFile, Map<string, string | null>>();
+function readOnce(readFile: ReadFile, file: string): string | null {
+  let memo = readMemos.get(readFile);
+  if (!memo) readMemos.set(readFile, (memo = new Map()));
+  if (!memo.has(file)) memo.set(file, readFile(file));
+  return memo.get(file) ?? null;
+}
+
+const escapeRe = (n: string) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const decoratorName = (d: ts.Decorator): string | null => {
   const e = d.expression;
@@ -172,8 +195,11 @@ function resolveConst(
   if (!rel) return null;
   const base = joinPath(dirname(fileName), rel);
   for (const candidate of [`${base}.ts`, `${base}/index.ts`]) {
-    const text = readFile(candidate);
+    const text = readOnce(readFile, candidate);
     if (text == null) continue;
+    // Cheap text test first: a class import (nearly every provider) has no `const NAME` in its file,
+    // so its production source is never parsed just to find that out.
+    if (!new RegExp(`\\bconst\\s+${escapeRe(name)}\\b`).test(text)) continue;
     const other = parse(candidate, text);
     const found = topLevelConst(other, name);
     if (found) return { node: found, sourceFile: other, fileName: candidate };
@@ -339,7 +365,11 @@ export function analyseSpec(
   return arrays;
 }
 
-/** Only the files whose text mentions a guarded service need parsing; the rest are never opened as ASTs. */
+/**
+ * Only files whose text mentions a guarded service AND a `providers` list need parsing; the rest are
+ * never opened as ASTs. (A spec that builds a service with `new X(...)` has no providers array, so
+ * there is nothing to check in it.)
+ */
 export function candidateSpecs(
   files: readonly string[],
   read: (file: string) => string | null,
@@ -347,7 +377,7 @@ export function candidateSpecs(
 ): string[] {
   return files.filter((f) => {
     const text = read(f);
-    return text != null && serviceNames.some((n) => text.includes(n));
+    return text != null && text.includes("providers") && serviceNames.some((n) => text.includes(n));
   });
 }
 
