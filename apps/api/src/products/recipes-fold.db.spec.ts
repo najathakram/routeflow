@@ -13,6 +13,13 @@
  *    Revert-red: deciding RECIPE_PRODUCT_HAS_PARENT from the PRE-lock recipe read (recipe-update-guard.ts)
  *    lets both win in some round.
  *  - SA-587a: tracked-categories assign/unassign vs an open recipe is a 409 with NOTHING written.
+ *  - SA-587a RACE (4 rounds): bulk `assignProducts` vs `recipes.activate`, both queued behind a raw
+ *    writer's family lock (a barrier waits until Postgres shows BOTH blocked, then releases them
+ *    together): the draft is open from the start, so the assign is ALWAYS a 409 RECIPE_CATEGORY_LOCKED
+ *    (with the locked COUNT) and writes NOTHING (synced-category clear and the `isTobacco` mirror are
+ *    unchanged); no ACTIVE recipe ends over an off-category component; never 40P01. A second test
+ *    pins "one transaction": on the success path every write of assign/unassign runs on the tx client
+ *    (an outer/`forTenant()` write fails it).
  *  - LOCK EDGE: a raw writer holds the FAMILY row and has un-committedly re-parented a component;
  *    `activate` must BLOCK on the family lock (house order: family -> recipe product -> components)
  *    and, once the writer commits, refuse the activation. Before the fix activate never touched the
@@ -462,5 +469,192 @@ describeDb("#2717 M2 fold: recipe invariants are kept — real Postgres", () => 
       categories.assignProducts(target.id, [c.variants[0].id, stray.id]),
     );
     expect(res).toMatchObject({ assigned: 2 });
+  }, 60_000);
+
+  /** Polls until at least `n` backends are blocked by `blockerPid` (< 5 s: Prisma's tx timeout). */
+  async function waitUntilNBlockedBy(blockerPid: number, n: number): Promise<boolean> {
+    const deadline = Date.now() + 4_000;
+    while (Date.now() < deadline) {
+      // eslint-disable-next-line no-await-in-loop
+      const { rows } = await pool.query(
+        "SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))",
+        [blockerPid],
+      );
+      if (rows[0].n >= n) return true;
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    return false;
+  }
+
+  it("SA-587a RACE (4 rounds): bulk assign vs activate is always a 409 and writes NOTHING (clear + isTobacco unchanged)", async () => {
+    const tenantId = await seedTenant("race-bulk-assign");
+    const cat = await prisma.trackedCategory.create({ data: { tenantId, name: "Beverage" } });
+    const sub = await prisma.trackedSubcategory.create({
+      data: { tenantId, trackedCategoryId: cat.id, name: "Cherry" },
+    });
+    const target = await prisma.trackedCategory.create({ data: { tenantId, name: "Tobacco" } });
+    for (let round = 0; round < 4; round += 1) {
+      // Synced free-text category ("Cherry" == the subcategory name): a write would clear it.
+      const synced = {
+        trackedCategoryId: cat.id,
+        trackedSubcategoryId: sub.id,
+        category: "Cherry",
+      };
+      // eslint-disable-next-line no-await-in-loop
+      const c = await seedDraft(tenantId, synced);
+      // eslint-disable-next-line no-await-in-loop
+      const stray = await product(tenantId, "Stray", synced);
+      const movers = [c.variants[0].id, c.variants[1].id, stray.id];
+
+      const writer = await pool.connect();
+      let assigned: PromiseSettledResult<unknown>;
+      let activated: PromiseSettledResult<unknown>;
+      let bothBlocked = false;
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await writer.query("BEGIN");
+        // eslint-disable-next-line no-await-in-loop
+        const pid = Number((await writer.query("SELECT pg_backend_pid() AS pid")).rows[0].pid);
+        // eslint-disable-next-line no-await-in-loop
+        await writer.query('SELECT id FROM "Product" WHERE id = $1 FOR UPDATE', [c.family.id]);
+        // both start while the family is held; the barrier waits until BOTH queue behind it
+        const both = Promise.allSettled([
+          inTenant(tenantId, () => categories.assignProducts(target.id, movers)),
+          inTenant(tenantId, () => recipes.activate(c.draft.id)),
+        ]);
+        // eslint-disable-next-line no-await-in-loop
+        bothBlocked = await waitUntilNBlockedBy(pid, 2);
+        // eslint-disable-next-line no-await-in-loop
+        await writer.query("COMMIT");
+        // eslint-disable-next-line no-await-in-loop
+        [assigned, activated] = await both;
+      } finally {
+        await writer.query("ROLLBACK").catch(() => undefined);
+        writer.release();
+      }
+
+      expect({ round, bothBlocked }).toEqual({ round, bothBlocked: true });
+      for (const r of [assigned, activated]) {
+        if (r.status === "rejected") expect(stateOf(r.reason)).not.toBe("40P01");
+      }
+      // The DRAFT is open from the start: the assign can never win, whatever the interleaving.
+      expect(assigned.status).toBe("rejected");
+      expect((assigned as PromiseRejectedResult).reason.getResponse()).toMatchObject({
+        code: "RECIPE_CATEGORY_LOCKED",
+        lockedCount: 2,
+      });
+      expect(activated.status).toBe("fulfilled");
+
+      // NOTHING written: category, subcategory, the synced free-text clear and the isTobacco mirror
+      // (the target is the Tobacco type, so any write would have set isTobacco = true).
+      // eslint-disable-next-line no-await-in-loop
+      const rows = await prisma.product.findMany({ where: { id: { in: movers } } });
+      expect(rows).toHaveLength(3);
+      for (const r of rows) {
+        expect({
+          trackedCategoryId: r.trackedCategoryId,
+          trackedSubcategoryId: r.trackedSubcategoryId,
+          category: r.category,
+          isTobacco: r.isTobacco,
+        }).toEqual({
+          trackedCategoryId: cat.id,
+          trackedSubcategoryId: sub.id,
+          category: "Cherry",
+          isTobacco: false,
+        });
+      }
+      // never an ACTIVE recipe over an off-category component
+      // eslint-disable-next-line no-await-in-loop
+      const active = await prisma.recipe.findMany({
+        where: { tenantId, id: c.draft.id, status: "ACTIVE" },
+        include: { components: true },
+      });
+      for (const r of active) {
+        for (const comp of r.components) {
+          // eslint-disable-next-line no-await-in-loop
+          const p = await prisma.product.findUniqueOrThrow({
+            where: { id: comp.componentProductId },
+          });
+          expect(p.trackedCategoryId).toBe(cat.id);
+        }
+      }
+    }
+  }, 120_000);
+
+  it("SA-587a: assign / unassign write ONLY on the transaction client (a write moved out of the tx fails this)", async () => {
+    const tenantId = await seedTenant("category-one-tx");
+    const cat = await prisma.trackedCategory.create({ data: { tenantId, name: "Beverage" } });
+    const target = await prisma.trackedCategory.create({ data: { tenantId, name: "Tobacco" } });
+    const a = await product(tenantId, "Free A", { trackedCategoryId: cat.id });
+    const b = await product(tenantId, "Free B", { trackedCategoryId: cat.id });
+
+    const WRITE = /^(create|createMany|update|updateMany|upsert|delete|deleteMany)$/;
+    const outer: string[] = [];
+    const inTx: string[] = [];
+    const record = (into: string[], client: any): any =>
+      new Proxy(client, {
+        get(t, k, r) {
+          const v = Reflect.get(t, k, r);
+          if (typeof k !== "string") return v;
+          if (/^\$execute/.test(k) && typeof v === "function") {
+            return (...args: unknown[]) => {
+              into.push(k);
+              return v.apply(t, args);
+            };
+          }
+          if (!k.startsWith("$") && v && typeof v === "object") {
+            return new Proxy(v, {
+              get(mt, mk, mr) {
+                const mv = Reflect.get(mt, mk, mr);
+                if (typeof mk === "string" && WRITE.test(mk) && typeof mv === "function") {
+                  return (...args: unknown[]) => {
+                    into.push(`${k}.${mk}`);
+                    return mv.apply(mt, args);
+                  };
+                }
+                return mv;
+              },
+            });
+          }
+          return v;
+        },
+      });
+    const origTx = prisma.tenantTransaction.bind(prisma);
+    const origForTenant = prisma.forTenant.bind(prisma);
+    const txSpy = jest
+      .spyOn(prisma, "tenantTransaction")
+      .mockImplementation(((fn: any, ...rest: any[]) =>
+        (origTx as any)((tx: any) => fn(record(inTx, tx)), ...rest)) as any);
+    const forTenantSpy = jest
+      .spyOn(prisma, "forTenant")
+      .mockImplementation((() => record(outer, origForTenant())) as any);
+    const baseSpies = ["update", "updateMany", "upsert", "create"].map((m) =>
+      jest.spyOn((prisma as any).product, m),
+    );
+    const rawSpy = jest.spyOn(prisma as any, "$executeRaw");
+    try {
+      const res = await inTenant(tenantId, () =>
+        categories.assignProducts(target.id, [a.id, b.id]),
+      );
+      expect(res).toMatchObject({ assigned: 2 });
+      const un = await inTenant(tenantId, () =>
+        categories.unassignProducts(target.id, [a.id, b.id]),
+      );
+      expect(un).toMatchObject({ unassigned: 2 });
+
+      // assign = category + isTobacco (no synced rows here); unassign = category + isTobacco.
+      expect(inTx.filter((w) => w === "product.updateMany")).toHaveLength(4);
+      // one transaction per call, and not one write outside it
+      expect(txSpy).toHaveBeenCalledTimes(2);
+      expect(outer).toEqual([]);
+      for (const s of baseSpies) expect(s).not.toHaveBeenCalled();
+      expect(rawSpy).not.toHaveBeenCalled();
+    } finally {
+      txSpy.mockRestore();
+      forTenantSpy.mockRestore();
+      for (const s of baseSpies) s.mockRestore();
+      rawSpy.mockRestore();
+    }
   }, 60_000);
 });
