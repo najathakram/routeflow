@@ -1227,11 +1227,13 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
           findUnique: txReturnFindUnique,
           updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         },
-        product: { update: jest.fn() },
+        // B562 PR-2: update() returns the written row — the reversing movement reads its counter.
+        product: { update: jest.fn().mockResolvedValue({ currentStock: 8, averageCost: 3 }) },
         // B665: cancel undoes exactly the RET-<id> movements receive() booked (in pieces)
         stockMovement: {
           findMany: jest.fn().mockResolvedValue([{ productId: "p1", quantity: 2 }]),
           deleteMany: jest.fn(),
+          create: jest.fn().mockResolvedValue({ id: "mv-rev" }),
         },
         returnParkedRestock: { deleteMany: jest.fn() },
         $executeRaw: jest.fn().mockResolvedValue(0),
@@ -1252,9 +1254,20 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
         where: { id: "p1" },
         data: { currentStock: { decrement: 2 } },
       });
-      expect(tx.stockMovement.deleteMany).toHaveBeenCalledWith({
-        where: { productId: "p1", reference: `RET-${id.slice(0, 8)}` },
+      // B562 PR-2 (SA-136 §2): nothing deletes a movement — one reversing RETURN row is APPENDED,
+      // same reference, stockAfter from the decrement's own result.
+      expect(tx.stockMovement.deleteMany).not.toHaveBeenCalled();
+      expect(tx.stockMovement.create).toHaveBeenCalledTimes(1);
+      const rev = tx.stockMovement.create.mock.calls[0][0].data;
+      expect(rev).toMatchObject({
+        productId: "p1",
+        type: "RETURN",
+        reference: `RET-${id.slice(0, 8)}`,
+        notes: "RETURN_CANCELLED",
+        stockAfter: 8,
+        performedById: "u1",
       });
+      expect(rev.quantity.toString()).toBe("-2");
       expect(ledger.unreverseReturnEntries).toHaveBeenCalledTimes(1);
       // The fresh read alone is still a TOCTOU: pin the FOR UPDATE row lock, and pin that
       // it ran BEFORE the fresh read, so deleting it turns this test red.
@@ -1277,7 +1290,11 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
           updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         },
         product: { update: jest.fn() },
-        stockMovement: { findMany: jest.fn().mockResolvedValue([]), deleteMany: jest.fn() },
+        stockMovement: {
+          findMany: jest.fn().mockResolvedValue([]),
+          deleteMany: jest.fn(),
+          create: jest.fn(),
+        },
         returnParkedRestock: { deleteMany: jest.fn() },
         $executeRaw: jest.fn().mockResolvedValue(0),
       };
@@ -1293,9 +1310,9 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
       await service.cancel(id, { sub: "u1", role: "OPERATOR" } as any);
 
       expect(tx.product.update).not.toHaveBeenCalled(); // restock:false — nothing to decrement
-      expect(tx.stockMovement.deleteMany).toHaveBeenCalledWith({
-        where: { productId: "p1", reference: `RET-${id.slice(0, 8)}` },
-      });
+      // B562 PR-2: no movement to undo → nothing appended, and nothing is ever deleted.
+      expect(tx.stockMovement.create).not.toHaveBeenCalled();
+      expect(tx.stockMovement.deleteMany).not.toHaveBeenCalled();
       expect(ledger.unreverseReturnEntries).toHaveBeenCalledTimes(1);
       expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
       expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(

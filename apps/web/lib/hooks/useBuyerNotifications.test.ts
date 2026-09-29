@@ -150,6 +150,36 @@ describe("useBuyerNotifications — order.statusChanged (B104, #2095)", () => {
   });
 });
 
+describe("useBuyerNotifications — route.progress (#2095 follow-up)", () => {
+  it("refreshes every order detail and its tracking card, silently", async () => {
+    const invalidate = jest.spyOn(client, "invalidateQueries");
+    const { result } = await mounted();
+    expect(fakeSocket.hasListener("route.progress")).toBe(true);
+
+    act(() => {
+      fakeSocket.emit("route.progress", { runId: "run-1" });
+    });
+
+    // A prefix match: every ["buyer", "order", id] and ["buyer", "order", id, "tracking"].
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["buyer", "order"] });
+    expect(result.current.notifications).toEqual([]);
+  });
+
+  it("does not subscribe to route.stop.completed (operators only; a buyer's own delivery is order.statusChanged)", async () => {
+    const { result } = await mounted();
+    expect(fakeSocket.hasListener("route.stop.completed")).toBe(false);
+
+    act(() => {
+      fakeSocket.emit("route.stop.completed", {
+        runId: "run-1",
+        stopId: "s-1",
+        customerId: "c-mine",
+      });
+    });
+    expect(result.current.notifications).toEqual([]);
+  });
+});
+
 describe("useBuyerNotifications — the socket's lifetime", () => {
   it("connects with a token getter, so a reconnect presents the current token", async () => {
     await mounted();

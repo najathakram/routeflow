@@ -69,12 +69,18 @@ const TABLE: Record<string, Row> = {
   ),
   // ── invoices / estimates / import (step 2b remainder) ──────────────────────────────────────
   [inv("create")]: G,
-  [inv("update")]: P("2b: invoice update"),
-  [inv("duplicate")]: P("2b: invoice duplicate"),
-  [inv("createSplitInvoices")]: P("2b: split invoices"),
+  [inv("update")]: G,
+  [inv("duplicate")]: G,
+  [inv("createSplitInvoices")]: X(
+    "owner ruling 2026-09-25 (#2093): SPLIT IS EXEMPT — quantity-neutral (siblings sum to the " +
+      "parent order, already checked when placed); flagged + audited via restricted-lines-flag.ts " +
+      "(pinned in invoices.service.spec.ts's F-05 #2093 describe), never blocked",
+  ),
   "estimates/estimates.service.ts::EstimatesService.convertToInvoice": G,
-  "import/import.service.ts::ImportService.importInvoices": P(
-    "ruling: historical invoice import (do bans apply to past sales?)",
+  "import/import.service.ts::ImportService.importInvoices": X(
+    "owner ruling 2026-09-25 (#2093): historical IMPORT IS EXEMPT — every row imports unchanged " +
+      "(history is never rewritten); flagged + audited via restricted-lines-flag.ts (pinned in " +
+      "import-invoices-restrictions.spec.ts), never blocked",
   ),
   [inv("applyPriceAdjustment")]: X("price only"),
   [inv("reconcileOrderDraftInvoice")]: X("mirrors the order's own goods (checked at the order)"),
@@ -90,7 +96,7 @@ const TABLE: Record<string, Row> = {
   // ── deletes elsewhere ──────────────────────────────────────────────────────────────────────
   [cust("deleteCustomer")]: X("customer purge"),
   [cust("deleteAllCustomers")]: X("customer purge"),
-  [cust("deleteImportedCustomers")]: X("customer purge"),
+  [cust("runImportedCustomersCleanup")]: X("customer purge"), // #2629: the kept body
   "products/products.service.ts::ProductsService.bulkDelete": X("product purge"),
   "system-config/settings.controller.ts::SettingsController.clearFinancialData":
     X("financial reset"),
@@ -113,9 +119,9 @@ const TABLE: Record<string, Row> = {
 };
 
 /** The RATCHET: how many rows are still PENDING. Lower it in the PR that flips a row to GUARDED. */
-const PENDING_BASELINE = 4;
+const PENDING_BASELINE = 0; // was 2: createSplitInvoices + importInvoices both EXEMPT with written reasons (F-05 #2093 split/import PR)
 /** GUARDED + PENDING: reclassifying a PENDING row to EXEMPT (an escape, not progress) must change THIS. */
-const ENFORCEMENT_POINTS = 12; // -2 (#2093): completeWithPayment and reopenStop EXEMPT with written reasons; -2 more: merge and consolidate EXEMPT (merge-and-warn, SA-255)
+const ENFORCEMENT_POINTS = 10; // -2 (#2093 split/import EXEMPT, this PR); prior -2 (completeWithPayment/reopenStop) + -2 (merge/consolidate, SA-255)
 const CHOKE_POINT = ["assertLinesSellable", "checkLinesSellable"];
 
 // ─── scanner (same rules as orders/unit-line-writers.ast.spec.ts; exercised on inline source) ──

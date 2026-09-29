@@ -49,7 +49,8 @@ import {
   type CreditLimitExceededInfo,
 } from "../../../../lib/credit-limit-error";
 import { parseSellingRestricted } from "../../../../lib/selling-restricted";
-import type { BlockedLine } from "@routeflow/types";
+import { postDeliveryInvoicePrompt, type BlockedLine } from "@routeflow/types";
+import { useOfflineQueue } from "../../../../store/offlineQueue";
 import { alertInfo, confirm } from "../../../../lib/confirm";
 import { invoiceLineQtyText } from "@routeflow/pricing";
 import { invoiceLineUnitNoun, usesUnitDisplay } from "../../../../lib/invoice-line-display";
@@ -68,6 +69,7 @@ import { SendInvoiceSheet } from "../../../../components/SendInvoiceSheet";
 import { ReasonSheet } from "../../../../components/ReasonSheet";
 import { canDeleteOrder, demotionRequiresReason } from "../../../../lib/order-status-flow";
 import { statusActions, type StatusAction } from "../../../../lib/order-actions";
+import { useRecordReturn } from "../../../../hooks/useRecordReturn";
 
 function formatCurrency(n: number | string | undefined): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
@@ -102,6 +104,12 @@ export default function OrderDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: order, isLoading, isError, refetch } = useAdminOrder(id ?? "");
+  // #2420: before any early return (rules of hooks) — null until the add-on resolves allowed.
+  const recordReturn = useRecordReturn({
+    customerId: order?.customerId ?? order?.customer?.id,
+    orderId: order?.id,
+    customerName: order?.customer?.businessName,
+  });
   // `order_ui_v2` (dark): card rows instead of the legacy item row.
   const orderUiV2 = useOrderUiV2();
   const changeMut = useChangeOrderStatus();
@@ -122,7 +130,14 @@ export default function OrderDetailScreen() {
     invoiceId: string;
     invoiceNumber: string;
     totalFmt: string;
+    // #2089: threads postDeliveryInvoicePrompt's "issue-and-send" outcome into
+    // the sheet's copy — see SendInvoiceSheet's own issuePrompt doc.
+    issuePrompt: boolean;
   } | null>(null);
+  // #2089: the ONE offline signal (store/offlineQueue.ts, fed by the app's
+  // NetInfo listener) — postDeliveryInvoicePrompt checks it before ever
+  // attempting the createInvoiceMut network call below.
+  const isOnline = useOfflineQueue((s) => s.isOnline);
   // WhatsApp (file-share mode) and Share PDF each run their own prepare →
   // (maybe) tap-again → share dance against ACTIVATION_BUDGET_MS — see
   // share-pdf.ts. The ref holds the already-prepared sharePdf() args so a
@@ -203,11 +218,28 @@ export default function OrderDetailScreen() {
    * the first; the rest are reachable from the Invoices list.
    */
   const openSendForOrder = () => {
+    // #2089 (owner ruling): "automatically open the invoice, then ask if you
+    // want to send it" — offline is checked FIRST and unconditionally
+    // (postDeliveryInvoicePrompt's own contract), before the network call
+    // below, since a dropped connection right after delivery must read as
+    // "try again once synced," never as "no invoice."
+    if (postDeliveryInvoicePrompt({ invoice: undefined, online: isOnline }) === "offline-later") {
+      showToast("Invoice will be ready to send once you're back online.");
+      return;
+    }
     createInvoiceMut.mutate(order.id, {
       onSuccess: (invoices) => {
         const inv = invoices[0];
-        if (!inv) {
-          showToast("Invoice created — open it from Invoices to send.");
+        // #2089: same shared decision as web/driver — a DRAFT invoice still
+        // gets the prompt (sendEmail issues DRAFT → SENT atomically on send,
+        // so "issue and send" is one action, not two); only VOID/no-invoice
+        // skips silently.
+        const outcome = postDeliveryInvoicePrompt({
+          invoice: inv ? { status: inv.status } : null,
+          online: true,
+        });
+        if (outcome === "skip" || outcome === "offline-later") {
+          if (!inv) showToast("Invoice created — open it from Invoices to send.");
           return;
         }
         // Reset any leftover share phase/cache from a previous open — a
@@ -220,6 +252,7 @@ export default function OrderDetailScreen() {
           invoiceId: inv.id,
           invoiceNumber: inv.invoiceNumber,
           totalFmt: formatCurrency(inv.total),
+          issuePrompt: outcome === "issue-and-send",
         });
       },
       onError: (e) => toastError(e, "Couldn't prepare the invoice. Create it from Invoices."),
@@ -958,6 +991,18 @@ export default function OrderDetailScreen() {
           <View style={styles.card}>
             <Text style={styles.cardTitle}>More</Text>
             <View style={styles.actionsCol}>
+              {/* #2420: Record return — web's RecordReturnAction twin. Any order status (never
+                  gated on it); hidden without the orders_inline_returns add-on. */}
+              {recordReturn ? (
+                <Pressable
+                  style={[styles.actionBtn, styles.secondaryAction]}
+                  onPress={recordReturn}
+                  accessibilityRole="button"
+                >
+                  <Ionicons name="return-down-back-outline" size={18} color={ios.brand} />
+                  <Text style={styles.actionBtnText}>Record return</Text>
+                </Pressable>
+              ) : null}
               {/* Split into multiple invoices — available once the order has items
                   and isn't a draft / cancelled. The screen prevents over-invoicing via
                   OrderItem.invoicedQty. */}
@@ -1061,6 +1106,7 @@ export default function OrderDetailScreen() {
         openPdfPending={openPdfPending}
         onMarkAsSent={handleMarkAsSent}
         markingSent={markingSent}
+        issuePrompt={sendSheet?.issuePrompt}
       />
 
       <ReasonSheet

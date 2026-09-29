@@ -1,4 +1,9 @@
-import { computeLineSubtotal, formatQtySplit, normalizeBoxesPieces } from "@routeflow/pricing";
+import {
+  computeLineSubtotal,
+  formatQtySplit,
+  invoiceLineQtyText,
+  normalizeBoxesPieces,
+} from "@routeflow/pricing";
 import { freeUnitsLabel } from "./buyer-cart-logic";
 
 /**
@@ -209,11 +214,16 @@ export function orderLineCardModel(li: LineInput, orderStatus: string): OrderLin
   // The box-level noun is the line's own unit when it has one (a 3-Case line reads "3 Cases", not
   // "3 boxes"); `formatQtySplit` does the naming and pluralising — nothing is mirrored here.
   const boxLabel = li.unitLabel?.trim() || null;
+  // #2049: a factor-1 units_v1 line (no boxes/pieces split) still carries its own unitLabel
+  // ("5 Piece") — route it through the shared formatter instead of a bare "5", the same fix
+  // #2046 applied to this screen's other qty cells (B757/#1275) — never a third copy.
   const qtyPriceLine = boxed
     ? `${formatQtySplit({ qty, boxes: li.boxes, pieces: li.pieces, boxLabel })} · ${money(unitPrice)} / ${boxLabel ?? "box"} of ${upb}`
     : hasSplit
       ? `${formatQtySplit({ qty, boxes: li.boxes, pieces: li.pieces, boxLabel })} × ${money(unitPrice)}`
-      : `${formatQtySplit({ qty })} × ${money(unitPrice)}`;
+      : // invoiceLineQtyText falls back to formatQtySplit(qty) byte-identical when unitLabel is
+        // empty, so this is safe unconditionally — a factor-1 unit line just gains its label.
+        `${invoiceLineQtyText({ qty, boxes: li.boxes, pieces: li.pieces, unitLabel: li.unitLabel })} × ${money(unitPrice)}`;
 
   const cancelled = li.status === "CANCELLED";
   const total =
@@ -257,8 +267,12 @@ export function orderLineCardModel(li: LineInput, orderStatus: string): OrderLin
       ? formatQtySplit({ ...normalizeBoxesPieces({ qty: n, unitsPerBox: upb }), boxLabel })
       : formatQtySplit({ qty: n });
   const delivered = li.deliveredQty == null ? null : Number(li.deliveredQty);
+  // B669 (#1702): a CANCELLED line owes nothing — "0 of 8 delivered" beside it reads as a shortfall.
   const deliveryText =
-    DELIVERY_PROGRESS_STATUSES.has(orderStatus) && delivered != null && delivered < qty
+    DELIVERY_PROGRESS_STATUSES.has(orderStatus) &&
+    !cancelled &&
+    delivered != null &&
+    delivered < qty
       ? `${qtyText(delivered)} of ${qtyText(qty)} delivered`
       : null;
   const tagText = tag ? `${tag.label} price` : null;

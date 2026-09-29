@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { connectSocket, disconnectSocket } from "../socket";
 import {
   buyerNotificationsKey,
+  buyerRefreshTokens,
   getBuyerAccessToken,
   getStoredActiveSeller,
   getStoredBuyerId,
@@ -58,6 +59,8 @@ function saveToStorage(key: string | null, notifications: BuyerNotification[]) {
  *   seller's own list.
  */
 export function useBuyerNotifications(sellerTenantId?: string | null) {
+  // #2167: the socket's token expired and could not be refreshed, so live updates have stopped.
+  const [sessionExpired, setSessionExpired] = React.useState(false);
   const qc = useQueryClient();
   const tenantId =
     sellerTenantId === undefined ? (getStoredActiveSeller()?.tenant?.id ?? null) : sellerTenantId;
@@ -116,7 +119,14 @@ export function useBuyerNotifications(sellerTenantId?: string | null) {
 
     // The getter, not the token: every reconnect presents the CURRENT buyer token (the buyer
     // client refreshes it on a 401), so a dropped socket does not come back on an expired one.
-    const socket = connectSocket(getBuyerAccessToken);
+    // #2167: the server disconnects a socket whose token expired, and socket.io does not retry
+    // after that. `recovery` refreshes through the buyer refresh flow and reconnects; when the
+    // refresh fails the portal shows the expired state instead of failing silently.
+    setSessionExpired(false);
+    const socket = connectSocket(getBuyerAccessToken, {
+      refresh: async () => (await buyerRefreshTokens()) !== null,
+      onSessionExpired: () => setSessionExpired(true),
+    });
 
     // B104: the server joins a buyer's socket to the rooms of EVERY seller it is linked to, so an
     // event may belong to another seller than the portal on screen. Caches are keyed by ids and
@@ -177,23 +187,22 @@ export function useBuyerNotifications(sellerTenantId?: string | null) {
       });
     };
 
-    const onStopCompleted = (data: { orderId?: string }) =>
-      push({
-        type: "delivery",
-        title: "Delivery update",
-        description: "Items from your order have been delivered",
-      });
+    // #2095: the run carrying a delivery moved (the payload is `{ runId }` only). Refetch every
+    // order detail and its "Track your delivery" card; silent — no bell entry. A buyer's own
+    // delivery arrives as order.statusChanged, so `route.stop.completed` (operators only) is not
+    // subscribed here.
+    const onRouteProgress = () => qc.invalidateQueries({ queryKey: ["buyer", "order"] });
 
     socket.on("order.statusChanged", onOrderStatusChanged);
     socket.on("invoice.updated", onInvoiceUpdated);
     socket.on("creditNote.created", onCreditNoteCreated);
-    socket.on("route.stop.completed", onStopCompleted);
+    socket.on("route.progress", onRouteProgress);
 
     return () => {
       socket.off("order.statusChanged", onOrderStatusChanged);
       socket.off("invoice.updated", onInvoiceUpdated);
       socket.off("creditNote.created", onCreditNoteCreated);
-      socket.off("route.stop.completed", onStopCompleted);
+      socket.off("route.progress", onRouteProgress);
       // The socket is this portal's: leaving it (or logging out) closes it, so a later staff
       // session in the same tab never inherits a buyer-authenticated connection (the shared
       // connectSocket returns any live socket as-is). Mirrors useRealtimeUpdates' cleanup.
@@ -219,5 +228,5 @@ export function useBuyerNotifications(sellerTenantId?: string | null) {
     });
   }, []);
 
-  return { notifications, unreadCount, markAllRead, clearAll, push };
+  return { notifications, unreadCount, markAllRead, clearAll, push, sessionExpired };
 }

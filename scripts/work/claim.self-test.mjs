@@ -6,6 +6,7 @@
 //
 // Run: node scripts/work/claim.self-test.mjs
 import { canClaim, issueHoldsLane } from "./claim.mjs";
+import { readFileSync as readPkgFile } from "node:fs";
 
 let failures = 0;
 function check(name, got, want) {
@@ -82,6 +83,19 @@ function check(name, got, want) {
 }
 
 // ── result ────────────────────────────────────────────────────────────────
+// ── VERIFY-PIN (#2285): `npm run verify` runs this self-test ──────────────────
+// Unwired, this file protects nothing (found orphaned in the #2273 sweep), so it pins its own
+// place in the root verify chain, the same pattern as the F-22 self-tests' T10v/T17v (#2283).
+{
+  const pkg = JSON.parse(readPkgFile(new URL("../../package.json", import.meta.url), "utf8"));
+  const verify = typeof pkg.scripts?.verify === "string" ? pkg.scripts.verify : "";
+  check(
+    "VERIFY-PIN: verify chain runs scripts/work/claim.self-test.mjs",
+    verify.split("&&").some((step) => step.trim() === "node scripts/work/claim.self-test.mjs"),
+    true,
+  );
+}
+
 console.log(
   failures === 0 ? `\nclaim.self-test: ALL GREEN` : `\nclaim.self-test: ${failures} FAILURE(S)`,
 );

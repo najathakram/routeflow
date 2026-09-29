@@ -29,6 +29,7 @@ import {
   ChangeRequestResolveAction,
   ResolveChangeRequestDto,
 } from "./dto/resolve-change-request.dto";
+import { assertDriverMayEditOrder, underOrderLockForDriver } from "./driver-edit-access";
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
@@ -279,6 +280,11 @@ export class ChangeRequestsService {
   }
 
   async resolve(orderId: string, crId: string, dto: ResolveChangeRequestDto, user: JwtPayload) {
+    // SA-434: a DRIVER may resolve only on an order of their own IN_PROGRESS run with a PENDING or
+    // IN_PROGRESS stop (the SA-429 predicate, the order's own stop chain) — FIRST, before the change
+    // request and order reads, so an unassigned driver learns nothing. Re-derived under the Order
+    // lock at every claim below.
+    await assertDriverMayEditOrder(this.prisma.forTenant(), orderId, user);
     const cr = await this.prisma
       .forTenant()
       .changeRequest.findFirst({ where: { id: crId, orderId } });
@@ -289,17 +295,9 @@ export class ChangeRequestsService {
     });
     if (!order) throw new NotFoundException("Order not found");
 
-    // G6 authority: a DRIVER may resolve only if they are the run's assigned
-    // driver (driver-at-stop). Operators/TENANT_ADMIN act as "the office" and
-    // may resolve only while PENDING — which the atomic claim enforces anyway.
-    if (user.role === UserRole.DRIVER) {
-      const driver = await this.prisma
-        .forTenant()
-        .driver.findFirst({ where: { userId: user.sub } });
-      if (!driver || order.routeRun?.driverId !== driver.id) {
-        throw new ForbiddenException("Only the run's assigned driver can resolve at the stop");
-      }
-    }
+    // G6 authority: the DRIVER check is SA-434's predicate above (it replaced the order-level
+    // routeRun.driverId compare, which read no run or stop status). Operators/TENANT_ADMIN act as
+    // "the office" and may resolve only while PENDING — which the atomic claim enforces anyway.
     // Fast-path (the atomic claim in each branch remains authoritative).
     if (cr.status !== ChangeRequestStatus.PENDING) {
       throw new ConflictException({ code: "CHANGE_REQUEST_ALREADY_RESOLVED", status: cr.status });
@@ -328,18 +326,21 @@ export class ChangeRequestsService {
   /** Decline — atomic claim (G6 first-resolution-wins), then notify with reason. */
   private async decline(cr: any, order: any, reason: string | undefined, user: JwtPayload) {
     if (!reason?.trim()) throw new BadRequestException("A decline reason is required");
-    const claimed = await this.prisma.forTenant().changeRequest.updateMany({
-      where: { id: cr.id, status: ChangeRequestStatus.PENDING },
-      data: {
-        status: ChangeRequestStatus.DECLINED,
-        resolution: "DECLINED",
-        resolutionReason: reason.trim(),
-        resolvedById: user.sub || null,
-        resolvedByName: user.username || null,
-        resolvedByRole: user.role ?? null,
-        resolvedAt: new Date(),
-      },
-    });
+    // SA-434: claimed under the Order lock with the driver predicate re-derived (CAS on PENDING).
+    const claimed = await underOrderLockForDriver(this.prisma, order.id, user, (tx) =>
+      tx.changeRequest.updateMany({
+        where: { id: cr.id, status: ChangeRequestStatus.PENDING },
+        data: {
+          status: ChangeRequestStatus.DECLINED,
+          resolution: "DECLINED",
+          resolutionReason: reason.trim(),
+          resolvedById: user.sub || null,
+          resolvedByName: user.username || null,
+          resolvedByRole: user.role ?? null,
+          resolvedAt: new Date(),
+        },
+      }),
+    );
     if (claimed.count !== 1) {
       throw new ConflictException({ code: "CHANGE_REQUEST_ALREADY_RESOLVED" });
     }
@@ -515,6 +516,8 @@ export class ChangeRequestsService {
     // splits at the SOURCE pack and bills at the SOURCE's agreed price instead of re-splitting at the live pack
     // and re-quoting; the subtotal is derived from that pack and price by computeLineSubtotal. An ADD_ITEM has no
     // source line: create() re-splits its filed split against the LIVE pack and prices it today (a new sale).
+    // SA-434a: a locked re-derive BEFORE the draft is created, so a refused driver writes nothing.
+    await underOrderLockForDriver(this.prisma, order.id, user, async () => undefined);
     const draft = await this.ordersService.create(
       {
         items: [{ productId, qty, ...(boxes != null ? { boxes, pieces } : {}) }],
@@ -554,20 +557,23 @@ export class ChangeRequestsService {
         draft.id,
         Number(draft.total),
       );
-      // G6 atomic claim — first resolution wins and locks.
-      const claimed = await this.prisma.forTenant().changeRequest.updateMany({
-        where: { id: cr.id, status: ChangeRequestStatus.PENDING },
-        data: {
-          status: ChangeRequestStatus.APPROVED,
-          resolution: "NEXT_DELIVERY",
-          resolutionReason: reason ?? null,
-          nextOrderId: draft.id,
-          resolvedById: user.sub || null,
-          resolvedByName: user.username || null,
-          resolvedByRole: user.role ?? null,
-          resolvedAt: new Date(),
-        },
-      });
+      // G6 atomic claim — first resolution wins and locks. SA-434a: under the Order lock with the
+      // driver predicate re-derived; a 403 or the 409 both fall to the compensation below.
+      const claimed = await underOrderLockForDriver(this.prisma, order.id, user, (tx) =>
+        tx.changeRequest.updateMany({
+          where: { id: cr.id, status: ChangeRequestStatus.PENDING },
+          data: {
+            status: ChangeRequestStatus.APPROVED,
+            resolution: "NEXT_DELIVERY",
+            resolutionReason: reason ?? null,
+            nextOrderId: draft.id,
+            resolvedById: user.sub || null,
+            resolvedByName: user.username || null,
+            resolvedByRole: user.role ?? null,
+            resolvedAt: new Date(),
+          },
+        }),
+      );
       if (claimed.count !== 1) {
         throw new ConflictException({ code: "CHANGE_REQUEST_ALREADY_RESOLVED" });
       }

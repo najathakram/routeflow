@@ -215,7 +215,7 @@ function StatTile({
 }) {
   const content = (
     <>
-      <span className="overline block">{label}</span>
+      <span className="eyebrow-label block">{label}</span>
       <span
         className={cn(
           "mt-1.5 block text-2xl text-navy",
@@ -563,7 +563,12 @@ export default function InvoicesPage() {
         subtitle="Track receivables — what's outstanding, due soon, and overdue across your customers."
         action={
           !isCustomer ? (
-            <div className="flex items-center gap-2">
+            // B770: overflowed at 390px (New Invoice off-screen) because PageHeader's own
+            // action wrapper (shrink-0, no max-w-full) never actually shrank enough for THIS
+            // flex-wrap to trigger — fixed at the PageHeader level too
+            // (packages/ui/src/web/PageHeader.tsx), this row's own wrap is still needed so
+            // the content itself has somewhere to go once it can.
+            <div className="flex flex-wrap items-center justify-end gap-2">
               <Button
                 variant="secondary"
                 size="sm"
@@ -668,7 +673,7 @@ export default function InvoicesPage() {
             value={dateFrom}
             onChange={(e) => setFilter("dateFrom", e.target.value)}
             max={dateTo || undefined}
-            className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Issue date from"
           />
           <span className="text-navy/70">–</span>
@@ -677,7 +682,7 @@ export default function InvoicesPage() {
             value={dateTo}
             min={dateFrom || undefined}
             onChange={(e) => setFilter("dateTo", e.target.value)}
-            className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Issue date to"
           />
           {(dateFrom || dateTo) && (
@@ -692,253 +697,261 @@ export default function InvoicesPage() {
         </div>
       </div>
 
-      {/* Table */}
+      {/* Table — B750: the bare table clipped (overflow-hidden) instead of scrolling at 390px;
+          an inner overflow-x-auto lets it scroll horizontally while the outer div keeps the
+          rounded-corner clip, same pattern as the orders list table. */}
       <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
-        <table className="w-full text-sm">
-          <thead className="border-b border-surface-border bg-gray-50">
-            <tr>
-              <th
-                className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
-                onClick={() => toggleSort("issueDate")}
-              >
-                Date <SortIcon col="issueDate" />
-              </th>
-              <th
-                className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
-                onClick={() => toggleSort("invoiceNumber")}
-              >
-                Invoice # <SortIcon col="invoiceNumber" />
-              </th>
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70">
-                Customer Name
-              </th>
-              <th
-                className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
-                onClick={() => toggleSort("status")}
-              >
-                Status <SortIcon col="status" />
-              </th>
-              <th
-                className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
-                onClick={() => toggleSort("dueDate")}
-              >
-                Due Date <SortIcon col="dueDate" />
-              </th>
-              <th
-                className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
-                onClick={() => toggleSort("total")}
-              >
-                Amount <SortIcon col="total" />
-              </th>
-              <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/70">
-                Balance Due
-              </th>
-              <th className="w-20 px-3 py-3" />
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-surface-border bg-white">
-            {isLoading ? (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="border-b border-surface-border bg-gray-50">
               <tr>
-                <td colSpan={8} className="px-4 py-12 text-center">
-                  <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/70" />
-                </td>
+                <th
+                  className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                  onClick={() => toggleSort("issueDate")}
+                >
+                  Date <SortIcon col="issueDate" />
+                </th>
+                <th
+                  className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                  onClick={() => toggleSort("invoiceNumber")}
+                >
+                  Invoice # <SortIcon col="invoiceNumber" />
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70">
+                  Customer Name
+                </th>
+                <th
+                  className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                  onClick={() => toggleSort("status")}
+                >
+                  Status <SortIcon col="status" />
+                </th>
+                <th
+                  className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                  onClick={() => toggleSort("dueDate")}
+                >
+                  Due Date <SortIcon col="dueDate" />
+                </th>
+                <th
+                  className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                  onClick={() => toggleSort("total")}
+                >
+                  Amount <SortIcon col="total" />
+                </th>
+                <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/70">
+                  Balance Due
+                </th>
+                <th className="w-20 px-3 py-3" />
               </tr>
-            ) : isError ? (
-              <tr>
-                <td colSpan={8} className="px-4 py-12 text-center text-sm text-danger">
-                  Failed to load invoices. Please try again.
-                </td>
-              </tr>
-            ) : invoices.length === 0 ? (
-              <tr>
-                <td colSpan={8} className="p-0">
-                  {search || statusFilter || dateFrom || dateTo || dueFrom || dueTo ? (
-                    <EmptyState
-                      variant="invoices"
-                      title="No matching invoices"
-                      description="No invoices match your current search and filters."
-                      action={
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => {
-                            setSearch("");
-                            setFilters({
-                              status: "",
-                              dateFrom: "",
-                              dateTo: "",
-                              dueFrom: "",
-                              dueTo: "",
-                            });
-                          }}
-                        >
-                          Clear filters
-                        </Button>
-                      }
-                    />
-                  ) : (
-                    <EmptyState
-                      variant="invoices"
-                      title="No invoices yet"
-                      description="Create an invoice to bill a customer and start tracking receivables."
-                      action={
-                        <Button size="sm" onClick={() => router.push("/invoices/new")}>
-                          New Invoice
-                        </Button>
-                      }
-                    />
-                  )}
-                </td>
-              </tr>
-            ) : (
-              invoices.map((inv: Invoice) => {
-                const balance = resolveInvoiceListBalance(inv);
-                return (
-                  <tr
-                    key={inv.id}
-                    onClick={() => router.push(`/invoices/${inv.id}`)}
-                    className="group cursor-pointer transition-colors hover:bg-blue-50/40"
-                  >
-                    <td className="px-4 py-3 text-sm text-navy">
-                      {fmtCalendarDate((inv as any).issueDate ?? inv.createdAt)}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-col gap-0.5">
-                        <span className="font-mono text-xs font-semibold text-brand-500">
-                          {inv.invoiceNumber}
-                        </span>
+            </thead>
+            <tbody className="divide-y divide-surface-border bg-white">
+              {isLoading ? (
+                <tr>
+                  <td colSpan={8} className="px-4 py-12 text-center">
+                    <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/70" />
+                  </td>
+                </tr>
+              ) : isError ? (
+                <tr>
+                  <td colSpan={8} className="px-4 py-12 text-center text-sm text-danger">
+                    Failed to load invoices. Please try again.
+                  </td>
+                </tr>
+              ) : invoices.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="p-0">
+                    {search || statusFilter || dateFrom || dateTo || dueFrom || dueTo ? (
+                      <EmptyState
+                        variant="invoices"
+                        title="No matching invoices"
+                        description="No invoices match your current search and filters."
+                        action={
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => {
+                              setSearch("");
+                              setFilters({
+                                status: "",
+                                dateFrom: "",
+                                dateTo: "",
+                                dueFrom: "",
+                                dueTo: "",
+                              });
+                            }}
+                          >
+                            Clear filters
+                          </Button>
+                        }
+                      />
+                    ) : (
+                      <EmptyState
+                        variant="invoices"
+                        title="No invoices yet"
+                        description="Create an invoice to bill a customer and start tracking receivables."
+                        action={
+                          <Button size="sm" onClick={() => router.push("/invoices/new")}>
+                            New Invoice
+                          </Button>
+                        }
+                      />
+                    )}
+                  </td>
+                </tr>
+              ) : (
+                invoices.map((inv: Invoice) => {
+                  const balance = resolveInvoiceListBalance(inv);
+                  return (
+                    <tr
+                      key={inv.id}
+                      onClick={() => router.push(`/invoices/${inv.id}`)}
+                      className="group cursor-pointer transition-colors hover:bg-blue-50/40"
+                    >
+                      <td className="px-4 py-3 text-sm text-navy">
+                        {fmtCalendarDate((inv as any).issueDate ?? inv.createdAt)}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-col gap-0.5">
+                          <span className="font-mono text-xs font-semibold text-brand-500">
+                            {inv.invoiceNumber}
+                          </span>
+                          <span
+                            className={cn(
+                              "inline-flex w-fit items-center rounded-full px-1.5 py-px text-[10px] font-medium leading-tight",
+                              (inv as any).orderId
+                                ? "bg-brand-50 text-brand-600"
+                                : "bg-surface-raised text-navy/70",
+                            )}
+                          >
+                            {(inv as any).orderId ? "From Order" : "Manual"}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 font-medium text-navy">
+                        {inv.customer?.businessName ?? "—"}
+                      </td>
+                      <td className="px-4 py-3">{renderStatus(inv.status, inv.dueDate)}</td>
+                      <td className="px-4 py-3 text-sm text-navy">
+                        {fmtCalendarDate(inv.dueDate)}
+                      </td>
+                      <td className="px-4 py-3 text-right text-sm font-medium text-navy">
+                        {fmt(Number(inv.total))}
+                      </td>
+                      <td className="px-4 py-3 text-right">
                         <span
                           className={cn(
-                            "inline-flex w-fit items-center rounded-full px-1.5 py-px text-[10px] font-medium leading-tight",
-                            (inv as any).orderId
-                              ? "bg-brand-50 text-brand-600"
-                              : "bg-surface-raised text-navy/70",
+                            "text-sm font-semibold",
+                            balance > 0 ? "text-danger" : "text-navy",
                           )}
                         >
-                          {(inv as any).orderId ? "From Order" : "Manual"}
+                          {fmt(balance)}
                         </span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 font-medium text-navy">
-                      {inv.customer?.businessName ?? "—"}
-                    </td>
-                    <td className="px-4 py-3">{renderStatus(inv.status, inv.dueDate)}</td>
-                    <td className="px-4 py-3 text-sm text-navy">{fmtCalendarDate(inv.dueDate)}</td>
-                    <td className="px-4 py-3 text-right text-sm font-medium text-navy">
-                      {fmt(Number(inv.total))}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <span
-                        className={cn(
-                          "text-sm font-semibold",
-                          balance > 0 ? "text-danger" : "text-navy",
-                        )}
-                      >
-                        {fmt(balance)}
-                      </span>
-                    </td>
-                    <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
-                      {!isCustomer && confirmDeleteId === inv.id ? (
-                        <div className="flex items-center gap-1">
-                          <button
-                            title="Confirm delete"
-                            disabled={deleteInvoice.isPending}
-                            onClick={async () => {
-                              try {
-                                await deleteInvoice.mutateAsync(inv.id);
-                                setConfirmDeleteId(null);
-                                toast({ title: "Invoice deleted", variant: "success" });
-                              } catch (err: any) {
-                                setConfirmDeleteId(null);
-                                toast({
-                                  title: "Delete failed",
-                                  description:
-                                    err?.response?.data?.message ?? err?.message ?? "Unknown error",
-                                  variant: "error",
-                                });
-                              }
-                            }}
-                            className="rounded px-2 py-1 text-xs font-semibold text-white bg-danger hover:bg-danger/80 disabled:opacity-50 transition-colors"
-                          >
-                            {deleteInvoice.isPending ? (
-                              <Loader2 className="h-3 w-3 animate-spin" />
-                            ) : (
-                              "Delete"
-                            )}
-                          </button>
-                          <button
-                            title="Cancel"
-                            onClick={() => setConfirmDeleteId(null)}
-                            className="rounded p-1 text-navy/70 hover:text-navy transition-colors"
-                          >
-                            <X className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-0.5">
-                          <button
-                            title="View invoice"
-                            onClick={() => router.push(`/invoices/${inv.id}`)}
-                            className="rounded p-1.5 text-navy/70 hover:bg-white hover:text-navy transition-colors"
-                          >
-                            <Eye className="h-4 w-4" />
-                          </button>
-                          <button
-                            title="Print invoice"
-                            aria-label={`Print invoice ${inv.invoiceNumber}`}
-                            disabled={printingIds.has(inv.id)}
-                            onClick={async () => {
-                              if (printingIds.has(inv.id)) return;
-                              setPrintingIds((prev) => new Set(prev).add(inv.id));
-                              try {
-                                // mutateAsync (not mutate + per-call options) — TanStack
-                                // Query v5's useMutation is ONE shared observer, so
-                                // per-call onSuccess/onError/onSettled on a concurrent
-                                // .mutate() would be overwritten by whichever row calls
-                                // it last, silently dropping every other row's print,
-                                // error toast and spinner clear (review finding F1).
-                                const { blob } = await downloadPdf.mutateAsync(inv.id);
-                                printPdfBlob(blob);
-                              } catch {
-                                toast({
-                                  title: "Failed to generate PDF",
-                                  description: "Please try again.",
-                                  variant: "error",
-                                });
-                              } finally {
-                                setPrintingIds((prev) => {
-                                  const next = new Set(prev);
-                                  next.delete(inv.id);
-                                  return next;
-                                });
-                              }
-                            }}
-                            className="rounded p-1.5 text-navy/70 hover:bg-white hover:text-navy transition-colors disabled:opacity-50"
-                          >
-                            {printingIds.has(inv.id) ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <Printer className="h-4 w-4" />
-                            )}
-                          </button>
-                          {!isCustomer && inv.status === "DRAFT" && (
+                      </td>
+                      <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                        {!isCustomer && confirmDeleteId === inv.id ? (
+                          <div className="flex items-center gap-1">
                             <button
-                              title="Delete invoice"
-                              onClick={() => setConfirmDeleteId(inv.id)}
-                              className="rounded p-1.5 text-navy/70 hover:bg-white hover:text-danger transition-colors"
+                              title="Confirm delete"
+                              disabled={deleteInvoice.isPending}
+                              onClick={async () => {
+                                try {
+                                  await deleteInvoice.mutateAsync(inv.id);
+                                  setConfirmDeleteId(null);
+                                  toast({ title: "Invoice deleted", variant: "success" });
+                                } catch (err: any) {
+                                  setConfirmDeleteId(null);
+                                  toast({
+                                    title: "Delete failed",
+                                    description:
+                                      err?.response?.data?.message ??
+                                      err?.message ??
+                                      "Unknown error",
+                                    variant: "error",
+                                  });
+                                }
+                              }}
+                              className="rounded px-2 py-1 text-xs font-semibold text-white bg-danger hover:bg-danger/80 disabled:opacity-50 transition-colors"
                             >
-                              <Trash2 className="h-4 w-4" />
+                              {deleteInvoice.isPending ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                "Delete"
+                              )}
                             </button>
-                          )}
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
+                            <button
+                              title="Cancel"
+                              onClick={() => setConfirmDeleteId(null)}
+                              className="rounded p-1 text-navy/70 hover:text-navy transition-colors"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-0.5">
+                            <button
+                              title="View invoice"
+                              onClick={() => router.push(`/invoices/${inv.id}`)}
+                              className="rounded p-1.5 text-navy/70 hover:bg-white hover:text-navy transition-colors"
+                            >
+                              <Eye className="h-4 w-4" />
+                            </button>
+                            <button
+                              title="Print invoice"
+                              aria-label={`Print invoice ${inv.invoiceNumber}`}
+                              disabled={printingIds.has(inv.id)}
+                              onClick={async () => {
+                                if (printingIds.has(inv.id)) return;
+                                setPrintingIds((prev) => new Set(prev).add(inv.id));
+                                try {
+                                  // mutateAsync (not mutate + per-call options) — TanStack
+                                  // Query v5's useMutation is ONE shared observer, so
+                                  // per-call onSuccess/onError/onSettled on a concurrent
+                                  // .mutate() would be overwritten by whichever row calls
+                                  // it last, silently dropping every other row's print,
+                                  // error toast and spinner clear (review finding F1).
+                                  const { blob } = await downloadPdf.mutateAsync(inv.id);
+                                  printPdfBlob(blob);
+                                } catch {
+                                  toast({
+                                    title: "Failed to generate PDF",
+                                    description: "Please try again.",
+                                    variant: "error",
+                                  });
+                                } finally {
+                                  setPrintingIds((prev) => {
+                                    const next = new Set(prev);
+                                    next.delete(inv.id);
+                                    return next;
+                                  });
+                                }
+                              }}
+                              className="rounded p-1.5 text-navy/70 hover:bg-white hover:text-navy transition-colors disabled:opacity-50"
+                            >
+                              {printingIds.has(inv.id) ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Printer className="h-4 w-4" />
+                              )}
+                            </button>
+                            {!isCustomer && inv.status === "DRAFT" && (
+                              <button
+                                title="Delete invoice"
+                                onClick={() => setConfirmDeleteId(inv.id)}
+                                className="rounded p-1.5 text-navy/70 hover:bg-white hover:text-danger transition-colors"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Pagination */}

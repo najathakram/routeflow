@@ -30,11 +30,11 @@ export function OrderLineItemsTable({
       <table className="w-full text-sm">
         <thead className="border-b border-surface-border bg-surface-raised">
           <tr>
-            <th className="overline px-6 py-2.5 text-left">Product</th>
-            <th className="overline px-4 py-2.5 text-right">Qty</th>
-            <th className="overline px-4 py-2.5 text-right">Unit Price</th>
-            <th className="overline px-4 py-2.5 text-right">Line Total</th>
-            <th className="overline px-6 py-2.5 text-left">Status</th>
+            <th className="eyebrow-label px-6 py-2.5 text-left">Product</th>
+            <th className="eyebrow-label px-4 py-2.5 text-right">Qty</th>
+            <th className="eyebrow-label px-4 py-2.5 text-right">Unit Price</th>
+            <th className="eyebrow-label px-4 py-2.5 text-right">Line Total</th>
+            <th className="eyebrow-label px-6 py-2.5 text-left">Status</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-surface-border">

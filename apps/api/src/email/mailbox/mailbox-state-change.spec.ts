@@ -372,6 +372,7 @@ describe.each(SITES)("F-10a detection site — $name", (site) => {
         status: site.status,
         reasonCode: site.reasonCode,
         throttledUntil: site.status === "THROTTLED" ? expect.any(Date) : null,
+        alertPendingAt: expect.any(Date), // #2113: the value the same tx stamped
       },
     ]);
   });
@@ -406,6 +407,7 @@ describe.each(SITES)("F-10a detection site — $name", (site) => {
       expect(changes).toHaveLength(1);
       expect(Object.keys(changes[0]).sort()).toEqual([
         "accountEmail",
+        "alertPendingAt",
         "connectionId",
         "provider",
         "reasonCode",

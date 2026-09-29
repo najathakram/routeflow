@@ -154,6 +154,28 @@ export type PriceType = (typeof PRICE_TYPE_VALUES)[number];
 export const CHECK_STATUS_VALUES = ["RECORDED", "DEPOSITED", "CLEARED", "BOUNCED"] as const;
 export type CheckStatus = (typeof CHECK_STATUS_VALUES)[number];
 
+// #2169 (SA-395): a system-written InvoiceItem purpose marker — today only the NSF bounce-fee
+// line (the real Prisma enum: `InvoiceItemSystemKind.NSF_FEE`). NOTE: the API never value-imports
+// this array (apps/api/src/common/no-runtime-workspace-imports.spec.ts forbids it —
+// @routeflow/types ships raw TS, no build step, and would crash `node dist/main.js` at boot);
+// apps/api/src/invoices/nsf-line.ts instead value-imports the real generated `@prisma/client`
+// enum directly, and the one place that CANNOT do that either (the plain .mjs backfill script,
+// apps/api/scripts/backfill-2169-nsf-system-kind.mjs) hand-copies the single string as
+// `NSF_FEE_SYSTEM_KIND`, pinned there against the schema source in its own `--self-test`. This
+// array is the shared mirror for web/mobile (and this file's own enum-parity pin).
+export const INVOICE_ITEM_SYSTEM_KIND_VALUES = ["NSF_FEE"] as const;
+export type InvoiceItemSystemKind = (typeof INVOICE_ITEM_SYSTEM_KIND_VALUES)[number];
+
+// SA-436 (#2401): why a (credit note, invoice) pair is never re-applied automatically — the
+// CreditNoteApplyBlock row's reason. Mirrors the Prisma enum for the web/mobile "Applied credits"
+// panel (SA-436 PR-3).
+export const CREDIT_NOTE_APPLY_BLOCK_REASON_VALUES = [
+  "UNAPPLIED",
+  "UNTICKED",
+  "VOID_REVERSAL",
+] as const;
+export type CreditNoteApplyBlockReason = (typeof CREDIT_NOTE_APPLY_BLOCK_REASON_VALUES)[number];
+
 export const DOCUMENT_NUMBER_TYPE_VALUES = [
   "INVOICE",
   "ESTIMATE",

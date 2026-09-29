@@ -23,10 +23,16 @@
  * body onto a validated DTO, MED-5/6/7 are documented at their own call sites below.
  */
 import {
+  INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS,
+  assertReplayItems,
+  inlineReturnItemsFingerprint,
+} from "./inline-return-fingerprint";
+import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma, UserRole } from "@prisma/client";
@@ -43,8 +49,10 @@ import { NO_RESTOCK_REASONS } from "./returns.service";
 import { restockReturnItems } from "./returns-restock.util";
 import { sumInlineReturnCredit } from "./inline-return-credit.util";
 import { InlineReturnsQuoteService } from "./inline-returns-quote.service";
+import { creditOverrideAuditItems } from "./inline-returns-pricing";
 import type { CaptureInlineReturnDto, InlineReturnLinesDto } from "./dto/capture-inline-return.dto";
 import type { ApproveInlineReturnDto } from "./dto/approve-inline-return.dto";
+import { selectEditRevertedInvoices } from "../invoices/order-edit-revert-set";
 
 /** design.md §8 — the ONE gate every money-writing method here re-checks itself,
  * regardless of the registry's rollout state (the `AddonGuard` on the controller courtesy-
@@ -63,6 +71,9 @@ export const INLINE_RETURN_ERROR_CODES = {
   ORDER_CUSTOMER_MISMATCH: "INLINE_RETURN_ORDER_CUSTOMER_MISMATCH",
   ORDER_CANCELLED: "INLINE_RETURN_ORDER_CANCELLED",
   RETURN_KEY_CONFLICT: "INLINE_RETURN_KEY_CONFLICT",
+  // #2424: the same key, the same customer/order, but DIFFERENT items: not a replay. The client
+  // treats it as a definite refusal (settles its nonce), so its next capture mints a new key.
+  RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS: INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS,
 } as const;
 
 /** The 409 code of a returnKey already held (create's preflight: a replay, or a real collision). */
@@ -70,6 +81,8 @@ export const INLINE_RETURN_KEY_TAKEN = "INLINE_RETURN_KEY_TAKEN";
 
 @Injectable()
 export class InlineReturnsService {
+  private readonly logger = new Logger(InlineReturnsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly gateway: RouteFlowGateway,
@@ -99,6 +112,14 @@ export class InlineReturnsService {
   /** MED-7: true only for a P2002 whose violated constraint is `returnKey`'s own unique
    * index — permissive on an empty/unreported target (mirrors credit-notes.service.ts's
    * `create()` P2002 handling), but never true for an unrelated unique violation. */
+  /** #2424: a same-pair replay must carry the same items as the stored capture, else 409. */
+  private assertReplaySameItems(
+    existing: { id: string; returnNumber?: string | null; capturePayload?: unknown },
+    dto: { items: any[]; reason?: string | null },
+  ) {
+    assertReplayItems(existing, dto, this.logger);
+  }
+
   private isReturnKeyConflict(err: any): boolean {
     if (err?.code !== "P2002") return false;
     const target = Array.isArray(err?.meta?.target)
@@ -294,6 +315,7 @@ export class InlineReturnsService {
             message: "A different return already used this capture key",
           });
         }
+        this.assertReplaySameItems(raced, dto); // #2424
         return {
           replayed: true as const,
           ret: raced,
@@ -368,6 +390,7 @@ export class InlineReturnsService {
         status: "RECEIVED",
         kind: "INLINE",
         returnKey: dto.returnKey,
+        capturePayload: inlineReturnItemsFingerprint(dto.items, dto.reason), // #2424: what a replay must match
         capturedById: user.sub,
         capturedRole: user.role,
         routeRunStopId: dto.routeRunStopId,
@@ -379,6 +402,25 @@ export class InlineReturnsService {
       },
       include: { items: true },
     });
+
+    // #2695 (SA-557): ONE in-tx audit row naming every lowered credit — the default it replaced,
+    // the price typed, and why. A held (DRIVER_CAP) return cannot carry one: overrides are staff-only.
+    const overridden = priced.chunks.filter((c) => c.priceSource === "MANUAL");
+    if (overridden.length > 0) {
+      await tx.auditLog.create({
+        data: {
+          userId: user.sub,
+          action: "inline_return.price_override",
+          entityType: "Return",
+          entityId: created.id,
+          meta: {
+            orderId: dto.orderId,
+            customerId: dto.customerId,
+            items: creditOverrideAuditItems(overridden),
+          },
+        },
+      });
+    }
 
     if (!overCap) {
       // HIGH-4: restock/ledger reversal happens NOW only for a return that is NOT
@@ -425,36 +467,51 @@ export class InlineReturnsService {
    * locks, is authoritative and may differ (a stale price race), so the caller never uses this figure
    * to decide whether an in-tx counter reservation is needed: it reserves ahead regardless (SA-292).
    *
-   * KNOWN RESIDUAL (L1, SA-321; fix scoped on #2178 for R1.1): the preflight is NOT a full guarantee
-   * in one case. It prices BEFORE `revertLinkedInvoicesForOrderEdit`, and that revert drops this
-   * order's own invoice from the matching set. Precondition, all of: an UNDELIVERED order with its
-   * own SENT invoice, plus a boxed return line on a product with no live pack whose only pack
-   * evidence is that invoice. The in-tx pricing can then fail INLINE_RETURN_PACK_UNKNOWN: the edit
-   * rolls back and the invoice is left DRAFT (the B215 class); the operator re-sends it.
+   * #2178 (closes the L1 residual, SA-321): on an UNDELIVERED order edit the caller passes
+   * `revertOrderId`, and the dry run prices against the matching set as it will be AFTER
+   * `revertLinkedInvoicesForOrderEdit` — the invoices that revert turns into DRAFTs of an undelivered
+   * order are left out (the ONE selection, invoices/order-edit-revert-set.ts). So a boxed return whose
+   * only pack evidence is this order's own SENT invoice now refuses INLINE_RETURN_PACK_UNKNOWN HERE,
+   * before the revert commits, instead of in the tx after it (the B215 class).
    */
   async preflightCapture(
     dto: CaptureInlineReturnDto,
     user: JwtPayload,
     order: { routeRunId: string | null },
+    // #2178: set on an UNDELIVERED order edit, whose linked-invoice revert runs next: price against
+    // the matching set as it will be AFTER that revert (the reverted invoices left out), so a return
+    // whose only pack evidence is this order's own SENT invoice refuses HERE, before the revert.
+    opts: { revertOrderId?: string } = {},
   ): Promise<number | null> {
     const db = this.prisma.forTenant();
     if (dto.returnKey) {
       const pre = await db.return.findFirst({
         where: { returnKey: dto.returnKey, kind: "INLINE" },
-        select: { customerId: true, orderId: true },
+        select: {
+          id: true,
+          returnNumber: true,
+          customerId: true,
+          orderId: true,
+          capturePayload: true,
+        },
       });
       if (pre) {
         if (pre.customerId !== dto.customerId || pre.orderId !== dto.orderId) {
           throw new ConflictException("A different return already used this capture key");
         }
+        this.assertReplaySameItems(pre, dto); // #2424
         return null; // a replay of THIS return: nothing to price or reserve; the in-tx check returns the row
       }
     }
     if (user.role === UserRole.DRIVER) await this.assertDriverOwnsOrder(db, dto, order);
+    const excludeInvoiceIds = opts.revertOrderId
+      ? (await selectEditRevertedInvoices(db, opts.revertOrderId)).map((inv) => inv.id)
+      : [];
     const priced = await this.quoteService.priceInlineReturn(
       { customerId: dto.customerId, items: dto.items, routeRunStopId: dto.routeRunStopId },
       user,
       db,
+      { excludeInvoiceIds },
     );
     return priced.total; // the dry-run total: a gate only; the edit path reserves ahead regardless (SA-292)
   }
@@ -488,6 +545,49 @@ export class InlineReturnsService {
       capIntentToOrderBalance: true,
     });
     return { ...captured, minted };
+  }
+
+  /**
+   * B735: attaches the return's own unresolved `RegulatedLedgerParkedReversal` rows to a
+   * response about to leave `capture()`/`approve()` — a FRESH read, never a value threaded up
+   * from the reversal call itself. `reverseLedgerForReturn` is `void` all the way down
+   * (`reverseReturnEntries`'s B681/SA-067 park branch only writes the row + warns), and
+   * `capture()` has replay/idempotency exits that never call it at all — a threaded value would
+   * show a parked capture as clean on a retry or double-tap. Reading fresh by `returnId` catches
+   * every exit uniformly, needs no signature change to the ledger service (whose OTHER caller,
+   * standard returns, can never park), and stays correct after `cancel()` (which deletes
+   * unresolved parked rows). `tenantId` is included in the `where` explicitly —
+   * belt-and-suspenders regardless of whether `forTenant()` already scopes this model.
+   */
+  private async withParkedReversals<T extends { id: string }>(
+    ret: T,
+  ): Promise<T & { parkedReversals?: { count: number; pieces: number } | null }> {
+    // `parkedReversals` semantics: null = CHECKED and clean; ABSENT = not checked. The read
+    // runs after the work committed, so it must never turn committed work into a 500 (a retry
+    // of approve() would then 400 and the operator would never see the response).
+    const tenantId = this.prisma.getTenantId();
+    // No tenant context (SUPER_ADMIN): nothing was checked, so the field is omitted.
+    if (!tenantId) return ret;
+    try {
+      const rows = await this.prisma.forTenant().regulatedLedgerParkedReversal.findMany({
+        where: { returnId: ret.id, tenantId, resolvedAt: null },
+        select: { returnedPieces: true },
+      });
+      const parkedReversals = rows.length
+        ? {
+            count: rows.length,
+            pieces: rows.reduce((sum: number, r: any) => sum + Number(r.returnedPieces), 0),
+          }
+        : null;
+      return { ...ret, parkedReversals };
+    } catch (err) {
+      this.logger.warn(
+        `B735: parked-reversal read failed for return ${ret.id}; response omits parkedReversals: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return ret;
+    }
   }
 
   /**
@@ -527,6 +627,7 @@ export class InlineReturnsService {
       preExisting.customerId === dto.customerId &&
       preExisting.orderId === dto.orderId
     ) {
+      this.assertReplaySameItems(preExisting, dto); // #2424
       result = {
         replayed: true,
         ret: preExisting,
@@ -549,6 +650,7 @@ export class InlineReturnsService {
             include: { items: true },
           });
           if (raced && raced.customerId === dto.customerId && raced.orderId === dto.orderId) {
+            this.assertReplaySameItems(raced, dto); // #2424
             result = { replayed: true, ret: raced, overCap: raced.holdReason === "DRIVER_CAP" };
           } else {
             throw new ConflictException({
@@ -567,11 +669,17 @@ export class InlineReturnsService {
     // after this same capture committed. Either way, (re-)issue idempotently before returning.
     if (result.ret.status === "RECEIVED" && !result.ret.creditNoteId && !result.ret.holdReason) {
       await this.issueCredit(result.ret.id);
-      return this.prisma
+      const reissued = await this.prisma
         .forTenant()
         .return.findUnique({ where: { id: result.ret.id }, include: { items: true } });
+      // #2144: never fall back to the PRE-issue snapshot — it has no creditNoteId, so the response
+      // would look un-issued for a credit that WAS issued. Like approve() (#2467), a null read-back
+      // (the row vanished mid-request) refuses; a retry with the same returnKey replays and
+      // returns the issued row.
+      if (!reissued) throw new NotFoundException("Return not found");
+      return this.withParkedReversals(reissued);
     }
-    return result.ret;
+    return this.withParkedReversals(result.ret);
   }
 
   /**
@@ -731,6 +839,17 @@ export class InlineReturnsService {
     // current state silently instead of throwing.
     const pre = await this.prisma.forTenant().return.findFirst({ where: { id, kind: "INLINE" } });
     if (!pre) throw new NotFoundException("Return not found");
+    // #2143: an ALREADY-APPROVED hold (approve() committed, then its read-back failed and the
+    // operator retried). The approval set status REFUNDED, the credit note and approvedAt, so a
+    // retry returns the current state — idempotent, no transaction, no second money write. A
+    // return issued without a hold has no approvedAt and still falls through to the 400 below.
+    if (pre.status === "REFUNDED" && pre.creditNoteId && pre.approvedAt) {
+      const current = await this.prisma
+        .forTenant()
+        .return.findUnique({ where: { id }, include: { items: true } });
+      if (!current) throw new NotFoundException("Return not found");
+      return this.withParkedReversals(current);
+    }
     if (pre.status !== "RECEIVED" || pre.holdReason !== "DRIVER_CAP" || pre.creditNoteId) {
       throw new BadRequestException("Only a driver-cap hold awaiting approval can be approved");
     }
@@ -786,7 +905,13 @@ export class InlineReturnsService {
     });
 
     if (!result.skipped && minted) this.emitCreditNoteCreated(tenantId, minted);
-    return this.prisma.forTenant().return.findUnique({ where: { id }, include: { items: true } });
+    const afterApprove = await this.prisma
+      .forTenant()
+      .return.findUnique({ where: { id }, include: { items: true } });
+    // The row was locked and (on the non-skipped path) just written inside the transaction
+    // above under this same id — a null read here would mean it vanished mid-request.
+    if (!afterApprove) throw new NotFoundException("Return not found");
+    return this.withParkedReversals(afterApprove);
   }
 
   /** Q-C: declines a driver-cap hold outright. HIGH-4: nothing was ever restocked or

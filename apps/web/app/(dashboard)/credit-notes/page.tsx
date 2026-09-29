@@ -509,7 +509,7 @@ function StatTile({
 }) {
   return (
     <div className="rounded-lg border border-surface-border bg-white p-4 shadow-card">
-      <span className="overline block">{label}</span>
+      <span className="eyebrow-label block">{label}</span>
       <span
         className={cn(
           "mt-1.5 block text-2xl text-navy",
@@ -717,7 +717,7 @@ export default function CreditNotesPage() {
                 setDateFrom(e.target.value);
                 setPage(1);
               }}
-              className="h-8 rounded-lg border border-surface-border bg-white px-2 text-xs text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="h-8 w-32 rounded-lg border border-surface-border bg-white px-2 text-xs text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
               title="Issue date from"
             />
             <span className="text-navy/70">–</span>
@@ -729,7 +729,7 @@ export default function CreditNotesPage() {
                 setDateTo(e.target.value);
                 setPage(1);
               }}
-              className="h-8 rounded-lg border border-surface-border bg-white px-2 text-xs text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="h-8 w-32 rounded-lg border border-surface-border bg-white px-2 text-xs text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
               title="Issue date to"
             />
             {(dateFrom || dateTo) && (
