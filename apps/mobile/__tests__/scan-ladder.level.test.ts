@@ -69,6 +69,19 @@ describe("scan ladder — level from the shared resolver (local fast path)", () 
   });
 });
 
+describe("SA-595: sku/unitSku still resolve when the product has barcode rows (local fast path)", () => {
+  const rows = [{ code: "ROW-U", level: "UNIT" as const }];
+  it.each([
+    ["unitSku hit -> UNIT (not the default BOX)", "2000000000012", 6, "UNIT"],
+    ["sku hit -> BOX", "COLA-6", 6, "BOX"],
+    ["sku hit at upb 1 keeps today's raw BOX (R4 shape is applied by the line)", "COLA-6", 1, "BOX"],
+  ])("%s", async (_n, code, upb, level) => {
+    const { scan, accepted } = harness([{ ...boxed, unitsPerBox: upb, barcodes: rows }]);
+    await scan(code);
+    expect(accepted).toEqual([{ id: "p1", level }]);
+  });
+});
+
 describe("scan ladder — a shared code on an upb<=1 product adds a UNIT (SA-580b)", () => {
   it("local shared row code, upb 1 -> UNIT; upb 6 stays BOX", async () => {
     const plain: P = { ...boxed, unitsPerBox: 1, barcodes: [{ code: "SH", level: "BOX" }, { code: "SH", level: "UNIT" }] };

@@ -99,4 +99,13 @@ describe("useScanCodeHandler — passes the scanned level (R1/R2)", () => {
     const level = (d.addLineItem as jest.Mock).mock.calls[0][1];
     expect(["BOX", "UNIT"]).toContain(level);
   });
+
+  it("SA-595: with cached barcode rows, a sku hit -> BOX and a unitSku hit -> UNIT (also at upb 1)", async () => {
+    const rows = [{ code: "ROW-U", level: "UNIT" }];
+    const p = boxed({ barcodes: rows });
+    expect((await scan("CHIPS-12", p)).addLineItem).toHaveBeenCalledWith(p, "BOX");
+    expect((await scan("CHIPS-1", p)).addLineItem).toHaveBeenCalledWith(p, "UNIT");
+    const one = boxed({ barcodes: rows, unitsPerBox: 1 });
+    expect((await scan("CHIPS-12", one)).addLineItem).toHaveBeenCalledWith(one, "BOX");
+  });
 });

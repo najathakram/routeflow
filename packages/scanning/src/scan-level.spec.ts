@@ -213,3 +213,38 @@ describe("levelsForScannedCode — ProductBarcode rows (R1/R2 on rows)", () => {
     expect([...levelsForScannedCode("4000000000019", p)].sort()).toEqual([BOX, UNIT]);
   });
 });
+
+describe("levelsForScannedCode — SA-595: rows supersede ONLY the barcode column", () => {
+  const p = {
+    barcode: "4000000000019",
+    sku: "COLA-6",
+    unitSku: "2000000000012",
+    unitsPerBox: 6,
+    barcodes: [
+      { code: "ROW-U", level: UNIT },
+      { code: "ROW-B", level: BOX },
+    ],
+  };
+
+  it("with rows present a unitSku hit -> [UNIT] and a sku hit -> [BOX]", () => {
+    expect(levelsForScannedCode("2000000000012", p)).toEqual([UNIT]);
+    expect(levelsForScannedCode("COLA-6", p)).toEqual([BOX]);
+  });
+
+  it("same at upb 1 (sku -> BOX raw level, unitSku -> UNIT)", () => {
+    const plain = { ...p, unitsPerBox: 1 };
+    expect(levelsForScannedCode("COLA-6", plain)).toEqual([BOX]);
+    expect(levelsForScannedCode("2000000000012", plain)).toEqual([UNIT]);
+  });
+
+  it("a legacy Product.barcode value with rows present adds no levels; a row code does", () => {
+    expect(levelsForScannedCode("4000000000019", p)).toEqual([]);
+    expect(levelsForScannedCode("ROW-U", p)).toEqual([UNIT]);
+    expect(levelsForScannedCode("ROW-B", p)).toEqual([BOX]);
+  });
+
+  it("a sku equal to a UNIT row code is shared (BOX+UNIT)", () => {
+    const q = { ...p, sku: "ROW-U" };
+    expect([...levelsForScannedCode("ROW-U", q)].sort()).toEqual([BOX, UNIT]);
+  });
+});
