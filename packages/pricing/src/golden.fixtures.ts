@@ -640,5 +640,10 @@ export const LARGEST_REMAINDER_FIXTURES: LargestRemainderFixture[] = [
   { label: "10.00 over [1,1,1]", total: 10, weights: [1, 1, 1], expected: [3.34, 3.33, 3.33] },
   { label: "7.00 over [10,7,7]", total: 7, weights: [10, 7, 7], expected: [2.92, 2.04, 2.04] },
   { label: "50.00 over [16,12,12]", total: 50, weights: [16, 12, 12], expected: [20, 15, 15] },
-  { label: "tie-break 0.02 over [1,2,1]", total: 0.02, weights: [1, 2, 1], expected: [0.01, 0.01, 0] },
+  {
+    label: "tie-break 0.02 over [1,2,1]",
+    total: 0.02,
+    weights: [1, 2, 1],
+    expected: [0.01, 0.01, 0],
+  },
 ];

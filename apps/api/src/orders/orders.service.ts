@@ -31,6 +31,7 @@ import {
   AppendOrderRevisionArgs,
 } from "./order-revisions";
 import {
+  isSpecialTier,
   categoryTaxSnapshotOf,
   computeCategoryTax,
   computeLineSubtotal,
@@ -38,6 +39,7 @@ import {
   normalizeBoxesPieces,
   regulatedUnitBasis,
   roundMoney,
+  withinStaffOverrideTolerance,
   type CategoryTaxType,
   type PromotionRule,
 } from "@routeflow/pricing";
@@ -46,6 +48,7 @@ import { retryOnTxConflict, txConflictState } from "../common/tx-retry";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { atStopConflict } from "./at-stop-conflicts";
 import { sourceLineFor, type SourceLines } from "./source-line";
+import { decideTierOverride } from "./staff-override";
 import { assertMergeLockAcquired, isMergeContention, mapLockError } from "./merge-contention";
 import {
   OrderStatus,
@@ -125,14 +128,15 @@ import {
 import { linePieceQty } from "./line-piece-qty";
 import {
   isBuyerPricedLine,
-  isSpecialTier,
   mergeBoxedContributions,
   rescaleBogoFreeUnits,
   resolveBuyerLinePrice,
 } from "./buyer-merge-pricing";
 import { buildMergeLineWrites, type MergeLine, type MergeWarning } from "./merge-line-writes";
 import { assertReplaceAllPackMatchesLive } from "./replace-all-pack-resolution";
+import { decideAddedLinePrice, decideEditedLinePrice, isOverride } from "./staff-line-price";
 import {
+  buildBogoCounterpart,
   buildExistingLineMaps,
   buildReplaceAllLineData,
   type ReplaceAllLineBuildCtx,
@@ -1755,7 +1759,6 @@ export class OrdersService implements OnApplicationBootstrap {
 
       // Resolve tier: per-product override > customer default tier
       const tierForProduct = cpMap.get(item.productId) ?? defaultTier;
-      const listPrice = Number(product.pricePerUnit); // tier 1 = list price
       // B13: non-staff never set prices. POST /orders is reachable by DRIVER and
       // CUSTOMER as well as staff, and this DISCOUNTED-branch price had no role
       // gate — a hand-crafted driver request could bill any below-list price.
@@ -1771,6 +1774,7 @@ export class OrdersService implements OnApplicationBootstrap {
       // resolveBuyerLinePrice (buyer path); a staff override never combines with a
       // promo, so it stays 0 on the DISCOUNTED/upsell branches below.
       let freeUnits = 0;
+      let staffOverride: { overrideReason: string | null; overriddenBy: string } | null = null;
 
       // QTY_BREAK promo threshold is measured in PIECES. A box-split line stores qty
       // in pieces already; a box-UNAWARE boxed line (boxes==null) stores qty as a
@@ -1797,19 +1801,20 @@ export class OrdersService implements OnApplicationBootstrap {
       // promotion (PROMO) / tier price (SPECIAL) / list price (STANDARD). Promos
       // populate `activePromos` only on the buyer (CUSTOMER) path (P5-04); staff
       // orders get [] so this reproduces the prior tier/standard ladder exactly.
-      if (overridePrice != null && overridePrice < listPrice) {
-        unitPrice = overridePrice;
-        priceType = PriceType.DISCOUNTED;
-        originalPrice = listPrice;
-      } else if (isStaffRole && overridePrice != null && overridePrice > listPrice) {
-        // Upsell: an operator deliberately sells ABOVE catalog. Stored as a MANUAL
-        // override with the catalog base as originalPrice (< unitPrice). The base
-        // is redacted before the order reaches the customer (upsell-redaction.ts);
-        // the operator sees a green "Upsell" indicator. Staff-only — buyers never
-        // send unitPrice, and the price-race check below guards their path anyway.
-        unitPrice = overridePrice;
-        priceType = PriceType.MANUAL;
-        originalPrice = listPrice;
+      // #2696(c) rule A: a staff price is decided against this customer's TIER price (a special
+      // line needs a reason to move, 400 otherwise); DISCOUNTED < list, MANUAL ≥ list (an upsell —
+      // its base is redacted for the customer, upsell-redaction.ts). Within ½¢ of tier ⇒ the ladder.
+      const staff =
+        overridePrice != null
+          ? decideTierOverride(product, tierForProduct, Number(overridePrice), item.overrideReason)
+          : null;
+      if (staff?.overridden) {
+        ({ unitPrice, originalPrice } = staff);
+        priceType = PriceType[staff.priceType];
+        staffOverride = {
+          overrideReason: item.overrideReason?.trim() || null,
+          overriddenBy: user.sub,
+        };
       } else {
         // Apply the customer's sticky upsell when no explicit staff price was typed
         // (buyers never type one). A staff member who enters a price — even == list —
@@ -1887,10 +1892,10 @@ export class OrdersService implements OnApplicationBootstrap {
         unitPrice,
         priceType,
         originalPrice,
-        // D-20: a carried override keeps its audit trail (source-line.ts).
+        // D-20: a carried override keeps its audit trail (source-line.ts); #2696(c) a staff one's.
         ...(source
           ? { overrideReason: source.overrideReason, overriddenBy: source.overriddenBy }
-          : {}),
+          : (staffOverride ?? {})),
         // BUY_N_GET_M sale-time snapshot; null for every other line (unaffected).
         promoFreeUnits: freeUnits > 0 ? freeUnits : null,
         subtotal: itemSubtotal,
@@ -3494,22 +3499,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 incomingLinesByProduct.get(li.productId) === 1 &&
                 !bogoCounterparts.has(li.productId)
               ) {
-                bogoCounterparts.set(li.productId, {
-                  qty: Number(li.qty),
-                  boxes: li.boxes ?? null,
-                  unitPrice: Number(li.unitPrice),
-                  priceType: li.priceType,
-                  // A counterpart is ANY line carrying a free-unit snapshot — it can
-                  // be SPECIAL (tier strikethrough) or MANUAL (operator override), not
-                  // only PROMO. Its strikethrough base and override attribution are
-                  // captured too: the qty-edit oracle writes originalPrice /
-                  // overrideReason / overriddenBy ONLY under isManualOverride, so at an
-                  // unchanged price they must survive this re-create untouched.
-                  originalPrice: li.originalPrice != null ? Number(li.originalPrice) : null,
-                  overrideReason: (li as any).overrideReason ?? null,
-                  overriddenBy: (li as any).overriddenBy ?? null,
-                  promoFreeUnits: Number((li as any).promoFreeUnits ?? 0),
-                });
+                bogoCounterparts.set(li.productId, buildBogoCounterpart(li));
               }
             }
 
@@ -3708,60 +3698,48 @@ export class OrdersService implements OnApplicationBootstrap {
                 const tierForProduct = isStaffEdit
                   ? (operatorCpMap.get(item.productId) ?? operatorDefaultTier)
                   : 1;
-                // B465: a customer/product that resolves to SPECIAL tier is a documented
-                // contract price. A bare staff-typed price must never override it — that
-                // included a typed price equal to CATALOG, the original hole: the client
-                // pre-fills the price field with the list price for a fresh add, and that
-                // silently saved as STANDARD even though this customer's real price for the
-                // product is the SPECIAL tier rate. Only a genuine documented override (a
-                // price change WITH a reason — the same path `applyPriceOverride` uses on
-                // the client) is honored. Fix-round-2 (Opus BLOCK): a price with no reason
-                // on a SPECIAL line is REFUSED outright, before any mutation — never
-                // silently dropped/ignored, which would 200 the request while quietly
-                // keeping the tier price with no record the caller even tried to change it.
-                const lineIsSpecialTier = isSpecialTier(tierForProduct);
-                const hasOverrideReason = !!(item.overrideReason && item.overrideReason.trim());
-                if (overridePrice !== null && lineIsSpecialTier && !hasOverrideReason) {
-                  throw new BadRequestException(
-                    `A reason is required to change ${product.name ?? "this"} — it's this customer's special price`,
-                  );
-                }
-                // An explicit price DIFFERENT from catalog is a genuine operator override
-                // (MANUAL); one that EQUALS catalog is stored verbatim as STANDARD/list
-                // (unchanged behavior — selling at list for one order). WP1: ONLY a line
-                // with no price at all falls through to the tier ladder, and only for
-                // staff — a DRIVER diff add (prices stripped by B13) keeps list pricing.
-                const isManualOverride = overridePrice !== null && overridePrice !== catalogPrice;
-                const priced =
+                // #2716c: ONE rule (staff-line-price.ts -> decideStaffOverride). A special-tier
+                // line (B465) refuses a changed price with no reason; a price within half a cent
+                // of the customer's tier price is no override; otherwise below list is DISCOUNTED,
+                // at/above list MANUAL, originalPrice = list. WP1: ONLY a line with no price at
+                // all falls through to the tier ladder, and only for staff — a DRIVER diff add
+                // (prices stripped by B13) keeps list pricing.
+                const addDecision =
                   overridePrice !== null
-                    ? {
-                        unitPrice: overridePrice,
-                        originalPrice: isManualOverride ? catalogPrice : null,
-                        priceType: isManualOverride ? PriceType.MANUAL : PriceType.STANDARD,
+                    ? decideAddedLinePrice({
+                        overridePrice,
+                        tierPrice: Number(getTierPrice(product, tierForProduct)),
+                        listPrice: catalogPrice,
+                        isSpecialTier: isSpecialTier(tierForProduct),
+                        hasReason: !!(item.overrideReason && item.overrideReason.trim()),
+                        productName: product.name,
+                      })
+                    : null;
+                const isManualOverride = !!addDecision && isOverride(addDecision);
+                const priced = addDecision
+                  ? { ...addDecision, freeUnits: 0 }
+                  : isStaffEdit
+                    ? this.resolveBuyerLinePrice(
+                        product,
+                        tierForProduct,
+                        buyerPromos,
+                        qtyPieces,
+                        qtyUnits,
+                        null,
+                        // REG-B109: the exact denomination this line bills with below.
+                        {
+                          boxes: boxesForLine,
+                          pieces: piecesForLine,
+                          unitsPerBox: unitsPerBoxNum,
+                        },
+                      )
+                    : {
+                        // Non-staff caller (driver diff add): legacy list pricing.
+                        unitPrice: catalogPrice,
+                        originalPrice: null as number | null,
+                        priceType: PriceType.STANDARD,
                         freeUnits: 0,
-                      }
-                    : isStaffEdit
-                      ? this.resolveBuyerLinePrice(
-                          product,
-                          tierForProduct,
-                          buyerPromos,
-                          qtyPieces,
-                          qtyUnits,
-                          null,
-                          // REG-B109: the exact denomination this line bills with below.
-                          {
-                            boxes: boxesForLine,
-                            pieces: piecesForLine,
-                            unitsPerBox: unitsPerBoxNum,
-                          },
-                        )
-                      : {
-                          // Non-staff caller (driver diff add): legacy list pricing.
-                          unitPrice: catalogPrice,
-                          originalPrice: null as number | null,
-                          priceType: PriceType.STANDARD,
-                          freeUnits: 0,
-                        };
+                      };
                 const unitPrice = priced.unitPrice;
                 const subtotal = computeLineSubtotal({
                   unitPrice,
@@ -3869,7 +3847,6 @@ export class OrdersService implements OnApplicationBootstrap {
                 // tier price) keeps today's SPECIAL/STANDARD tier-priced behavior.
                 const isStaffCaller =
                   user?.role === UserRole.OPERATOR || user?.role === UserRole.TENANT_ADMIN;
-                const listPrice = Number(product.pricePerUnit);
                 // B466: this branch never checked tier at all — a bare unitPrice on a
                 // substitute to a SPECIAL-tier product was compared only against LIST
                 // price, so a correctly-priced substitute (typed at this customer's real
@@ -3880,41 +3857,20 @@ export class OrdersService implements OnApplicationBootstrap {
                 const tierForProduct = isStaffCaller
                   ? (operatorCpMap.get(item.substituteProductId) ?? operatorDefaultTier)
                   : 1;
-                const lineIsSpecialTier = isSpecialTier(tierForProduct);
-                const tierPrice = Number(getTierPrice(product, tierForProduct));
+                // The baseline is the SUBSTITUTE's own tier price (list at tier 1, so non-special
+                // behavior is unchanged); within ½¢ of it is not a repricing and needs no reason.
+                // #2696(c): the ONE rule A, shared with create (decideTierOverride → pricing's
+                // decideStaffOverride, rounded) — pinned byte-identical to this branch's B466 shape.
                 const overridePrice =
                   isStaffCaller && item.unitPrice != null ? Number(item.unitPrice) : null;
-                // The baseline is the SUBSTITUTE's own tier price (equals list when
-                // tierForProduct is 1, so non-special behavior is unchanged) — a price
-                // matching what this customer already pays for the new product is not a
-                // repricing decision and needs no reason, same half-cent tolerance the
-                // UPDATE branch's priceUnchangedFromStored uses.
-                const priceUnchangedFromTier =
-                  overridePrice != null && Math.abs(overridePrice - tierPrice) <= 0.005;
-                const hasOverrideReason = !!(item.overrideReason && item.overrideReason.trim());
-                if (
-                  overridePrice != null &&
-                  lineIsSpecialTier &&
-                  !priceUnchangedFromTier &&
-                  !hasOverrideReason
-                ) {
-                  throw new BadRequestException(
-                    `A reason is required to change ${product.name ?? "this"} — it's this customer's special price`,
-                  );
-                }
-                let unitPrice = tierPrice;
-                let priceType: PriceType = lineIsSpecialTier
-                  ? PriceType.SPECIAL
-                  : PriceType.STANDARD;
-                let originalPrice: number | null = lineIsSpecialTier ? listPrice : null;
-                const isOverridden = overridePrice != null && !priceUnchangedFromTier;
-                if (isOverridden && overridePrice != null) {
-                  // Opus MERGE-verdict fix: round the honored override, matching the
-                  // UPDATE branch's convention — never persist a raw client float.
-                  unitPrice = roundMoney(overridePrice);
-                  priceType = overridePrice < listPrice ? PriceType.DISCOUNTED : PriceType.MANUAL;
-                  originalPrice = listPrice;
-                }
+                const decided = decideTierOverride(
+                  product,
+                  tierForProduct,
+                  overridePrice ?? Number(getTierPrice(product, tierForProduct)),
+                  item.overrideReason,
+                );
+                const { unitPrice, originalPrice, overridden: isOverridden } = decided;
+                const priceType: PriceType = PriceType[decided.priceType];
                 const subtotal = computeLineSubtotal({
                   unitPrice,
                   qty: qtyVal,
@@ -4074,81 +4030,42 @@ export class OrdersService implements OnApplicationBootstrap {
                   isStaffEdit && li.productId
                     ? (operatorCpMap.get(li.productId) ?? operatorDefaultTier)
                     : 1;
-                // B465: same guard as the new-item branch above — a SPECIAL-tier line
-                // (this customer's contract price) can only be repriced through a
-                // genuine documented override (a price change WITH a reason), which is
-                // exactly the hole R9 found: typing a value over a stored SPECIAL price
-                // was accepted and attributed, but never refused. Fix-round-2 (Opus
-                // BLOCK): a price with no reason on a SPECIAL line is REFUSED outright —
-                // never silently dropped. A payload that omits overrideReason still
-                // counts as documented when the LINE ALREADY carries one (the client is
-                // re-saving under its existing reason) — only a line with no reason
-                // anywhere, old or new, is refused. Fix-round-3 (Opus BLOCK item 2):
-                // scoped to an ACTUAL price change — a carried-over/echoed price equal
-                // to what is already stored is not a repricing decision and must never
-                // demand a reason, matching the replace-all branch's same guard.
-                const lineIsSpecialTier = isSpecialTier(tierForProduct);
-                const priceUnchangedFromStored =
-                  overridePrice !== null && Math.abs(overridePrice - existingUnitPrice) <= 0.005;
                 const storedOverrideReason = (li as any).overrideReason ?? null;
-                const hasOverrideReason = !!(
-                  (item.overrideReason && item.overrideReason.trim()) ||
-                  (storedOverrideReason && String(storedOverrideReason).trim())
-                );
+                // #2716c: ONE rule (staff-line-price.ts -> decideStaffOverride); reason baseline =
+                // STORED price (echo = untouched, no re-stamp); the TIER price typed back restores
+                // SPECIAL/STANDARD, reason cleared (SA-592). Else DISCOUNTED < list <= MANUAL, original = LIST.
+                let editProduct: Awaited<ReturnType<typeof tx.product.findFirst>> = null;
                 if (
                   overridePrice !== null &&
-                  !priceUnchangedFromStored &&
-                  lineIsSpecialTier &&
-                  !hasOverrideReason
+                  !withinStaffOverrideTolerance(overridePrice, existingUnitPrice) &&
+                  !isUnlisted &&
+                  li.productId
                 ) {
-                  const priceProduct = li.productId
-                    ? await tx.product.findFirst({
-                        where: { id: li.productId },
-                        select: { name: true },
-                      })
-                    : null;
-                  throw new BadRequestException(
-                    `A reason is required to change ${priceProduct?.name ?? "this line"} — it's this customer's special price`,
-                  );
-                }
-                // B465 fix round 4 (Opus BLOCK item 4, LOW): the SAME half-cent
-                // tolerance as priceUnchangedFromStored above — a strict `!==` here
-                // disagreed with that check on a float-rounding-only difference
-                // (e.g. 8.000000001 vs 8), so a price the reason-guard correctly
-                // treated as unchanged still got stamped MANUAL/originalPrice/
-                // overriddenBy as if the operator had genuinely repriced it.
-                const isManualOverride = overridePrice !== null && !priceUnchangedFromStored;
-                // B465 fix round 5 (Opus BLOCK item 2, LOW): keyed on
-                // isManualOverride, not "a price was sent" — a within-tolerance
-                // echo (e.g. 8.004 against a stored 8) is NOT a manual override
-                // (round-4's own fix above), so it must persist the EXISTING
-                // clean value, never the incoming near-miss float, or repeated
-                // saves could drift the stored price by fractions of a cent.
-                // roundMoney on the genuine-override branch matches every other
-                // money-write path in this file (never store a raw client float).
-                const unitPrice = isManualOverride ? roundMoney(overridePrice!) : existingUnitPrice;
-                // Anchor the struck-through original to the CATALOG list price (like the
-                // replace-all / new-item branches), never the line's prior net price —
-                // otherwise re-editing an override (e.g. an upsell nudged down but still
-                // above list) would flip its derived upsell/discount direction and show a
-                // bogus "was" price to the customer/operator.
-                let catalogPrice = existingUnitPrice;
-                if (isManualOverride && !isUnlisted && li.productId) {
-                  const prod = await tx.product.findFirst({
+                  editProduct = await tx.product.findFirst({
                     where: { id: li.productId },
-                    select: { pricePerUnit: true },
                   });
-                  if (prod) catalogPrice = Number(prod.pricePerUnit);
                 }
-                // This branch keeps the line's stored (agreed) price — it never
-                // re-runs applyBestPromotion for the UNIT PRICE, same as every other
-                // promo type. The line's BUY_N_GET_M free units, though, are a
-                // function of the QUANTITY, so they are RE-DERIVED for the new qty
-                // (`rescaleBogoFreeUnits`) and written back: reusing the snapshot
-                // verbatim under-billed a shrunk line (12 → 2 boxes billed $0.00) and
-                // left the column contradicting the subtotal. A manual price override
-                // replaces the promo price outright, so the free units earned under it
-                // do not survive — they would discount the operator's own price.
+                const repriced = decideEditedLinePrice({
+                  overridePrice,
+                  storedPrice: existingUnitPrice,
+                  tierPrice: editProduct ? getTierPrice(editProduct, tierForProduct) : 0,
+                  listPrice: editProduct ? Number(editProduct.pricePerUnit) : existingUnitPrice,
+                  isSpecialTier: isSpecialTier(tierForProduct),
+                  hasReason: !!(
+                    (item.overrideReason && item.overrideReason.trim()) ||
+                    (storedOverrideReason && String(storedOverrideReason).trim())
+                  ),
+                  isUnlisted,
+                  productName: editProduct?.name ?? null,
+                });
+                const isManualOverride = !!repriced && isOverride(repriced);
+                const unitPrice = repriced ? repriced.unitPrice : existingUnitPrice;
+                // This branch keeps the line's stored (agreed) price — it never re-runs
+                // applyBestPromotion for the UNIT PRICE. BUY_N_GET_M free units are a function of
+                // the QUANTITY, so they are RE-DERIVED for the new qty (`rescaleBogoFreeUnits`):
+                // reusing the snapshot verbatim under-billed a shrunk line (12 → 2 boxes billed
+                // $0.00). A manual price override replaces the promo price outright, so the free
+                // units earned under it do not survive.
                 const storedFreeUnits = Number((li as any).promoFreeUnits ?? 0);
                 let promoCategory: string | null = null;
                 if (storedFreeUnits > 0 && !isManualOverride && li.productId) {
@@ -4197,16 +4114,12 @@ export class OrdersService implements OnApplicationBootstrap {
                       ? { promoFreeUnits: freeUnits > 0 ? freeUnits : null }
                       : {}),
                     ...(item.notes !== undefined ? { notes: item.notes } : {}),
-                    ...(isManualOverride
-                      ? isUnlisted
-                        ? // Unlisted lines have no catalog "list price" — a price change is
-                          // just the new MANUAL price, no struck-through original.
-                          { priceType: PriceType.MANUAL, originalPrice: null }
-                        : {
-                            priceType: PriceType.MANUAL,
-                            originalPrice: catalogPrice,
-                            overriddenBy: user?.sub ?? null,
-                          }
+                    ...(repriced
+                      ? {
+                          priceType: repriced.priceType,
+                          originalPrice: repriced.originalPrice,
+                          ...(isUnlisted ? {} : { overriddenBy: user?.sub ?? null }),
+                        }
                       : {}),
                     // F2 server half: independent of isManualOverride/isUnlisted — a
                     // reason-only edit (price unchanged, so isManualOverride is false)
@@ -4237,6 +4150,9 @@ export class OrdersService implements OnApplicationBootstrap {
                               : (item.overrideReason ?? null),
                           overriddenBy: user?.sub ?? null,
                         }
+                      : {}),
+                    ...(repriced && !isManualOverride
+                      ? { overrideReason: null, overriddenBy: null }
                       : {}),
                   },
                 });
