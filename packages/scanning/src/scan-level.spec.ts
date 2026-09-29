@@ -7,7 +7,6 @@
  * Contract these specs pin (names/signatures are the builder's to satisfy, chosen here):
  *   resolveScanSellLevel(product: { unitsPerBox?: number | null }, levels: readonly SellLevel[]): SellLevel
  *     - takes ONE product and the SET OF LEVELS THE HIT CODE HAS (no lineMode, no line).
- *   resolveBuyerScanSellLevel(product): SellLevel   — SA-580a: always defaultSellLevel.
  *   levelsForScannedCode(code, product { barcode, sku, unitSku, unitsPerBox, barcodes? }): SellLevel[]
  *     - the levels the scanned code has on that product: from `barcodes[]` rows when present,
  *       else the legacy columns exactly as M1's planBarcodeRows/synthesizeLegacyBarcodes would
@@ -16,7 +15,6 @@
 import { defaultSellLevel, SELL_LEVEL_VALUES, type SellLevel } from "@routeflow/pricing";
 import {
   levelsForScannedCode,
-  resolveBuyerScanSellLevel,
   resolveScanSellLevel,
 } from "./scan-level";
 
@@ -110,27 +108,6 @@ describe("resolveScanSellLevel — R4 (upb <= 1: no box/unit distinction)", () =
       unitsPerBox: 1,
     });
     expect(levels).toEqual([UNIT]);
-  });
-});
-
-describe("resolveBuyerScanSellLevel — SA-580a (buyer surfaces: default unit only, v1)", () => {
-  it("is defaultSellLevel whatever the code resolved to: upb>1 -> BOX, upb<=1 -> UNIT", () => {
-    expect(resolveBuyerScanSellLevel({ unitsPerBox: 6 })).toBe(BOX);
-    expect(resolveBuyerScanSellLevel({ unitsPerBox: 1 })).toBe(UNIT);
-    expect(resolveBuyerScanSellLevel({ unitsPerBox: null })).toBe(UNIT);
-  });
-
-  it("a buyer unitSku scan on a upb>1 product adds a BOX line (the pin SA-580a requires)", () => {
-    const product = { barcode: "4000000000019", sku: "S", unitSku: "2000000000012", unitsPerBox: 6 };
-    // Staff rule would give UNIT for this code…
-    const levels = levelsForScannedCode("2000000000012", product);
-    expect(resolveScanSellLevel(product, levels)).toBe(UNIT);
-    // …the buyer rule ignores the code's level.
-    expect(resolveBuyerScanSellLevel(product)).toBe(BOX);
-  });
-
-  it("arity 1: it takes no level set at all", () => {
-    expect(resolveBuyerScanSellLevel.length).toBe(1);
   });
 });
 

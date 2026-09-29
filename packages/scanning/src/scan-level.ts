@@ -42,10 +42,9 @@ export function resolveScanSellLevel(
   return defaultSellLevel({ unitsPerBox: product.unitsPerBox });
 }
 
-/** SA-580a: buyer surfaces add the default unit only, whatever level the code resolved to. */
-export function resolveBuyerScanSellLevel(product: { unitsPerBox?: number | null }): SellLevel {
-  return defaultSellLevel({ unitsPerBox: product.unitsPerBox });
-}
+// SA-580a: buyer surfaces (mobile (customer)/scan.tsx) add the default selling unit only, whatever
+// level the code resolved to. That rule is `cartStore.add` itself (one default unit, boxes for a
+// boxed product); no level resolver is involved, so there is deliberately no buyer function here.
 
 /**
  * The levels the scanned `code` has on `product`. `barcodes[]` rows (non-empty) replace only the
