@@ -1,5 +1,5 @@
 {
-  "mappedSha": "d2025fb26d815e4c47ccdb726bc0af1301d9c56c",
+  "mappedSha": "d8ad4de327e060934546bc6396726a3b89be786f",
   "generatedAt": "2026-09-28T01:03:32.671Z",
   "layout": "split-2026-09-13",
   "areas": [
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1045,
-  "notes": "**2026-09-28 — night landings #2720, #2718, #2719, #2686, #2707 (docs-only bookkeeping).** New `api/landing-2026-09-28-night.md` (TOC row in `api.md`), each grepped in the merged tree (#2707 = catalog v13, an owner-run publish, no migration). Registry: B891 (#2720) and B890 (#2718) closed already-fixed. mappedSha -> d2025fb2. No source changed. See CHANGELOG.md for the full landing list."
+  "notes": "**2026-09-29 — early landings #2134, #2740, #2739, #2287, #2638, #2678, #2672, #2679, #2725, #2066, #2729 (docs-only bookkeeping).** New `api/landing-2026-09-29-early.md` and `mobile/landing-2026-09-29-early.md` (TOC rows in `api.md`/`mobile.md`). mappedSha -> d8ad4de3. No source changed. See CHANGELOG.md for the full landing list."
 }
