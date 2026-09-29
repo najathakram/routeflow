@@ -117,9 +117,21 @@ describe("LineItemRow layout contract (B565)", () => {
       expect(group.parentElement).toBe(row);
       expect(group).toHaveClass("whitespace-nowrap");
     }
-    expect(within(cases).getByText("cases")).toBeInTheDocument();
+    expect(within(cases).getByText(/^cases?$/)).toBeInTheDocument();
     expect(within(units).getByText("+")).toBeInTheDocument();
-    expect(within(units).getByText("units")).toBeInTheDocument();
+    expect(within(units).getByText(/^units?$/)).toBeInTheDocument();
+  });
+
+  // SA-558d: one wording in the row and the sheet (PriceEditor.test "case wording").
+  it("says '1 case' / 'n cases' and '1 unit' / 'n units'", () => {
+    const row = () => within(screen.getByTestId("line-qty-cases-row"));
+    const { unmount } = renderRow(makeProps({ ...boxedItem, boxes: 1, pieces: 1 }));
+    expect(row().getByText("case")).toBeInTheDocument();
+    expect(row().getByText("unit")).toBeInTheDocument();
+    unmount();
+    renderRow(makeProps({ ...boxedItem, boxes: 3, pieces: 2 }));
+    expect(row().getByText("cases")).toBeInTheDocument();
+    expect(row().getByText("units")).toBeInTheDocument();
   });
 });
 

@@ -1212,12 +1212,74 @@ describe("CreateOrderModal", () => {
       expect(screen.getByRole("dialog", { name: "Create Order" })).toBeInTheDocument();
     });
 
-    it("(b) a SPECIAL-priced line's price is NOT tappable until #2696(c) (B721)", async () => {
-      await setup(plain, 2); // a tier-2 customer: the line is SPECIAL-priced
+    // #2696(c) (SA-558/558a): a SPECIAL line's price is tappable too; moving it off the special price
+    // needs a reason, decided by @routeflow/pricing's decideStaffOverride — the server's own rule.
+    const special = {
+      notFound: false,
+      archived: false,
+      product: {
+        id: "prod-2",
+        name: "Soda",
+        pricePerUnit: "2.50",
+        priceTier2: "2.00",
+        unit: "each",
+      },
+    };
+    const openSheet = async () => {
       expect(await screen.findByText("Special price")).toBeInTheDocument();
-      expect(screen.queryByLabelText("Change price")).not.toBeInTheDocument();
-      fireEvent.click(screen.getByText("Special price"));
-      expect(screen.queryByRole("dialog", { name: /^edit /i })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByLabelText("Change price"));
+      return screen.findByRole("dialog", { name: /^edit /i });
+    };
+    const typePrice = (sheet: HTMLElement, v: string) => {
+      const input = within(sheet).getByLabelText("Price");
+      fireEvent.change(input, { target: { value: v } });
+      fireEvent.blur(input);
+    };
+
+    it("(c) a SPECIAL-priced line's price opens the sheet, the special price as its placeholder", async () => {
+      await setup(special, 2);
+      const sheet = await openSheet();
+      expect(within(sheet).getByLabelText("Price")).toHaveAttribute("placeholder", "2.00");
+      expect(within(sheet).getByText(/special price \$2\.00/i)).toBeInTheDocument();
+    });
+
+    it("(c) moving off the special price with no reason blocks saving, naming the product", async () => {
+      await setup(special, 2);
+      typePrice(await openSheet(), "1.50");
+      expect(screen.getByLabelText("Reason (required)")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
+      expect(createOrderMutate).not.toHaveBeenCalled();
+      expect(mockToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: expect.stringMatching(/reason is required to change Soda/),
+        }),
+      );
+    });
+
+    it("(c) with a reason the override is sent: unitPrice + overrideReason", async () => {
+      await setup(special, 2);
+      typePrice(await openSheet(), "1.50");
+      fireEvent.change(screen.getByLabelText("Reason (required)"), {
+        target: { value: "dented cans" },
+      });
+      expect(saveDraft()).toEqual([
+        { productId: "prod-2", qty: 1, unitPrice: 1.5, overrideReason: "dented cans" },
+      ]);
+    });
+
+    it("(c) typing the LIST price on a special line is a real change too — it needs a reason", async () => {
+      await setup(special, 2);
+      typePrice(await openSheet(), "2.50");
+      expect(screen.getByLabelText("Reason (required)")).toBeInTheDocument();
+    });
+
+    it("(c) typing the special price back restores it: no reason, nothing overridden", async () => {
+      await setup(special, 2);
+      const sheet = await openSheet();
+      typePrice(sheet, "1.50");
+      typePrice(sheet, "2.00");
+      expect(screen.queryByLabelText("Reason (required)")).not.toBeInTheDocument();
+      expect(saveDraft()).toEqual([{ productId: "prod-2", qty: 1 }]);
     });
   });
 });

@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import { PriceType } from "@prisma/client";
 import {
+  isSpecialTier,
   AmbiguousLineError,
   InvalidTierError,
   UnknownUnitError,
@@ -325,8 +326,8 @@ export function buildUnitLine(input: {
   }
   const typed = item.unitPrice != null ? roundMoney(item.unitPrice) : null; // round every write
   let unitPrice = tierPrice;
-  let priceType: PriceType = tier !== 1 ? PriceType.SPECIAL : PriceType.STANDARD;
-  let originalPrice: number | null = tier !== 1 ? listPrice : null;
+  let priceType: PriceType = isSpecialTier(tier) ? PriceType.SPECIAL : PriceType.STANDARD;
+  let originalPrice: number | null = isSpecialTier(tier) ? listPrice : null;
   if (typed != null && typed < listPrice) {
     unitPrice = typed;
     priceType = PriceType.DISCOUNTED;
