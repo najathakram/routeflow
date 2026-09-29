@@ -9,6 +9,10 @@ const toCents = (n: number): number => Math.round(roundMoney(n) * 100);
  * drift a cent). Works in integer cents. Leftover cents go by remainder desc, then weight desc,
  * then index asc.
  *
+ * Precondition (lead condition 2): callers pass `roundMoney(total)`. `isWholeCents` has no tolerance,
+ * so an unrounded float sum must be rounded at the call site; this function also rounds `total`
+ * defensively (`toCents`), so 0.1 + 0.2 splits as 0.30 and never throws.
+ *
  * Total 0 gives zeros. Throws MoneyInvariantError on a negative or non-finite total, a
  * negative, non-finite or non-integer weight, or a positive total with no positive weight.
  */
