@@ -104,14 +104,18 @@ export class StripeService implements OnModuleInit {
 
   // ─── Billing Portal ───────────────────────────────────────────────────────
 
-  async createBillingPortalSession(params: {
-    customerId: string;
-    returnUrl: string;
-  }): Promise<{ url: string }> {
-    return this.client.billingPortal.sessions.create({
-      customer: params.customerId,
-      return_url: params.returnUrl,
-    });
+  /** #2476: `request` caps this one call (stripe-node's `timeout` / `maxNetworkRetries`); omit it for
+   *  Stripe's defaults. */
+  async createBillingPortalSession(
+    params: { customerId: string; returnUrl: string },
+    request?: { timeoutMs: number; maxNetworkRetries: number },
+  ): Promise<{ url: string }> {
+    return this.client.billingPortal.sessions.create(
+      { customer: params.customerId, return_url: params.returnUrl },
+      request
+        ? { timeout: request.timeoutMs, maxNetworkRetries: request.maxNetworkRetries }
+        : undefined,
+    );
   }
 
   // ─── Webhook signature verification ───────────────────────────────────────

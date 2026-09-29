@@ -37,6 +37,7 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { InvoiceStatus } from "@prisma/client";
 import { assertIntegerPieces, billPackOf } from "./unit-line-bill-guard";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { fillSparseCasBasis } from "./testing/sparse-line-fixtures";
 
 describe("InvoicesService — B652 unit-line partial billing", () => {
   let service: InvoicesService;
@@ -81,6 +82,7 @@ describe("InvoicesService — B652 unit-line partial billing", () => {
   const mockNumbering = { reserveNext: jest.fn().mockResolvedValue("INV-2026-0001") };
 
   beforeEach(async () => {
+    fillSparseCasBasis(); // #2645: sparse order fixtures vs the CAS basis pin
     prisma = createMockPrisma();
     // #2070: createPartialFromOrder's invoicedQty bump is a CAS (updateMany); a clean read matches 1.
     prisma.orderItem.updateMany.mockResolvedValue({ count: 1 } as any);
@@ -365,6 +367,8 @@ describe("InvoicesService — B652 unit-line partial billing", () => {
           update: jest.fn().mockResolvedValue({}),
           updateMany: jest.fn().mockResolvedValue({ count: 1 }), // #2612: the CAS bump
         },
+        // B760: no DeliveryMutation evidence — remaining stays qty - invoicedQty.
+        deliveryMutation: { findMany: jest.fn().mockResolvedValue([]) },
         $executeRaw: jest.fn().mockResolvedValue(0),
         $queryRaw: jest.fn().mockResolvedValue([]),
       };

@@ -14,6 +14,10 @@
 //   UNLINKED_ITEMS, PACK_SIZE_UNKNOWN, DUPLICATE_VENDOR_BILL — `body.code` of vendor-bill 409s.
 //   CLEANUP_IMPORTED_DISABLED — `body.code` of the customers cleanup-preview / cleanup-imported
 //                    409 (#2629, disabled until a real import marker exists).
+//   ORDER_LINE_CHANGED — `body.code` of the order-line CAS 409 (invoice-from-order paths:
+//                    qty/price/tax/pack changed mid-create; nothing billed, retriable).
+//   NSF_LINE_UNTAXED — `body.code` of the 400 when an invoice write gives the NSF fee line a
+//                    tax rate (#2656: the NSF line is never taxed; clients lock the field at 0).
 
 export const API_ERROR_CODES = {
   ADDON_GATE: "ADDON_GATE",
@@ -23,6 +27,8 @@ export const API_ERROR_CODES = {
   PACK_SIZE_UNKNOWN: "PACK_SIZE_UNKNOWN",
   DUPLICATE_VENDOR_BILL: "DUPLICATE_VENDOR_BILL",
   CLEANUP_IMPORTED_DISABLED: "CLEANUP_IMPORTED_DISABLED",
+  ORDER_LINE_CHANGED: "ORDER_LINE_CHANGED",
+  NSF_LINE_UNTAXED: "NSF_LINE_UNTAXED",
 } as const;
 
 export type ApiErrorCode = (typeof API_ERROR_CODES)[keyof typeof API_ERROR_CODES];

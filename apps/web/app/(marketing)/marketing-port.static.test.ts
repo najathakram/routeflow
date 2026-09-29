@@ -311,8 +311,10 @@ describe("marketing.css is delivered from the root layout — R-MKT T6", () => {
 // globals.css re-pinned by #2080 (date/time-input appearance-none rule, a
 // legitimate unrelated dashboard change — this pin exists to catch the
 // marketing port leaking into shared files, not to freeze globals.css
-// forever; see B511 above for the same precedent).
-const GLOBALS_CSS_SHA256 = "20db8512526ff90aacc47444eca5e02bafb5d00f1f23806aeab0a07b72968293";
+// forever; see B511 above for the same precedent). Re-pinned again by #2497 (the `.overline`
+// label class renamed `.eyebrow-label` — it collided with Tailwind's `overline` utility; a
+// dashboard fix, not marketing leakage).
+const GLOBALS_CSS_SHA256 = "0804180c82de14659e8aeead69783e9fbd2c848bc71f644925ef1868ed91bf6d";
 // tailwind.config.ts re-pinned by #2329: the preset now builds its values from the shared
 // Ledger token source (packages/ui/src/tokens/ledger.ts). Behaviour-preserving — the compiled
 // web CSS is byte-identical before and after — and unrelated to the marketing port.

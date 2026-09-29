@@ -33,6 +33,8 @@ import { useAuthStore } from "../lib/auth-store";
 import { useTenantStore } from "../lib/tenant-store";
 import { useBuyerSessionStore } from "../lib/buyer-session-store";
 import { rootBuyerGate } from "../lib/buyer-route-guard";
+import { SHELL_ON } from "../lib/web-shell/shell-env";
+import { shellGate } from "../lib/web-shell/shell-routing";
 import { useDeveloperMode } from "../lib/api/addons";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { initSentry } from "../lib/sentry";
@@ -106,6 +108,10 @@ function RootLayoutNav() {
     // BUG-B2-5: when the requested route is buyer-protected (e.g. a deep-linked
     // /invoices/<uuid>), send the user to /customer-login with returnTo so post-
     // login they land back on the intended page instead of the marketing home.
+    // #2653: a signed-out buyer may stay in the shell (the web's own buyer login, until the
+    // sign-in handoff lands). Every other signed-out route falls through unchanged.
+    if (!user && shellGate({ shellOn: SHELL_ON, segments, hasStaffUser: false }).handled) return;
+
     if (!user) {
       if (segments.length > 0 && segments[0] !== "(auth)") {
         const isBuyerRoute = segments[0] === "(customer)";
@@ -187,6 +193,15 @@ function RootLayoutNav() {
     }
 
     if (activeRole === "operator") {
+      // #2653: with the shell ON, operators and tenant admins get the NEW web in the WebShell
+      // (RF-087's customer-login exemption still wins). Shell OFF → the native screens below.
+      if (!onCustomerLogin) {
+        const shell = shellGate({ shellOn: SHELL_ON, segments, hasStaffUser: true, activeRole });
+        if (shell.handled) {
+          if (shell.to) router.replace(shell.to as any);
+          return;
+        }
+      }
       if (segments[0] !== "(operator)" && !onCustomerLogin) {
         const mapped = mapSharedCustomerPathToOperator();
         router.replace(mapped ?? "/(operator)/home");

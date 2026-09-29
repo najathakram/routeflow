@@ -679,7 +679,7 @@ export function canonicalJson(v: unknown): string {
     .join(",")}}`;
 }
 
-const SECTION_LABEL: Record<IntakeSectionKey, string> = {
+export const SECTION_LABEL: Record<IntakeSectionKey, string> = {
   ACCOUNT: "Account",
   TAX_COMPLIANCE: "Tax & compliance",
   INVOICING: "Invoicing",
