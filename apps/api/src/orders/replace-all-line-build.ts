@@ -240,7 +240,10 @@ export function buildReplaceAllLineData(
     : !!replaceAllDecision?.repriced;
   // An echo of the stored counterpart keeps that line's own attribution (like the BOGO arm).
   const echoedExisting =
-    replaceAllDecision && !replaceAllDecision.repriced && replaceAllExisting
+    replaceAllDecision &&
+    !replaceAllDecision.repriced &&
+    !replaceAllDecision.restored &&
+    replaceAllExisting
       ? replaceAllExisting
       : null;
   const upb = Number(product.unitsPerBox ?? 0);

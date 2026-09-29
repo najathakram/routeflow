@@ -39,10 +39,16 @@ function decideOrRefuse(input: {
 export const isOverride = (d: Pick<StaffPricedLine, "priceType">) =>
   d.priceType === "DISCOUNTED" || d.priceType === "MANUAL";
 
-/** (B) existing-line edit. `null` = the line is untouched (no price sent, or within ½¢ of stored). */
+/**
+ * (B) existing-line edit. `null` = the line is untouched (no price sent, or within ½¢ of stored).
+ * The REASON baseline is the stored price, but the CLASSIFICATION keeps rule A's tier band (SA-592):
+ * a price within ½¢ of the customer's TIER price restores SPECIAL / STANDARD, no reason needed
+ * (the result is not an override, see {@link isOverride}; the caller clears the stale reason).
+ */
 export function decideEditedLinePrice(input: {
   overridePrice: number | null;
   storedPrice: number;
+  tierPrice: number;
   listPrice: number;
   isSpecialTier: boolean;
   /** A reason sent with the edit OR already on the line. */
@@ -60,7 +66,12 @@ export function decideEditedLinePrice(input: {
       originalPrice: null,
     };
   }
-  return decideOrRefuse({ ...input, overridePrice, baselinePrice: storedPrice });
+  const restore = withinStaffOverrideTolerance(overridePrice, input.tierPrice);
+  return decideOrRefuse({
+    ...input,
+    overridePrice,
+    baselinePrice: restore ? input.tierPrice : storedPrice,
+  });
 }
 
 /** (C) add-line-during-edit: baseline = the customer's tier price for the product. */
@@ -90,7 +101,7 @@ export function decideReplaceAllLinePrice(input: {
   /** The staff create-merge's brand-new lines were never reason-checked. */
   skipReasonGuard: boolean;
   productName?: string | null;
-}): StaffPricedLine & { repriced: boolean } {
+}): StaffPricedLine & { repriced: boolean; restored?: true } {
   const { existing, overridePrice } = input;
   if (existing && withinStaffOverrideTolerance(overridePrice, existing.unitPrice)) {
     return {
@@ -100,13 +111,15 @@ export function decideReplaceAllLinePrice(input: {
       repriced: false,
     };
   }
+  // SA-592: the tier price typed back on an existing line restores its clean type (no reason).
+  const restore = !!existing && withinStaffOverrideTolerance(overridePrice, input.tierPrice);
   const d = decideOrRefuse({
     overridePrice,
-    baselinePrice: existing ? existing.unitPrice : input.tierPrice,
+    baselinePrice: existing && !restore ? existing.unitPrice : input.tierPrice,
     listPrice: input.listPrice,
     isSpecialTier: input.isSpecialTier,
     hasReason: input.hasReason || input.skipReasonGuard,
     productName: input.productName,
   });
-  return { ...d, repriced: isOverride(d) };
+  return restore ? { ...d, repriced: false, restored: true } : { ...d, repriced: isOverride(d) };
 }

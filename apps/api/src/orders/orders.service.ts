@@ -4042,11 +4042,10 @@ export class OrdersService implements OnApplicationBootstrap {
                     ? (operatorCpMap.get(li.productId) ?? operatorDefaultTier)
                     : 1;
                 const storedOverrideReason = (li as any).overrideReason ?? null;
-                // #2716c: ONE rule (staff-line-price.ts -> decideStaffOverride). B465: a special-tier
-                // change needs a reason (a stored one counts); the baseline is the STORED price, so
-                // an echo is no repricing (forward-only, no re-stamp). Below list DISCOUNTED, at/above
-                // MANUAL, originalPrice = the product's LIST price (never the line's prior net).
-                let editProduct: { name: string | null; pricePerUnit: unknown } | null = null;
+                // #2716c: ONE rule (staff-line-price.ts -> decideStaffOverride); reason baseline =
+                // STORED price (echo = untouched, no re-stamp); the TIER price typed back restores
+                // SPECIAL/STANDARD, reason cleared (SA-592). Else DISCOUNTED < list <= MANUAL, original = LIST.
+                let editProduct: Awaited<ReturnType<typeof tx.product.findFirst>> = null;
                 if (
                   overridePrice !== null &&
                   !withinStaffOverrideTolerance(overridePrice, existingUnitPrice) &&
@@ -4055,12 +4054,12 @@ export class OrdersService implements OnApplicationBootstrap {
                 ) {
                   editProduct = await tx.product.findFirst({
                     where: { id: li.productId },
-                    select: { name: true, pricePerUnit: true },
                   });
                 }
                 const repriced = decideEditedLinePrice({
                   overridePrice,
                   storedPrice: existingUnitPrice,
+                  tierPrice: editProduct ? getTierPrice(editProduct, tierForProduct) : 0,
                   listPrice: editProduct ? Number(editProduct.pricePerUnit) : existingUnitPrice,
                   isSpecialTier: isSpecialTier(tierForProduct),
                   hasReason: !!(
@@ -4070,17 +4069,14 @@ export class OrdersService implements OnApplicationBootstrap {
                   isUnlisted,
                   productName: editProduct?.name ?? null,
                 });
-                const isManualOverride = repriced !== null;
+                const isManualOverride = !!repriced && isOverride(repriced);
                 const unitPrice = repriced ? repriced.unitPrice : existingUnitPrice;
-                // This branch keeps the line's stored (agreed) price — it never
-                // re-runs applyBestPromotion for the UNIT PRICE, same as every other
-                // promo type. The line's BUY_N_GET_M free units, though, are a
-                // function of the QUANTITY, so they are RE-DERIVED for the new qty
-                // (`rescaleBogoFreeUnits`) and written back: reusing the snapshot
-                // verbatim under-billed a shrunk line (12 → 2 boxes billed $0.00) and
-                // left the column contradicting the subtotal. A manual price override
-                // replaces the promo price outright, so the free units earned under it
-                // do not survive — they would discount the operator's own price.
+                // This branch keeps the line's stored (agreed) price — it never re-runs
+                // applyBestPromotion for the UNIT PRICE. BUY_N_GET_M free units are a function of
+                // the QUANTITY, so they are RE-DERIVED for the new qty (`rescaleBogoFreeUnits`):
+                // reusing the snapshot verbatim under-billed a shrunk line (12 → 2 boxes billed
+                // $0.00). A manual price override replaces the promo price outright, so the free
+                // units earned under it do not survive.
                 const storedFreeUnits = Number((li as any).promoFreeUnits ?? 0);
                 let promoCategory: string | null = null;
                 if (storedFreeUnits > 0 && !isManualOverride && li.productId) {
@@ -4165,6 +4161,9 @@ export class OrdersService implements OnApplicationBootstrap {
                               : (item.overrideReason ?? null),
                           overriddenBy: user?.sub ?? null,
                         }
+                      : {}),
+                    ...(repriced && !isManualOverride
+                      ? { overrideReason: null, overriddenBy: null }
                       : {}),
                   },
                 });
