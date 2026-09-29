@@ -56,7 +56,7 @@ export function recipeSnapshotPort(
           barcodes: { select: { code: true, symbology: true, level: true, primaryFor: true } },
         },
       });
-      return new Map<string, ComponentProductFacts>(rows.map((p) => [p.id, p]));
+      return new Map(rows.map((p): [string, ComponentProductFacts] => [p.id, p]));
     },
   };
 }
