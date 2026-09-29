@@ -8,7 +8,8 @@
 --     to call Apple's /auth/revoke on account deletion.
 -- All three columns are nullable adds: no table rewrite, no backfill in this file.
 --
--- Locking: Prisma runs this file in ONE transaction, so CONCURRENTLY is unavailable. Each ADD COLUMN
+-- Locking: the file is wrapped in an explicit BEGIN/COMMIT so SET LOCAL lock_timeout takes effect
+-- (SA-597), so CONCURRENTLY is unavailable. Each ADD COLUMN
 -- (nullable, no default) is metadata-only; each CREATE UNIQUE INDEX scans its table once and holds a
 -- SHARE lock (writes to that table wait, reads do not) for the build — "User" and "BuyerAccount" are
 -- small, so seconds at most. The same form as googleId's indexes (0_init). lock_timeout makes the
@@ -20,6 +21,7 @@
 --   DROP INDEX "BuyerAccount_appleId_key";
 --   ALTER TABLE "BuyerAccount" DROP COLUMN "appleId", DROP COLUMN "appleRefreshTokenEnc";
 
+BEGIN;
 SET LOCAL lock_timeout = '5s';
 
 -- AlterTable
@@ -34,3 +36,5 @@ CREATE UNIQUE INDEX "User_tenantId_appleId_key" ON "User"("tenantId", "appleId")
 
 -- CreateIndex
 CREATE UNIQUE INDEX "BuyerAccount_appleId_key" ON "BuyerAccount"("appleId");
+
+COMMIT;

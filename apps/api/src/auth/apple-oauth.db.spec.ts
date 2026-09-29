@@ -1,6 +1,6 @@
 /**
  * #2309 (SA-418 §5) — real-Postgres proof that the two additive unique constraints from
- * migration 20260927100000_2309_apple_sign_in actually exist and behave as designed:
+ * migration 20260929200000_2309_apple_sign_in actually exist and behave as designed:
  *   - "User_tenantId_appleId_key" (@@unique([tenantId, appleId])): one Apple sub per
  *     TENANT, not globally — the same sub is allowed to sign in as staff in two
  *     different tenants (e.g. a contractor working two RouteFlow customers).
