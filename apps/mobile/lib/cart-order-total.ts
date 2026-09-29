@@ -1,4 +1,10 @@
-import { computeLineSubtotal, effectiveQty, getTierPrice, roundMoney } from "@routeflow/pricing";
+import {
+  isSpecialTier,
+  computeLineSubtotal,
+  effectiveQty,
+  getTierPrice,
+  roundMoney,
+} from "@routeflow/pricing";
 import { unitPriceBase } from "./unit-options";
 import { effectiveUnitPrice, type LineState, type Product } from "./cart-line-state";
 
@@ -13,10 +19,11 @@ import { effectiveUnitPrice, type LineState, type Product } from "./cart-line-st
  * unit, no explicit override) prices off its OWN resolved level, never the pack's tier price.
  */
 export function lineUnitFor(line: LineState | undefined, product: Product, tier: number): number {
-  const isSpecial = tier !== 1;
+  const isSpecial = isSpecialTier(tier);
   const tierPrice = getTierPrice(product, tier);
   const base = unitPriceBase(line ?? {}, tierPrice);
-  return isSpecial ? base : effectiveUnitPrice(line, base);
+  // #2696(c): a special line bills an override only WITH its reason (the server refuses one without).
+  return isSpecial && !line?.overrideReason?.trim() ? base : effectiveUnitPrice(line, base);
 }
 
 /**

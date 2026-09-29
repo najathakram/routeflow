@@ -472,6 +472,41 @@ export const ROUTE_RUN_STOP_STATUS_VALUES = [
 ] as const;
 export type RouteRunStopStatusValue = (typeof ROUTE_RUN_STOP_STATUS_VALUES)[number];
 
+// #2717 M1 (SA-572a): the catalog role of a Product row. Constant default; NOT backfilled in
+// M1 and read by nothing in M1 (variant-ness stays parentProductId != null). Values beyond
+// STANDARD are M2+.
+export const PRODUCT_KIND_VALUES = ["STANDARD", "FAMILY", "VARIANT", "RECIPE"] as const;
+export type ProductKind = (typeof PRODUCT_KIND_VALUES)[number];
+
+// #2717 M1 (SA-572a): the packaging level a barcode or a ProductUnit sits at.
+export const PACKAGING_LEVEL_VALUES = [
+  "UNIT",
+  "INNER",
+  "BOX",
+  "CASE",
+  "DISPLAY",
+  "PALLET",
+] as const;
+export type PackagingLevel = (typeof PACKAGING_LEVEL_VALUES)[number];
+
+// #2717 M1 (SA-572a): the barcode symbology, inferred from the code
+// (apps/api/src/common/barcode-symbology.ts).
+export const BARCODE_SYMBOLOGY_VALUES = [
+  "UPC_A",
+  "UPC_E",
+  "EAN_8",
+  "EAN_13",
+  "GTIN_14",
+  "CODE128",
+  "OTHER",
+] as const;
+export type BarcodeSymbology = (typeof BARCODE_SYMBOLOGY_VALUES)[number];
+
+// #2717 M1 (SA-572a): ENTERED = a code someone entered or scanned for this level; COPIED = the
+// owner's rule "one barcode ⇒ the units share it": the unit row copied from the box row.
+export const BARCODE_ORIGIN_VALUES = ["ENTERED", "COPIED"] as const;
+export type BarcodeOrigin = (typeof BARCODE_ORIGIN_VALUES)[number];
+
 /** #2653 (SA-542b): which realm minted a sign-in handoff code (Prisma `HandoffRealm`). */
 export const HANDOFF_REALM_VALUES = ["STAFF", "BUYER"] as const;
 export type HandoffRealm = (typeof HANDOFF_REALM_VALUES)[number];

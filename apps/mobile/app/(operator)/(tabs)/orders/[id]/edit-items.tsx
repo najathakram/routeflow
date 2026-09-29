@@ -23,7 +23,7 @@ import { useCustomerPriceHistory, useUpdateOrderItems } from "../../../../../lib
 import { useCustomer, useCustomerPrices } from "../../../../../lib/api/customers";
 import { showToast } from "../../../../../lib/toast";
 import { confirm } from "../../../../../lib/confirm";
-import { computeLineSubtotal, effectiveQty, getTierPrice } from "@routeflow/pricing";
+import { computeLineSubtotal, effectiveQty, getTierPrice, isSpecialTier } from "@routeflow/pricing";
 import { marginFloorPrice } from "../../../../../lib/margin-floor-price";
 import { isUnitLine, setLineUnits } from "../../../../../lib/sale-line";
 import { buildSubstituteLine } from "../../../../../lib/substitute-line";
@@ -145,11 +145,11 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     return m;
   }, [customerPrices]);
   const effectiveTierFor = (productId: string) => cpMap.get(productId) ?? customerTier ?? 1;
-  /** SPECIAL (tier!==1) lines are the customer's permanent price — never overridable
+  /** SPECIAL (a tier other than 1) lines are the customer's permanent price — never overridable
    *  (the create surface's own rule, components/NewOrderScreen.tsx:627). Mobile's
    *  editor contradicted mobile's builder until this landed; the api-side gate is
    *  still the owner's call, so this is a CLIENT gate only (RULINGS R2/R9). */
-  const isSpecialFor = (productId: string) => effectiveTierFor(productId) !== 1;
+  const isSpecialFor = (productId: string) => isSpecialTier(effectiveTierFor(productId));
   const userRole = useAuthStore((s) => s.user?.role);
   const userId = useAuthStore((s) => s.user?.id);
   // Customer accounts shouldn't reach this screen, but defend anyway —
@@ -647,7 +647,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   ): string => {
     const catalogPrice = tierPriceFor(p);
     const listPrice = toNumber(p.pricePerUnit);
-    const isSpecial = (cpMap.get(p.id) ?? customerTier ?? 1) !== 1;
+    const isSpecial = isSpecialTier(cpMap.get(p.id) ?? customerTier ?? 1);
     const upbRaw = p.unitsPerBox;
     const unitsPerBox = upbRaw == null ? null : Number(upbRaw);
     // Fresh-add starting price — only a genuine discount (below tier) or

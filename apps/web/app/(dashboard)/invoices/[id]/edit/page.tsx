@@ -21,6 +21,7 @@ import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
 import { displayProductName } from "@/lib/product-display";
 import {
+  isSpecialTier,
   computeLineSubtotal,
   normalizeBoxesPieces,
   packFromOwnSplit,
@@ -398,7 +399,9 @@ export default function EditInvoicePage() {
     (product: TierPriceableProduct) => {
       const listPrice = parseFloat(String(product.pricePerUnit ?? 0)) || 0;
       const customerTier = customer?.pricingTier ?? 1;
-      const tierLadderPrice = customerTier !== 1 ? getTierPrice(product, customerTier) : undefined;
+      const tierLadderPrice = isSpecialTier(customerTier)
+        ? getTierPrice(product, customerTier)
+        : undefined;
       const specialPrice = priceMap[product.id] ?? tierLadderPrice;
       return specialPrice != null && Number.isFinite(specialPrice) ? specialPrice : listPrice;
     },
