@@ -20,6 +20,7 @@ const CLEAN_ENV: NodeJS.ProcessEnv = Object.fromEntries(
   Object.entries(process.env).filter(([k]) => !/^GIT_/.test(k)),
 );
 const REPO_ROOT = path.resolve(__dirname, "../../../..");
+const SQUAWK_CLI = path.resolve(REPO_ROOT, "node_modules/squawk-cli");
 
 function run(args: string[], cwd?: string) {
   return spawnSync(process.execPath, [SCRIPT, ...args], { encoding: "utf8", cwd });
@@ -495,16 +496,22 @@ describe("lint-migrations.mjs contract (T1 / R2, R3)", () => {
           path.resolve(REPO_ROOT, "apps/api/.squawk.toml"),
           path.join(repo, "apps/api/.squawk.toml"),
         );
+        // A "dir" symlink needs a privilege a normal Windows user lacks (EPERM); a junction does
+        // not, and behaves the same for squawk (same pattern as scripts/janitor.self-test.mjs).
         fs.symlinkSync(
-          path.resolve(REPO_ROOT, "node_modules/squawk-cli"),
+          SQUAWK_CLI,
           path.join(repo, "node_modules/squawk-cli"),
-          "dir",
+          process.platform === "win32" ? "junction" : "dir",
         );
         // An applied, UNWRAPPED migration already in history (no SET LOCAL, no wrap).
         addMigration("20260101000000_applied_history", 'ALTER TABLE "T" ADD COLUMN "old" TEXT;\n');
         base = commitAll("base");
       });
-      afterEach(() => fs.rmSync(repo, { recursive: true, force: true }));
+      afterEach(() => {
+        fs.rmSync(repo, { recursive: true, force: true });
+        // The cleanup must unlink the link only, never delete through it into the real install.
+        expect(fs.existsSync(path.join(SQUAWK_CLI, "package.json"))).toBe(true);
+      });
 
       const GOOD =
         'BEGIN;\nSET LOCAL lock_timeout = \'5s\';\nALTER TABLE "T" ADD COLUMN "c" TEXT;\nCOMMIT;\n';
