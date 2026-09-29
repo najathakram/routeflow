@@ -6,7 +6,10 @@
 import { priceCorrectionTarget } from "./regulated-ledger.service";
 
 describe("B894 — priceCorrectionTarget is a linear slice of the new figure", () => {
-  const line = { qty: 20 };
+  // the FULL line shape production passes (free units + box split): the linear rule must ignore them, and on master
+  // (prorateLineSubtotal with the free-unit telescope) they bend the curve. A variable, not a literal, so the extra
+  // fields are not an excess-property error against the narrowed Pick<..., "qty">.
+  const line = { qty: 20, boxes: 5, unitsPerBox: 4, promoFreeUnits: 2 };
 
   it("monotone non-decreasing in the held qty, 0 at none, the whole figure at the full qty", () => {
     const curve = Array.from({ length: 21 }, (_, held) => priceCorrectionTarget(24, held, line));
@@ -20,7 +23,9 @@ describe("B894 — priceCorrectionTarget is a linear slice of the new figure", (
     expect(priceCorrectionTarget(24, 10, line)).toBe(12);
   });
 
+  const bogo = { qty: 2, boxes: null, unitsPerBox: null, promoFreeUnits: 1 };
+
   it("size 1 BOGO (P=2, F=1): holding 1 of 2 targets half, not the whole figure", () => {
-    expect(priceCorrectionTarget(10, 1, { qty: 2 })).toBe(5);
+    expect(priceCorrectionTarget(10, 1, bogo)).toBe(5);
   });
 });

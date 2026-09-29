@@ -171,6 +171,42 @@ export function selfTest() {
     0,
     "recomputed old price equals the booked credit",
   );
+  // a price-change correction counts; a B681 unit-basis restatement row (qty 0, net 0, tax 0, unitBasisQty != 0) does not
+  const priceRow = {
+    qty: 0,
+    netSales: -3.2,
+    categoryTax: 0,
+    unitBasisQty: 0,
+    returnId: null,
+    lineBoxes: 5,
+    lineUnitsPerBox: 4,
+  };
+  const b681Row = {
+    qty: 0,
+    netSales: 0,
+    categoryTax: 0,
+    unitBasisQty: -12,
+    returnId: null,
+    lineBoxes: 5,
+    lineUnitsPerBox: 4,
+  };
+  const taxOnly = { ...priceRow, netSales: 0, categoryTax: 1.5 };
+  eq(
+    [isPriceCorrectionRow(priceRow), isPriceCorrectionRow(b681Row), isPriceCorrectionRow(taxOnly)],
+    [true, false, true],
+    "correction predicate",
+  );
+  eq(
+    isPriceCorrectionRow({ ...priceRow, returnId: "r1" }),
+    false,
+    "a return-driven row is not a price correction",
+  );
+  const blk = blockOf([], [priceRow, b681Row, taxOnly, { ...priceRow, lineBoxes: null }]);
+  eq(
+    [blk.corrections.size1, blk.corrections.sizeGt1],
+    [1, 2],
+    "B681 row excluded from the correction counts",
+  );
   eq([...anonymize(["x", "y", "x"]).values()], ["tenant A", "tenant B"], "labels");
   if (JSON.stringify(s).match(/tenant|slug|id"/)) throw new Error("summary leaked an identifier");
   return "self-test ok";
@@ -199,6 +235,8 @@ const CREDIT_SQL = `
 
 const CORRECTION_SQL = `
   SELECT rl."tenantId", t.slug,
+         rl.qty AS qty, rl."netSales" AS "netSales", rl."categoryTax" AS "categoryTax",
+         rl."unitBasisQty" AS "unitBasisQty", rl."returnId" AS "returnId",
          ii.boxes AS "lineBoxes", ii."unitsPerBox" AS "lineUnitsPerBox"
     FROM "RegulatedSalesLedger" rl
     JOIN "Tenant" t ON t.id = rl."tenantId"
@@ -206,13 +244,27 @@ const CORRECTION_SQL = `
    WHERE rl."correctsEntryId" IS NOT NULL
      AND rl.qty = 0
      AND rl."returnId" IS NULL
+     AND (rl."netSales" <> 0 OR rl."categoryTax" <> 0)
      AND ii."promoFreeUnits" > 0`;
+
+/**
+ * A price-change correction row (`correctSaleForPriceChange`): a correction of a SALE (qty 0, no returnId) that
+ * carries a NET or CATEGORY-TAX delta. B681 unit-basis restatement rows share the correctsEntryId / qty 0 shape
+ * but move only unitBasisQty (netSales 0, categoryTax 0); `priceCorrectionTarget` never priced them.
+ * Mirrors the WHERE clause of CORRECTION_SQL.
+ */
+export function isPriceCorrectionRow(r) {
+  return (
+    num(r.qty) === 0 && r.returnId == null && (num(r.netSales) !== 0 || num(r.categoryTax) !== 0)
+  );
+}
 
 /** Totals for one block (live or test) from the credit rows and the correction rows. */
 export function blockOf(creditRows, correctionRows) {
   const credits = summarizeCredits(creditRows);
   const corr = { size1: 0, sizeGt1: 0 };
-  for (const c of correctionRows) freeUnitSize(c) > 1 ? corr.sizeGt1++ : corr.size1++;
+  for (const c of correctionRows.filter(isPriceCorrectionRow))
+    freeUnitSize(c) > 1 ? corr.sizeGt1++ : corr.size1++;
   return { credits, corrections: corr };
 }
 
