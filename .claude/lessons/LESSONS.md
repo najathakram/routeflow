@@ -429,15 +429,6 @@
   plainly that it is unverified.**
 - **Guard:** none — judgment. Grep `isWeb`/`Platform.OS` in any file a fix touches.
 
-### L-218 · 2026-09-25 · testing · a red-proof that matches message TEXT can be vacuous (B861)
-
-- **Symptom:** the red-proofs AB/AD passed on the OLD code, so they proved nothing about the fix.
-- **Root cause:** they matched `/reload/`, which the pre-existing 409's message also contains, so the
-  wrong error satisfied the assertion.
-- **Lesson:** **Assert by error CLASS or code, never by message text another error can share. Run the
-  proof against the old code and confirm it fails for the intended reason.**
-- **Guard:** `REG-B861-AB`/`AD` assert `BadRequestException`.
-
 ### L-226 · 2026-09-27 · testing · a money fixture must be shaped by the production writer (#2274, #2245, #2305)
 
 - **Symptom:** ledger and unit-line specs built rows by hand in shapes the writer never produces (credit overshoot legs the per-line and header caps would refuse; quantities not in base pieces), so they proved a state that cannot exist and could miss the one the writer can.
@@ -670,6 +661,19 @@
   connection), `customer-delete-money-records-2587.db.spec.ts`,
   `customer-delete-fk-race-2572.db.spec.ts`; `common/update-tenant-class-ledger.db.spec.ts`.
   Cf. [[L-217]], [[L-221]].
+
+### L-242 · 2026-09-28 · domain · never key a UI draft or map by a nullable id (B889, #2709)
+
+- **Symptom:** mobile buyer edit-items keyed its draft by `productId`. The seller's custom lines
+  (`productId` null) collapsed into one "Product" row, and Save sent `productId: null`, which the
+  server silently ignored.
+- **Root cause:** a draft keyed by a nullable id: every null collides on one key, and the null class
+  is not a real member of the keyed set.
+- **Lesson:** **Never key a UI draft or map by a nullable id. Key on the non-null identity and skip or
+  segregate the null class explicitly, mirroring web's established filter and the server's own
+  definition (`isUnlisted = !productId`).**
+- **Guard:** #2709's pins in `apps/mobile/__tests__/buyer-edit-items-custom-lines.test.ts`
+  (`isCustomLine` skips seller custom lines in `hydrateBuyerDraft`).
 
 ## security
 
