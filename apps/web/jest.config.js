@@ -12,6 +12,8 @@ const createJestConfig = nextJest({ dir: "./" });
 
 /** @type {import('jest').Config} */
 const customJestConfig = {
+  // #2671: a per-worktree cache (dies with the worktree), never the shared OS-temp jest cache.
+  cacheDirectory: "<rootDir>/.jest-cache",
   setupFilesAfterEnv: ["<rootDir>/jest.setup.ts"],
   testEnvironment: "jsdom",
   // Campaign gate artifact — see scripts/jest-campaign-reporter.cjs. Writes
