@@ -27,6 +27,9 @@
 // through and appends an audit line to <git-dir>/push-guard.log. A blank reason is not an override.
 //
 // Exit: 0 pass, 1 refused, 2 the range could not be resolved (fails CLOSED; the override applies).
+// Edge case: with no origin/* ref carrying master (master fetched by URL / FETCH_HEAD only), a NEW
+// branch has no merge-base to judge from, so it refuses loudly (exit 2) rather than passing
+// unchecked; the override (PUSH_GUARD_OVERRIDE_REASON, audited with the actual cause) applies.
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";

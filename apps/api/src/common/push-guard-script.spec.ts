@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 // B897 — scripts/push-guard.mjs, the pre-push guard against pushing build/cache output or a heavy
 // push. Origin: #2742 pushed a commit that added 2,401 `.jest-cache/` files (~38 MB, source maps
@@ -23,8 +24,11 @@ const CLEAN_GIT_ENV: NodeJS.ProcessEnv = JSON.parse(
     [
       "--input-type=module",
       "-e",
+      // A file: URL, never a raw path: on Windows a bare `C:\\...` path is an unsupported ESM
+      // scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME), the suite would load 0 tests and every PC lane's
+      // pre-push would go red (Linux CI hides it). Specs that import by path use pathToFileURL.
       `import { cleanGitEnv } from ${JSON.stringify(
-        path.resolve(__dirname, "../../../../scripts/lib/verify-scope.mjs"),
+        pathToFileURL(path.resolve(__dirname, "../../../../scripts/lib/verify-scope.mjs")).href,
       )}; process.stdout.write(JSON.stringify(cleanGitEnv()));`,
     ],
     { encoding: "utf8" },
@@ -272,6 +276,15 @@ describe("push-guard.mjs contract (B897)", () => {
     it("no stdin refs and no --base: nothing to check, exit 0", () => {
       expect(guard([], {}, "").status).toBe(0);
     });
+  });
+
+  it("the spec imports the ESM helper through a file: URL (pathToFileURL), never a raw path (Windows)", () => {
+    const src = fs.readFileSync(__filename, "utf8");
+    expect(src).toContain("pathToFileURL(path.resolve(__dirname");
+    expect(src).not.toMatch(/import \{ cleanGitEnv \} from \$\{JSON\.stringify\(\s*path\.resolve/);
+    // and the URL is what node actually accepts: the same one-off import loads and yields a clean env
+    expect(Object.keys(CLEAN_GIT_ENV).some((k) => k.startsWith("GIT_"))).toBe(false);
+    expect(Object.keys(CLEAN_GIT_ENV).length).toBeGreaterThan(0);
   });
 
   it("the hook runs the guard before SKIP_VERIFY and verify, passing it the pre-push stdin", () => {
