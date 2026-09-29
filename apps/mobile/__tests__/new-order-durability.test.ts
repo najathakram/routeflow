@@ -248,7 +248,11 @@ describe("NewOrderScreen piece-scan-on-a-unit-line confirm (SA-085h LOW)", () =>
   it("gates a piece-kind accept on the line's unitLabel before calling addOne, via the confirm dialog", () => {
     const fn = (screen.match(/const acceptScannedProduct = \([\s\S]*?\n  \};/) ?? [""])[0];
     expect(fn).toBeTruthy();
-    expect(fn).toMatch(/level !== "UNIT" \|\| !label\) return finishAccept/);
+    // The gate is now the shared predicate (piece kind + the line's unitLabel + a real case size).
+    expect(fn).toMatch(/!needsUnitLabelConfirm\(level, product, label\)\) return finishAccept/);
+    expect(screen).toMatch(
+      /import \{ needsUnitLabelConfirm \} from "\.\.\/lib\/scan-unit-confirm";/,
+    );
     expect(fn).toMatch(/confirm\(/);
     // Declining does nothing: addOne only happens inside finishAccept, called from onYes.
     expect(fn).not.toMatch(/^\s*addOne\(/m);
