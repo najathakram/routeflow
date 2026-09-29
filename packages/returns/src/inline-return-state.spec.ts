@@ -2,6 +2,12 @@ import {
   applyCoveredPiecesToLines,
   buildCaptureRequest,
   buildQuoteRequest,
+  boxedProductIds,
+  canOverrideReturnCredit,
+  CREDIT_OVERRIDE_ROLES,
+  creditOverrideNote,
+  creditOverrideProblem,
+  parseCreditOverride,
   coveredPiecesByProduct,
   DEFAULT_EXCESS_OPTION,
   dropExcessAndRequote,
@@ -569,5 +575,161 @@ describe("keyReusedReturnOf (#2647)", () => {
     ["undefined", undefined],
   ])("%s ⇒ null", (_n, e) => {
     expect(keyReusedReturnOf(e)).toBeNull();
+  });
+});
+
+describe("#2695 (SA-557): the staff credit price override on the wire", () => {
+  const cheap = { creditUnitPrice: "3.50", overrideReason: "  damaged box  " };
+
+  it("only OPERATOR and TENANT_ADMIN are offered the input (every other caller would get a 400)", () => {
+    expect(
+      ["OPERATOR", "TENANT_ADMIN", "DRIVER", "CUSTOMER", "SUPER_ADMIN", undefined, null].map(
+        canOverrideReturnCredit,
+      ),
+    ).toEqual([true, true, false, false, false, false, false]);
+  });
+
+  it("parses none / ok (trimmed) / invalid, the same rules the server applies", () => {
+    expect(parseCreditOverride({})).toEqual({ kind: "none" });
+    expect(parseCreditOverride({ creditUnitPrice: " ", overrideReason: "" })).toEqual({
+      kind: "none",
+    });
+    expect(parseCreditOverride(cheap)).toEqual({
+      kind: "ok",
+      creditUnitPrice: 3.5,
+      overrideReason: "damaged box",
+    });
+    expect(parseCreditOverride({ creditUnitPrice: "0", overrideReason: "x" })).toMatchObject({
+      kind: "ok",
+      creditUnitPrice: 0,
+    });
+    for (const bad of [
+      { creditUnitPrice: "3.50" }, // no reason
+      { creditUnitPrice: "3.50", overrideReason: "   " },
+      { overrideReason: "why" }, // a reason without a price
+      { creditUnitPrice: "3.505", overrideReason: "why" }, // sub-cent
+      { creditUnitPrice: "-1", overrideReason: "why" },
+      { creditUnitPrice: "abc", overrideReason: "why" },
+      { creditUnitPrice: "3", overrideReason: "x".repeat(201) },
+    ]) {
+      expect(parseCreditOverride(bad).kind).toBe("invalid");
+    }
+  });
+
+  it("names the first line that can't be sent, so the host can disable Get quote", () => {
+    expect(creditOverrideProblem([line(), line({ productId: "p2", ...cheap })])).toBeNull();
+    expect(creditOverrideProblem([line({ productName: "Gadget", creditUnitPrice: "2" })])).toMatch(
+      /^Gadget: /,
+    );
+  });
+
+  it("the quote and the capture send the SAME override, trimmed; a line without one sends neither field", () => {
+    const lines = [
+      line({ productId: "p1", pieces: "4", ...cheap }),
+      line({ productId: "p2", pieces: "2" }),
+    ];
+    const quote = buildQuoteRequest("cust-1", lines);
+    const capture = buildCaptureRequest({
+      customerId: "cust-1",
+      orderId: "ord-1",
+      lines,
+      returnKey: "k",
+      reason: "DAMAGED",
+    });
+    for (const items of [quote.items, capture.items]) {
+      expect(items[0]).toMatchObject({ creditUnitPrice: 3.5, overrideReason: "damaged box" });
+      expect(Object.keys(items[1])).not.toContain("creditUnitPrice");
+      expect(Object.keys(items[1])).not.toContain("overrideReason");
+    }
+    // Nothing else changed shape: a no-override request is exactly what it was before #2695.
+    expect(buildQuoteRequest("cust-1", [line({ pieces: "2" })]).items).toEqual([
+      { productId: "prod-1", qty: 1, boxes: 0, pieces: 2 },
+    ]);
+  });
+
+  it("an unsendable override is never put on the wire half-formed (the host blocks it first)", () => {
+    const items = buildQuoteRequest("cust-1", [line({ pieces: "2", creditUnitPrice: "2" })]).items;
+    expect(items[0]).toEqual({ productId: "prod-1", qty: 1, boxes: 0, pieces: 2 });
+  });
+
+  it("'Return only what was bought' re-quotes WITH the product's override, so it and the capture agree", () => {
+    const q = quoteResponse([
+      chunk({ productId: "p1", pieces: 4 }),
+      chunk({ productId: "p1", sourceOrderId: null, pieces: 2 }),
+    ]);
+    const lines = [line({ productId: "p1", pieces: "6", ...cheap })];
+    expect(dropExcessAndRequote("cust-1", q, undefined, lines).items).toEqual([
+      {
+        productId: "p1",
+        qty: 1,
+        boxes: 0,
+        pieces: 4,
+        creditUnitPrice: 3.5,
+        overrideReason: "damaged box",
+      },
+    ]);
+    // The existing 3-argument form is unchanged.
+    expect(dropExcessAndRequote("cust-1", q).items).toEqual([
+      { productId: "p1", qty: 1, boxes: 0, pieces: 4 },
+    ]);
+  });
+
+  it("names a lowered credit the way the server priced it; any other chunk has no note", () => {
+    const fmt = (n: number) => `$${n.toFixed(2)}`;
+    expect(creditOverrideNote(chunk(), fmt)).toBeNull();
+    expect(
+      creditOverrideNote(
+        chunk({
+          priceSource: "MANUAL",
+          unitPrice: 3.5,
+          originalPrice: 5,
+          overrideReason: "dented",
+        }),
+        fmt,
+      ),
+    ).toBe("Credit lowered to $3.50 each from $5.00 each — dented");
+    expect(
+      creditOverrideNote(
+        chunk({ priceSource: "MANUAL", unitPrice: 18, originalPrice: 24 }),
+        fmt,
+        true,
+      ),
+    ).toBe("Credit lowered to $18.00 per box from $24.00 per box");
+    expect([
+      ...boxedProductIds([line({ productId: "a", unitsPerBox: 12 }), line({ productId: "b" })]),
+    ]).toEqual(["a"]);
+  });
+
+  it("two rows of ONE product must agree on the override: a conflict is refused visibly, never silently dropped (lead, inline-return-state :634)", () => {
+    const other = { creditUnitPrice: "2.00", overrideReason: "goodwill" };
+    const conflicts: Array<[string, ReturnType<typeof line>[]]> = [
+      ["priced + unpriced", [line({ ...cheap }), line()]],
+      ["unpriced + priced (the second override would be dropped)", [line(), line({ ...cheap })]],
+      ["two different prices", [line({ ...cheap }), line({ ...other })]],
+      [
+        "same price, different reason",
+        [line({ ...cheap }), line({ ...cheap, overrideReason: "x" })],
+      ],
+    ];
+    for (const [, lines] of conflicts) {
+      expect(creditOverrideProblem(lines)).toMatch(
+        /^Widget: two rows of this product have different credit prices/,
+      );
+    }
+    // Identical overrides (trim-insensitive), both blank, and different products are all fine.
+    expect(creditOverrideProblem([line({ ...cheap }), line({ ...cheap })])).toBeNull();
+    expect(creditOverrideProblem([line(), line()])).toBeNull();
+    expect(creditOverrideProblem([line({ ...cheap }), line({ productId: "p2" })])).toBeNull();
+  });
+
+  it("the override roles are OPERATOR and TENANT_ADMIN, checked against the shared UserRole type (not an untyped string list)", () => {
+    expect([...CREDIT_OVERRIDE_ROLES]).toEqual(["OPERATOR", "TENANT_ADMIN"]);
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const src: string = require("fs").readFileSync(
+      require("path").join(__dirname, "inline-return-state.ts"),
+      "utf8",
+    );
+    expect(src).toMatch(/\bUserRole,\n\} from "@routeflow\/types"/); // a type-only import block
+    expect(src).toContain("satisfies readonly `${UserRole}`[]");
   });
 });

@@ -17,6 +17,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { FeatureOverrideService } from "../billing/feature-override.service";
 import { buildPlanFlagDenial } from "../billing/plan-flag-denial";
+import { isDarkFlag } from "../billing/plan-flag-policy";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { buildPlanGateBody } from "../billing/plan-gate";
@@ -153,7 +154,24 @@ export class ProductsService {
   async assertReorderAllowed(): Promise<void> {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) return; // no tenant context (e.g. SUPER_ADMIN) — nothing to gate
-    if (await this.authority.can(tenantId, "flag.forecasting")) return;
+    if (await this.authority.can(tenantId, "flag.forecasting")) {
+      // Ships DARK (DARK_PLAN_FLAGS, PLAN_FLAG_ENFORCEMENT off): the authority allowed by the
+      // courtesy, so log the would-deny from ITS OWN resolver (preset + grants − denies — no second
+      // plan-lookup path) to make the blast radius readable before the flag is enforced.
+      if (isDarkFlag("flag.forecasting")) {
+        try {
+          const resolved = await this.authority.resolveAll(tenantId);
+          if (resolved?.byKey.get("flag.forecasting")?.effective === false) {
+            this.logger.warn(
+              `reorder gate would deny (dark): flag=flag.forecasting tenant=${tenantId}`,
+            );
+          }
+        } catch {
+          // Observation only: a resolver failure never turns an allowed write into a refusal.
+        }
+      }
+      return;
+    }
     // The guard's own deny-body builder (override DENY → no upgrade CTA; unresolvable →
     // PLAN_GATE_UNAVAILABLE), so this 403 can never drift from the inventory route's.
     throw await buildPlanFlagDenial(
