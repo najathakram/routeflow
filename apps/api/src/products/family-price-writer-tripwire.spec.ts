@@ -208,3 +208,117 @@ describe("family price writer tripwire: scripts and prisma (Q2 ii)", () => {
     }
   });
 });
+
+/**
+ * SA-584 fold (lead): the column scans above only see a price column NAMED in an object literal. A
+ * write whose `data` is a variable or carries a spread (`data,`, `data: someVar`, `{ ...dto }`) can
+ * carry a price column the scan never sees. Every such write is either listed here by file with a
+ * reason it can never carry a price column onto a governed row, or the tripwire fails.
+ */
+export type DataArg = "literal" | "spread" | "opaque" | "none";
+
+export function dataArgKind(block: string): DataArg {
+  const m = /(^|[\s{,(])data\b\s*([:,}])/m.exec(block);
+  if (!m) return "none";
+  if (m[2] !== ":") return "opaque";
+  const rest = block.slice(m.index + m[0].length).trimStart();
+  if (rest.startsWith("{") || rest.startsWith("[")) {
+    const open = rest[0];
+    const inner = balancedGeneric(rest, 0, open, open === "{" ? "}" : "]");
+    // `...(cond ? { k: v } : {})` spreads a literal built in place; `...dto` / `...rest` spreads a value
+    // the scan cannot see into.
+    return /\.\.\.\s*[A-Za-z_$]/.test(inner) ? "spread" : "literal";
+  }
+  return "opaque";
+}
+
+function balancedGeneric(text: string, openIdx: number, open: string, close: string): string {
+  let depth = 1;
+  let i = openIdx + 1;
+  while (i < text.length && depth > 0) {
+    if (text[i] === open) depth++;
+    else if (text[i] === close) depth--;
+    i++;
+  }
+  return text.slice(openIdx, i);
+}
+
+/** Every product write call block whose data argument is a variable or contains a spread. */
+export function opaqueProductWrites(text: string): string[] {
+  const out: string[] = [];
+  for (const receiver of ["product", "products"]) {
+    const methods = receiver === "product" ? WRITE_METHODS : ["create", "update"];
+    for (const block of callBlocks(text, receiver, methods)) {
+      const kind = dataArgKind(block);
+      if (kind === "opaque" || kind === "spread") out.push(block);
+    }
+  }
+  return out;
+}
+
+/** File (relative to apps/api/src) -> why its variable/spread `data` can never carry a price column onto a governed row. */
+const OPAQUE_DATA_ALLOW: Record<string, string> = {
+  "inventory/inventory.service.ts":
+    "createVariantRowInTx spreads `priceColumns`: the family's own five columns re-read under its " +
+    "row lock (familyPricesForNewVariant) with the mode on, the parent's as before with it off; the " +
+    "cost-basis write with a ternary `data` names only cost columns.",
+  "products/family-price.ts":
+    "propagateFamilyPrice IS the authority writer: it copies the family's own five columns " +
+    "(pickPriceColumns) onto its variants and its non-override recipe products.",
+  "products/products.service.ts":
+    "update() writes `data` after applyFamilyPriceBeforeUpdate rewrote it (a governed row's price " +
+    "columns replaced by the family's or stripped); the ROUTED table above pins that call.",
+};
+
+describe("family price writer tripwire: variable and spread data (SA-584 fold)", () => {
+  it("sees a spread, a shorthand and a variable data argument, and ignores a literal", () => {
+    expect(
+      opaqueProductWrites("await tx.product.update({ where: { id }, data: { ...dto } });"),
+    ).toHaveLength(1);
+    expect(opaqueProductWrites("await tx.product.update({ where: { id }, data });")).toHaveLength(
+      1,
+    );
+    expect(
+      opaqueProductWrites("await tx.product.update({ where: { id }, data, select });"),
+    ).toHaveLength(1);
+    expect(
+      opaqueProductWrites("await tx.product.update({ where: { id }, data: patch });"),
+    ).toHaveLength(1);
+    expect(
+      opaqueProductWrites("await tx.products.create({ data: { name, ...rest } });"),
+    ).toHaveLength(1);
+    expect(
+      opaqueProductWrites("await tx.product.createMany({ data: rows.map(toRow) });"),
+    ).toHaveLength(1);
+    expect(
+      opaqueProductWrites("await tx.product.update({ where: { id }, data: { currentStock: 1 } });"),
+    ).toHaveLength(0);
+    expect(
+      opaqueProductWrites(
+        "await tx.product.update({ where: { id }, data: { a: 1, ...(x ? { b: 2 } : {}) } });",
+      ),
+    ).toHaveLength(0);
+    expect(
+      opaqueProductWrites("await tx.product.create({ data: { name: 'x', unit: 'ea' } });"),
+    ).toHaveLength(0);
+  });
+
+  const files = listFiles(SRC_ROOT, /\.ts$/);
+  const opaque = new Map<string, number>();
+  for (const file of files) {
+    const n = opaqueProductWrites(readFileSync(file, "utf8")).length;
+    if (n > 0) opaque.set(rel(SRC_ROOT, file), n);
+  }
+
+  it("every file with a variable/spread product write is allow-listed with a reason", () => {
+    const offenders = [...opaque.keys()].filter((f) => !(f in OPAQUE_DATA_ALLOW));
+    expect(offenders).toEqual([]);
+  });
+
+  it("every allow-listed file has a reason and still has such a write (a stale row fails)", () => {
+    for (const [file, reason] of Object.entries(OPAQUE_DATA_ALLOW)) {
+      expect(reason.length).toBeGreaterThan(20);
+      expect(opaque.has(file)).toBe(true);
+    }
+  });
+});

@@ -362,6 +362,65 @@ describe("house lock order: recipe writers (SA-584 B1/B2)", () => {
   });
 });
 
+describe("createVersion re-validates the copied set under the locks (lead fold item 1)", () => {
+  const seedActive = () => ({ ...seedDraft(), recipes: [recipeRow("ACTIVE")] });
+
+  it("locks family, recipe product, then the source's components FOR SHARE in id order; re-reads via tx after them", async () => {
+    const { service, events } = await build(seedActive());
+    await service.createVersion("r1");
+    expect(lockEvents(events)).toEqual([
+      "tx:lock:update:fam",
+      "tx:lock:update:rp",
+      "tx:lock:share:v1",
+      "tx:lock:share:v2",
+    ]);
+    expect(firstTxProductRead(events)).toBeGreaterThan(lastLockIndex(events));
+  });
+
+  it("a component re-parented since the source was validated -> 400 COMPONENT_NOT_VARIANT, no version created", async () => {
+    const { service, products: rows, recipes } = await build(seedActive());
+    rows.find((p) => p.id === "v1")!.parentProductId = null;
+    const err = await service.createVersion("r1").catch((e) => e);
+    expect(bodyOf(err)).toMatchObject({ code: "RECIPE_INVALID", reason: "COMPONENT_NOT_VARIANT" });
+    expect(recipes).toHaveLength(1);
+  });
+
+  it("a re-parent that lands between the plan read and the tx is caught (the re-check decides)", async () => {
+    const { service, prisma, products: rows, recipes } = await build(seedActive());
+    const original = prisma.tenantTransaction.getMockImplementation()!;
+    prisma.tenantTransaction.mockImplementation(async (fn: any) => {
+      rows.find((p) => p.id === "v2")!.isActive = false;
+      return original(fn);
+    });
+    const err = await service.createVersion("r1").catch((e) => e);
+    expect(bodyOf(err)).toMatchObject({ code: "RECIPE_INVALID", reason: "COMPONENT_INACTIVE" });
+    expect(recipes).toHaveLength(1);
+  });
+});
+
+describe("update: the under-lock DRAFT re-check decides (lead fold item 2)", () => {
+  it("a unitsPerPack-only edit of a recipe that went ACTIVE between the read and the lock -> 409 RECIPE_IMMUTABLE, no recipe.update", async () => {
+    const { service, prisma, recipes, tx } = await build(seedDraft());
+    const original = prisma.tenantTransaction.getMockImplementation()!;
+    prisma.tenantTransaction.mockImplementation(async (fn: any) => {
+      recipes[0].status = "ACTIVE";
+      return original(fn);
+    });
+    const err = await service.update("r1", { unitsPerPack: 12 } as any).catch((e) => e);
+    expect(bodyOf(err)).toMatchObject({ code: "RECIPE_IMMUTABLE" });
+    expect(tx.recipe.update).not.toHaveBeenCalled();
+    expect(recipes[0].unitsPerPack).toBe(12);
+  });
+
+  it("the status is re-read AFTER the locks, through tx (the observation the decision rests on)", async () => {
+    const { service, events } = await build(seedDraft());
+    await service.update("r1", { unitsPerPack: 12 } as any);
+    const lastLock = lastLockIndex(events);
+    const statusRead = events.findIndex((e, i) => i > lastLock && e === "tx:recipe.findFirst");
+    expect(statusRead).toBeGreaterThan(lastLock);
+  });
+});
+
 describe("house lock order: propagateFamilyPrice (recipe products before variants)", () => {
   it("writes recipe products BEFORE variants (family -> recipe product -> variants)", async () => {
     const calls: string[] = [];
