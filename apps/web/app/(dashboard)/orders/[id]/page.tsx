@@ -108,7 +108,6 @@ import {
   getTierPrice,
   normalizeBoxesPieces,
   roundMoney,
-  type SellLevel,
 } from "@routeflow/pricing";
 import { useCustomer, useCustomerPrices } from "@/lib/api/customers";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
@@ -118,7 +117,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { AppliedCreditsPanel, appliedOnOrderRows } from "./AppliedCreditsPanel";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { resolveProductByCode } from "@/lib/barcode-resolve";
-import { scanLevelForHit } from "../_components/scan/useScanCodeHandler";
+import * as scan from "./scan-level-line";
 import { ShipmentCard } from "@/components/ShipmentCard";
 import { SplitInvoiceModal } from "../_components/SplitInvoiceModal";
 import { InvoicePreviewModal, DivergenceNote } from "../../_components/LinkedDocPreviewModal";
@@ -1252,31 +1251,13 @@ export function EditableLineItems({
     return () => document.removeEventListener("mousedown", onClickOutside);
   }, []);
 
-  function addProduct(p: any, level: SellLevel = "BOX") {
+  function addProduct(p: any, level: scan.SellLevel = "BOX") {
     // If this product is already in the list (not cancelled), increment qty instead of adding duplicate
     const existing = items.find((it) => it.productId === p.id && !it.cancelled);
-    // #2717 M4a-1 (SA-580 R1/R4): the level comes from the scanned CODE. On a boxed product
-    // (upb > 1) a UNIT code adds one loose PIECE and a BOX/shared code one CASE; a picker click
-    // (no level) is a case, as today. upb <= 1 has no distinction: today's +1 / qty-1 line.
-    const productUpb = Number(p.unitsPerBox ?? 0);
-    const unitScan = level === "UNIT" && productUpb > 1;
+    const unitScan = scan.isUnitScanOnBoxed(p, level);
     if (existing) {
-      const lineUpb = Number(existing.unitsPerBox ?? 0);
-      const boxedLine = lineUpb > 1 && existing.unitLabel == null;
       onChange(
-        items.map((it) => {
-          if (it.id !== existing.id) return it;
-          if (!boxedLine) return { ...it, qty: it.qty + 1 };
-          // A split line counts PIECES (qty = boxes * upb + pieces); a plain boxed line counts
-          // SELLING UNITS (cases). A UNIT scan switches the line to the split form so the loose
-          // piece is never hidden; a BOX scan on a split line adds a whole case of pieces.
-          if (unitScan) {
-            return it.boxSplit
-              ? { ...it, qty: it.qty + 1 }
-              : { ...it, qty: it.qty * lineUpb + 1, boxSplit: true };
-          }
-          return it.boxSplit ? { ...it, qty: it.qty + lineUpb } : { ...it, qty: it.qty + 1 };
-        }),
+        items.map((it) => (it.id === existing.id ? scan.bumpLineForScan(it, unitScan) : it)),
       );
       setScrollToId(existing.id);
     } else {
@@ -1295,31 +1276,9 @@ export function EditableLineItems({
           ? hist.lastPrice
           : base;
       const newId = `new-${Date.now()}-${Math.random()}`;
-      onAdd({
-        id: newId,
-        isNew: true,
-        originalProductId: p.id,
-        originalProductName: p.name,
-        originalQty: 1,
-        productId: p.id,
-        productName: p.name,
-        qty: 1,
-        // A UNIT scan on a boxed product is ONE loose piece: the split form (qty = pieces).
-        ...(unitScan ? { boxSplit: true } : {}),
-        unitPrice: startPrice,
-        basePrice: base,
-        originalUnitPrice: startPrice,
-        originalBasePrice: base,
-        // Carry the case size so a later substitution re-denominates this
-        // line's selling-unit qty correctly (boxSplit stays unset — a plain
-        // new line still bills in selling units and sends no split).
-        unitsPerBox: p.unitsPerBox == null ? null : Number(p.unitsPerBox),
-        originalUnitsPerBox: p.unitsPerBox == null ? null : Number(p.unitsPerBox),
-        cancelled: false,
-        // units_v1: OrderLineUnitPicker's required fields (pack unit label + price type).
-        unit: p.unit ?? "",
-        priceType: isSpecialTierFor(p) ? "SPECIAL" : "STANDARD",
-      });
+      onAdd(
+        scan.buildNewLine(p, { newId, startPrice, base, unitScan, special: isSpecialTierFor(p) }),
+      );
       setScrollToId(newId);
     }
     setAddSearch("");
@@ -1360,7 +1319,7 @@ export function EditableLineItems({
           scheduleScannerRefocus(addInputRef, 50, { select: true });
           return;
         }
-        addProduct(result.product, scanLevelForHit(code, result.product));
+        addProduct(result.product, scan.scanLevelForHit(code, result.product));
         return;
       }
       // Nothing found — open create-product modal with scanned code as SKU
@@ -1541,16 +1500,7 @@ export function EditableLineItems({
                     if (!isNaN(v) && v > 0) update(item.id, { qty: v });
                   }}
                 />
-                {/* No hidden quantity (SA-580): a split line counts PIECES, so say cases + loose. */}
-                {item.boxSplit && Number(item.unitsPerBox ?? 0) > 1 && item.unitLabel == null && (
-                  <span
-                    data-testid="edit-line-split"
-                    className="text-[11px] normal-case tracking-normal text-navy/60"
-                  >
-                    pcs = {Math.floor(item.qty / Number(item.unitsPerBox))} cases +{" "}
-                    {item.qty % Number(item.unitsPerBox)} loose
-                  </span>
-                )}
+                <scan.SplitLineHint item={item} />
               </label>
             )}
 
