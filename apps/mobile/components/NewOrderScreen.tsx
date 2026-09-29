@@ -1345,7 +1345,6 @@ function ProductPickView({
     scanOpen,
     setScanOpen,
     setPriceEditId,
-    getActions: () => actionsRef.current,
   });
   // Resolved lazily (two map lookups) rather than memoized: it is null on every
   // render but the handful where the sheet is open.

@@ -2,17 +2,10 @@ import { useCallback, useEffect, useRef } from "react";
 import { Platform } from "react-native";
 import { planScanPriceEdit } from "./scan-price-edit";
 
-interface ScanPriceEditActions {
-  isUnlisted: (id: string) => boolean;
-  showInline: (message: string) => void;
-}
-
 interface Args {
   scanOpen: boolean;
   setScanOpen: (open: boolean) => void;
   setPriceEditId: (id: string | null) => void;
-  /** Read lazily (ref-backed) so the memoized tray callback never goes stale. */
-  getActions?: () => ScanPriceEditActions;
 }
 
 /**
