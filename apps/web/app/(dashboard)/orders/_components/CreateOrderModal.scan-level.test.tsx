@@ -35,6 +35,9 @@ const BOXED = {
   isActive: true,
 };
 
+const UPB_ONE = { ...PLAIN, id: "p-upb1", name: "Sample Soda", sku: "700800900", unitsPerBox: 1 };
+const UPB_NULL = { ...PLAIN, id: "p-upbnull", name: "Sample Juice", sku: "111222333", unitsPerBox: null };
+
 jest.mock("@/lib/api/customers", () => ({
   useCustomers: () => ({ data: { data: [] } }),
   useCustomerPrices: () => ({ data: [] }),
@@ -42,7 +45,7 @@ jest.mock("@/lib/api/customers", () => ({
 }));
 jest.mock("@/lib/api/products", () => ({
   ...jest.requireActual("@/lib/api/products"),
-  useProducts: () => ({ data: { data: [PLAIN, BOXED] } }),
+  useProducts: () => ({ data: { data: [PLAIN, BOXED, UPB_ONE, UPB_NULL] } }),
   useCreateProduct: () => ({ mutate: jest.fn(), mutateAsync: jest.fn(), isPending: false }),
 }));
 jest.mock("@/lib/api/orders", () => ({
@@ -267,5 +270,40 @@ describe("R4: upb <= 1 — no box/unit distinction, today's line shape whatever 
     await scan(PLAIN, "100200300", [level]);
     await waitFor(() => expect(plainQty()).toBe("2"));
     expect(screen.queryByTitle("Number of whole cases")).not.toBeInTheDocument();
+  });
+});
+
+describe("SA-595a R4: a sku (BOX-level) hit at upb <= 1 adds today's line shape (unchanged by M4a)", () => {
+  // Master's newLineQty/mergeQtyIntoLine: upb null -> a plain qty line; upb 1 -> a 1-box line
+  // ({qty 1, boxes 1, pieces 0}) whose merge is +1 box. Either way qty is +1 per scan, one line.
+  it("upb null: new line is plain qty 1 (no case/loose split), a repeat merges to qty 2", async () => {
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    const qty = () =>
+      (
+        lineFor("Sample Juice").querySelector(
+          'input[aria-label="Quantity"]',
+        ) as HTMLInputElement | null
+      )?.value ?? lineFor("Sample Juice").querySelector("span.w-8.text-center")?.textContent;
+    await scan(UPB_NULL, "111222333", ["BOX"]);
+    await waitFor(() => expect(lineFor("Sample Juice")).toBeTruthy());
+    expect(qty()).toBe("1");
+    await scan(UPB_NULL, "111222333", ["BOX"]);
+    await waitFor(() => expect(qty()).toBe("2"));
+    expect(screen.getAllByTitle("Remove")).toHaveLength(1);
+    expect(screen.queryByTitle("Number of whole cases")).not.toBeInTheDocument();
+  });
+
+  it("upb 1: new line is {boxes 1, pieces 0, qty 1}, a repeat merges +1 box on the ONE line, no loose units", async () => {
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await scan(UPB_ONE, "700800900", ["BOX"]);
+    await waitFor(() => expect(lineFor("Sample Soda")).toBeTruthy());
+    expect(casesInput().value).toBe("1");
+    expect(looseInput()).toBeNull();
+    expect(lineFor("Sample Soda").textContent).toContain("1 pcs total");
+    await scan(UPB_ONE, "700800900", ["BOX"]);
+    await waitFor(() => expect(casesInput().value).toBe("2"));
+    expect(looseInput()).toBeNull();
+    expect(lineFor("Sample Soda").textContent).toContain("2 pcs total");
+    expect(screen.getAllByTitle("Remove")).toHaveLength(1);
   });
 });

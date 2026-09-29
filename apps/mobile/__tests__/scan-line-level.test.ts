@@ -53,6 +53,20 @@ describe("addScannedLevelToLine — R4 (upb <= 1: today's shape, level ignored)"
   });
 });
 
+describe("SA-595a R4 — a sku (BOX-level) hit at upb <= 1 adds today's plain +1 line", () => {
+  it.each([["upb 1", 1], ["upb null", null]] as const)("%s: new line -> qty 1, no split; existing line merges +1", (_n, upb) => {
+    const isBoxed = (upb ?? 1) > 1;
+    const created = addScannedLevelToLine(NEW, "BOX", isBoxed, upb ?? 1);
+    expect(created.qty).toBe(1);
+    expect(created.boxes ?? null).toBeNull();
+    expect(created.pieces ?? null).toBeNull();
+    const merged = addScannedLevelToLine({ qty: 4, unitPrice: 3 }, "BOX", isBoxed, upb ?? 1);
+    expect(merged).toMatchObject({ qty: 5, unitPrice: 3 });
+    expect(merged.boxes ?? null).toBeNull();
+    expect(merged.pieces ?? null).toBeNull();
+  });
+});
+
 describe("no hidden quantity — after ANY scan the line text states its boxes AND pieces", () => {
   it("1 box + 1 piece renders both parts", () => {
     const l = addScannedLevelToLine(line(1, 0), "UNIT", true, 12);

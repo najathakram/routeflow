@@ -82,6 +82,14 @@ describe("SA-595: sku/unitSku still resolve when the product has barcode rows (l
   });
 });
 
+describe("SA-595a R4: a sku hit at upb <= 1 reaches accept as BOX with no unit prompt", () => {
+  it.each([["upb 1", 1], ["upb null", null]] as const)("%s -> one accept, level BOX", async (_n, upb) => {
+    const { scan, accepted } = harness([{ ...boxed, unitsPerBox: upb }]);
+    await scan("COLA-6");
+    expect(accepted).toEqual([{ id: "p1", level: "BOX" }]);
+  });
+});
+
 describe("scan ladder — a shared code on an upb<=1 product adds a UNIT (SA-580b)", () => {
   it("local shared row code, upb 1 -> UNIT; upb 6 stays BOX", async () => {
     const plain: P = { ...boxed, unitsPerBox: 1, barcodes: [{ code: "SH", level: "BOX" }, { code: "SH", level: "UNIT" }] };
