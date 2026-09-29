@@ -13,7 +13,7 @@ import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, NavAction, NavBar, Pill } from "@routeflow/ui/mobile/ios";
 import { useState } from "react";
-import { useBuyerOrders, type BuyerOrder } from "../../../lib/api/buyer";
+import { useBuyerOrders, type BuyerOrderListItem } from "../../../lib/api/buyer";
 import { useBuyerSessionStore } from "../../../lib/buyer-session-store";
 
 const FILTERS = [
@@ -74,7 +74,8 @@ export default function CustomerOrdersScreen() {
   });
   const orders = data?.data ?? [];
 
-  const totalItems = (order: BuyerOrder) => order.lineItems.reduce((s, i) => s + Number(i.qty), 0);
+  const totalItems = (order: BuyerOrderListItem) =>
+    order.lineItems.reduce((s, i) => s + Number(i.qty), 0);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>

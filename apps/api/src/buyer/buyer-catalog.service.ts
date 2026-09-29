@@ -8,33 +8,13 @@ import { OrdersService } from "../orders/orders.service";
 import { ReplenishmentService } from "./replenishment.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { signableImageKeys } from "../products/product-image-keys";
+import type { BuyerProduct } from "@routeflow/types";
 
 /** Max images presigned per product for the tile's dot-pager (P5-02). */
 const MAX_TILE_IMAGES = 4;
 
-export interface BuyerProduct {
-  id: string;
-  name: string;
-  description: string | null;
-  sku: string | null;
-  barcode: string | null;
-  unit: string;
-  category: string | null;
-  buyerPrice: number;
-  unitsPerBox: number | null;
-  thumbnailUrl: string | null;
-  imageKeys: string[];
-  isFeatured: boolean;
-  isNew: boolean;
-  isDeal: boolean;
-  /** Presigned URLs for the first images (max 4) — the tile dot-pager. [] when no images. */
-  imageUrls: string[];
-  // RF-200: stock availability fields
-  inStock: boolean;
-  stockStatus: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
-  /** Whole units remaining, exposed ONLY while stockStatus === "LOW" ("Only N left"); else null. */
-  stockLeft: number | null;
-}
+// #2703: the catalog row shape is shared with web + mobile — one declaration in @routeflow/types.
+export type { BuyerProduct } from "@routeflow/types";
 
 @Injectable()
 export class BuyerCatalogService {
