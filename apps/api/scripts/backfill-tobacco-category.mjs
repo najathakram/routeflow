@@ -56,13 +56,7 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { isTestTenant } from "../../../scripts/lib/test-tenants.cjs";
-import {
-  applyTobaccoPlan,
-  openRecipeWhereAny,
-  planTobaccoLink,
-  summarizePlans,
-  tobaccoLinkCandidates,
-} from "./lib/recipe-locked.mjs";
+import { applyTobaccoPlan, planTobaccoTenant, summarizePlans } from "./lib/recipe-locked.mjs";
 
 // ─── Connection (mirrors repair-receiving-units.mjs) ──────────────────────────
 function resolveDbUrl() {
@@ -134,43 +128,7 @@ if (execute) {
 const pool = new Pool({ connectionString: resolveDbUrl() });
 const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
 
-const CI_TOBACCO = { equals: "Tobacco", mode: "insensitive" };
-
-async function planForTenant(tenant) {
-  const tobaccoCat = await prisma.trackedCategory.findFirst({
-    where: { tenantId: tenant.id, name: CI_TOBACCO },
-    select: { id: true, name: true, active: true },
-  });
-  const products = await prisma.product.findMany({
-    where: {
-      tenantId: tenant.id,
-      OR: [{ isTobacco: true }, ...(tobaccoCat ? [{ trackedCategoryId: tobaccoCat.id }] : [])],
-    },
-    select: {
-      id: true,
-      name: true,
-      isTobacco: true,
-      trackedCategoryId: true,
-      trackedCategory: { select: { name: true } },
-    },
-  });
-  // SA-587b: a would-be link product in an open (DRAFT/ACTIVE) recipe is skipped, counted only.
-  // The pure planner (scripts/lib/recipe-locked.mjs planTobaccoLink) decides link/recipe-locked.
-  const linkCandidates = tobaccoLinkCandidates(products);
-  const openRecipes =
-    linkCandidates.length > 0
-      ? await prisma.recipe.findMany({
-          where: { tenantId: tenant.id, ...openRecipeWhereAny(linkCandidates.map((p) => p.id)) },
-          select: {
-            status: true,
-            productId: true,
-            familyProductId: true,
-            components: { select: { componentProductId: true } },
-          },
-        })
-      : [];
-  return { tenant, ...planTobaccoLink({ tobaccoCat, products, openRecipes }) };
-}
+const planForTenant = (tenant) => planTobaccoTenant(prisma, tenant);
 
 async function executePlan(plan) {
   await prisma.$transaction((tx) => applyTobaccoPlan(tx, plan));

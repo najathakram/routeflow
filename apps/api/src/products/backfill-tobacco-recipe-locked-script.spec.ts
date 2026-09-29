@@ -185,7 +185,7 @@ describe("backfill-tobacco-category recipe-locked partition (SA-587b)", () => {
 
   it("the link step uses the helper and prints a count-only recipe-locked bucket", () => {
     expect(SCRIPT).toMatch(/from "\.\/lib\/recipe-locked\.mjs"/);
-    expect(SCRIPT).toContain("planTobaccoLink(");
+    expect(SCRIPT).toContain("planTobaccoTenant(prisma, tenant)");
     expect(SCRIPT).toContain("applyTobaccoPlan(");
     const lines = SCRIPT.split("\n").filter((l) => l.includes("recipe-locked ("));
     expect(lines.length).toBeGreaterThan(0);
