@@ -6,8 +6,11 @@ import { FeatureResolverService, ResolvedKey } from "./feature-resolver.service"
 import { EntitlementsModeService } from "./entitlements-mode.service";
 import { FeatureDiffService } from "./feature-diff.service";
 import {
+  DEFAULT_GRANTED_ADDON_FEATURES,
   FEATURE_REGISTRY,
   checkFeatureRequires,
+  defaultGrantRequirementKeys,
+  isDefaultGrantedAddon,
   describeUnmetFeatureRequirement,
 } from "./feature-registry";
 import { addonGateState } from "./addon-gate-registry";
@@ -173,7 +176,11 @@ export class EntitlementAuthority {
 
       const isAddonKeyed = feature.gate.via === "RequireAddon" || feature.gate.via === "guard";
       if (isAddonKeyed) {
-        const active = activeAddonSet.has(feature.key);
+        // SA-540 / Opus review of fa6186b9 (M1): the SAME default-grant rule as computeOldPath and
+        // AddonService. Fails closed when entitlements could not resolve (ent === null).
+        const active =
+          activeAddonSet.has(feature.key) ||
+          (ent !== null && isDefaultGrantedAddon(feature, activeAddonSet, ent.flags, overrides));
         result.set(
           feature.key,
           active || (addonGateState(feature.key) === "dark" && !isAlwaysEnforced),
@@ -299,6 +306,29 @@ export class EntitlementAuthority {
         select: { active: true },
       });
       if (addon?.active === true) return true;
+      // Owner ruling 2026-09-28: the guard now also holds a default-granted key with no row
+      // (AddonService → isDefaultGrantedAddon); the old path must reproduce that exactly. The
+      // DENY override was already handled above.
+      if (feature && DEFAULT_GRANTED_ADDON_FEATURES.includes(feature)) {
+        try {
+          const [rows, ent, reqOverrides] = await Promise.all([
+            this.prisma.tenantAddon.findMany({
+              where: { tenantId, active: true },
+              select: { addonKey: true },
+            }),
+            this.entitlements.resolve(tenantId),
+            this.featureOverrides.getMany(tenantId, defaultGrantRequirementKeys([feature])),
+          ]);
+          const rowKeys = rows.map((r) => r.addonKey);
+          if (isDefaultGrantedAddon(feature, rowKeys, ent.flags, reqOverrides)) return true;
+        } catch (err) {
+          // Fail closed, exactly like AddonService.defaultGrantedKeys().
+          this.logger.warn(
+            `Old-path default grant for "${key}" skipped for tenant ${tenantId}: ` +
+              `${(err as Error)?.message ?? err}`,
+          );
+        }
+      }
       if (
         addonGateState(key) === "dark" &&
         !(await this.entitlements.isAlwaysEnforcedTenant(tenantId))

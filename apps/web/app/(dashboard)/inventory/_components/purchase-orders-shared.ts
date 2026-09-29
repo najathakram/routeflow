@@ -1,6 +1,7 @@
 import {
   buildPOLine,
   derivedCaseCost,
+  linePack,
   normalizeBoxesPieces,
   roundMoney,
   type POLineAmounts,
@@ -47,7 +48,12 @@ export interface PurchaseOrder {
   supplier: Supplier;
   status: POStatus;
   items: POItem[];
-  total: number;
+  /**
+   * The server-stored document total: the raw Prisma `PurchaseOrder.totalAmount` (`Decimal(10,2)`), so a
+   * numeric STRING. B719 (#1485): this type used to declare a `total` the API never sends, so the list's
+   * Total column read `undefined` and showed $0.00 on every row. Read it through `poDisplayTotal` (@routeflow/pricing).
+   */
+  totalAmount?: number | string | null;
   expectedDate: string;
   notes?: string;
   createdAt: string;
@@ -130,16 +136,11 @@ export function resolvePOLineAmounts(line: POLineItem, unitsPerBox: number): POL
  * it (or an unusable one) is rebuilt through the one `@routeflow/pricing` builder from the case cost
  * `derivedCaseCost` reads back, which shows an OLD drifted row honestly rather than masking it.
  */
-/**
- * B699 / B722: the pack a PO line is denominated in. The line's OWN stored packSize wins; the live
- * catalog pack is only the fallback, for a new line or one that never stored a pack. A bill-raised
- * line stores the bill's pack even when the catalog product is not boxed, and re-splitting it at the
- * live pack silently rewrote its exact total (11,000.00 -> 11,000.40) on a notes-only save.
- */
-export function linePack(line: { packSize?: number | null }, livePack: number): number {
-  const stored = Number(line.packSize ?? 0);
-  return stored > 1 ? stored : livePack;
-}
+// B699/B722: `linePack` moved to `@routeflow/pricing` (mobile's PO detail screen
+// needed the identical stored-wins rule and had none — #2066 review round);
+// re-exported under this file's original name so every existing
+// `from "./purchase-orders-shared"` import of it keeps working unchanged.
+export { linePack };
 
 export function resolveStoredPOLineAmounts(
   item: Pick<POItem, "qtyOrdered" | "unitCost" | "totalCost" | "packSize">,

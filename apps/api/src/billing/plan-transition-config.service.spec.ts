@@ -19,7 +19,11 @@ const IN_PLAN = planFlagKeys[0];
 const NOT_IN_PLAN = planFlagKeys[1];
 const SKU_GRANTED = planFlagKeys[2];
 const ADDON_KEYED = FEATURE_REGISTRY.find((f) => f.gate.via === "RequireAddon")!.key;
-const DEFAULT_GRANTED = FEATURE_REGISTRY.find((f) => f.defaultGranted)!.key;
+// A flag-keyed default (not an add-on): an add-on-keyed default (orders_inline_returns, owner
+// ruling 2026-09-28) takes the addonKeyed branch and would leave the defaultGranted branch untested.
+const DEFAULT_GRANTED = FEATURE_REGISTRY.find(
+  (f) => f.defaultGranted && f.gate.via !== "RequireAddon" && f.gate.via !== "guard",
+)!.key;
 
 const auditCreate = jest.fn().mockResolvedValue({});
 const raw = jest.fn().mockResolvedValue(1);

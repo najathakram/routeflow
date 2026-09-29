@@ -624,3 +624,598 @@ Format: `## <date> <anchor>` then `- what:` `- cause:` `- guard:` `- rule:` (opt
 - what: A lane shrank a service under its size ratchet by moving a tx.orderItem.update() write into a free function in a helper file; the units_v1 and selling-restrictions AST writer-classifiers only scan class-method bodies, so deliveredQty-write coverage silently vanished (caught only because those suites went red)
 - cause: AST safety guards scope by syntax shape (class methods), so refactors that move writes out of that shape escape them
 - guard: Size-ratchet extractions move READ-ONLY computation only; DB write calls stay inline in the service class. Any extraction touching a write runs the AST writer-classifier specs first
+
+## 2026-09-26 #1362
+
+- what: PC lead sent a Mac lane (B707, #1362) a merge instruction directly while the Mac Lead had already sent a conflicting cherry-pick instruction; the lane received two leads' orders for one PR
+- cause: lead bypassed the Mac Lead because its channel was capped, and wrote an instruction from a general rule without reading what the machine lead had already ruled for that PR
+- guard: Every lead-to-Mac-lane message starts by quoting the Mac Lead's last instruction for that item (or 'none recorded'); if one exists the lead routes through the Mac Lead instead of sending directly
+- rule: One routing authority per lane: machine leads own their lanes' instructions; the fleet lead routes through them
+
+## 2026-09-26 #2107
+
+- what: #2107 got an SA PASS citing a DB spec that pins real ledger rows, but the spec wired RegulatedLedgerService as jest.fn(), so it could never write the rows it asserted; caught by the lane before the F2 proof
+- cause: a reviewer read the spec's header claim ('the REAL service is wired') and its assertions, not the provider list that decides what actually runs
+- guard: Every DB-proof review checks the TestingModule providers: the service under test and its write collaborators must be real classes, not jest.fn(); a DB spec whose asserted rows come from a mocked writer is REQUIRED CHANGES
+- rule: A DB spec proves nothing about rows written through a mocked collaborator; check the providers, not the header
+
+## 2026-09-26 #2076
+
+- what: Board-sync subagent probed scripts/work/reconcile.mjs --help; the script has no flag parser, so it ran a live apply (board fields, digest #1507) before the intended dry-run
+- cause: reconcile.mjs treats unknown flags as a live run, same class as the watchdog #2076 defect
+- guard: reconcile.mjs must reject unknown flags and default to --dry-run unless --apply is passed; every lead brief running a repo script runs it with --dry-run explicitly first
+- rule: Repo scripts that write shared state default to dry-run and reject unknown flags
+
+## 2026-09-26 #2221
+
+- what: Master spec local-super-admin.spec.ts (#2162) asserted a POSIX-only output line; Linux CI was green but every Windows pre-push verify failed, blocking #1353's push
+- cause: Spec asserted platform-conditional script output unconditionally; CI runs only Linux, so no gate exercises the Windows branch the fleet's PC pushes through
+- guard: A spec over a script with a process.platform branch asserts per platform (#2221); reviewers grep the script for process.platform when a spec pins its output
+- rule: Platform-branching scripts get platform-aware specs; Linux CI cannot prove the PC pre-push
+
+## 2026-09-26 SA-none/2026-09-26 Mac queue
+
+- what: Mac verify queue reached 13 pushes (~2 h serial) under the one-verify-per-machine rule while the owner asked for no idle time
+- cause: The one-verify rule was set for the memory-starved PC (8 GB WSL, 1 GB jest workers) and applied uniformly to the larger Mac mini
+- guard: Verify concurrency is set per machine from measured memory pressure: Mac mini runs 2 verifies at JEST_MAX_WORKERS=2 while memory_pressure is normal, serial otherwise; image builds never overlap two verifies
+- rule: Verify concurrency is a per-machine budget read from memory pressure, not one global rule
+
+## 2026-09-26 #2220
+
+- what: #2220 passed SA + two Opus reviews on a unit test whose unit line had qty:3 (display count), a shape the server never stores (qty is base pieces); F2's capture on real data showed a 12x over-bill
+- cause: Review read the fixture's logic, not whether the fixture matches the stored shape; qty semantics (pieces vs display units) were never checked against the writer
+- guard: Every money-path review brief requires fixtures built from the server's stored shape (quote the writer's path:line for each field), and the prover runs on a DB-created row before any PASS counts
+- rule: A money fixture must be shaped by the writer, not by the reader under test
+
+## 2026-09-26 #2234
+
+- what: #2234 got an SA content PASS and an Opus 'fix correct' on unit pins over mocks; F2's real-Postgres run of the PR's own DB spec showed the retry never happens (attempts 1)
+- cause: Second occurrence tonight (after #2220) of a verdict resting on mocked or mis-shaped evidence; reviews read the code path, nobody had executed the DB proof before the verdicts
+- guard: Tier-1 order of gates: F2's executed DB proof at the sha runs BEFORE SA/Opus content reads are requested; a content PASS on a PR whose DB spec has not run is recorded as 'pending execution'
+- rule: A money verdict waits for the executed proof, not the other way round
+
+## 2026-09-26 #2239
+
+- what: Two owner-run prod report scripts from one lane used a naive file:// entry check, so on Windows (or a path with spaces) main() never runs and the script exits 0 with no output — indistinguishable from a clean zero result
+- cause: Entry-point idiom copied without the pathToFileURL comparison; specs imported the module instead of spawning the script, so nothing exercised the entry check
+- guard: Every owner-run report script has a --self-test and a spec that spawns it by real path asserting output; the owner command says 'no output = main did not run, not a zero result'
+- rule: A report that can exit 0 silently is not a report — spawn it in the spec
+
+## 2026-09-26 2026-09-26 PC queue
+
+- what: PC ran one verify at a time with 31.5 GB RAM, 14 cores and 10 GB free while five PC lanes idled on the slot
+- cause: The one-verify rule dates from the PC's 8-GB-WSL starvation and was never re-measured; the PC's real limit tonight is disk (1.7 GB free), not memory
+- guard: Per-machine verify concurrency is set from a measured read (RAM free, cores, disk) at each owner 'use all resources' ask: PC now 2 verifies at JEST_MAX_WORKERS=3, no npm ci below 8 GB free
+- rule: Verify concurrency is a per-machine budget read from memory pressure, not one global rule
+
+## 2026-09-26 2026-09-26 PC disk
+
+- what: PC disk hit 0.1 GB free mid-run; 4.8 GB of it was the shared Jest cache in %TEMP%\jest grown by parallel lane verifies
+- cause: Jest's default cacheDirectory is machine-global and never pruned; the janitor reclaims node_modules, Docker, npm cache and old handoffs but not the Jest cache
+- guard: janitor.mjs adds 'jest --clearCache' (report size first) to its reclaim list, and the lead checks free disk before granting each PC verify slot (below 5 GB: clear caches first)
+- rule: Grant a verify slot only after reading free disk; caches are the first reclaim
+
+## 2026-09-26 #2274
+
+- what: Two open PRs (#2250, #2274) created Prisma migrations with the identical timestamp 20260926120000, from different lanes the same day
+- cause: Lanes pick migration timestamps by hand (round hour) with no check against other open PRs' migration folders
+- guard: Before F2 runs a migration PR, the lead lists migration folders across all open PRs (gh compare per head) and rejects a duplicate timestamp prefix; lanes use the current UTC minute, not a round hour
+- rule: Migration timestamps are unique across open PRs, checked before proof
+
+## 2026-09-26 #2274
+
+- what: Owner migration runbook grouped #2274's NOT VALID CHECK with additive migrations under 'migrate first, then merge' and claimed all three were safe with deployed code, without showing that
+- cause: The migrate-before-merge rule (L-184) assumes code depends on schema; a write-restricting constraint inverts that dependency — it depends on the code that stops the violating writes
+- guard: Runbook template field per migration: 'restricts writes? (CHECK/NOT NULL/UNIQUE)' → if yes, list violating write paths on deployed master with path:line; non-empty → order is merge → deploy SUCCESS → migrate
+- rule: A migration that restricts writes lands after the code that stops the violating writes; only additive migrations go first
+
+## 2026-09-26 #2274
+
+- what: #2274's SA-388g fold passed SA and F2 with a unit pin that hand-fed line ids/name; two of four real call sites pass neither, so production's message says 'This line' and Sentry gets lineIds: []
+- cause: The pin called the guard with an invented argument object instead of driving the real writer; the shape of the call-site argument was never exercised
+- guard: Review briefs for a guard/message change require one pin per real call site that drives the writer itself (not the guard with a hand-built object); reviewer checks each call site's argument against the pin's input
+- rule: A money fixture must be shaped by the writer
+
+## 2026-09-26 2026-09-26 PC disk
+
+- what: PC disk fell to 3.3 GB; 10.6 GB of it was two runaway background-command .output files in %TEMP%\claude (a grep flood and a Python REPL loop), one a week old
+- cause: Background task output files have no size cap and survive the session; nothing reports them
+- guard: janitor.mjs reports %TEMP%/claude/**/tasks/*.output files over 500 MB whose mtime is older than 1 h (report-only), and the lead truncates them after inspecting the head
+
+## 2026-09-26 #2060
+
+- what: The R1 plan shipped two driver fixes (#2260, #2060) 'via EAS Update' on channel production; at publish time the channel did not exist and every installed build was the staging APK on channel staging, runtime 1.1.0 (master is 1.1.1), so an OTA could reach no phone
+- cause: The EAS runbook was reviewed for bundle safety (.env inlining) but nobody read which channel/runtime the installed builds carry; eas.json's production profile was assumed to be what drivers run
+- guard: Any OTA plan starts with 'eas build:list --platform <p> --limit 3' in its runbook step 0 and records channel + runtime of the installed builds; the plan names the matching channel and fails if runtime != app.json version
+- rule: Verify the delivery path of a mobile fix (installed build channel + runtime) before promising it ships by OTA
+
+## 2026-09-26 #2258
+
+- what: The coordinator held W4 because gate messages cited SA verdicts (SA-404h, SA-411/412/413, SA-388j, SA-410) that were never posted to #938; the lead relayed rulings to lanes but posted SA text only sometimes
+- cause: The SA does not post (OP-15); the lead treated an SA message as posted evidence and cited it by id in the gate message
+- guard: Gate-message template field 'SA verdict comment URL' is mandatory; the lead posts the SA text verbatim to #938 (--body-file) the moment it arrives, before any relay or gate message cites it
+- rule: A verdict is evidence only once it is on the board at the sha; post the SA text verbatim before citing it
+
+## 2026-09-26 #2258
+
+- what: Master 896fdd96 went red on the size ratchet (invoices.service.spec.ts 9385 > 9376) after #2258 squashed onto a master that had grown since its verify; every branch off master then failed pre-push
+- cause: Each PR was verified against its own merge-base; nobody measured ratchet files on the tree that the merge would actually produce
+- guard: Coordinator merge routine: before each squash, run size-ratchet counts on 'git merge-tree --write-tree origin/master <sha>' for ratchet-listed files touched by the PR; over limit = no merge
+- rule: Ratchet-listed files are measured on the merged tree, not the branch
+
+## 2026-09-26 #2270
+
+- what: Lead authorized an audited SKIP_VERIFY push for #2270 during a master ratchet breach; the lane's own permission layer denied it as a safety bypass
+- cause: Treated SKIP_VERIFY as a lead-grantable process exception; bypassing a verification gate is a permission the lane's session holds, and a peer's say-so cannot supply it
+- guard: Lead never authorizes SKIP_VERIFY for another session; when master breaks a gate, the only routes are the fix-first PR or the owner acting in their own session
+- rule: A peer never authorizes a verification bypass for another session
+
+## 2026-09-26 #2258
+
+- what: 9 of 11 merges on 2026-09-26 were CI-tested on a merge ref whose base was behind master; the ratchet breach reached master that way, and master push CI runs only E2E
+- cause: Close/reopen re-triggers reused stale merge refs; the gate checked green, not which base the green was computed on
+- guard: Coordinator merge step: the CI run log's 'Merge <head> into <base>' sha must equal ls-remote master at merge time, else re-trigger via a lane-pushed empty commit; plus one full verify on master before each window
+- rule: A green CI run counts only if its base equals current master
+
+## 2026-09-26 #2245
+
+- what: #2245 passed F2 + SA + Opus with a qty cap that refuses the web picker's amount-only partial credits (default qty rounding accumulates past the tolerance); a later gate-fill review caught it by brute-forcing the formula
+- cause: Every pin sent an explicit qty; none drove the real caller's shape (amount only), so the default-qty path was never exercised
+- guard: Money review briefs list each real caller's payload shape (web, mobile, import) and require one pin per shape; reviewers brute-force any rounding-accumulating cap across repeated partials
+- rule: A money fixture must be shaped by the writer
+
+## 2026-09-27 #1315
+
+- what: npm ci in a MacBook worktree whose apps/*/node_modules were symlinks to the main checkout emptied main's api and mobile node_modules before aborting (ENOTDIR)
+- cause: Symlinked node_modules make any install in a worktree a write into the shared main checkout
+- guard: janitor/worktree-audit reports any node_modules symlink or junction under a worktree as a violation; lanes create worktrees with real node_modules via npm ci and never link
+- rule: No node_modules symlinks: an install in a linked worktree writes into main
+
+## 2026-09-27 #938
+
+- what: Owner ruling 2026-09-27 ~00:55Z: land gate-complete PRs as 3 merge trains (money/server, web/mobile, tooling/docs) instead of ~4 per window
+- cause: Per-PR serial landings (update-branch + CI + deploy each) capped throughput at ~4 per window with 40 PRs gate-complete
+- guard: Train rule: test the exact train tree once (verify + local:validate + DB lane), squash PRs in order, then assert origin/master^{tree} == tested train tree before the single deploy + post-deploy-check
+- rule: Batch landings are safe only when master's final tree equals the tree that was tested
+
+## 2026-09-27 #2307
+
+- what: The store-release program shipped a TestFlight build of apps/mobile, whose screens are the OLD interfaces; the owner wants the new web's functionality and branding in the store app
+- cause: The lead planned the store path from the owner's 'all roles need iOS/Android apps' without confirming which UI the owner considered current; the 2026-09-23 'phones get the new web' ruling already signalled the native UI was behind
+- guard: Before any store/TestFlight build, the release checklist requires an owner-confirmed side-by-side capture (web at 390 vs native simulator) of 3 core screens per role
+- rule: Confirm the shipped surface matches the owner's current product before building for a store
+
+## 2026-09-27 #2305
+
+- what: #2305 (price-only edit lost on a Case line) looked green on master with the e2e Case fixture and was nearly downgraded; with a tier-price ladder set (how real catalogs are priced) it is red: no PATCH sent
+- cause: The e2e fixture had no tier prices, so the picker's refresh path never engaged; code reading predicted 'latent' from the untiered shape
+- guard: Unit/pricing e2e specs set a tier ladder in their own setup; the e2e seed fixture carries tier prices
+- rule: A money fixture must be shaped by the writer
+
+## 2026-09-27 #2376
+
+- what: #2376 fold SA-422b(b) narrowed a pre-lock line map to live lines for all roles while the lock-time re-check still used every held line; a staff edit now passes the pre-check, commits the invoice revert, then 409s in the transaction
+- cause: A pre-lock validation and its in-transaction re-check read two different line populations; a fold changed one without the other
+- guard: Review briefs for any order-edit fold require naming the lock-time twin of every pre-lock check the diff touches, plus a pin that a refused edit writes no invoice/mirror row
+- rule: A pre-lock check and its lock-time re-check must read the same population; a fold that narrows one narrows both
+
+## 2026-09-27 #2383
+
+- what: Window plan put single PRs #2378/#2380 ahead of Train C #2383; landing them first would move master so C's squash tree could never equal its tested tree
+- cause: Train tree-identity rule makes a train order-sensitive; single PRs are cheap to re-pin, trains are not
+- guard: Window plan template: trains land first in any window that also has single PRs; single PRs re-pin via update-branch + tree identity after
+- rule: Trains land before single PRs in a shared window
+
+## 2026-09-27 #2394
+
+- what: A lead-commissioned review subagent on the PC ran 'git worktree remove --force' on its own scratch worktree, against the standing PC rule
+- cause: Review briefs said 'read-only, pinned worktree allowed' but did not restate the no --force rule; the subagent cleaned up its own tree the fastest way
+- guard: Every review brief template that allows a pinned worktree carries the literal line: never git worktree remove --force on the PC; leave the scratch worktree for the lead
+
+## 2026-09-27 #2097
+
+- what: Three P0 claims were refused by lane locks held by stale claims (#2088, #2093 idle 2 days) and by #2097, which Train B had fixed but never closed
+- cause: A train squash lands the PRs' 'Closes #N' lines in its body, and GitHub does not auto-close issues named in a PR that is closed rather than merged; stale claims kept lanes locked
+- guard: The coordinator's post-train step closes every issue that a constituent PR's body names with 'Closes #N'. work:reconcile flags claims idle more than 24h to the lead before new P0 work is assigned
+- rule: Post-train close-out closes the constituent PRs' linked issues explicitly
+
+## 2026-09-27 #2245
+
+- what: The R1.1 plan told a lane to rebuild #2245 as still red on the caller shape, but it had been fixed and gated (SA-401c, F2, Opus) at 7d352dbd two hours earlier
+- cause: The plan was written from the lead's summary memory of #2245's BLOCK instead of the board's latest verdict at the PR's current head
+- guard: Before assigning any PR as rebuild or blocked, the lead reads the newest #938 verdicts for that PR number and checks the head sha (gh pr view --json headRefOid) against them
+- rule: A fact restated in a second place is the copy that goes wrong; resolve against the primary source
+
+## 2026-09-27 #2376
+
+- what: On 2026-09-27 at least 6 PRs (#1358, #2376, #2137, #2220, #1315, #2393) needed re-merges, rebuilds, slices or re-pins because they sat gated while master moved through big batched trains
+- cause: CI runs only in public windows (Actions billing), so landings were batched into a few large trains; long queues plus hot shared files grew each conflict
+- guard: Owner ruling 2026-09-27 ~05:15Z: stay public longer. The coordinator lands each gate-complete PR or small train within about 2h, and update-branches waiting PRs after every landing with lead tree-identity confirmation
+- rule: Land gate-complete work within hours; a queue is where rebuild cost accrues
+
+## 2026-09-27 #1358
+
+- what: Train D's squash carried a Prettier reformat of 7 .claude/skills files (fleet-lead SKILL/LOG/scripts, model-routing) that came in with #1358; three reviews called its diff 'same as reviewed' and nobody flagged it as out of scope
+- cause: A lane's repo-wide 'npm run format' rewrote unrelated files, and the review briefs checked logic equality, not file scope against the PR's purpose
+- guard: Review briefs list the allowed file globs for the PR and fail any file outside them; the coordinator's pre-merge step prints files outside apps/<area> and packages for the PR, and any .claude/ file in a code PR needs a stated reason
+
+## 2026-09-27 #938
+
+- what: The lead told the owner to run 'the command I sent above' several times, but the owner could not find the command; the owner flagged it as repeated
+- cause: Owner commands were spread across earlier messages or superseded by corrections, and later messages referred back to them instead of restating them
+- guard: Every message that asks the owner to act carries the complete, current command inline in a code block; the words 'above', 'earlier' and 'I sent' never stand in for a command; the away-log lists every pending owner command verbatim
+- rule: An owner action is always restated in full in the message that asks for it
+
+## 2026-09-27 #2385
+
+- what: Docs-only bookkeeping PR #2385 merged origin/master and its conflict resolution silently reverted 4 landed app files (-60 lines)
+- cause: Merge conflict resolution took the branch side for files outside the docs globs; PR looked docs-only by intent
+- guard: Docs PR review runs git diff --stat $(git merge-base origin/master HEAD) HEAD -- apps/ packages/ scripts/ and BLOCKs on any output
+- rule: A docs PR's merge-base diff over apps/ packages/ scripts/ must be empty
+
+## 2026-09-27 #938
+
+- what: PC desktop app crash ~08:15Z stopped every PC lane; lead lost Remote Control so could not reach Mac sessions; 5 tier-1 PRs waited hours on the lead's Opus PASS
+- cause: Lead is a single point of review; no relay path to Mac besides the bridge
+- guard: Lead handoff lives on a pushed docs branch plus a #938 pointer; tier-1 queue lists which verdicts are the lead's so the Mac Lead can commission the Opus review when the lead is offline
+- rule: When the lead is offline >30 min, the Mac Lead commissions the lead-side Opus review
+
+## 2026-09-27 #938
+
+- what: Lead's handoff commit used git commit -am in a shared worktree and swept in hook-written pipeline telemetry files
+- cause: -a stages every tracked modification, including files hooks write in the background
+- guard: Lead commits name paths explicitly (git commit -- <path>) and check git show --stat HEAD before push
+
+## 2026-09-27 #938
+
+- what: Owner asked for the branch-delete command before leaving; the lead split the answer across tool calls (settings edit, relabels) and the owner left without it
+- cause: Owner-facing command was interleaved with background work instead of being sent first and complete
+- guard: When the owner is about to leave, the lead's very next message carries every owner command in full, before any other tool call
+- rule: Owner commands go first, complete, in one message, before any other tool call
+
+## 2026-09-27 #2093
+
+- what: Five lane-lock refusals in 30 min (#2093, #2410, #2477, #2443, Lane B billing), each caused by an issue claimed but blocked on an owner migration or idle
+- cause: Lane labels are coarse (orders/invoices/billing); a claim on a parked issue holds the whole lane
+- guard: An issue parked on an owner action gets its own narrow lane label (lane:credit-notes, lane:returns-followups, lane:selling-restrictions) so it never blocks a working lane
+
+## 2026-09-27 #2425
+
+- what: Mac Lead made a local merge commit with --no-verify to build the #2425 prod-migration tree (never pushed); disclosed it
+- cause: Migration trees need both PRs' migration folders; hooks run a full verify that's pointless for a throwaway apply tree
+- guard: Build migration-apply trees with 'git merge --no-commit' then 'git checkout' of only apps/api/prisma from the second PR (no commit needed), so no hook bypass is ever required
+
+## 2026-09-27 #2135
+
+- what: 5 master specs (ESM bare C:\ path, path separators, the api-error-codes scan) fail only on win32, so every PC pre-push failed; U-po's fix sat unpushed after the crash
+- cause: CI runs only on Linux, so a spec with a POSIX-only path assumption lands green and silently blocks the Windows machine's pre-push
+- guard: An unblocker PR for a machine-wide pre-push red goes first on the slot, and the lead checks origin for it (git ls-remote) instead of assuming 'pushed'; a cheap windows-latest job for the script-spec lane is proposed as the permanent fix
+- rule: Machine-wide pre-push reds jump the queue; verify the fix branch exists on origin
+
+## 2026-09-27 #2503
+
+- what: Lead assigned the PC F prover a real-PG proof for #2503, which had landed ~5 min earlier (and #2494's proof, already done on the Mac)
+- cause: Assignments made from the lead's own running notes, not from the PR's live state
+- guard: Before assigning any proof/review, run gh pr view N --json state,headRefOid and grep #938 for an existing proof at that sha
+
+## 2026-09-27 #2511
+
+- what: Lead delta-PASSed #2511's latch race pin by reading it; F2's executed probe showed it red at head and red on revert (the latch paused before the run read, so it pinned nothing)
+- cause: Judged a concurrency pin's efficacy from source instead of an executed red/green probe (SA-E13 class: observe, don't predict)
+- guard: A delta review of any race/latch/concurrency pin is CONDITIONAL until F2 posts the executed head-green plus revert-red; the lead's verdict text says 'pending executed probe' and never 'PASS' before it
+- rule: Never PASS a race pin before its executed revert-red probe
+
+## 2026-09-27 #2518
+
+- what: A lead-commissioned Opus review of #2518 created folder links from the scratchpad to another worktree's node_modules to run jest; another process removed three of the links mid-run
+- cause: Review briefs said 'read-only, no working tree changes' but didn't forbid linking node_modules; on Windows a junction removal can delete through to the target (rf-2142-fix, verified intact after)
+- guard: Every review brief states: never symlink/junction node_modules; execute tests only via CI or an F-prover, or in a worktree with its own real npm ci; static reading is otherwise the evidence
+
+## 2026-09-27 #2240
+
+- what: PC slot starvation: Sales-facts released and re-acquired within ~100 ms three times (17:08-18:12Z) while 5 lanes waited in 20 s poll loops; no other lane pushed for ~1h40m
+- cause: Lead's pc-slot v1 was a bare mkdir lock with a poll loop: no queue, no cooldown, so a chained release→acquire always wins
+- guard: pc-slot v2: FIFO queue tickets (oldest live ticket only) plus a 45 s same-lane re-acquire cooldown; the lead checks pc-slot.log for same-lane back-to-back acquires each sweep
+
+## 2026-09-27 #2544
+
+- what: Lead and Mac Lead filed the same follow-up issue simultaneously three times (#2487/#2488, #2529/#2531, #2543/#2544)
+- cause: Both sessions file follow-ups from the same review findings without a check or an owner rule
+- guard: Before filing any follow-up, search open issues created in the last 15 min for the source PR number; the Mac Lead files follow-ups it relays from SA/F2, and the lead files only from its own Opus findings
+
+## 2026-09-27 #2554
+
+- what: Board issue #938 hit GitHub's 2,500-comment cap mid-session; a lead review's verdict post failed with 403 'Commenting is disabled'
+- cause: No one tracked the board's comment count; GitHub hard-caps issue comments at 2,500
+- guard: The sweep checks the board's comment count (gh api issues/N --jq .comments) and rolls to a pinned successor at 2,300; the board number lives in one place (the lead handoff header) and skills reference 'the pinned board'
+- rule: Roll the board issue to a pinned successor at 2,300 comments
+
+## 2026-09-27 #2532
+
+- what: pc-slot FIFO v2 still let 4 lanes jump the oldest ticket (F-prover, 18:28Z) because their acquire loops started before v2 and poll without tickets
+- cause: In-memory processes keep the old code; FIFO was enforced only on the acquire side, never at release time
+- guard: pc-slot v3: release performs an atomic HANDOFF to the oldest LIVE ticket (pid-checked), so a ticketless poller can never win a free instant; dead tickets are pruned
+
+## 2026-09-27 SA-506
+
+- what: Lead's fold wording for #2556 coined INVOICE_OVERDUE_SWEEP=off|count|enforce while SA-506 ruled OVERDUE_SWEEP_MODE=dark|enforced; the Mac Lead had to arbitrate two names before MacBook built
+- cause: Lead wrote a flag name into a FAIL fold before the SA ruling existed, then did not supersede it when SA-506 landed
+- guard: Fold/FAIL messages that name a flag, env var, or enum cite the SA ruling id that defines it, or say 'name TBD per SA'; a lead-coined name is never used in a brief
+- rule: A fact restated in a second place is the copy that goes wrong
+
+## 2026-09-27 #2561
+
+- what: #2561 unit spec green with mocks, but red 3/9 on real PG: unit-aware 409s became 400s because master's classifyEditPayload now runs before the unit guard
+- cause: Mocked unit specs call the guard directly and skip the controller/service order of validation, so a guard reordered by a master merge stays green
+- guard: Every guard-ordering fix ships a db.spec or e2e case asserting the HTTP status through the real request path, and tier-1 gates require F2's real-PG run before the lead PASS
+- rule: A spec that calls the guard directly cannot prove the guard's position in the request path
+
+## 2026-09-27 SA-506a
+
+- what: Lead stamped lane/Mac messages 20:07Z-20:51Z by estimate; date -u read 20:24Z at the 'window closed 20:24Z' relay, so up to 27 min of future timestamps went out
+- cause: After the 20:03Z date -u read, the lead incremented times per message by feel instead of running date -u
+- guard: Every lead message that carries a time is preceded, in the same tool batch, by a date -u call; a message without a fresh date -u read carries no time
+- rule: Times from date -u only
+
+## 2026-09-27 #2562
+
+- what: pc-slot wedged 6 PC lanes for up to 4h: v3 release HANDOFF went to N-buyer whose in-memory v2 waiter never checks handoffs; v2 pruned tickets by creation age >75 min so long waiters deleted their own tickets and starved
+- cause: Hot-patching a coordination tool whose clients are long-lived processes: running waiters keep old code, and an age-based liveness rule punished exactly the waiters that waited longest
+- guard: pc-slot v4: liveness by PID only (12 h ceiling), no handoff, --since to restore FIFO order on restart; any protocol change to pc-slot must be compatible with every running waiter version (check Win32_Process for pc-slot acquire PIDs and their start time vs the tool's mtime) or be paired with a coordinated restart
+- rule: A fact restated in a second place is the copy that goes wrong
+
+## 2026-09-27 #2573
+
+- what: SA-511/511b passed #2573 (scoped {id,orderId} removals) but the CANCEL branch passes item.id! with no guard; Prisma drops id:undefined so updateMany strikes off every line of the order — a regression the bare update() would have thrown on
+- cause: Converting update({where:{id}}) to updateMany({where:{id,orderId}}) changes undefined-id semantics from throw to match-all; the reviewers checked scoping, not the undefined case
+- guard: Any update/delete → updateMany/deleteMany conversion must assert every where-key is defined (throw on falsy) and carry a pin with the key omitted; review briefs for such conversions name the undefined-key case explicitly
+
+## 2026-09-27 #2528
+
+- what: Lane B made one local --no-verify commit on scratch/2528-fold (a throwaway merge used to test the #2528 duplicate-import fix); never pushed, no PR affected. Second scratch-merge --no-verify slip today (Mac Lead 15:10Z was the first)
+- cause: A scratch merge needs a commit to inspect, and the pre-commit hook costs a verify, so --no-verify looks harmless for a throwaway
+- guard: Scratch merge checks use git merge-tree --write-tree or git merge --no-commit (no commit, so no hook); lane briefs name this explicitly; a --no-verify commit is never pushed and the real fold is recommitted with hooks on
+- rule: Scratch checks never commit
+
+## 2026-09-27 #2241
+
+- what: Lead ran 'git merge-tree --write-tree ... | head -1' for #2241 and read the printed tree as clean; merge-tree prints a tree oid even on conflict (exit 1), and the reviewer found 2 spec conflicts
+- cause: Taking the first output line as the verdict instead of the exit status
+- guard: Every lead merge-tree check reads the exit status (0 clean / 1 conflict) with --name-only, never the tree line alone; review briefs ask for the exit code
+- rule: A fact restated in a second place is the copy that goes wrong
+
+## 2026-09-27 SA-506a
+
+- what: The owner-return item 7 in the lead handoff still named #2556's flag INVOICE_OVERDUE_SWEEP=count|enforce two hours after SA-506a renamed it OVERDUE_SWEEP_MODE=off|dark|enforced; the owner would have set a variable that does nothing
+- cause: The owner-return list is a second copy of rulings and wasn't re-read when the ruling changed
+- guard: When an SA ruling supersedes a name or value, grep the handoff's owner-return block for the old token in the same turn and correct it; owner items cite the ruling id, not a restated value where possible
+- rule: A fact restated in a second place is the copy that goes wrong
+
+## 2026-09-27 #2586
+
+- what: Lead asked the Mac Lead to queue F2 runs for #2586 and #2589 that F2 had already posted on #2554 at 22:12Z/22:14Z
+- cause: The sweep's board read filtered by lead-verdict keywords, not by every comment since the last sweep, so executed proofs were missed
+- guard: The sweep's step 3 lists EVERY #2554 comment since the last sweep (createdAt filter, first 160 chars) before any proof or review is requested; a request names the comment it checked
+
+## 2026-09-27 #2489
+
+- what: Lead briefed F2 to prove #2489's purge deletes 'expired files of completed OR ABANDONED cases'; the code and plan purge only LIVE>=30d cases (LOST never purged) — the lead restated a spec it had not read
+- cause: The proof brief was written from the PR title before the Opus increment review returned
+- guard: Proof briefs for a deletion job quote the selection predicate at path:line from the code (or wait for the review that reads it); never paraphrase scope from a title
+- rule: A fact restated in a second place is the copy that goes wrong
+
+## 2026-09-28 SA-523a
+
+- what: Lead offered a headroom CAS (invoicedQty <= qty - delta) as an acceptable alternative for #2070; SA-523a: a headroom CAS lets a concurrent partial commit underneath, so the invoice is priced off a stale priorBilledQty basis
+- cause: The lead reasoned only about the over-bill invariant, not about the values the rest of the write derives from the read
+- guard: A CAS for a read-then-write must pin EVERY read value the write derives from (exact-value compare), not just the invariant; briefs list the derived values explicitly
+
+## 2026-09-28 SA-393
+
+- what: Lead briefed MacBook to make #2236 rethrow all commission-sync errors; SA-393 (already on master, commission-engine.service.ts:89-123, cites #2236) deliberately swallows non-conflict errors under a SAVEPOINT so a commission bug can't block ~20 money write paths
+- cause: Brief written from the issue title; the lead didn't grep master for the issue number or search rulings before specifying
+- guard: Before assigning any issue: git grep the issue number on origin/master and search #2554/#938 for it; if code cites it, the brief starts from that code and ruling, and the lane first asks whether the issue is already fixed
+- rule: A fact restated in a second place is the copy that goes wrong
+
+## 2026-09-28 #2554
+
+- what: U-po tried to post on #938 at ~00:35Z, five hours after the board moved to #2554, and reported it as a fleet blocker; the board move was relayed to the Mac Lead and cron but never broadcast to the PC lanes
+- cause: A standing-address change was announced to the lead's own channels only
+- guard: Any change of fleet address (board, slot tool, handoff path) is broadcast to every live lane (ListAgents) in the same turn it happens, and pinned in the board issue's first comment
+
+## 2026-09-28 #2215
+
+- what: N-kit's #2332b push was refused on web check-types TS2344 from master's invoices/page.tsx exporting a non-page helper; .next/types regenerates during the verify, so any PC push can go red depending on order. The class (#1776/#2215) was known since 09-25 and left open
+- cause: A known, order-dependent local-only check failure was triaged as 'known trap' instead of being fixed at the source, and a new page (#2625-era) added another offending export
+- guard: A guard spec fails if any apps/web/app/**/page.tsx exports a non-Next-contract name (S-order folding into #2215); known pre-push traps get an owner and a fix date, never just a memory note
+
+## 2026-09-28 #2431
+
+- what: Coordinator held #2431: my re-pin at 4d6ed562 was buried in the second half of an owner-migration relay comment (5863291050), and its verdict search missed it
+- cause: The verdict was restated inside another fact's comment instead of standing as its own record; the coordinator's search keys on a verdict-headed comment
+- guard: Every lead verdict is its own #2554 comment whose first line is '**Lead verdict, #N @ <full sha>: PASS|FAIL**'; relays may cite it by comment id but never carry it
+- rule: A verdict is one comment, headed with PR + full sha + outcome; never embedded in a relay
+
+## 2026-09-28 #2301
+
+- what: #2301's b760 spec passes at its head and merge-tree exits 0, but it goes red once merged with #2632 (the new CAS needs an updateMany mock the spec never stubs)
+- cause: A clean textual merge was treated as proof the merged tree works; a sibling PR changed a shared mock contract
+- guard: A tier-1 review of a PR behind master runs the PR's touched specs on the merge-tree result (a worktree at merge-tree --write-tree), not only at the head
+- rule: merge-tree exit 0 proves no textual conflict, never a green merged tree; run the touched specs on the merge result
+
+## 2026-09-28 #2474
+
+- what: Lead assigned Lane B #2476/#2442 as new work; both were already built by Lane B (#2474 open, #2476 local stacked)
+- cause: Brief written from the issue list, without checking open PRs and lane branches for the issue numbers
+- guard: Before assigning issue N: gh pr list --search 'N' --state open and git ls-remote origin | grep N, plus ask the lane's machine lead for local branches; the assignment names what exists
+- rule: Never brief from an issue title or a PR title
+
+## 2026-09-28 #2647
+
+- what: Lead assigned #2647 to N-buyer while MacBook (its filer) was already building it; and #2491 to MacBook though #2496 had closed it
+- cause: Assignments made from the open-issue list without checking the issue's filer/claim comments or recently merged PRs' Closes lines
+- guard: Before assigning: gh issue view N --json state,comments (claims, filer lane) and gh pr list --state merged --search 'N' since the last sweep; an assignment quotes the claim check result
+- rule: Never brief from an issue title or a PR title
+
+## 2026-09-28 #2646
+
+- what: #2646's guard turns master's newer void-2628 db.spec red after merge; merge-tree clean (second semantic conflict tonight after #2301)
+- cause: A sibling PR landed a spec that calls the method this PR guards; head-only review can't see it
+- guard: A tier-1 review of a PR behind master greps the merge-base..master diff for callers of every symbol the PR changes (git diff base..master | grep <symbol>) and runs those specs on the merge-tree
+- rule: merge-tree exit 0 proves no textual conflict, never a green merged tree; run the touched specs on the merge result
+
+## 2026-09-28 #2646
+
+- what: An Opus review subagent junctioned another worktree's node_modules into a scratch copy and left it behind
+- cause: Review prompts said read-only for git but did not forbid creating junctions; a later recursive delete would have followed them into a live worktree
+- guard: Every review prompt states: never create junctions/symlinks; run specs only in an existing worktree; the lead removes any leftover junction with cmd rmdir and verifies the target survives
+
+## 2026-09-28 SA-542
+
+- what: Lead's #2653 spec said the web session is cookie-based; the SA found web auth keeps tokens in localStorage (only tenant-slug + presence cookies)
+- cause: Spec fact taken from CLAUDE.md's env list (COOKIE_SECRET) instead of reading apps/web lib/auth.ts
+- guard: Every 'Facts' line in a lead spec carries a path:line read at a pinned sha; a fact without one is marked UNVERIFIED and routed to the context pack
+- rule: A fact restated in a second place is the copy that goes wrong; resolve against the primary source
+
+## 2026-09-28 #2075
+
+- what: Mac Lead proposed Lane B build #2065, which already has a draft fix PR #2075 from 09-25; GitHub secondary rate limit hit during the check
+- cause: Self-pick checks the board status, not open/draft PRs referencing the issue
+- guard: Before any pick: search open AND draft PRs for the issue number (REST search, one call) and the issue's last comments; a draft fix means revive, never rebuild
+- rule: Never brief from an issue title or a PR title
+
+## 2026-09-28 #2268
+
+- what: Lead's 'resume' message to Sales-facts started a turn that force-killed its 39-min pre-push verify (exit 0x40010004); #2268 lost its slot turn
+- cause: A cross-session message to a session running a foreground verify interrupts it; 'resume' was sent without checking the lane's slot state
+- guard: Before messaging a PC lane, check pc-slot status: never message the current slot HOLDER; message queued lanes only with 'do not interrupt your waiter'
+- rule: Never interrupt the pc-slot holder
+
+## 2026-09-28 #2268
+
+- what: The owner-ordered 'resume' messages to all 8 PC lanes restarted each session; every background pc-slot waiter died and every lane lost its queue place (tickets re-filed from scratch)
+- cause: A session restart kills its background shells, including pc-slot acquire waiters; the lead resumed all lanes at once without warning them to re-queue with --since
+- guard: A fleet-wide resume message tells each lane: 'if your slot waiter died, re-queue with --since <your original ticket ms>'; the lead snapshots pc-slot.queue ticket names before the resume
+- rule: Never interrupt the pc-slot holder
+
+## 2026-09-28 #2665
+
+- what: A spec landed via #2611 spawns a 51 KB node -e script; Windows' 32 KB command-line limit makes it ENAMETOOLONG, so master is red on every PC pre-push and lanes started pushing with SKIP_VERIFY
+- cause: CI runs only on Linux; nothing proves specs on win32 before merge
+- guard: A lint/spec guard rejects spawnSync/exec argv over 8 KB (or node -e with a >8 KB literal) in specs; PC lanes' SKIP_VERIFY audit lines are read each sweep and each cited red becomes a ticket at once
+
+## 2026-09-28 #2624
+
+- what: #2624 rolled on a REAL red: its split-restricted-lines spec mocks don't return {count:1} for #2643's CAS updateMany; the lead's Opus DELTA re-read passed it without running the specs
+- cause: Third instance of the post-#2632/#2643 mock contract (updateMany count 0 default ⇒ 409); delta reviews read code, not merged-tree specs
+- guard: Any tier-1 re-pin after a master change to a shared mock contract runs the PR's touched specs on the merge result, or asks F to; the verdict states 'specs executed on merged tree: yes/no' and 'no' blocks PASS
+- rule: merge-tree exit 0 proves no textual conflict, never a green merged tree; run the touched specs on the merge result
+
+## 2026-09-28 #2635
+
+- what: Lead relaunched Docker Desktop and waited 20 min assuming a cold boot; the backend had crashed at once on the known stale sailor-ingest.sock (error 1920) and showed an error dialog
+- cause: Didn't read the backend log right after the launch; the recovery runbook (rename Docker\run + docker-secrets-engine) was in memory
+- guard: After any Docker Desktop launch, check com.docker.backend.exe.log for 'backend crashed' within 60 s before waiting; on the sailor-ingest.sock error apply the rename recovery at once
+
+## 2026-09-28 #2635
+
+- what: Docker Desktop crashed again during recovery (secrets-engine engine.sock) while the lead's own background waiter polled 'docker ps' every 20 s
+- cause: The lead's poller hit the CLI during init, the exact hazard the recovery memory names
+- guard: Docker startup is watched via com.docker.backend.exe.log (Docker:running / backend crashed), never via docker CLI polling; kill every docker.exe client before relaunch
+
+## 2026-09-28 #2668
+
+- what: Lead posted #2075 and #2668 verdicts in one comment; the Mac Lead couldn't find the #2668 verdict
+- cause: Two verdicts batched into one comment despite the rule 'a verdict is one comment headed with PR + full sha'
+- guard: The verdict-posting step writes one gh api POST per PR; batching verdicts into one body is never done
+- rule: A verdict is one comment, headed with PR + full sha + outcome; never embedded in a relay
+
+## 2026-09-28 #2670
+
+- what: Lead hit the 10-message cap to PC Desktop sessions while the owner was away; further PC lane messages were blocked
+- cause: Per-lane one-off messages (resumes, corrections, reorders) spent the cap; the sweep prompt warned to batch
+- guard: While the owner is away, PC-lane instructions go on #2554 (lanes read the board) or through the Mac Lead's RC bridges; direct PC messages are reserved for blockers, and the lead counts them (≤ 8 per owner absence)
+
+## 2026-09-28 #2665
+
+- what: Three PC lanes (salvage, N-buyer, S-order) independently diagnosed the same win32 red and each offered or started a duplicate fix for #2665
+- cause: The fleet-wide blocker and its owner were announced only in 1:1 messages and a board comment; lanes hitting the red didn't search issues before starting a fix
+- guard: A fleet-wide blocker gets ONE pinned #2554 comment (issue + owner + ETA) that lanes read before any fix, and lanes search open issues for the failing spec name before proposing a fix
+- rule: Never brief from an issue title or a PR title
+
+## 2026-09-28 #2661
+
+- what: Lead endorsed filing a HIGH bug ('inline returns can't be opened') from a capture that ran web @dc462aca against a pre-09-27 API image; master's findOne renders INLINE rows since #2601
+- cause: The capture stack didn't print/assert the API image's build sha, and the lead didn't check the claimed endpoint behaviour in code before endorsing (same class as B689/B690)
+- guard: Every capture/proof stack prints BOTH api and web image build shas and asserts each is at or after the PR's merge-base; a 'bug found in a capture' is verified against the code at the exact sha before any issue or verdict
+- rule: A fact restated in a second place is the copy that goes wrong; resolve against the primary source
+
+## 2026-09-28 #2677
+
+- what: #2677 passed two lead reviews but crashes for every tenant on real PG: scripts read 'stripeSubscriptionId' while TenantSubscription's column is 'stripeSubId' (platform.prisma:38)
+- cause: Scripts use raw/untyped queries, so tsc can't catch a wrong column; reviews read logic, not field names against the schema; only the real-PG gate executes the query
+- guard: Tier-1 review briefs for scripts require checking every selected column/field name against prisma/schema at the sha; scripts that query by hand get a spec pinning their field names to the Prisma DMMF
+
+## 2026-09-28 #2679
+
+- what: Lead's #2679 fold asked for retryOnTxConflict on the cancel side only; F2 found the reorder side is the deadlock victim 3/6 in a natural race, a raw 500 introduced by #2679's stop-first lock
+- cause: A lock-order change was reviewed for the path it changed, not for every path that is now the other half of the new deadlock pair
+- guard: When a PR changes a lock order, the review enumerates EVERY transaction that takes the same two locks and requires each to be retried or re-ordered; F2's race uses the real peer methods, both as victims
+
+## 2026-09-28 #2661
+
+- what: The PC F prover's 'stopped' build job held the pc-slot 10:25–10:33Z, and its capture script then started a web image build during salvage's slot turn
+- cause: Background build chains outlive TaskStop on Windows Git-bash (U-po reported the same); the capture script didn't check slot ownership before each build step
+- guard: Capture/build scripts re-check 'pc-slot status' == own lane before EVERY heavy step and abort otherwise; lanes verify a stopped chain is dead by PID (Get-CimInstance) before re-queuing
+
+## 2026-09-28 #2685
+
+- what: The lead's fleet-lead skill + LEAD-LOG edits all day went to an UNTRACKED copy in the main checkout (branch ops/t6-a0-owner-batch lacks the skill), diverging from master's copy that bookkeeping edited
+- cause: The lead session's checkout isn't on master, so the skill dir is untracked there; lead-closeout.mjs writes to the cwd copy
+- guard: The lead runs lead-closeout.mjs from a master-tracking worktree (rf-work-sync or a dedicated one) and checks 'git ls-files .claude/skills/fleet-lead' is non-empty at session start; the SessionStart digest warns when the skill dir is untracked
+
+## 2026-09-28 #2653
+
+- what: N-kit burned two ~30-min pc-slot turns on its own check-types/repo-truth reds (a spec constructing AddonService with the old arg count; a report script naming DATABASE_URL)
+- cause: Lanes ran tsc on src only before queuing; the verify's spec ratchet and repo-truth lane catch what src-tsc misses
+- guard: Before taking the pc-slot, a lane runs the cheap gates locally: 'npm run check-types -w apps/api' (the spec ratchet) + the repo-truth jest lane; the slot is only for the full verify + push
+
+## 2026-09-28 #2680
+
+- what: PC Docker engine died at 12:20Z during the F prover's parallel capture image builds (WSL VM 8 GB cap), halting all PC captures ~40 min; the lead's log watcher also missed the 'running' state twice (pattern mismatch)
+- cause: Parallel web+mobile image builds plus the running compose/api stacks exceeded the WSL VM memory; the watcher grepped a log line that the current Docker version doesn't emit
+- guard: Capture image builds run strictly one at a time on the PC with old images pruned first; the Docker-up check is a single 'docker ps' after a fixed wait, not a log-pattern grep
+
+## 2026-09-28 #2301
+
+- what: #2301 passed lead Opus (jest 394 unit) + SA + F2 11/11, then ROLLED on CI: an existing DB spec (recompute-order-partial B785/SA-113a at-door reconcile) finds no draft invoice
+- cause: Both the lead's executed jest and F2's real-PG run covered only the PR's own specs; neither ran the module's full DB lane where the changed function has other callers
+- guard: A tier-1 gate on a shared money function includes the FULL db lane for the touched module(s) (npm run local:test:db filtered to invoices/orders/routes), not just the PR's new spec; the verdict states which DB suites ran
+
+## 2026-09-28 #2185
+
+- what: #2185 carried a PC 'full verify green' (api unit 10569) yet import-invoice-reimport.db.spec fails 12/12 on DI (ImportService gained ProductsService), found only when F2 ran #2190 stacked on it
+- cause: The PC verify runs unit lanes only; a constructor change on a tier-1 import service was never exercised by the module's DB specs before the verdicts
+- guard: A PR that changes a Nest service constructor lists every _.spec.ts/_.db.spec.ts that builds that service (git grep 'ServiceName' in createTestingModule) and F2 runs the module's full DB lane at the gated sha before any PASS
+- rule: Tier-1 money reviews run the module's FULL DB lane, not just the PR's spec
+
+## 2026-09-28 #2693
+
+- what: A Sonnet Explore context pack reported the web+mobile inline-returns UI 'does NOT exist' (grep clean); the owner was using it in prod, and git grep origin/master found InlineReturnSection.tsx + mobile returns/inline.tsx
+- cause: The agent's working-tree grep (Windows) missed the files, and a negative claim ('not found') was reported as fact without a pinned-ref search
+- guard: Before any spec or issue uses a context pack's absence claim, the lead runs git grep <string> origin/master -- apps packages itself; the pack brief requires 'NOT FOUND' lines to include the exact git grep command + ref used
+- rule: Never brief from an issue title or a PR title
+
+## 2026-09-28 #2554
+
+- what: The lead filed two janitor 'safety defects' (force-remove before junction unlink; a live lane classed merged) from a janitor report and source read in the MAIN checkout, which sits on the stale branch ops/t6-a0-owner-batch (janitor last touched 09-18); master already had B817 links-first and B748 dirty/idle guards, 122/122 self-test
+- cause: Tooling was run and read from the main checkout without checking which ref it was on; its copy was 10 days behind master
+- guard: The lead runs repo tooling and reads source only from a master-tracking worktree (rf-work-sync after git pull) or via git show origin/master:<path>; a finding cites the ref it was read at
+- rule: A fact restated in a second place is the copy that goes wrong; resolve against the primary source
+
+## 2026-09-28 #2686
+
+- what: The lead sent the owner to the F2 prover's chat to grant simulator access on the Mac Lead's relayed word; the owner found F2 was not waiting for anything
+- cause: An 'owner action needed' claim was relayed second-hand (Mac Lead about F2) and put to the owner without confirming with the acting session
+- guard: Before any owner action is requested on another session's behalf, the lead messages that session directly and gets its own statement of the exact blocking UI element; the owner request quotes the acting session, not a relay
+- rule: A fact restated in a second place is the copy that goes wrong; resolve against the primary source

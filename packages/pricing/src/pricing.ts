@@ -44,6 +44,17 @@ export function roundMoney(n: number): number {
   return (sign * cents) / 100;
 }
 
+/**
+ * True when `n` is a finite amount in whole cents — the ONE predicate for "is this a cents
+ * amount" (#2695, SA-557c). Defined by {@link roundMoney}, so it agrees with every rounded write:
+ * `19.99` passes even though `19.99 * 100` is `1998.9999999999998` in floats (a hand-rolled
+ * `Math.round(n * 100) === n * 100` refuses 1,146 of the 10,001 cent values in $0–$100).
+ * Sign is not its concern: a caller that needs ≥ 0 checks that itself.
+ */
+export function isWholeCents(n: number): boolean {
+  return Number.isFinite(n) && roundMoney(n) === n;
+}
+
 export interface NormalizedQty {
   /** Whole boxes (null for non-boxed products / no split). */
   boxes: number | null;
@@ -1091,6 +1102,28 @@ export function invoiceLineQtyText(item: UnitLineQtyInput): string {
   if (!label) return formatQtySplit(split);
   if (item.boxes == null && item.pieces == null) return `${formatQtySplit(split)} ${label}`;
   return formatQtySplit({ ...split, boxLabel: label });
+}
+
+// ─── Purchase-order line pack (#2066 review round) ────────────────────────────
+// `linePack` moved here verbatim from
+// apps/web/app/(dashboard)/inventory/_components/purchase-orders-shared.ts, which now
+// re-exports it. Mobile's PO detail screen had read the boxes+pieces split straight off the
+// LIVE product's `unitsPerBox`, skipping this stored-wins rule (the class of bug B707/#1171
+// fixed for invoice/order lines): a repack (12 -> 6) silently re-denominated an already-written
+// line at the NEW pack. Web and mobile both import it; no-mirrors-linepack.spec.ts fails the
+// build on a local copy. (The label itself, `unitsLabel`, is ./units-label.ts.)
+
+/**
+ * B699/B722: the pack a PO line is denominated in. The line's OWN stored
+ * `packSize` wins; the live catalog pack is only the fallback, for a new line
+ * or one that never stored a pack. A line stores the pack it was actually
+ * written against — re-splitting it at the live pack on every render silently
+ * rewrites an already-agreed line's display the moment the product is repacked
+ * or un-boxed, the exact bug this function exists to prevent.
+ */
+export function linePack(line: { packSize?: number | null }, livePack: number): number {
+  const stored = Number(line.packSize ?? 0);
+  return stored > 1 ? stored : livePack;
 }
 
 // ─── Per-unit cost rounding ───────────────────────────────────────────────────

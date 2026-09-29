@@ -23,6 +23,11 @@
  * body onto a validated DTO, MED-5/6/7 are documented at their own call sites below.
  */
 import {
+  INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS,
+  assertReplayItems,
+  inlineReturnItemsFingerprint,
+} from "./inline-return-fingerprint";
+import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
@@ -44,6 +49,7 @@ import { NO_RESTOCK_REASONS } from "./returns.service";
 import { restockReturnItems } from "./returns-restock.util";
 import { sumInlineReturnCredit } from "./inline-return-credit.util";
 import { InlineReturnsQuoteService } from "./inline-returns-quote.service";
+import { creditOverrideAuditItems } from "./inline-returns-pricing";
 import type { CaptureInlineReturnDto, InlineReturnLinesDto } from "./dto/capture-inline-return.dto";
 import type { ApproveInlineReturnDto } from "./dto/approve-inline-return.dto";
 import { selectEditRevertedInvoices } from "../invoices/order-edit-revert-set";
@@ -65,6 +71,9 @@ export const INLINE_RETURN_ERROR_CODES = {
   ORDER_CUSTOMER_MISMATCH: "INLINE_RETURN_ORDER_CUSTOMER_MISMATCH",
   ORDER_CANCELLED: "INLINE_RETURN_ORDER_CANCELLED",
   RETURN_KEY_CONFLICT: "INLINE_RETURN_KEY_CONFLICT",
+  // #2424: the same key, the same customer/order, but DIFFERENT items: not a replay. The client
+  // treats it as a definite refusal (settles its nonce), so its next capture mints a new key.
+  RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS: INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS,
 } as const;
 
 /** The 409 code of a returnKey already held (create's preflight: a replay, or a real collision). */
@@ -103,6 +112,14 @@ export class InlineReturnsService {
   /** MED-7: true only for a P2002 whose violated constraint is `returnKey`'s own unique
    * index — permissive on an empty/unreported target (mirrors credit-notes.service.ts's
    * `create()` P2002 handling), but never true for an unrelated unique violation. */
+  /** #2424: a same-pair replay must carry the same items as the stored capture, else 409. */
+  private assertReplaySameItems(
+    existing: { id: string; returnNumber?: string | null; capturePayload?: unknown },
+    dto: { items: any[]; reason?: string | null },
+  ) {
+    assertReplayItems(existing, dto, this.logger);
+  }
+
   private isReturnKeyConflict(err: any): boolean {
     if (err?.code !== "P2002") return false;
     const target = Array.isArray(err?.meta?.target)
@@ -298,6 +315,7 @@ export class InlineReturnsService {
             message: "A different return already used this capture key",
           });
         }
+        this.assertReplaySameItems(raced, dto); // #2424
         return {
           replayed: true as const,
           ret: raced,
@@ -372,6 +390,7 @@ export class InlineReturnsService {
         status: "RECEIVED",
         kind: "INLINE",
         returnKey: dto.returnKey,
+        capturePayload: inlineReturnItemsFingerprint(dto.items, dto.reason), // #2424: what a replay must match
         capturedById: user.sub,
         capturedRole: user.role,
         routeRunStopId: dto.routeRunStopId,
@@ -383,6 +402,25 @@ export class InlineReturnsService {
       },
       include: { items: true },
     });
+
+    // #2695 (SA-557): ONE in-tx audit row naming every lowered credit — the default it replaced,
+    // the price typed, and why. A held (DRIVER_CAP) return cannot carry one: overrides are staff-only.
+    const overridden = priced.chunks.filter((c) => c.priceSource === "MANUAL");
+    if (overridden.length > 0) {
+      await tx.auditLog.create({
+        data: {
+          userId: user.sub,
+          action: "inline_return.price_override",
+          entityType: "Return",
+          entityId: created.id,
+          meta: {
+            orderId: dto.orderId,
+            customerId: dto.customerId,
+            items: creditOverrideAuditItems(overridden),
+          },
+        },
+      });
+    }
 
     if (!overCap) {
       // HIGH-4: restock/ledger reversal happens NOW only for a return that is NOT
@@ -449,12 +487,19 @@ export class InlineReturnsService {
     if (dto.returnKey) {
       const pre = await db.return.findFirst({
         where: { returnKey: dto.returnKey, kind: "INLINE" },
-        select: { customerId: true, orderId: true },
+        select: {
+          id: true,
+          returnNumber: true,
+          customerId: true,
+          orderId: true,
+          capturePayload: true,
+        },
       });
       if (pre) {
         if (pre.customerId !== dto.customerId || pre.orderId !== dto.orderId) {
           throw new ConflictException("A different return already used this capture key");
         }
+        this.assertReplaySameItems(pre, dto); // #2424
         return null; // a replay of THIS return: nothing to price or reserve; the in-tx check returns the row
       }
     }
@@ -582,6 +627,7 @@ export class InlineReturnsService {
       preExisting.customerId === dto.customerId &&
       preExisting.orderId === dto.orderId
     ) {
+      this.assertReplaySameItems(preExisting, dto); // #2424
       result = {
         replayed: true,
         ret: preExisting,
@@ -604,6 +650,7 @@ export class InlineReturnsService {
             include: { items: true },
           });
           if (raced && raced.customerId === dto.customerId && raced.orderId === dto.orderId) {
+            this.assertReplaySameItems(raced, dto); // #2424
             result = { replayed: true, ret: raced, overCap: raced.holdReason === "DRIVER_CAP" };
           } else {
             throw new ConflictException({

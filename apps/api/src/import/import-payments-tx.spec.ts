@@ -17,6 +17,7 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 type Write = {
   op: "payment" | "invoiceUpdate" | "invoiceCreate";
@@ -57,6 +58,12 @@ describe("#2262 import writes payments + the Invoice row in one transaction (SA-
         // idempotency for source-numberless rows). `findLocalId` → null is
         // "never imported before", the state every suite here assumes.
         { provide: ExternalRefService, useValue: externalRefs },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
       ],
     }).compile();
     service = mod.get(ImportService);

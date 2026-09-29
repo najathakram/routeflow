@@ -26,8 +26,10 @@ export interface ReorderItem {
  *  properly is a bigger lift (the create path would need to build a real unit-aware
  *  line, not just forward a field) and isn't done here. */
 export function buildReorderItems(order: Pick<BuyerOrder, "lineItems">): ReorderItem[] {
+  // A custom (unlisted) line has productId null — never reorderable; the predicate narrows it out.
   const live = order.lineItems.filter(
-    (li) => li.status !== "CANCELLED" && !!li.productId && Number(li.qty) > 0,
+    (li): li is (typeof order.lineItems)[number] & { productId: string } =>
+      li.status !== "CANCELLED" && !!li.productId && Number(li.qty) > 0,
   );
   if (live.some((li) => li.unitLabel != null && li.unitLabel !== "")) return [];
   return live.map((li) => ({
