@@ -2,10 +2,17 @@
  * SA-584 B2 (#2717 M2 fold) — DB-lane proof that a recipe's invariants are KEPT, not only checked
  * at draft time. Real Postgres, throwaway `qa-2717-fold-<run>-<n>` tenants (assertTestTenant).
  *
- *  - RACE (4 rounds): a component re-parent (`ProductsService.update`) and `activate` in parallel
- *    never yield an ACTIVE recipe with a component that is not a variant of the family: either
- *    activate wins and the re-parent is a 409 RECIPE_FAMILY_LOCKED, or the re-parent wins and
- *    activate re-validates under the locks (400 COMPONENT_NOT_VARIANT). Never a 40P01.
+ *  - SERIALIZED (4 rounds): a component re-parent (`ProductsService.update`) and `activate` started
+ *    together never yield an ACTIVE recipe with a component that is not a variant of the family. The
+ *    DRAFT is already open, so the re-parent is ALWAYS a 409 RECIPE_FAMILY_LOCKED whatever the
+ *    interleaving (a check that the guard holds under concurrency, not a two-outcome race). Never 40P01.
+ *  - RACE (6 rounds, two outcomes): a component DEACTIVATE (allowed while a recipe is open, SA-584b) and
+ *    `activate` started together: either activate wins, or it refuses 400 COMPONENT_INACTIVE.
+ *  - SA-587 RACE (6 rounds): `recipes.create(R)` vs `ProductsService.update(R, { parentProductId })`
+ *    never leaves R with BOTH a recipe and a parent: exactly one side wins, the loser gets the 409.
+ *    Revert-red: deciding RECIPE_PRODUCT_HAS_PARENT from the PRE-lock recipe read (recipe-update-guard.ts)
+ *    lets both win in some round.
+ *  - SA-587a: tracked-categories assign/unassign vs an open recipe is a 409 with NOTHING written.
  *  - LOCK EDGE: a raw writer holds the FAMILY row and has un-committedly re-parented a component;
  *    `activate` must BLOCK on the family lock (house order: family -> recipe product -> components)
  *    and, once the writer commits, refuse the activation. Before the fix activate never touched the
@@ -19,6 +26,7 @@ import { randomUUID } from "crypto";
 import { Pool } from "pg";
 import { RecipesService } from "./recipes.service";
 import { ProductsService } from "./products.service";
+import { TrackedCategoriesService } from "../tracked-categories/tracked-categories.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { StorageService } from "../storage/storage.service";
@@ -52,6 +60,7 @@ describeDb("#2717 M2 fold: recipe invariants are kept — real Postgres", () => 
   let tenantCtx: TenantContextService;
   let recipes: RecipesService;
   let products: ProductsService;
+  let categories: TrackedCategoriesService;
   const createdTenantIds: string[] = [];
 
   beforeAll(async () => {
@@ -63,6 +72,7 @@ describeDb("#2717 M2 fold: recipe invariants are kept — real Postgres", () => 
       providers: [
         RecipesService,
         ProductsService,
+        TrackedCategoriesService,
         { provide: PrismaService, useValue: prisma },
         { provide: StorageService, useValue: { presignedUrls: jest.fn().mockResolvedValue([]) } },
         { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(false) } },
@@ -81,6 +91,7 @@ describeDb("#2717 M2 fold: recipe invariants are kept — real Postgres", () => 
     }).compile();
     recipes = module.get(RecipesService);
     products = module.get(ProductsService);
+    categories = module.get(TrackedCategoriesService);
   }, 120_000);
 
   afterAll(async () => {
@@ -100,6 +111,7 @@ describeDb("#2717 M2 fold: recipe invariants are kept — real Postgres", () => 
     await prisma.auditLog.deleteMany({ where: { tenantId } });
     await prisma.product.deleteMany({ where: { tenantId, parentProductId: { not: null } } });
     await prisma.product.deleteMany({ where: { tenantId } });
+    await prisma.trackedCategory.deleteMany({ where: { tenantId } });
     await prisma.user.deleteMany({ where: { tenantId } });
     await prisma.tenant.delete({ where: { id: tenantId } });
   }
@@ -126,14 +138,16 @@ describeDb("#2717 M2 fold: recipe invariants are kept — real Postgres", () => 
       },
     });
 
-  async function seedDraft(tenantId: string) {
-    const family = await product(tenantId, "Family");
+  async function seedDraft(tenantId: string, extra: Record<string, unknown> = {}) {
+    const family = await product(tenantId, "Family", extra);
     const variants = [] as Awaited<ReturnType<typeof product>>[];
     for (const n of ["A", "B", "C"]) {
       // eslint-disable-next-line no-await-in-loop
-      variants.push(await product(tenantId, `Flavor ${n}`, { parentProductId: family.id }));
+      variants.push(
+        await product(tenantId, `Flavor ${n}`, { parentProductId: family.id, ...extra }),
+      );
     }
-    const recipeProduct = await product(tenantId, "Mix");
+    const recipeProduct = await product(tenantId, "Mix", extra);
     const draft = await inTenant(tenantId, () =>
       recipes.create({
         recipeProductId: recipeProduct.id,
@@ -179,37 +193,112 @@ describeDb("#2717 M2 fold: recipe invariants are kept — real Postgres", () => 
     return false;
   }
 
-  it("RACE (4 rounds): a component re-parent vs activate never yields an ACTIVE recipe over a non-family component", async () => {
+  it("SERIALIZED (4 rounds): a component re-parent started with activate is always a 409, and no ACTIVE recipe ends over a non-family component", async () => {
     const tenantId = await seedTenant("race-reparent");
     for (let round = 0; round < 4; round += 1) {
       // eslint-disable-next-line no-await-in-loop
       const c = await seedDraft(tenantId);
       // eslint-disable-next-line no-await-in-loop
-      const results = await Promise.allSettled([
+      const [activated, reparented] = await Promise.allSettled([
         inTenant(tenantId, () => recipes.activate(c.draft.id)),
         inTenant(tenantId, () =>
           products.update(c.variants[0].id, { parentProductId: null } as any),
         ),
       ]);
-      const [activated, reparented] = results;
-      for (const r of results) {
+      for (const r of [activated, reparented]) {
         if (r.status === "rejected") expect(stateOf(r.reason)).not.toBe("40P01");
       }
-      if (activated.status === "fulfilled") {
-        expect(reparented.status).toBe("rejected");
-        expect((reparented as PromiseRejectedResult).reason.getResponse()).toMatchObject({
-          code: "RECIPE_FAMILY_LOCKED",
-        });
-      } else {
-        expect(reparented.status).toBe("fulfilled");
-        expect(activated.reason.getResponse()).toMatchObject({
-          code: "RECIPE_INVALID",
-          reason: "COMPONENT_NOT_VARIANT",
-        });
-      }
+      // The DRAFT is open from the start, so the re-parent can never win.
+      expect(reparented.status).toBe("rejected");
+      expect((reparented as PromiseRejectedResult).reason.getResponse()).toMatchObject({
+        code: "RECIPE_FAMILY_LOCKED",
+      });
+      expect(activated.status).toBe("fulfilled");
       // eslint-disable-next-line no-await-in-loop
       expect(await activeRecipeHasNonFamilyComponent(tenantId)).toBe(false);
     }
+  }, 120_000);
+
+  it("RACE (6 rounds, two outcomes): a component deactivate vs activate is either 'activate first' or 400 COMPONENT_INACTIVE, never 40P01", async () => {
+    const tenantId = await seedTenant("race-deactivate");
+    let activateWon = 0;
+    let deactivateWon = 0;
+    for (let round = 0; round < 6; round += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      const c = await seedDraft(tenantId);
+      // eslint-disable-next-line no-await-in-loop
+      const [activated, deactivated] = await Promise.allSettled([
+        inTenant(tenantId, () => recipes.activate(c.draft.id)),
+        inTenant(tenantId, () => products.update(c.variants[1].id, { isActive: false } as any)),
+      ]);
+      for (const r of [activated, deactivated]) {
+        if (r.status === "rejected") expect(stateOf(r.reason)).not.toBe("40P01");
+      }
+      expect(deactivated.status).toBe("fulfilled"); // a deactivate is never refused (SA-584b)
+      if (activated.status === "fulfilled") {
+        activateWon += 1;
+      } else {
+        deactivateWon += 1;
+        expect(activated.reason.getResponse()).toMatchObject({
+          code: "RECIPE_INVALID",
+          reason: "COMPONENT_INACTIVE",
+        });
+        // eslint-disable-next-line no-await-in-loop
+        const still = await prisma.recipe.findUniqueOrThrow({ where: { id: c.draft.id } });
+        expect(still.status).toBe("DRAFT");
+      }
+    }
+    expect(activateWon + deactivateWon).toBe(6);
+  }, 120_000);
+
+  it("SA-587 RACE (6 rounds): recipes.create(R) vs update(R, { parentProductId }) never leaves R with a recipe AND a parent", async () => {
+    const tenantId = await seedTenant("race-adopt");
+    let recipeWon = 0;
+    let parentWon = 0;
+    for (let round = 0; round < 6; round += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      const family = await product(tenantId, "Family");
+      // eslint-disable-next-line no-await-in-loop
+      const adopter = await product(tenantId, "Adopter family");
+      // eslint-disable-next-line no-await-in-loop
+      const variant = await product(tenantId, "Flavor", { parentProductId: family.id });
+      // eslint-disable-next-line no-await-in-loop
+      const r = await product(tenantId, "Mix");
+      // eslint-disable-next-line no-await-in-loop
+      const [created, adopted] = await Promise.allSettled([
+        inTenant(tenantId, () =>
+          recipes.create({
+            recipeProductId: r.id,
+            familyProductId: family.id,
+            unitsPerPack: 12,
+            components: [{ componentProductId: variant.id, qty: 12 }],
+          } as any),
+        ),
+        inTenant(tenantId, () => products.update(r.id, { parentProductId: adopter.id } as any)),
+      ]);
+      for (const x of [created, adopted]) {
+        if (x.status === "rejected") expect(stateOf(x.reason)).not.toBe("40P01");
+      }
+      // eslint-disable-next-line no-await-in-loop
+      const row = await prisma.product.findUniqueOrThrow({ where: { id: r.id } });
+      // eslint-disable-next-line no-await-in-loop
+      const recipeCount = await prisma.recipe.count({ where: { tenantId, productId: r.id } });
+      // The invariant: never both.
+      expect(recipeCount > 0 && row.parentProductId !== null).toBe(false);
+      // Exactly one side won; the loser got the 409 (the adoption's 409, or create's 400/409 shape refusal).
+      expect([created.status, adopted.status].sort()).toEqual(["fulfilled", "rejected"]);
+      if (created.status === "fulfilled") {
+        recipeWon += 1;
+        expect((adopted as PromiseRejectedResult).reason.getResponse()).toMatchObject({
+          code: "RECIPE_INVALID",
+          reason: "RECIPE_PRODUCT_HAS_PARENT",
+        });
+      } else {
+        parentWon += 1;
+        expect(created.reason.getResponse?.()).toMatchObject({ code: "RECIPE_INVALID" });
+      }
+    }
+    expect(recipeWon + parentWon).toBe(6);
   }, 120_000);
 
   it("LOCK EDGE: activate blocks on the family lock a re-parent holds, then refuses over the re-parented component", async () => {
@@ -340,5 +429,38 @@ describeDb("#2717 M2 fold: recipe invariants are kept — real Postgres", () => 
     expect(activated).toMatchObject({ status: "ACTIVE" });
     const v1 = await prisma.recipe.findUniqueOrThrow({ where: { id: c.draft.id } });
     expect(v1.status).toBe("RETIRED");
+  }, 60_000);
+
+  it("SA-587a: bulk assign / unassign of a tracked category vs an open recipe is a 409 with NOTHING written", async () => {
+    const tenantId = await seedTenant("category-bulk");
+    const cat = await prisma.trackedCategory.create({ data: { tenantId, name: "Beverage" } });
+    const target = await prisma.trackedCategory.create({ data: { tenantId, name: "Snacks" } });
+    const c = await seedDraft(tenantId, { trackedCategoryId: cat.id });
+    const stray = await product(tenantId, "Stray", { trackedCategoryId: cat.id });
+
+    // assign: the component would move, the stray would too — neither may.
+    let err: any = await inTenant(tenantId, () =>
+      categories.assignProducts(target.id, [c.variants[0].id, stray.id]),
+    ).catch((e) => e);
+    expect(err.getResponse()).toMatchObject({ code: "RECIPE_CATEGORY_LOCKED" });
+    // unassign: same, from the category they are in.
+    err = await inTenant(tenantId, () =>
+      categories.unassignProducts(cat.id, [c.variants[0].id, stray.id]),
+    ).catch((e) => e);
+    expect(err.getResponse()).toMatchObject({ code: "RECIPE_CATEGORY_LOCKED" });
+    const rows = await prisma.product.findMany({
+      where: { id: { in: [c.variants[0].id, stray.id] } },
+    });
+    expect(rows.map((r) => r.trackedCategoryId)).toEqual([cat.id, cat.id]);
+
+    // RETIRED-only: the same bulk move goes through.
+    await prisma.recipe.updateMany({
+      where: { tenantId, id: c.draft.id },
+      data: { status: "RETIRED", activeFor: null, retiredAt: new Date() },
+    });
+    const res = await inTenant(tenantId, () =>
+      categories.assignProducts(target.id, [c.variants[0].id, stray.id]),
+    );
+    expect(res).toMatchObject({ assigned: 2 });
   }, 60_000);
 });
