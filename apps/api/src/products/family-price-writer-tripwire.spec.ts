@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync, statSync } from "fs";
 import { join, relative } from "path";
+import { WRITE_METHODS, callBlocks, opaqueProductWrites } from "./tripwire-scan";
 
 /**
  * #2717 M2 test 23 (SA-574 Q2, SA-E95, L-223): the family owns its variants' prices only if EVERY
@@ -17,7 +18,6 @@ const API_ROOT = join(__dirname, "..", "..");
 const SRC_ROOT = join(API_ROOT, "src");
 
 const COLUMNS = ["pricePerUnit", "priceTier2", "priceTier3", "priceTier4", "priceTier5"];
-const WRITE_METHODS = ["create", "update", "upsert", "createMany", "updateMany"];
 const UPDATE_METHODS = ["update", "upsert", "updateMany"];
 
 /** File -> symbols family-price.ts exports that the file must call (the routing proof). */
@@ -60,32 +60,6 @@ function listFiles(dir: string, exts: RegExp): string[] {
       out.push(...listFiles(full, exts));
     } else if (exts.test(entry) && !/\.spec\.ts$|\.d\.ts$/.test(entry)) {
       out.push(full);
-    }
-  }
-  return out;
-}
-
-function balanced(text: string, openIdx: number): string {
-  let depth = 1;
-  let i = openIdx + 1;
-  while (i < text.length && depth > 0) {
-    if (text[i] === "(") depth++;
-    else if (text[i] === ")") depth--;
-    i++;
-  }
-  return text.slice(openIdx, i);
-}
-
-function callBlocks(text: string, receiver: string, methods: string[]): string[] {
-  const out: string[] = [];
-  for (const method of methods) {
-    const needle = `.${receiver}.${method}(`;
-    let from = 0;
-    for (;;) {
-      const idx = text.indexOf(needle, from);
-      if (idx === -1) break;
-      out.push(balanced(text, idx + needle.length - 1));
-      from = idx + needle.length;
     }
   }
   return out;
@@ -206,5 +180,122 @@ describe("family price writer tripwire: scripts and prisma (Q2 ii)", () => {
       expect(reason.length).toBeGreaterThan(20);
       expect(offenders).toContain(file);
     }
+  });
+});
+
+/**
+ * SA-584 fold (lead): the column scans above only see a price column NAMED in an object literal. A
+ * write whose `data` is a variable or carries a spread (`data,`, `data: someVar`, `{ ...dto }`) can
+ * carry a price column the scan never sees. Every such write is either listed here by file with a
+ * reason it can never carry a price column onto a governed row, or the tripwire fails.
+ */
+/**
+ * File (relative to apps/api/src) -> the EXACT number of variable/spread product writes it may hold,
+ * with why none of them can carry a price column onto a governed row. A NEW opaque writer in an
+ * allow-listed file changes the count and fails (SA-587 lead LOW: per count, not per file).
+ */
+export const OPAQUE_DATA_ALLOW: Record<string, { count: number; reason: string }> = {
+  "inventory/inventory.service.ts": {
+    count: 3,
+    reason:
+      "createVariantRowInTx spreads `priceColumns`: the family's own five columns re-read under its " +
+      "row lock (familyPricesForNewVariant) with the mode on, the parent's as before with it off; the " +
+      "cost-basis write with a ternary `data` names only cost columns.",
+  },
+  "products/family-price.ts": {
+    count: 2,
+    reason:
+      "propagateFamilyPrice IS the authority writer: it copies the family's own five columns " +
+      "(pickPriceColumns) onto its variants and its non-override recipe products.",
+  },
+  "products/products.service.ts": {
+    count: 2,
+    reason:
+      "update() writes `data` after applyFamilyPriceBeforeUpdate rewrote it (a governed row's price " +
+      "columns replaced by the family's or stripped); the ROUTED table above pins that call.",
+  },
+};
+
+/** Files whose opaque-write count is not exactly the allow-listed number (or that are not listed at all). */
+export function opaqueCountViolations(
+  found: Map<string, number>,
+  allow: Record<string, { count: number; reason: string }>,
+): string[] {
+  const out: string[] = [];
+  for (const [file, n] of found) {
+    if (!(file in allow)) out.push(`${file}: ${n} (not allow-listed)`);
+    else if (allow[file].count !== n) out.push(`${file}: found ${n}, allowed ${allow[file].count}`);
+  }
+  for (const [file, { count }] of Object.entries(allow)) {
+    if (!found.has(file)) out.push(`${file}: allow-listed ${count} but none found (stale)`);
+  }
+  return out;
+}
+
+describe("family price writer tripwire: variable and spread data (SA-584 fold)", () => {
+  it("sees a spread, a shorthand and a variable data argument, and ignores a literal", () => {
+    expect(
+      opaqueProductWrites("await tx.product.update({ where: { id }, data: { ...dto } });"),
+    ).toHaveLength(1);
+    expect(opaqueProductWrites("await tx.product.update({ where: { id }, data });")).toHaveLength(
+      1,
+    );
+    expect(
+      opaqueProductWrites("await tx.product.update({ where: { id }, data, select });"),
+    ).toHaveLength(1);
+    expect(
+      opaqueProductWrites("await tx.product.update({ where: { id }, data: patch });"),
+    ).toHaveLength(1);
+    expect(
+      opaqueProductWrites("await tx.products.create({ data: { name, ...rest } });"),
+    ).toHaveLength(1);
+    expect(
+      opaqueProductWrites("await tx.product.createMany({ data: rows.map(toRow) });"),
+    ).toHaveLength(1);
+    expect(
+      opaqueProductWrites("await tx.product.update({ where: { id }, data: { currentStock: 1 } });"),
+    ).toHaveLength(0);
+    expect(
+      opaqueProductWrites(
+        "await tx.product.update({ where: { id }, data: { a: 1, ...(x ? { b: 2 } : {}) } });",
+      ),
+    ).toHaveLength(0);
+    expect(
+      opaqueProductWrites("await tx.product.create({ data: { name: 'x', unit: 'ea' } });"),
+    ).toHaveLength(0);
+  });
+
+  const files = listFiles(SRC_ROOT, /\.ts$/);
+  const opaque = new Map<string, number>();
+  for (const file of files) {
+    const n = opaqueProductWrites(readFileSync(file, "utf8")).length;
+    if (n > 0) opaque.set(rel(SRC_ROOT, file), n);
+  }
+
+  it("the allow-list matches the found opaque writers exactly, per file and per count", () => {
+    expect(opaqueCountViolations(opaque, OPAQUE_DATA_ALLOW)).toEqual([]);
+  });
+
+  it("every allow-listed file carries a reason", () => {
+    for (const { reason } of Object.values(OPAQUE_DATA_ALLOW)) {
+      expect(reason.length).toBeGreaterThan(20);
+    }
+  });
+
+  it("the count check is not vacuous: one extra writer in an allow-listed file, a new file, and a stale row all fail", () => {
+    const allow = { "a.ts": { count: 2, reason: "x".repeat(30) } };
+    expect(opaqueCountViolations(new Map([["a.ts", 2]]), allow)).toEqual([]);
+    expect(opaqueCountViolations(new Map([["a.ts", 3]]), allow)).toHaveLength(1);
+    expect(opaqueCountViolations(new Map([["a.ts", 1]]), allow)).toHaveLength(1);
+    expect(
+      opaqueCountViolations(
+        new Map([
+          ["a.ts", 2],
+          ["b.ts", 1],
+        ]),
+        allow,
+      ),
+    ).toHaveLength(1);
+    expect(opaqueCountViolations(new Map(), allow)).toHaveLength(1);
   });
 });

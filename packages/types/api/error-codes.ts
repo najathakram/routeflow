@@ -25,6 +25,9 @@
 //                    in place (#2717 M2, I3); clone it with POST /recipes/:id/versions instead.
 //   RECIPE_CATEGORY_LOCKED — `body.code` of the 409 when a product that sits in a non-RETIRED
 //                    recipe (as recipe product, family or component) changes its tracked category.
+//   RECIPE_FAMILY_LOCKED — `body.code` of the 409 when a product in a DRAFT/ACTIVE recipe is re-parented
+//                    (component) or has its unitsPerBox changed (family or recipe product);
+//                    `body.reason` is PARENT or UNITS_PER_BOX (#2717 M2, SA-584 B2).
 //   RECIPE_ACTIVE_CONFLICT — `body.code` of the 409 when another activation won the race for the
 //                    same recipe product; re-read and retry.
 //   RECIPE_VERSION_CONFLICT — `body.code` of the 409 when another new version took the number.
@@ -55,6 +58,7 @@ export const API_ERROR_CODES = {
   BARCODE_TAKEN: "BARCODE_TAKEN",
   RECIPE_IMMUTABLE: "RECIPE_IMMUTABLE",
   RECIPE_CATEGORY_LOCKED: "RECIPE_CATEGORY_LOCKED",
+  RECIPE_FAMILY_LOCKED: "RECIPE_FAMILY_LOCKED",
   RECIPE_ACTIVE_CONFLICT: "RECIPE_ACTIVE_CONFLICT",
   RECIPE_VERSION_CONFLICT: "RECIPE_VERSION_CONFLICT",
   RECIPE_INVALID: "RECIPE_INVALID",

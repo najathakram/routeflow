@@ -225,10 +225,13 @@ export function recipeUniqueViolation(e: unknown): "activeFor" | "productVersion
   return null;
 }
 
+/** The statuses that hold a recipe's invariants: DRAFT and ACTIVE (RETIRED locks nothing). */
+const OPEN_RECIPE_STATUS = { in: ["DRAFT", "ACTIVE"] as Array<"DRAFT" | "ACTIVE"> };
+
 /** I6 helper: the query that says whether a product sits in a non-RETIRED recipe in any role. */
 export function openRecipeWhere(productId: string) {
   return {
-    status: { in: ["DRAFT", "ACTIVE"] as Array<"DRAFT" | "ACTIVE"> },
+    status: OPEN_RECIPE_STATUS,
     OR: [
       { productId },
       { familyProductId: productId },
@@ -237,11 +240,54 @@ export function openRecipeWhere(productId: string) {
   };
 }
 
-/** 409 RECIPE_CATEGORY_LOCKED. */
-export function recipeCategoryLocked(): ConflictException {
+/** `openRecipeWhere` for a set of products (any of them, in any role) — the bulk writers' form. */
+export function openRecipeWhereAny(productIds: string[]) {
+  return {
+    status: OPEN_RECIPE_STATUS,
+    OR: [
+      { productId: { in: productIds } },
+      { familyProductId: { in: productIds } },
+      { components: { some: { componentProductId: { in: productIds } } } },
+    ],
+  };
+}
+
+/** How many DISTINCT `movingIds` are held (any role) by the given open recipes. A count, never ids. */
+export function countLockedProducts(
+  movingIds: string[],
+  recipes: Array<{
+    productId: string;
+    familyProductId: string;
+    components?: Array<{ componentProductId: string }>;
+  }>,
+): number {
+  const held = new Set<string>();
+  for (const r of recipes) {
+    held.add(r.productId);
+    held.add(r.familyProductId);
+    for (const c of r.components ?? []) held.add(c.componentProductId);
+  }
+  return new Set(movingIds.filter((id) => held.has(id))).size;
+}
+
+/** 409 RECIPE_CATEGORY_LOCKED; `lockedCount` = how many products are locked (SA-587a: count only). */
+export function recipeCategoryLocked(lockedCount = 1): ConflictException {
   return new ConflictException({
     code: API_ERROR_CODES.RECIPE_CATEGORY_LOCKED,
+    lockedCount,
     message:
       "This product is part of a recipe that is not retired, so its tracked category cannot change.",
+  });
+}
+
+/** 409 RECIPE_FAMILY_LOCKED (SA-584 B2 a): a re-parent or a box-size change an open recipe forbids. */
+export function recipeFamilyLocked(reason: "PARENT" | "UNITS_PER_BOX"): ConflictException {
+  return new ConflictException({
+    code: API_ERROR_CODES.RECIPE_FAMILY_LOCKED,
+    reason,
+    message:
+      reason === "PARENT"
+        ? "This product is a component of a recipe that is not retired, so it cannot leave its family."
+        : "This product is the family or the recipe product of a recipe that is not retired, so its box size cannot change.",
   });
 }
