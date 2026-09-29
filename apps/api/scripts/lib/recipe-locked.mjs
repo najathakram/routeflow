@@ -71,6 +71,48 @@ export function planTobaccoLink({ tobaccoCat, products, openRecipes }) {
   };
 }
 
+const CI_TOBACCO = { equals: "Tobacco", mode: "insensitive" };
+
+/**
+ * The per-tenant read glue of the backfill: loads the Tobacco type, the flagged/member products and
+ * the open recipes touching the link candidates via `db` (a Prisma client), then returns EXACTLY
+ * `{ tenant, ...planTobaccoLink(...) }` - nothing is re-added after planning.
+ */
+export async function planTobaccoTenant(db, tenant) {
+  const tobaccoCat = await db.trackedCategory.findFirst({
+    where: { tenantId: tenant.id, name: CI_TOBACCO },
+    select: { id: true, name: true, active: true },
+  });
+  const products = await db.product.findMany({
+    where: {
+      tenantId: tenant.id,
+      OR: [{ isTobacco: true }, ...(tobaccoCat ? [{ trackedCategoryId: tobaccoCat.id }] : [])],
+    },
+    select: {
+      id: true,
+      name: true,
+      isTobacco: true,
+      trackedCategoryId: true,
+      trackedCategory: { select: { name: true } },
+    },
+  });
+  // SA-587b: a would-be link product in an open (DRAFT/ACTIVE) recipe is skipped, counted only.
+  const linkCandidates = tobaccoLinkCandidates(products);
+  const openRecipes =
+    linkCandidates.length > 0
+      ? await db.recipe.findMany({
+          where: { tenantId: tenant.id, ...openRecipeWhereAny(linkCandidates.map((p) => p.id)) },
+          select: {
+            status: true,
+            productId: true,
+            familyProductId: true,
+            components: { select: { componentProductId: true } },
+          },
+        })
+      : [];
+  return { tenant, ...planTobaccoLink({ tobaccoCat, products, openRecipes }) };
+}
+
 /** The writes of a plan, on a transaction client `tx`: ONLY `plan.link` and `plan.flag` ids. */
 export async function applyTobaccoPlan(tx, plan) {
   let catId = plan.tobaccoCat?.id;
