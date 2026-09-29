@@ -24,6 +24,8 @@ import {
 } from "../../../../../lib/api/change-requests";
 import {
   buildAtDoorChangeRequests,
+  dropSucceededAddedLine,
+  leftoverAddedMessage,
   type AtDoorAddedLine,
   type AtDoorEditedLine,
 } from "../../../../../lib/at-door-diff";
@@ -113,6 +115,11 @@ export default function AdjustOrderScreen() {
   // failure below, B790): removing the line or getting an override are both real next
   // steps here, not just "retry the same thing again".
   const blockedCrRef = useRef<string | null>(null);
+  // Set by processDiff right after a batch finishes successfully — the actual
+  // toast/navigate decision waits for the effect below, which reads `added`
+  // only once React has settled it to its TRUE latest value (never a value
+  // read mid-function, which could miss a concurrent re-scan's own setAdded).
+  const batchJustCompletedRef = useRef(false);
 
   const createCr = useCreateChangeRequest(orderId ?? "");
   const resolveCr = useResolveChangeRequestAtStop(orderId ?? "");
@@ -253,6 +260,13 @@ export default function AdjustOrderScreen() {
           // The create itself may have landed — its own queued resolve will settle
           // it once reconnected, so this is NOT a decline-worthy failure (B790).
           showToast("Connection lost — reconnect and save again.");
+          if (createdCrId && entry.type === "ADD_ITEM" && entry.productId) {
+            // The create already succeeded and the resolve is now queued for
+            // offline replay — it WILL land once reconnected, so drop the
+            // draft now, or the next Save resends this ADD_ITEM on top of the
+            // queued replay (B795, #1302 round 1 finding 2).
+            setAdded((prev) => dropSucceededAddedLine(prev, entry));
+          }
           return false;
         case "regulated":
           // The CR was created (and the buyer notified) but the regulated guard
@@ -263,7 +277,14 @@ export default function AdjustOrderScreen() {
           setLicenseBlock(outcome.blocked);
           return false;
         case "already-resolved":
-          showToast("That line changed elsewhere — refreshed.");
+          // Name a DECLINED resolution distinctly (#1302 round 1 finding 3) — an
+          // APPROVED-elsewhere race and an office decline read very differently to
+          // the driver. No status from the server => the generic toast.
+          showToast(
+            outcome.status === "DECLINED"
+              ? "That line was declined by the office — refreshed."
+              : "That line changed elsewhere — refreshed.",
+          );
           return true; // don't block the rest of the batch on a benign race
         case "credit":
           // B790: decline immediately, unlike the regulated case above — there is
@@ -291,18 +312,44 @@ export default function AdjustOrderScreen() {
   // (still present in local `added` state) is never re-diffed and resent.
   async function processDiff(diff: CreateChangeRequestInput[], startIndex: number) {
     for (let i = startIndex; i < diff.length; i++) {
-      const ok = await submitEntry(diff[i]!);
+      const entry = diff[i]!;
+      const ok = await submitEntry(entry);
       if (!ok) {
         pendingRef.current = { diff, index: i };
         setSaving(false);
         return;
       }
+      // B795: a bare re-tap of "Save changes" (the credit-block Cancel, a
+      // message-less 409, an offline drop, and the license modal's Cancel all
+      // leave the driver here) rebuilds a FRESH diff from `added` at index 0 --
+      // drop this entry's draft now, or a succeeded ADD_ITEM gets re-diffed and
+      // double-adds the line server-side.
+      setAdded((prev) => dropSucceededAddedLine(prev, entry));
     }
     pendingRef.current = null;
     setSaving(false);
+    // B795 review round 2: the toast/navigate decision below waits for the
+    // effect (reads the TRUE latest `added`) rather than deciding here --
+    // a concurrent re-scan's own setAdded may not have committed yet.
+    batchJustCompletedRef.current = true;
+  }
+
+  // Fires once the batch-completion flag is set AND `saving` has settled to
+  // false, reading whatever `added` React has ACTUALLY committed by then. A
+  // concurrent re-scan mid-batch can leave units here that were never part of
+  // the diff just processed -- never silently discard them by navigating away
+  // (Opus review, #1302 round 2: router.back() used to fire unconditionally).
+  useEffect(() => {
+    if (!batchJustCompletedRef.current || saving) return;
+    batchJustCompletedRef.current = false;
+    const leftover = leftoverAddedMessage(added);
+    if (leftover) {
+      showToast(leftover);
+      return;
+    }
     showToast("Order updated");
     router.back();
-  }
+  }, [saving, added, router]);
 
   async function handleSave() {
     if (!orderId) return;
@@ -453,7 +500,10 @@ export default function AdjustOrderScreen() {
         </View>
       </ScrollView>
 
-      <BarcodeFab onScanned={handleScanned} hidden={!!licenseBlock} />
+      {/* B795 review round 2: hide the scanner while saving too, not just
+          during the license block -- a scan landing mid-batch grows a draft
+          past what a just-sent ADD_ITEM already covers. */}
+      <BarcodeFab onScanned={handleScanned} hidden={saving || !!licenseBlock} />
 
       {/* Regulated-license guard — drivers can't capture/override (403 server-side),
           so this is read-only; the only real exit besides Cancel is dropping the

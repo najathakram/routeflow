@@ -73,3 +73,50 @@ export function buildAtDoorChangeRequests(args: {
 
   return out;
 }
+
+/**
+ * Reconciles the `added` draft whose ADD_ITEM change request just succeeded
+ * (B795). Apply this as EACH entry resolves during a batch, not only at the
+ * end: a later entry's failure stops the batch, and a bare re-tap of "Save
+ * changes" rebuilds a fresh diff from `added` at index 0 -- an already-
+ * succeeded ADD_ITEM still sitting in `added` gets re-diffed and double-adds
+ * the line server-side. CHANGE_QTY/REMOVE_ITEM need no equivalent: the diff
+ * is built against a freshly refetched order, so an already-applied edit
+ * self-heals (the line's stored qty already matches, so the diff-builder
+ * skips it). A no-match `productId` (already dropped, or a non-ADD_ITEM
+ * entry) is a no-op and returns the SAME array reference.
+ *
+ * SUBTRACTS the sent qty/boxes/pieces rather than dropping the draft
+ * outright: a driver can re-scan the same product while its ADD_ITEM is
+ * still in flight, growing the local draft past what was actually sent.
+ * Dropping the whole draft on that entry's success would silently lose the
+ * extra units the re-scan added -- an under-bill (Opus review, #1302 round
+ * 1). The draft is only removed once nothing sent remains unaccounted for.
+ */
+export function dropSucceededAddedLine<
+  T extends { productId: string; qty: number; boxes?: number; pieces?: number },
+>(added: T[], entry: CreateChangeRequestInput): T[] {
+  if (entry.type !== "ADD_ITEM" || !entry.productId) return added;
+  const idx = added.findIndex((a) => a.productId === entry.productId);
+  if (idx === -1) return added;
+  const draft = added[idx]!;
+  const remainingQty = draft.qty - (entry.qty ?? 0);
+  if (remainingQty <= 0) return added.filter((a) => a.productId !== entry.productId);
+  const next: T = {
+    ...draft,
+    qty: remainingQty,
+    ...(draft.boxes != null ? { boxes: Math.max(0, draft.boxes - (entry.boxes ?? 0)) } : {}),
+    ...(draft.pieces != null ? { pieces: Math.max(0, draft.pieces - (entry.pieces ?? 0)) } : {}),
+  };
+  return added.map((a, i) => (i === idx ? next : a));
+}
+
+/**
+ * The toast shown when a batch finishes but `added` still holds units a
+ * concurrent re-scan grew mid-flight -- never silently discard them by
+ * navigating away (Opus review, #1302 round 2). null when nothing is left.
+ */
+export function leftoverAddedMessage(added: ReadonlyArray<unknown>): string | null {
+  if (added.length === 0) return null;
+  return `${added.length} item${added.length === 1 ? "" : "s"} still to send — tap Save again.`;
+}
