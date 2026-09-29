@@ -208,13 +208,18 @@ describe("syncLineCompositions (order side)", () => {
         recipeId: "rec-1",
         version: 1,
         unitsPerPack: 24,
-        comps: recipe.comps,
+        // existing: differs from the stored rows (12+12 per box) so a re-read is detectable
+        comps: opts.existing
+          ? [{ componentProductId: A, qty: 6 }, { componentProductId: O, qty: 18 }]
+          : recipe.comps,
       }),
       activeRecipeFor: jest.fn().mockResolvedValue({
         recipeId: "rec-2",
         version: 2,
         unitsPerPack: 24,
-        comps: recipe.comps,
+        comps: opts.existing
+          ? [{ componentProductId: A, qty: 20 }, { componentProductId: O, qty: 4 }]
+          : recipe.comps,
       }),
       productFacts: jest.fn().mockResolvedValue(
         new Map([[A, product(A, "Almond")], [O, product(O, "Oat")]]),
@@ -250,6 +255,7 @@ describe("syncLineCompositions (order side)", () => {
   it("(8) an existing v1 line resized 2 -> 3 boxes rescales from the stored rows and never reads a Recipe", async () => {
     const { tx, port, ctx } = fixture({ existing: true, boxes: 3 });
     await syncLineCompositions(tx as never, ["li-1"], ctx);
+    expect(port.recipeById).not.toHaveBeenCalled();
     expect(port.activeRecipeFor).not.toHaveBeenCalled();
     const data = tx.orderItemComponent.createMany.mock.calls[0][0].data;
     expect(data.map((r: { qty: number }) => r.qty)).toEqual([36, 36]);
