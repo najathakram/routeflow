@@ -60,7 +60,7 @@ import { useAuthStore } from "../../../../lib/auth-store";
 import { hasUnsavedInvoiceDraft, shouldConfirmDiscard } from "../../../../lib/discard-guard";
 // Compose "<Parent> - <Variant>" so variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../../../../lib/product-display";
-import { computeLineSubtotal, effectiveQty, getTierPrice } from "@routeflow/pricing";
+import { computeLineSubtotal, effectiveQty, getTierPrice, isSpecialTier } from "@routeflow/pricing";
 import { useCustomerPrices } from "../../../../lib/api/customers";
 import {
   computeInvoiceTotals,
@@ -440,7 +440,7 @@ function InvoiceComposer({
   }, [customerPrices]);
   const tierPriceFor = (p: Product) => getTierPrice(p, cpMap.get(p.id) ?? customerTier ?? 1);
   // #2696(c): the server's "special" — the tier it prices this product at is not tier 1.
-  const isSpecialFor = (p: Product) => (cpMap.get(p.id) ?? customerTier ?? 1) !== 1;
+  const isSpecialFor = (p: Product) => isSpecialTier(cpMap.get(p.id) ?? customerTier ?? 1);
   const tenantTaxRate = (Number(settings?.taxRate) || 0) / 100;
   // Rate the row toggles actually offer: hidden entirely for exempt customers.
   const taxRateFraction = isTaxExempt ? 0 : tenantTaxRate;
