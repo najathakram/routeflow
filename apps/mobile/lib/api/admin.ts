@@ -414,6 +414,8 @@ export interface AdminInvoice {
   items?: Array<{
     id: string;
     description: string;
+    /** #2169: the system line kind ("NSF_FEE" for the bounce-fee line), null for a normal line. */
+    systemKind?: string | null;
     qty: number;
     /** Boxed denomination snapshot — when set, unitPrice is the BOX price. */
     boxes?: number | null;

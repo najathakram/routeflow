@@ -28,6 +28,9 @@ type CaptureItemLike = {
   reason?: string | null;
   condition?: string | null;
   restock?: boolean | null;
+  /** #2695: a staff credit-price override prices the capture, so a replay must carry the same one. */
+  creditUnitPrice?: number | null;
+  overrideReason?: string | null;
 };
 
 /** What a replay check needs from a request: its items and its request-level reason. */
@@ -54,6 +57,10 @@ export function inlineReturnItemsFingerprint(
     reason: i.reason ?? requestReason ?? null, // the EFFECTIVE reason the capture records
     condition: i.condition ?? null,
     restock: i.restock ?? null,
+    // #2695: absent on a pre-#2695 payload, re-canonicalised to null — still equal to a request
+    // that sends no override, so no stored capture changes its verdict.
+    creditUnitPrice: i.creditUnitPrice ?? null,
+    overrideReason: typeof i.overrideReason === "string" ? i.overrideReason.trim() : null,
   }));
   const key = (x: (typeof canon)[number]) => JSON.stringify(x);
   canon.sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));

@@ -156,6 +156,7 @@ export * from "./api/returns";
 export * from "./api/inline-returns";
 export * from "./api/regulated";
 export * from "./api/routes";
+export * from "./api/decimal";
 export * from "./api/buyer";
 export * from "./api/misc";
 export * from "./api/invoices";

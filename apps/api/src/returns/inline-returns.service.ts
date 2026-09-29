@@ -49,6 +49,7 @@ import { NO_RESTOCK_REASONS } from "./returns.service";
 import { restockReturnItems } from "./returns-restock.util";
 import { sumInlineReturnCredit } from "./inline-return-credit.util";
 import { InlineReturnsQuoteService } from "./inline-returns-quote.service";
+import { creditOverrideAuditItems } from "./inline-returns-pricing";
 import type { CaptureInlineReturnDto, InlineReturnLinesDto } from "./dto/capture-inline-return.dto";
 import type { ApproveInlineReturnDto } from "./dto/approve-inline-return.dto";
 import { selectEditRevertedInvoices } from "../invoices/order-edit-revert-set";
@@ -401,6 +402,25 @@ export class InlineReturnsService {
       },
       include: { items: true },
     });
+
+    // #2695 (SA-557): ONE in-tx audit row naming every lowered credit — the default it replaced,
+    // the price typed, and why. A held (DRIVER_CAP) return cannot carry one: overrides are staff-only.
+    const overridden = priced.chunks.filter((c) => c.priceSource === "MANUAL");
+    if (overridden.length > 0) {
+      await tx.auditLog.create({
+        data: {
+          userId: user.sub,
+          action: "inline_return.price_override",
+          entityType: "Return",
+          entityId: created.id,
+          meta: {
+            orderId: dto.orderId,
+            customerId: dto.customerId,
+            items: creditOverrideAuditItems(overridden),
+          },
+        },
+      });
+    }
 
     if (!overCap) {
       // HIGH-4: restock/ledger reversal happens NOW only for a return that is NOT

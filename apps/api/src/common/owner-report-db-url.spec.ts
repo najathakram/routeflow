@@ -86,7 +86,6 @@ const ALLOWED: Record<string, string> = {
   "tidy-regulated-categories.mjs": "writer",
   "ux-audit-cleanup.js": "destructive",
   "ux-audit-seed.js": "QA seed",
-  "wipe-tenant-fresh-start.js": "destructive",
   // Aliased or indirect readers, found once the scan matched the bare name.
   // The resolver itself, and the one writer that hands its requireProxy result to Prisma.
   "lib/railway-db-url.mjs": "the resolver: the fallback it implements",

@@ -509,7 +509,7 @@ function StatTile({
 }) {
   return (
     <div className="rounded-lg border border-surface-border bg-white p-4 shadow-card">
-      <span className="overline block">{label}</span>
+      <span className="eyebrow-label block">{label}</span>
       <span
         className={cn(
           "mt-1.5 block text-2xl text-navy",

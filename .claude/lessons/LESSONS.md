@@ -44,22 +44,6 @@
 - **Guard:** landing-coordinator routine step "read the coordination issue for REVIEW lines on
   this PR" before each merge (no code guard).
 
-### L-208 · 2026-09-19 · process · stacked PRs and `--delete-branch`
-
-- **Symptom:** squash-merging a stack parent with `gh pr merge --delete-branch` deleted its head
-  branch, which auto-CLOSED the child PR whose base was that branch; the child could not be
-  retargeted until the base branch was restored and the PR reopened. Separately, after the
-  parent's squash the child's branch still carried the parent's pre-squash commits, so it showed
-  DIRTY/CONFLICTING against master.
-- **Root cause:** GitHub closes (does not retarget) an open PR when its base branch is deleted,
-  and a squash rewrites the parent's commits so the child's history no longer matches master.
-- **Lesson:** **Merge stack parents WITHOUT `--delete-branch`. Retarget each child to master
-  (`gh pr edit N --base master`) BEFORE deleting anything, then have the child's owner merge
-  master in (taking master's side for the parent's files) and re-run CI on the fresh head.
-  Delete branches only after every child is retargeted.**
-- **Guard:** landing-coordinator checklist (no code guard); see [[L-190]] for the sibling
-  rebuild-after-squash trap.
-
 ### L-197 · 2026-09-17/18 · process · verifying landed/unlanded needs a fresh fetch AND the right commit (merged: L-203)
 
 - **Symptom:** two related false "unlanded" verdicts, same underlying mistake. (1) PR #857/B502
@@ -128,37 +112,12 @@
 - **Guard:** none yet — propose a removal checklist item: "list every client call site of the
   endpoint(s) this control posts to, not just this control's own references."
 
-### L-227 · 2026-09-27 · process · a ratchet row must be measured on the MERGED tree, not the branch (train A)
-
-- **Symptom:** a branch passed the size ratchet at its own head, then failed it once master was merged in (a service 6220 lines against a 6217 cap, its spec 9377 against 9376), and in merge train A two branches carried different rows (6163 vs 6151) for the same file.
-- **Root cause:** a ratchet row is a property of one file's line count, and the count moves with every merge into it; a number measured before the merge is a claim about a tree that will not exist.
-- **Lesson:** **Set and verify every ratchet row on the merged tree at land time, with `wc -l` on the merged file. On a conflicting row take the lower of the two sides and never raise it; if the merge pushes a file over, extract first.**
-- **Guard:** `size-ratchet.spec.ts` on the merged tree (train A: `invoices.service.ts` row set to 6124, the merged file's `wc -l`, below both sides). Cf. [[L-215]].
-
 ### L-228 · 2026-09-27 · process · a merge train must leave master's tree equal to the tree that was verified (train A)
 
 - **Symptom:** a train of 14 PRs merged `--no-ff` and verified as one head (tree e98a41e8) was landed as a single squash; nothing but a deliberate check said the squash equalled what had been tested.
 - **Root cause:** a squash-merge builds its own tree from the PR diff against the current base, so anything that moved on master after the train was built (or a hand-resolved conflict) changes what lands without changing what was verified.
 - **Lesson:** **Land a train only after its head is verified and any hand hunk (import unions, ratchet rows) is confirmed against the merge-tree; after the squash, compare `git rev-parse origin/master^{tree}` with the verified tree and stop on any difference.**
 - **Guard:** the train PR body states the expected tree; the landing coordinator runs the comparison (train A: master's tree equals e98a41e8, checked). Dropped PRs are named with their reason so they re-enter the next train. Cf. [[L-197]].
-
-### L-230 · 2026-09-22 · process · a verification framed as "is my work safe" answers itself by construction
-
-- **Symptom:** on the #1219/#1221 merge rehearsal, the forward probe (revert only #1221's own fix,
-  confirm its own cases fail) passed and looked complete. The reverse probe (revert the OTHER
-  side's fix, confirm THEIR cases fail) found #1221's fix had no guard in the DEFAULT Jest lane —
-  reverting it left all 395 unit tests green.
-- **Root cause:** "is my work safe" is answered the moment your own side passes, so it stops there
-  by construction — it never asks whether the merge weakened anything ELSE.
-- **Lesson:** **Frame a merge verification as "did this change weaken anything", symmetric: revert
-  YOUR change on the merged tree and confirm your cases still fail, then revert THEIRS and confirm
-  theirs still fail.** A missing guard is silent in the direction that matters — green suite, more
-  test files, every signal points the right way. Structural fix, not "review harder": a fix guarded
-  only by a DB-lane spec must ALSO carry a default-lane pin — the DB spec proves it against real
-  transactions, the unit pin proves it still exists after a merge that doesn't re-trigger the DB
-  lane (it fires on ADDING a `.db.spec.ts`, not on changing the logic it protects).
-- **Guard:** #1221's added default-lane pin; the default-lane-pin requirement for any
-  DB-lane-guarded fix going forward.
 
 ### L-231 · 2026-09-22 · process · a register claim needs the check that would disprove it, not just the belief
 
@@ -179,6 +138,34 @@
 - **Guard:** none automated yet — propose a lint on register entries requiring a cited command or
   file:line beside any factual claim, and a landing-procedure reminder to run `date -u` before
   quoting a time. Related: [[L-213]].
+
+### L-240 · 2026-09-27 · process · a board issue has a 2,500-comment cap; roll to a successor at ~2,300
+
+- **Symptom:** the review board of record (#938) reached GitHub's 2,500-comment limit mid-window,
+  and commenting on it was disabled. PASS verdicts and gate messages had nowhere to go until a
+  successor (#2554) was opened, pinned and pointed at from every skill and script that named #938.
+- **Root cause:** the board was a single ever-growing issue, and nothing tracked its comment count
+  against GitHub's hard limit. The number was hardcoded in skills and in `fleet-status.mjs`.
+- **Lesson:** **A long-lived coordination issue is a capped resource: GitHub stops accepting
+  comments at 2,500. Watch the count and roll to a pinned successor at ~2,300, before the cap. Name
+  the live board in one place (a constant or config) and have skills point at it; leave the old
+  issue's comment links as history.**
+- **Guard:** `fleet-lead/scripts/fleet-status.mjs` reads the board from one `BOARD_ISSUE` constant
+  (env `FLEET_BOARD_ISSUE`), and `fleet-lead/SKILL.md` names #2554 as the live board. Proposed:
+  `fleet-status.mjs` prints the board's comment count and warns at 2,300.
+
+### L-241 · 2026-09-28 · process · text with backticks goes through a quoted heredoc to a file, never an unquoted heredoc or --body "…" (#2707)
+
+- **Symptom:** a lane wrote a PR body through an unquoted heredoc (`<<EOF`). The shell ran the
+  backticked commands in the text, including an owner-only `railway run … audit-tenant-entitlements.mjs`,
+  which was stopped only by a missing CLI on that machine (MacBook, #2707; no damage).
+- **Root cause:** shell command substitution runs inside an unquoted heredoc and inside a
+  double-quoted `--body "…"`, so any backticked command in prose is executed, not quoted.
+- **Lesson:** **Any PR, board or brief text that contains backticks is written with a QUOTED heredoc
+  (`<<'EOF'`) or the file-write tool to a file, then passed as `--body-file` / `gh … -F body=@file`.
+  Never interpolate such text into a command line.**
+- **Guard:** the lane brief rule (write bodies to a file first); production commands are owner-run on
+  the Mac mini only, with no railway CLI or link on the MacBook.
 
 ## tooling
 
@@ -358,19 +345,6 @@
   `dist` is older than `src` for any workspace package; the third recurrence's specific gap (which
   consumers lack a `moduleNameMapper` for which package) would need the same kind of check.
 
-### L-216 · 2026-09-24 · tooling · bugs.mjs note --section silently replaced record analysis (B840)
-
-- **Symptom:** two registry reconciles and ~32 earlier notes wiped Summary/Root cause/Fix text in
-  ~150 bug records; noticed only because a "notes-only" commit showed insertions == deletions.
-- **Root cause:** `bugs.mjs note --section` REPLACES the section body; a verb named "note" reads
-  as append, so every caller assumed it was additive. The first repair then matched sections with a
-  multiline-flag regex whose `$` ended at the first line, restoring only first lines.
-- **Lesson:** **A CLI verb named like an append ("note", "add", "log") that actually replaces is a
-  silent-loss class: before any bulk run, check the verb on one record and read the diff. A bulk
-  "additive" run must be pure insertions. Repair from history as the union of every version, and
-  prove zero loss with a checker that does not share the repair's parser.**
-- **Guard:** B840: `note` appends, overwrite needs `--replace`, pinned in the bugs self-test.
-
 ### L-235 · 2026-09-27 · tooling · a tsconfig that excludes specs also switches off the test runner's type-check (#1315, B806)
 
 - **Symptom:** a spec fixture built with the wrong shape (#1286's `taxNone = () => 0`) reached CI
@@ -454,15 +428,6 @@
   platform. When you touch one side of such a branch, either exercise the other side or state
   plainly that it is unverified.**
 - **Guard:** none — judgment. Grep `isWeb`/`Platform.OS` in any file a fix touches.
-
-### L-218 · 2026-09-25 · testing · a red-proof that matches message TEXT can be vacuous (B861)
-
-- **Symptom:** the red-proofs AB/AD passed on the OLD code, so they proved nothing about the fix.
-- **Root cause:** they matched `/reload/`, which the pre-existing 409's message also contains, so the
-  wrong error satisfied the assertion.
-- **Lesson:** **Assert by error CLASS or code, never by message text another error can share. Run the
-  proof against the old code and confirm it fails for the intended reason.**
-- **Guard:** `REG-B861-AB`/`AD` assert `BadRequestException`.
 
 ### L-226 · 2026-09-27 · testing · a money fixture must be shaped by the production writer (#2274, #2245, #2305)
 
@@ -607,13 +572,6 @@
   web mirror both gate on one field's presence; each has a red-first regression test pinning
   the double-subtraction case.
 
-### L-220 · 2026-09-26 · domain · a money-ledger change needs every axis, every ordering, and a DB spec that calls the production writer (B662)
-
-- **Symptom:** a ledger pro-rate fix was verified on one axis and one order of operations, and the DB spec booked the reversal by hand, so a LINE_UNIT under-reversal and a return, adjust, return drift survived review.
-- **Root cause:** the proof re-derived the writer's behaviour instead of exercising it, so it could only agree with the author's model (cf. [[L-214]]).
-- **Lesson:** **For a money-ledger change enumerate every axis the writer serves, test the interleaving permutations, and make the DB spec CALL the production writer, never re-book the rows by hand.**
-- **Guard:** `regulated-ledger-price-correction.db.spec.ts` drives `reverseReturnEntries` and `correctSaleForPriceChange`; the master control reproduces the old wrong values.
-
 ### L-221 · 2026-09-26 · domain · retry a whole idempotent tx on a conflict through ONE shared predicate (SA-269)
 
 - **Symptom:** none observed in production: a design rule set by SA-269/SA-340 when #2152 added a transaction retry, so callers would not each invent their own conflict test.
@@ -660,24 +618,62 @@
 - **Lesson:** **A DTO field documented or consumed as a calendar day (statements, invoices, schedules) must be normalized at the write boundary through a literal first-10-characters day extractor — never `new Date(rawString)` directly, and never re-derived from a timezone. A shape that names no real day is a 400, checked before anything else is read.**
 - **Guard:** `common/calendar-date.ts`'s `calendarStampFromInput`/`issueDateStamp`, called as `InvoicesService.create()`'s first statement; `calendar-date.pins.spec.ts`, `invoice-issue-date-b2197.db.spec.ts`. Cf. the F25 calendar-date convention (archived L-047) — this is the same house rule recurring at a new call site.
 
-### L-229 · 2026-09-22 · domain · a pro-rata ratio must come from the specific row, never a sum (B661)
+### L-237 · 2026-09-28 · domain · a side effect fired inside a transaction still fires when it rolls back (#2526)
 
-- **Symptom:** unfolded from L-214 (same B661 fix, same PR, same review) — the pro-rata ratio used
-  to reverse a regulated line's pieces was first taken from an AGGREGATE over every SALE row of
-  the order line. A product repacked 12 -> 10 between the original write and a delivered-basis
-  reconcile gave a ratio of 11 (the average), so a 2-box partial credit booked -22 pieces where the
-  truth, from that specific row's own 10-pack snapshot, was -20.
-- **Root cause:** the fix reached for whatever quantity was conveniently in scope (a sum across the
-  parent's rows) instead of the one row actually being reversed. Summing erases which pack snapshot
-  applied to which piece.
-- **Lesson:** **A pro-rata ratio must be derived from the specific stored row being reversed,
-  never a sum across the parent entity's rows.** Near-invisible in testing: the CLOSING operation
-  books the exact remaining and absorbs the difference, so the TOTAL always reconciles — the error
-  only surfaces as filing-PERIOD attribution, and only when a partial straddles a boundary. Where a
-  sibling path already pro-rates correctly (`reverseReturnEntries` off the live row's own ratio),
-  match it rather than inventing a second derivation (cf. [[L-167]]).
-- **Guard:** `regulated-ledger.service.spec.ts`'s mixed-pack reconcile case pins the ratio source.
-  Related: [[L-214]].
+- **Symptom:** invoice realtime events told operators and buyers about changes whose transaction
+  later rolled back, or was retried.
+- **Root cause:** gateway emits are fire-and-forget; helpers called from a transaction body
+  emitted directly, so nothing tied the send to the commit.
+- **Lesson:** **A side effect that cannot be rolled back (socket emit, email, webhook, queue push)
+  is queued inside the transaction and flushed only after it commits: a rejected transaction
+  flushes nothing, and a retried attempt resets the queue first. Pass the queue into every helper
+  the transaction body calls, and pin it with a tripwire that fails on a direct emit.**
+- **Guard:** `common/after-commit.ts` (`AfterCommit`, `withAfterCommit`), `after-commit.spec.ts`,
+  `invoices/emit-after-commit.tripwire.spec.ts`. Cf. [[L-221]].
+
+### L-238 · 2026-09-28 · domain · an undefined key in a Prisma `where` is dropped, widening the match (#2573)
+
+- **Symptom:** a per-line CANCEL/DELETE edit with no line id built `{ id: undefined, orderId }`;
+  Prisma dropped `id`, so the write matched every line of the order.
+- **Root cause:** Prisma treats an `undefined` filter value as "no condition", not "match
+  nothing", so a missing value silently widens a narrowing `where`.
+- **Lesson:** **Never build a narrowing `where` from an optional value. Refuse the missing value
+  before the query (a 400/404), and scope every targeted write by the key AND its parent
+  (`{ id, orderId }`), so a hole in the scope can only fail loudly, never widen.**
+- **Guard:** `orders/order-line-removal.ts` (`writeLineRemoval`, `assertRemovalsNameALine`),
+  `order-line-removal.spec.ts`, `order-line-removal.db.spec.ts`.
+
+### L-239 · 2026-09-28 · domain · a guarded destructive write: lock, then read, then compare-and-set (#2566, #2584, #2594, #2607)
+
+- **Symptom:** customer deletes destroyed issued/paid invoices, money records and delivery
+  history; `updateTenantClass` booked its BillingEvent from a read taken before its lock; an
+  insert landing after the last read turned the final delete into a 500.
+- **Root cause:** deciding reads taken before the lock (or only outside the transaction), deletes
+  keyed on the parent id alone, and table lists that differed between the guard and the delete.
+- **Lesson:** **For a destructive or money-booking write gated on business state: take the row
+  lock, read the deciding state AFTER it, make each destructive statement a compare-and-set that
+  expects the guarded row set and throws 409 on a mismatch, drive the pre-flight, the in-tx
+  re-check and every delete from ONE list of protected tables, and map a late insert's FK
+  violation to the same 409. A pre-flight outside the transaction is UX, not protection.**
+- **Guard:** `customers/customer-delete-preflight.ts` (`assertNoBlockingInvoices`,
+  `readInvoicesAssertingNoneBlocking`, `deleteNonBlockingInvoicesCas`, `deleteMoneyRecordCas`,
+  `deleteCustomerRowsFkRaceAs409`); `customer-delete-race-2558.db.spec.ts` (a real second
+  connection), `customer-delete-money-records-2587.db.spec.ts`,
+  `customer-delete-fk-race-2572.db.spec.ts`; `common/update-tenant-class-ledger.db.spec.ts`.
+  Cf. [[L-217]], [[L-221]].
+
+### L-242 · 2026-09-28 · domain · never key a UI draft or map by a nullable id (B889, #2709)
+
+- **Symptom:** mobile buyer edit-items keyed its draft by `productId`. The seller's custom lines
+  (`productId` null) collapsed into one "Product" row, and Save sent `productId: null`, which the
+  server silently ignored.
+- **Root cause:** a draft keyed by a nullable id: every null collides on one key, and the null class
+  is not a real member of the keyed set.
+- **Lesson:** **Never key a UI draft or map by a nullable id. Key on the non-null identity and skip or
+  segregate the null class explicitly, mirroring web's established filter and the server's own
+  definition (`isUnlisted = !productId`).**
+- **Guard:** #2709's pins in `apps/mobile/__tests__/buyer-edit-items-custom-lines.test.ts`
+  (`isCustomLine` skips seller custom lines in `hydrateBuyerDraft`).
 
 ## security
 
@@ -707,6 +703,23 @@
 - **Lesson:** **For a tenant-scoped, role-gated write path, "the role is correct" and "this principal is entitled to touch this specific resource" are two separate checks. A new role-gated branch needs an explicit resource-ownership assertion — re-derived from the resource's own foreign-key chain, never a denormalized shortcut field — written and tested as its own predicate, run before any other guard AND re-checked under the row lock.**
 - **Guard:** `orders/driver-edit-access.ts`'s `assertDriverMayEditOrder` (follows `order.routeRunStopId → RouteRunStop → RouteRun`, never `order.routeRunId` directly); called first in `updateOrderItems`, before the cancelled-order check, and again under the Order `FOR UPDATE`. `driver-edit-access.spec.ts`, `driver-edit-access.db.spec.ts`.
 - **Recurred 2026-09-27 (train D, #2398/#2391, SA-434):** the SAME predicate was missing (or independently reinvented weaker) at two MORE call sites reachable by the DRIVER role: `orders.service.ts`'s `changeStatus()` had no check at all, and `change-requests.service.ts`'s `resolve()` checked only `order.routeRun.driverId` with no run/stop status. The fix reused `assertDriverMayEditOrder` verbatim rather than writing a third bespoke check. Confirms the lesson generalizes beyond the one endpoint it was first found on: audit EVERY role-gated write path reachable by the same role, not just the one a report named.
+
+### L-236 · 2026-09-28 · security · a stored storage key is trusted only after an exact own-prefix segment match (#2538, #2547)
+
+- **Symptom:** a tenant could plant another tenant's object key in its own product row (`PATCH
+  /products/:id` `imageKeys`) and have the server presign or delete it; separately, a POD key
+  `tenants/<own>/pod/../../<other>/…` passed a `startsWith` ownership check.
+- **Root cause:** a key persisted on a tenant-owned row was trusted once written, and ownership
+  was tested as a string prefix, which cannot see `..` segments.
+- **Lesson:** **Validate a storage/object key by parsing it into segments — exact segment count,
+  every segment from a safe-character allowlist, no `.`/`..`/empty segment, the owner id in its
+  fixed position — never with `startsWith`. Check it at write AND again at every sign/read/delete,
+  so a row poisoned before the write guard existed still leaks and deletes nothing.**
+- **Guard:** `products/product-image-keys.ts` (`isOwnProductImageKey`, `assertImageKeysReorder`) +
+  `image-key-signing.tripwire.spec.ts`, `products.image-keys-2533.spec.ts`;
+  `routes/pod-artifacts.util.ts` (`isPodStorageKey`, `podCaptureValueRefusal`) +
+  `routes.pod-key-traversal-2542.spec.ts`; `scripts/report-2533-product-image-keys.mjs` finds
+  rows poisoned before the fix.
 
 ## deploy
 
