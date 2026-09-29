@@ -1,0 +1,55 @@
+import type { Prisma } from "@prisma/client";
+import type {
+  ComponentProductFacts,
+  RecipeSnapshotPort,
+} from "./line-composition";
+
+/**
+ * #2717 M3 (I11): the ONE file where a document write reads Recipe / RecipeComponent rows. The
+ * ACTIVE recipe is `Recipe.activeFor = productId`; its components are read by recipeId, and a
+ * non-DRAFT recipe's components never change (SA-579), so a concurrent activation cannot mix
+ * versions. Everything else about the recipe is copied onto the line and read from there.
+ */
+export function recipeSnapshotPort(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+): RecipeSnapshotPort {
+  return {
+    async activeRecipeFor(productId) {
+      const r = await tx.recipe.findFirst({
+        where: { tenantId, activeFor: productId },
+        select: {
+          id: true,
+          version: true,
+          unitsPerPack: true,
+          components: {
+            select: { componentProductId: true, qty: true },
+            orderBy: { position: "asc" },
+          },
+        },
+      });
+      if (!r) return null;
+      return {
+        recipeId: r.id,
+        version: r.version,
+        unitsPerPack: r.unitsPerPack,
+        comps: r.components.map((c) => ({ componentProductId: c.componentProductId, qty: c.qty })),
+      };
+    },
+    async productFacts(ids) {
+      const rows = await tx.product.findMany({
+        where: { tenantId, id: { in: ids } },
+        select: {
+          id: true,
+          name: true,
+          sku: true,
+          unitSku: true,
+          barcode: true,
+          unitsPerBox: true,
+          barcodes: { select: { code: true, symbology: true, level: true, primaryFor: true } },
+        },
+      });
+      return new Map<string, ComponentProductFacts>(rows.map((p) => [p.id, p]));
+    },
+  };
+}

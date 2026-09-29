@@ -33,6 +33,12 @@
 //   FAMILY_PRICE_AUTHORITY — `body.code` of the 409 a variant price write answers while the
 //                    tenant's mixed_packs mode is on and the family owns the price; body carries
 //                    `familyId`.
+//   FIXED_WHOLE_BOXES / COMPOSED_UNIT_LINE / RECIPE_PACK_MISMATCH / COMPONENT_SUM_MISMATCH —
+//                    `body.code` of a mixed-pack (FIXED) line write refusal (#2717 M3): loose pieces
+//                    (400), a unit-aware line (400), a recipe pack size that differs from the line's
+//                    (409), and component pieces that do not add up to the line's pieces (400, I12).
+//   COMPOSITION_CORRUPT — `body.code` of the 500 when a line's stored composition does not divide
+//                    into whole boxes; a server tripwire, never a client-fixable input.
 
 export const API_ERROR_CODES = {
   ADDON_GATE: "ADDON_GATE",
@@ -51,6 +57,11 @@ export const API_ERROR_CODES = {
   RECIPE_VERSION_CONFLICT: "RECIPE_VERSION_CONFLICT",
   RECIPE_INVALID: "RECIPE_INVALID",
   FAMILY_PRICE_AUTHORITY: "FAMILY_PRICE_AUTHORITY",
+  FIXED_WHOLE_BOXES: "FIXED_WHOLE_BOXES",
+  COMPOSED_UNIT_LINE: "COMPOSED_UNIT_LINE",
+  RECIPE_PACK_MISMATCH: "RECIPE_PACK_MISMATCH",
+  COMPONENT_SUM_MISMATCH: "COMPONENT_SUM_MISMATCH",
+  COMPOSITION_CORRUPT: "COMPOSITION_CORRUPT",
 } as const;
 
 export type ApiErrorCode = (typeof API_ERROR_CODES)[keyof typeof API_ERROR_CODES];
