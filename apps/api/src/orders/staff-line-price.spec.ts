@@ -14,6 +14,7 @@ import {
 describe("decideEditedLinePrice (B: existing-line edit, baseline = stored price)", () => {
   const base = {
     storedPrice: 4.99,
+    tierPrice: 6,
     listPrice: 6,
     isSpecialTier: false,
     hasReason: false,
@@ -35,7 +36,15 @@ describe("decideEditedLinePrice (B: existing-line edit, baseline = stored price)
       unitPrice: 8,
       originalPrice: 6,
     });
-    expect(decideEditedLinePrice({ ...base, overridePrice: 6 })?.priceType).toBe("MANUAL");
+    expect(
+      decideEditedLinePrice({
+        ...base,
+        isSpecialTier: true,
+        hasReason: true,
+        tierPrice: 5,
+        overridePrice: 6,
+      })?.priceType,
+    ).toBe("MANUAL");
   });
 
   it("within half a cent of the STORED price is untouched (null: no re-stamp)", () => {
@@ -186,6 +195,7 @@ describe("SA-592 fold 1 — the band is withinStaffOverrideTolerance, not a raw 
       decideEditedLinePrice({
         overridePrice: 8.005,
         storedPrice: 8,
+        tierPrice: 10,
         listPrice: 10,
         isSpecialTier: false,
         hasReason: false,
