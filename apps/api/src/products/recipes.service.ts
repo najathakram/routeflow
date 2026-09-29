@@ -183,16 +183,16 @@ export class RecipesService {
       recipeId?: string;
       componentIds?: string[];
     },
-  ): Promise<Array<{ componentProductId: string; qty: number }> | null> {
+  ): Promise<Array<{ componentProductId: string; qty: number; position: number }> | null> {
     await lockFamilyRow(tx, tenantId, input.familyId);
     await lockProductRow(tx, tenantId, input.recipeProductId);
-    let current: Array<{ componentProductId: string; qty: number }> | null = null;
+    let current: Array<{ componentProductId: string; qty: number; position: number }> | null = null;
     let ids = input.componentIds;
     if (!ids) {
       if (!input.recipeId) throw new Error("lockRecipeRows: recipeId or componentIds required");
       current = await tx.recipeComponent.findMany({
         where: { recipeId: input.recipeId, tenantId },
-        select: { componentProductId: true, qty: true },
+        select: { componentProductId: true, qty: true, position: true },
         orderBy: { position: "asc" },
       });
       ids = (current ?? []).map((c) => c.componentProductId);
@@ -443,18 +443,28 @@ export class RecipesService {
     const tenantId = await this.assertOn();
     const { source, nextVersion } = await this.loadVersionPlan(id);
     const created = await this.prisma.tenantTransaction(async (tx: CatalogTx) => {
-      await lockProductRow(tx, tenantId, source.productId);
+      // Lead fold (item 1): the copied set is re-validated under the locks like every other write.
+      const rows = (await this.lockRecipeRows(tx, tenantId, {
+        familyId: source.familyProductId,
+        recipeProductId: source.productId,
+        recipeId: source.id,
+      })) as Array<{ componentProductId: string; qty: number; position: number }>;
       const agg = await tx.recipe.aggregate({
         where: { productId: source.productId, tenantId },
         _max: { version: true },
       });
       if ((agg._max.version ?? 0) + 1 !== nextVersion) throw recipeVersionConflict();
-      const rows: Array<{ componentProductId: string; qty: number; position: number }> =
-        await tx.recipeComponent.findMany({
-          where: { recipeId: source.id, tenantId },
-          select: { componentProductId: true, qty: true, position: true },
-          orderBy: { position: "asc" },
-        });
+      const fresh: { unitsPerPack: number } | null = await tx.recipe.findFirst({
+        where: { id: source.id, tenantId },
+        select: { unitsPerPack: true },
+      });
+      if (!fresh) throw new NotFoundException("Recipe not found");
+      await this.revalidateShape(tx, {
+        unitsPerPack: fresh.unitsPerPack,
+        familyId: source.familyProductId,
+        recipeProductId: source.productId,
+        inputs: rows,
+      });
       let recipe: { id: string; status: string };
       try {
         recipe = await tx.recipe.create({
@@ -463,7 +473,7 @@ export class RecipesService {
             productId: source.productId,
             familyProductId: source.familyProductId,
             version: nextVersion,
-            unitsPerPack: source.unitsPerPack,
+            unitsPerPack: fresh.unitsPerPack,
             status: "DRAFT",
             activeFor: null,
             createdById: createdById ?? null,
