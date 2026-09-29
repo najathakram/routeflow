@@ -115,6 +115,7 @@ import { CartModal } from "./new-order/CartModal";
 import { CreateCreditNoteSheet } from "./new-order/CreateCreditNoteSheet";
 import { CustomerPickerView } from "./new-order/CustomerPickerView";
 import { LinePriceModal } from "./new-order/LinePriceModal";
+import { useScanPriceEdit } from "../lib/use-scan-price-edit";
 import { UnlistedItemModal } from "./new-order/UnlistedItemModal";
 import { styles } from "./new-order/styles";
 import type { UnlistedLine } from "./new-order/types";
@@ -1340,18 +1341,13 @@ function ProductPickView({
     if (a.isUnlisted(id)) a.removeUnlisted(id);
     else a.removeLine(id);
   }, []);
-  // Reprice without leaving the camera. Until now the only price editor on
-  // this surface lived in CartModal, reachable only by leaving scan mode —
-  // while the order EDIT screen has had a one-tap edit under its scanner for
-  // two releases.
-  const onTrayEditPrice = useCallback((id: string) => {
-    const a = actionsRef.current;
-    if (!a.isUnlisted(id) && a.isSpecialLine(id)) {
-      a.showInline("Contract price — not editable on this order");
-      return;
-    }
-    setPriceEditId(id);
-  }, []);
+  // Reprice without leaving the camera (B901 sequencing lives in the hook).
+  const { onTrayEditPrice, handleScanSheetDismiss, closePriceEdit } = useScanPriceEdit({
+    scanOpen,
+    setScanOpen,
+    setPriceEditId,
+    getActions: () => actionsRef.current,
+  });
   // Resolved lazily (two map lookups) rather than memoized: it is null on every
   // render but the handful where the sheet is open.
   const priceEditTarget = ((): {
@@ -2372,6 +2368,7 @@ function ProductPickView({
         onDecrement={onTrayDecrement}
         onRemove={onTrayRemove}
         onEditPrice={onTrayEditPrice}
+        onDismiss={handleScanSheetDismiss}
         onReview={() => {
           setScanOpen(false);
           setCartOpen(true);
@@ -2442,10 +2439,10 @@ function ProductPickView({
         open={priceEditTarget != null}
         name={priceEditTarget?.name ?? ""}
         unitPrice={priceEditTarget?.unitPrice ?? null}
-        onClose={() => setPriceEditId(null)}
+        onClose={closePriceEdit}
         onSave={(value) => {
           const target = priceEditTarget;
-          setPriceEditId(null);
+          closePriceEdit();
           if (!target) return;
           // Money discipline: round every monetary write. The line TOTAL is never written
           // here — the tray/footer re-derive it through computeLineSubtotal from this price.
