@@ -433,6 +433,29 @@ export const ORDER_STATUS_VALUES = [
 ] as const;
 export type OrderStatusValue = (typeof ORDER_STATUS_VALUES)[number];
 
+/** Prisma `ItemStatus` — an order line's fulfilment status (#2703). */
+export const ITEM_STATUS_VALUES = [
+  "PENDING",
+  "CONFIRMED",
+  "PARTIAL",
+  "DELIVERED",
+  "CANCELLED",
+] as const;
+export type ItemStatus = (typeof ITEM_STATUS_VALUES)[number];
+
+/** Prisma `PaymentMethod` — an invoice payment's method (#2703). */
+export const PAYMENT_METHOD_VALUES = [
+  "CASH",
+  "CHECK",
+  "ACH",
+  "OTHER",
+  "CREDIT_NOTE",
+  "ADVANCE",
+  "CREDIT_CARD",
+  "ZELLE",
+] as const;
+export type PaymentMethod = (typeof PAYMENT_METHOD_VALUES)[number];
+
 export const ROUTE_RUN_STATUS_VALUES = [
   "SCHEDULED",
   "IN_PROGRESS",
