@@ -7,8 +7,7 @@ import { InvoicesService } from "./invoices.service";
  * back to OrderItemComponent. `displayUnitPrice4` is computed per invoice line, from that line's
  * own net subtotal over the pieces it bills (never a line column, never the order's basis).
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const service = new InvoicesService(...(Array(14).fill(undefined) as any[]));
+const service = new (InvoicesService as unknown as new (...a: unknown[]) => InvoicesService)(...Array(14).fill(undefined));
 const build = (li: object, billQty: number, opts?: object, tenantId: string | null = "t-1") =>
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (service as any).buildInvoiceItemData(li, billQty, tenantId, opts);

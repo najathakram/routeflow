@@ -47,6 +47,7 @@ describeDb("#2717 M3 SA-591(b) — an edit keeps a v1 line on v1, real Postgres"
   let tenantId = "";
   let customerId = "";
   let userId = "";
+  let customerUserId = "";
   const orderIds: string[] = [];
   const productIds: string[] = [];
 
@@ -202,9 +203,19 @@ describeDb("#2717 M3 SA-591(b) — an edit keeps a v1 line on v1, real Postgres"
         data: { email: `op-${run}@example.test`, username: `op-${run}`, role: "OPERATOR", tenantId },
       })
     ).id;
+    customerUserId = (
+      await raw.user.create({
+        data: {
+          email: `cust-${run}@example.test`,
+          username: `cust-${run}`,
+          role: "CUSTOMER",
+          tenantId,
+        },
+      })
+    ).id;
     customerId = (
       await raw.customer.create({
-        data: { businessName: "2717 co", contactName: "Tester", tenantId },
+        data: { userId: customerUserId, businessName: "2717 co", contactName: "Tester", tenantId },
       })
     ).id;
   }, 120_000);
@@ -218,7 +229,7 @@ describeDb("#2717 M3 SA-591(b) — an edit keeps a v1 line on v1, real Postgres"
     await raw.product.deleteMany({ where: { tenantId, parentProductId: { not: null } } });
     await raw.product.deleteMany({ where: { tenantId } });
     await raw.customer.deleteMany({ where: { id: customerId } });
-    await raw.user.deleteMany({ where: { id: userId } });
+    await raw.user.deleteMany({ where: { id: { in: [userId, customerUserId] } } });
     await raw.tenant.deleteMany({ where: { id: tenantId } });
     await prisma?.$disconnect();
     await raw?.$disconnect();

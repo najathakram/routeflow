@@ -6,8 +6,7 @@ import { InvoicesService } from "./invoices.service";
  * string) and the tenant/parent keys never leave the server.
  */
 function serviceReturning(inv: object) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const service = new InvoicesService(...(Array(14).fill(undefined) as any[]));
+  const service = new (InvoicesService as unknown as new (...a: unknown[]) => InvoicesService)(...Array(14).fill(undefined));
   Object.assign(service, {
     prisma: { forTenant: () => ({ invoice: { findUnique: jest.fn().mockResolvedValue(inv) } }) },
     systemConfig: { get: jest.fn().mockResolvedValue(null) },

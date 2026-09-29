@@ -41,7 +41,7 @@ describe("buildMergeLineWrites with FIXED lines (C9a/C9b)", () => {
     const { writes } = buildMergeLineWrites([winner], [loser], opts);
     expect(writes).toHaveLength(1);
     expect(writes[0].kind).toBe("create");
-    expect(compositionStampOf((writes[0] as { data: never }).data)).toEqual({
+    expect(compositionStampOf((writes[0] as unknown as { data: never }).data)).toEqual({
       compositionMode: "FIXED",
       recipeId: "rec-2",
       recipeVersion: 2,
@@ -66,7 +66,7 @@ describe("buildMergeLineWrites with FIXED lines (C9a/C9b)", () => {
   it("plain lines write no stamp keys at all (byte-identical to before)", () => {
     const plain = { compositionMode: null, recipeId: null, recipeVersion: null };
     const { writes } = buildMergeLineWrites([], [line(undefined, plain)], opts);
-    expect(compositionStampOf((writes[0] as { data: never }).data)).toEqual({});
+    expect(compositionStampOf((writes[0] as unknown as { data: never }).data)).toEqual({});
     expect(Object.keys((writes[0] as { data: object }).data)).not.toContain("compositionMode");
   });
 });
