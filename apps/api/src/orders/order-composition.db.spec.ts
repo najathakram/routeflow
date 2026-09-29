@@ -211,19 +211,24 @@ describeDb("#2717 M3 order composition writes — real Postgres", () => {
   const componentCount = (tenantId: string) =>
     raw.orderItemComponent.count({ where: { tenantId } });
 
-  /** Polls until at least `n` backends of this database are blocked by ANYONE (< 5 s: Prisma's tx timeout). */
-  async function waitUntilNBlocked(n: number): Promise<boolean> {
+  /**
+   * Polls until at least `n` backends of this database are blocked by ANYONE (< 5 s: Prisma's tx
+   * timeout). Returns the last count seen, so a timeout reports how many actually blocked.
+   */
+  async function waitUntilNBlocked(n: number): Promise<number> {
     const deadline = Date.now() + 4_000;
+    let seen = 0;
     while (Date.now() < deadline) {
       // eslint-disable-next-line no-await-in-loop
       const { rows } = await pool.query(
         "SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND cardinality(pg_blocking_pids(pid)) > 0",
       );
-      if (rows[0].n >= n) return true;
+      seen = rows[0].n;
+      if (seen >= n) return seen;
       // eslint-disable-next-line no-await-in-loop
       await new Promise((r) => setTimeout(r, 20));
     }
-    return false;
+    return seen;
   }
 
   beforeAll(async () => {
@@ -524,7 +529,7 @@ describeDb("#2717 M3 order composition writes — real Postgres", () => {
       // eslint-disable-next-line no-await-in-loop
       const holder = await pool.connect();
       let both: PromiseSettledResult<unknown>[] = [];
-      let bothBlocked = false;
+      let blockedSeen = 0;
       try {
         // eslint-disable-next-line no-await-in-loop
         await holder.query("BEGIN");
@@ -537,7 +542,7 @@ describeDb("#2717 M3 order composition writes — real Postgres", () => {
           create(w, customerId, [line(mix.id, 2)]),
         ]);
         // eslint-disable-next-line no-await-in-loop
-        bothBlocked = await waitUntilNBlocked(2);
+        blockedSeen = await waitUntilNBlocked(2);
         // eslint-disable-next-line no-await-in-loop
         await holder.query("COMMIT");
         // eslint-disable-next-line no-await-in-loop
@@ -548,7 +553,8 @@ describeDb("#2717 M3 order composition writes — real Postgres", () => {
         holder.release();
       }
 
-      expect({ round, bothBlocked }).toEqual({ round, bothBlocked: true });
+      // The CONTENT assertions run first, so removing a lock turns this test red on a v1/v2 mix (or
+      // a wrong stamp), not on the barrier. The barrier check is last, with its own message.
       const [activated, ordered] = both;
       expect(activated.status).toBe("fulfilled");
       expect(ordered.status).toBe("fulfilled");
@@ -579,6 +585,16 @@ describeDb("#2717 M3 order composition writes — real Postgres", () => {
       );
       expect(l.components.reduce((s, c) => s + c.qty, 0)).toBe(Number(l.qty));
       outcomes[version] += 1;
+      // Barrier proof (after content): both racers really queued behind the holder before release.
+      expect({
+        round,
+        barrier: `expected 2 blocked backends before release, saw ${blockedSeen}`,
+        ok: blockedSeen >= 2,
+      }).toEqual({
+        round,
+        barrier: `expected 2 blocked backends before release, saw ${blockedSeen}`,
+        ok: true,
+      });
     }
     expect(outcomes[1] + outcomes[2]).toBe(4);
   }, 120_000);
