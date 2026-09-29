@@ -123,15 +123,53 @@ export async function assertBarcodeAvailable(
  * 500. The holder's productId is unknown from the constraint violation alone, so it is omitted
  * (`null`); callers that need it should rely on `assertBarcodeAvailable` running first. #2717 M1.
  */
+/** The two constraints that mean "another product already holds this code" (SA-572h a). */
+const BARCODE_CONSTRAINT_NAMES: ReadonlySet<string> = new Set([
+  "Product_tenantId_barcode_key",
+  "ProductBarcode_tenantId_code_level_key",
+]);
+const BARCODE_CONSTRAINT_FIELD_SETS: ReadonlyArray<ReadonlySet<string>> = [
+  new Set(["tenantId", "barcode"]),
+  new Set(["tenantId", "code", "level"]),
+];
+
+function fieldsAreBarcodeConstraint(fields: readonly string[]): boolean {
+  const have = new Set(fields);
+  return BARCODE_CONSTRAINT_FIELD_SETS.some(
+    (want) => want.size === have.size && [...want].every((f) => have.has(f)),
+  );
+}
+
+/**
+ * The unique-violation `meta` comes in two shapes: the native engine's `meta.target` (a field array
+ * or a constraint-name string), and, with the Prisma pg DRIVER ADAPTER (what this API runs), no
+ * `target` at all — the constraint rides in `meta.driverAdapterError.cause.constraint` as
+ * `{ index: <name> }` or `{ fields: [...] }` (@prisma/adapter-pg 23505 mapping). Matching EXACT
+ * constraint names / field sets (never substrings) keeps the belt from swallowing another table's or
+ * another constraint's violation, the one-primary-per-level `(productId, primaryFor)` included.
+ */
 export function isBarcodeUniqueViolation(e: unknown): e is Prisma.PrismaClientKnownRequestError {
   if (!(e instanceof Prisma.PrismaClientKnownRequestError) || e.code !== "P2002") return false;
-  const target = (e.meta as { target?: unknown } | undefined)?.target;
-  const fields = Array.isArray(target)
-    ? target.map(String)
-    : typeof target === "string"
-      ? [target]
-      : [];
-  return fields.some((f) => f.includes("barcode") || f.includes("code"));
+  const meta = (e.meta ?? {}) as {
+    target?: unknown;
+    driverAdapterError?: { cause?: { constraint?: { index?: unknown; fields?: unknown } } };
+  };
+
+  const target = meta.target;
+  if (typeof target === "string" && BARCODE_CONSTRAINT_NAMES.has(target)) return true;
+  if (Array.isArray(target) && fieldsAreBarcodeConstraint(target.map(String))) return true;
+
+  const constraint = meta.driverAdapterError?.cause?.constraint;
+  if (typeof constraint?.index === "string" && BARCODE_CONSTRAINT_NAMES.has(constraint.index)) {
+    return true;
+  }
+  if (
+    Array.isArray(constraint?.fields) &&
+    fieldsAreBarcodeConstraint(constraint.fields.map(String))
+  ) {
+    return true;
+  }
+  return false;
 }
 
 export function mapBarcodeUniqueViolation(e: unknown, code: string): never {
