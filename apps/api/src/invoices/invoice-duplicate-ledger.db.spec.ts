@@ -40,6 +40,7 @@ import { SellingRestrictionsService } from "../selling-restrictions/selling-rest
 import { NumberingService } from "../import/numbering.service";
 import { periodBucketOf } from "../regulated/period";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -136,6 +137,7 @@ describeDb(
           { provide: MessagingService, useValue: mockMessaging },
           { provide: StorageService, useValue: mockStorage },
           { provide: EntitlementsService, useValue: mockEntitlements },
+          entitlementAuthorityFromEntitlements, // #2241
           { provide: CommissionEngineService, useValue: mockCommissionEngine },
         ],
       }).compile();

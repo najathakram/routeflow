@@ -29,6 +29,7 @@ import {
 } from "../../../../../lib/at-door-diff";
 import { computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
 import { adjustLineFreeUnits, lineUnitsPerBox } from "../../../../../lib/at-door-line-units";
+import { invoiceLineUnitNoun } from "../../../../../lib/invoice-line-display";
 import { freeUnitsLabel } from "../../../../../lib/buyer-cart-logic";
 import { sanitizeIntInput, parseIntQty } from "../../../../../lib/qty";
 import { archivedMessage, resolveProductByCode } from "../../../../../lib/barcode-resolve";
@@ -576,7 +577,10 @@ function AdjustLineRow({
           </Text>
           <Text style={styles.cardMeta}>
             ${Number(li.unitPrice).toFixed(2)}
-            {isBoxed ? ` / box of ${upb}` : ""}
+            {/* #2055: the price suffix names the LINE's own unit (Case, Pallet), never the
+                hardcoded word "box" — upb is already line-snapshot-first via lineUnitsPerBox
+                above (B657); only the noun itself was still hardcoded. */}
+            {isBoxed ? ` / ${invoiceLineUnitNoun(li)} of ${upb}` : ""}
           </Text>
           {/* BUY_N_GET_M: name the free units, or the reduced line total reads
               as a pricing error at the door. */}
