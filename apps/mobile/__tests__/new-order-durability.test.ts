@@ -203,9 +203,14 @@ describe("NewOrderScreen scan-tray price affordance (REG-NEWORDER-TRAYPRICE)", (
   });
 
   it("REG-NEWORDER-TRAYPRICE-C (#2696(c)): a SPECIAL-tier line opens the editor — the reason is asked there", () => {
-    expect(screen).toMatch(
-      /const onTrayEditPrice = useCallback\(\(id: string\) => setPriceEditId\(id\), \[\]\);/,
-    );
+    // B901: the handler lives in lib/use-scan-price-edit.ts (size ratchet); it no longer refuses.
+    const hook = readFileSync(join(__dirname, "..", "lib", "use-scan-price-edit.ts"), "utf8");
+    const handler = (hook.match(/const onTrayEditPrice = useCallback\([\s\S]*?\n {2}\);/) ?? [
+      "",
+    ])[0];
+    expect(handler).toBeTruthy();
+    expect(handler).not.toMatch(/isSpecialLine/);
+    expect(hook).not.toMatch(/isSpecialLine/);
     expect(screen).not.toMatch(/isSpecialLine/);
     expect(screen).toMatch(/isSpecial: isSpecialFor\(p\)/);
   });
