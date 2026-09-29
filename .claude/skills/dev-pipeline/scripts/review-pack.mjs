@@ -388,6 +388,10 @@ function assertTrue(cond, msg, state) {
 
 export function runSelftest() {
   const state = { failed: false, failures: [] };
+  // Terminal command: scrub git's repo-scoped env (GIT_DIR ...) so the throwaway fixture repo below
+  // is never re-pointed at the real repository when run under a git hook
+  // (apps/api/src/common/fixture-git-env-scrub.spec.ts).
+  for (const k of Object.keys(process.env)) if (k.startsWith("GIT_")) delete process.env[k];
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "review-pack-selftest-"));
   try {
     execFileSync("git", ["init"], { cwd: tmp, encoding: "utf8" });

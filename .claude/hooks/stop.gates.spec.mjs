@@ -20,8 +20,18 @@ import { spawnSync } from "node:child_process";
 
 const STOP_HOOK = fileURLToPath(new URL("./stop.mjs", import.meta.url));
 
+// Git EXPORTS repo-scoped variables (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, ...) into every hook
+// it runs and children inherit them. Unscrubbed, the `git init` / `git config` below re-point at the
+// REAL repository and rewrite its shared .git/config (core.bare, fixture identity) — the same hazard
+// scripts/campaign/bugs.mjs's self-test scrubs. Every `git` and `node stop.mjs` child gets this env.
+// Pinned by apps/api/src/common/fixture-git-env-scrub.spec.ts.
+function scrubbedEnv() {
+  // Prefix filter, not a hand list: it also drops GIT_CONFIG*, GIT_CONFIG_PARAMETERS/COUNT.
+  return Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("GIT_")));
+}
+
 function git(cwd, args) {
-  const res = spawnSync("git", args, { cwd, encoding: "utf8" });
+  const res = spawnSync("git", args, { cwd, encoding: "utf8", env: scrubbedEnv() });
   if (res.status !== 0) {
     throw new Error(`git ${args.join(" ")} failed in ${cwd}:\n${res.stdout}${res.stderr}`);
   }
@@ -61,7 +71,11 @@ function makeScenarioRepo({ withMap, withLessons, branch, trailer }) {
 }
 
 function runStopHook(dir) {
-  return spawnSync(process.execPath, [STOP_HOOK], { cwd: dir, encoding: "utf8" });
+  return spawnSync(process.execPath, [STOP_HOOK], {
+    cwd: dir,
+    encoding: "utf8",
+    env: scrubbedEnv(),
+  });
 }
 
 const cases = [

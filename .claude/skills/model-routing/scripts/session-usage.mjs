@@ -1205,7 +1205,11 @@ function runSelftest() {
     // path (the exact 2026-09-11 bug: a worktree's own path encodes to a
     // ~/.claude/projects/<enc> dir that never existed).
     function runGitCmd(args, cwd) {
-      return spawnSync("git", args, { cwd, encoding: "utf8" });
+      // Scrub git's repo-scoped env (GIT_DIR ...): under a git hook it would re-point this fixture
+      // at the real repository (fixture-git-env-scrub.spec.ts).
+      const env = { ...process.env };
+      for (const k of Object.keys(env)) if (k.startsWith("GIT_")) delete env[k];
+      return spawnSync("git", args, { cwd, encoding: "utf8", env });
     }
     const gitMainRepo = path.join(tmpBase, "git-main-repo");
     fs.mkdirSync(gitMainRepo, { recursive: true });
