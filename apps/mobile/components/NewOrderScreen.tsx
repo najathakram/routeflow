@@ -44,7 +44,7 @@ import { createScanAttempt, createWedgeSubmitHandler } from "../lib/wedge-submit
 import { createScanAcceptGuard } from "../lib/scan-accept-guard";
 // Compose "<Parent> - <Variant>" so scanned variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../lib/product-display";
-import { effectiveQty, getTierPrice, roundMoney } from "@routeflow/pricing";
+import { effectiveQty, getTierPrice, isSpecialTier, roundMoney } from "@routeflow/pricing";
 import { useMarginConfig, floorForCategory } from "../lib/api/margin";
 import { useTrackedCategories } from "../lib/api/tracked-categories";
 import {
@@ -480,7 +480,7 @@ function ProductPickView({
   /** The customer's effective per-selling-unit (box) price for a product. */
   const tierPriceFor = (p: Product) => getTierPrice(p, effectiveTierFor(p.id));
   /** SPECIAL (tier≠1) lines are the customer's permanent price — never overridable. */
-  const isSpecialFor = (p: Product) => effectiveTierFor(p.id) !== 1;
+  const isSpecialFor = (p: Product) => isSpecialTier(effectiveTierFor(p.id));
   const [scanOpen, setScanOpen] = useState(false);
   /** Tray line (catalog id or unlisted local id) whose price is being edited. */
   const [priceEditId, setPriceEditId] = useState<string | null>(null);
@@ -766,7 +766,7 @@ function ProductPickView({
     const histEntry = priceHistory?.[id];
     const listPrice = p ? toNumber(p.pricePerUnit) : 0;
     const tierPrice = p ? tierPriceFor(p) : 0;
-    const isSpecial = effectiveTierFor(id) !== 1;
+    const isSpecial = isSpecialTier(effectiveTierFor(id));
     const prefill =
       !isSpecial &&
       histEntry != null &&

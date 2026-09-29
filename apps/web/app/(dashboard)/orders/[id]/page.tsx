@@ -106,6 +106,7 @@ import { useProducts } from "@/lib/api/products";
 import {
   computeLineSubtotal,
   getTierPrice,
+  isSpecialTier,
   needsOverrideReason,
   normalizeBoxesPieces,
   roundMoney,
@@ -1973,14 +1974,14 @@ export default function OrderDetailPage() {
     [cpMap, customerTier],
   );
   const isSpecialTierFor = React.useCallback(
-    (p: SubstituteOption) => (cpMap.get(p.id) ?? customerTier ?? 1) !== 1,
+    (p: SubstituteOption) => isSpecialTier(cpMap.get(p.id) ?? customerTier ?? 1),
     [cpMap, customerTier],
   );
   // B465: id-only variant for call sites that only have `productId` (an
   // EditItemState line, not a full SubstituteOption/product row) — same rule,
   // shared so the save-time guard below and the row's own render never drift.
   const isSpecialTierForProductId = React.useCallback(
-    (productId: string) => (cpMap.get(productId) ?? customerTier ?? 1) !== 1,
+    (productId: string) => isSpecialTier(cpMap.get(productId) ?? customerTier ?? 1),
     [cpMap, customerTier],
   );
   // units_v1: the EFFECTIVE numeric tier `OrderLineUnitPicker` needs (it resolves the ladder
