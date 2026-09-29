@@ -26,6 +26,8 @@
 import * as ts from "typescript";
 
 export interface SpecProviderArray {
+  /** Set when the providers value (or a spread inside it) cannot be read statically. */
+  unresolvable?: string;
   /** 1-based line of the `providers` array. */
   line: number;
   /** Bare classes in the array (REAL providers). */
@@ -140,15 +142,21 @@ function relativeImport(sf: ts.SourceFile, name: string): string | null {
   return null;
 }
 
+/** Every path this module sees is '/'-separated (a Windows `C:\\a\\b` becomes `C:/a/b`). */
+export const toPosix = (p: string) => p.replace(/\\/g, "/");
+
 const dirname = (p: string) => p.slice(0, Math.max(p.lastIndexOf("/"), 0));
 
+/** `base` is a '/'-normalised directory (POSIX `/a/b` or a drive path `C:/a/b`); `rel` is `./x` or `../x`. */
 function joinPath(base: string, rel: string): string {
-  const out = base.split("/").filter(Boolean);
+  const drive = /^[A-Za-z]:/.exec(base)?.[0] ?? "";
+  const rest = drive ? base.slice(drive.length) : base;
+  const out = rest.split("/").filter(Boolean);
   for (const part of rel.split("/")) {
     if (part === "..") out.pop();
     else if (part !== ".") out.push(part);
   }
-  return `/${out.join("/")}`;
+  return `${drive}/${out.join("/")}`;
 }
 
 /** Resolves an identifier to a provider `const` (object or array), here or through a relative import. */
@@ -184,12 +192,21 @@ function collect(
   sf: ts.SourceFile,
   fileName: string,
   readFile: ReadFile,
-  into: { real: Set<string>; provided: Set<string> },
+  into: { real: Set<string>; provided: Set<string>; unresolved: string[] },
   depth = 0,
 ) {
   if (depth > 4) return;
-  if (ts.isSpreadElement(el))
+  if (ts.isSpreadElement(el)) {
+    // A spread of a bare identifier that names no readable const is UNRESOLVABLE (reported), not a class.
+    if (
+      ts.isIdentifier(el.expression) &&
+      !resolveConst(el.expression.text, sf, fileName, readFile)
+    ) {
+      into.unresolved.push(`...${el.expression.text}`);
+      return;
+    }
     return collect(el.expression, sf, fileName, readFile, into, depth + 1);
+  }
   if (ts.isParenthesizedExpression(el) || ts.isAsExpression(el) || ts.isSatisfiesExpression(el)) {
     return collect(el.expression, sf, fileName, readFile, into, depth + 1);
   }
@@ -234,24 +251,87 @@ function collect(
 }
 
 /** Every `providers: [...]` array in a spec, with what it provides. */
+/**
+ * True when `name` is a parameter of an enclosing function whose declared type is an array of object
+ * types that ALL carry `provide` and `useValue`: such a list can only hold value stubs, never a bare
+ * class, so it cannot make a guarded service REAL. (Derived from the type, not a file allow-list.)
+ */
+function isStubOnlyParameter(name: string, from: ts.Node): boolean {
+  for (let n: ts.Node | undefined = from; n; n = n.parent) {
+    if (!ts.isFunctionLike(n)) continue;
+    const param = n.parameters.find((q) => ts.isIdentifier(q.name) && q.name.text === name);
+    if (!param?.type) continue;
+    let t: ts.TypeNode | undefined = param.type;
+    if (ts.isTypeReferenceNode(t) && ts.isIdentifier(t.typeName) && t.typeName.text === "Array") {
+      t = t.typeArguments?.[0];
+    } else if (ts.isArrayTypeNode(t)) {
+      t = t.elementType;
+    } else {
+      return false;
+    }
+    if (!t || !ts.isTypeLiteralNode(t)) return false;
+    const keys = new Set(
+      t.members.map((m) => (m.name && ts.isIdentifier(m.name) ? m.name.text : "")),
+    );
+    return keys.has("provide") && keys.has("useValue");
+  }
+  return false;
+}
+
 export function analyseSpec(
-  fileName: string,
+  fileNameIn: string,
   sourceText: string,
   readFile: ReadFile,
 ): SpecProviderArray[] {
+  const fileName = toPosix(fileNameIn);
   const sf = parse(fileName, sourceText);
   const arrays: SpecProviderArray[] = [];
   const visit = (node: ts.Node) => {
+    // `providers: [...]`, `providers: someExpr` AND the shorthand `{ providers }`.
     if (
-      ts.isPropertyAssignment(node) &&
+      (ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node)) &&
       ts.isIdentifier(node.name) &&
-      node.name.text === "providers" &&
-      ts.isArrayLiteralExpression(node.initializer)
+      node.name.text === "providers"
     ) {
-      const into = { real: new Set<string>(), provided: new Set<string>() };
-      for (const el of node.initializer.elements) collect(el, sf, fileName, readFile, into);
       const line = sf.getLineAndCharacterOfPosition(node.getStart()).line + 1;
-      arrays.push({ line, ...into });
+      const into = {
+        real: new Set<string>(),
+        provided: new Set<string>(),
+        unresolved: [] as string[],
+      };
+      let init: ts.Expression = ts.isPropertyAssignment(node) ? node.initializer : node.name;
+      // Look through `providers as never` / `(providers)` / `providers satisfies X`.
+      while (
+        ts.isAsExpression(init) ||
+        ts.isSatisfiesExpression(init) ||
+        ts.isParenthesizedExpression(init)
+      ) {
+        init = init.expression;
+      }
+      let at = { sf, fileName };
+      if (ts.isIdentifier(init) && isStubOnlyParameter(init.text, node)) {
+        // Value stubs only: nothing in it can be a real service, and nothing to resolve.
+      } else if (ts.isIdentifier(init)) {
+        // `providers: SOME_CONST` — read the const when it is an array, else it is unresolvable.
+        const resolved = resolveConst(init.text, sf, fileName, readFile);
+        if (resolved && ts.isArrayLiteralExpression(resolved.node)) {
+          init = resolved.node;
+          at = { sf: resolved.sourceFile, fileName: resolved.fileName };
+        } else {
+          into.unresolved.push(init.text);
+        }
+      } else if (!ts.isArrayLiteralExpression(init)) {
+        into.unresolved.push(init.getText(sf).slice(0, 60));
+      }
+      if (ts.isArrayLiteralExpression(init)) {
+        for (const el of init.elements) collect(el, at.sf, at.fileName, readFile, into);
+      }
+      arrays.push({
+        line,
+        real: into.real,
+        provided: into.provided,
+        ...(into.unresolved.length > 0 ? { unresolvable: into.unresolved.join(", ") } : {}),
+      });
     }
     ts.forEachChild(node, visit);
   };
@@ -259,23 +339,47 @@ export function analyseSpec(
   return arrays;
 }
 
+/** Only the files whose text mentions a guarded service need parsing; the rest are never opened as ASTs. */
+export function candidateSpecs(
+  files: readonly string[],
+  read: (file: string) => string | null,
+  serviceNames: readonly string[],
+): string[] {
+  return files.filter((f) => {
+    const text = read(f);
+    return text != null && serviceNames.some((n) => text.includes(n));
+  });
+}
+
 /**
  * The guarded services a spec provides REAL whose constructor needs something the same providers
- * array does not give. `deps` maps a service class name to its required tokens.
+ * array does not give, plus any providers value that cannot be read (reported as
+ * `(unresolvable providers: ...)`, never passed silently). `deps` maps a service class name to its
+ * required tokens.
  */
 export function findMissingProviders(
-  fileName: string,
+  fileNameIn: string,
   sourceText: string,
   deps: ReadonlyMap<string, readonly string[]>,
   readFile: ReadFile,
 ): MissingProvider[] {
+  const file = toPosix(fileNameIn);
   if (sourceText.includes(".useMocker(")) return []; // auto-mocks every missing dependency
+  const mentionsGuarded = [...deps.keys()].some((n) => sourceText.includes(n));
   const out: MissingProvider[] = [];
-  for (const arr of analyseSpec(fileName, sourceText, readFile)) {
+  for (const arr of analyseSpec(file, sourceText, readFile)) {
+    if (arr.unresolvable && mentionsGuarded) {
+      out.push({
+        file,
+        line: arr.line,
+        service: `(unresolvable providers: ${arr.unresolvable})`,
+        missing: ["cannot verify: make the providers list explicit"],
+      });
+    }
     for (const [service, required] of deps) {
       if (!arr.real.has(service)) continue;
       const missing = required.filter((t) => !arr.provided.has(t));
-      if (missing.length > 0) out.push({ file: fileName, line: arr.line, service, missing });
+      if (missing.length > 0) out.push({ file, line: arr.line, service, missing });
     }
   }
   return out;
