@@ -34,7 +34,13 @@ async function build(opts: {
     recipe: {
       findMany: jest.fn(async ({ where }: any) => {
         events.push("recipe.findMany");
-        return opts.recipes().filter((r) => has(r, idsOf(where)));
+        return opts
+          .recipes()
+          .filter((r) => has(r, idsOf(where)))
+          .map((r) => ({
+            ...r,
+            components: r.components.map((componentProductId) => ({ componentProductId })),
+          }));
       }),
       findFirst: jest.fn(async ({ where }: any) => {
         events.push("recipe.findFirst");
@@ -92,6 +98,21 @@ describe.each([
     expect(body(err)).toMatchObject({ code: "RECIPE_CATEGORY_LOCKED" });
     expect(tx.product.updateMany).not.toHaveBeenCalled();
     expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("the 409 carries the COUNT of locked products (never ids or names)", async () => {
+    const both = ["v1", "v2", "p9"];
+    const { service } = await build({
+      recipes: () => [recipe],
+      members: name === "unassignProducts" ? both : [],
+    });
+    const call =
+      name === "assignProducts"
+        ? service.assignProducts("c1", both)
+        : service.unassignProducts("c1", both);
+    const err = await call.catch((e) => e);
+    expect(body(err)).toMatchObject({ code: "RECIPE_CATEGORY_LOCKED", lockedCount: 2 });
+    expect(JSON.stringify(body(err))).not.toMatch(/v1|v2|p9|fam|"rp"/);
   });
 
   it("a RETIRED-only / recipe-free product is written as before", async () => {

@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { lockFamilyRow } from "./family-price";
 import { lockProductRow, type CatalogTx } from "./product-catalog-sync";
-import { openRecipeWhereAny, recipeCategoryLocked } from "./recipe-rules";
+import { countLockedProducts, openRecipeWhereAny, recipeCategoryLocked } from "./recipe-rules";
 
 /**
  * SA-587a: the I6 guard for a bulk writer of `Product.trackedCategoryId` / `trackedSubcategoryId`
@@ -57,5 +57,19 @@ export async function assertNoOpenRecipe(tx: CatalogTx, movingIds: string[]): Pr
     where: openRecipeWhereAny(movingIds),
     select: { id: true },
   });
-  if (open) throw recipeCategoryLocked();
+  if (!open) return;
+  // Refusal path only (post-lock, in the same tx): count how many of the movers are locked.
+  const recipes: Array<{
+    productId: string;
+    familyProductId: string;
+    components: Array<{ componentProductId: string }>;
+  }> = await tx.recipe.findMany({
+    where: openRecipeWhereAny(movingIds),
+    select: {
+      productId: true,
+      familyProductId: true,
+      components: { select: { componentProductId: true } },
+    },
+  });
+  throw recipeCategoryLocked(Math.max(1, countLockedProducts(movingIds, recipes)));
 }

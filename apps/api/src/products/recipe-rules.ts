@@ -252,10 +252,29 @@ export function openRecipeWhereAny(productIds: string[]) {
   };
 }
 
-/** 409 RECIPE_CATEGORY_LOCKED. */
-export function recipeCategoryLocked(): ConflictException {
+/** How many DISTINCT `movingIds` are held (any role) by the given open recipes. A count, never ids. */
+export function countLockedProducts(
+  movingIds: string[],
+  recipes: Array<{
+    productId: string;
+    familyProductId: string;
+    components?: Array<{ componentProductId: string }>;
+  }>,
+): number {
+  const held = new Set<string>();
+  for (const r of recipes) {
+    held.add(r.productId);
+    held.add(r.familyProductId);
+    for (const c of r.components ?? []) held.add(c.componentProductId);
+  }
+  return new Set(movingIds.filter((id) => held.has(id))).size;
+}
+
+/** 409 RECIPE_CATEGORY_LOCKED; `lockedCount` = how many products are locked (SA-587a: count only). */
+export function recipeCategoryLocked(lockedCount = 1): ConflictException {
   return new ConflictException({
     code: API_ERROR_CODES.RECIPE_CATEGORY_LOCKED,
+    lockedCount,
     message:
       "This product is part of a recipe that is not retired, so its tracked category cannot change.",
   });
