@@ -16,8 +16,9 @@
 //      policy's allow-listed asset directories (CLAUDE.md "Heavy files policy").
 //
 // Range: for an update, the remote sha; for a new branch, the merge-base with origin/master. Commits
-// already reachable from origin/master (e.g. via a merge of master into the branch) are excluded,
-// so a merge never re-judges what master already carries.
+// already reachable from ANY origin/* ref are excluded (`--remotes=origin`), so a merge of master, a
+// stale origin/master, or a merge of another lane's already-pushed branch never re-judges what the
+// remote carries.
 //
 // Modes: hook (stdin = git's pre-push lines `<local ref> <local sha> <remote ref> <remote sha>`) or
 // `--base <rev> --head <rev>` (tests, ad-hoc). A branch deletion, or no refs at all, is a pass.
@@ -91,10 +92,10 @@ export function evaluateAdditions(added) {
 
 /** Every file ADDED by any commit in `head` not in `base` / origin/master, with its blob size. */
 function collectAdditions(base, head) {
-  const excludes = [base];
-  if (git(["rev-parse", "--verify", "-q", "refs/remotes/origin/master"]).status === 0) {
-    excludes.push("refs/remotes/origin/master");
-  }
+  // Everything the remote already has is excluded: the base, and EVERY origin/* ref (not just
+  // origin/master). A stale origin/master, or a merge of another lane's already-pushed branch, must
+  // never make this push re-answer for commits the remote carries.
+  const excludes = [base, "--remotes=origin"];
   const log = git([
     "log",
     "--raw",
@@ -189,6 +190,7 @@ function main() {
       failedResolve = e.message;
     }
   }
+  const unchecked = failedResolve ? `could not check: ${failedResolve}` : null;
   if (failedResolve && problems.length === 0) {
     console.error(
       `push-guard: cannot check this push (${failedResolve}) — refusing to pass it unchecked.`,
@@ -201,7 +203,9 @@ function main() {
     }
   }
   if (problems.length === 0 && !failedResolve) process.exit(0);
-  const detail = problems.join("\n");
+  // An override used on a push the guard could not check must record WHY it could not (the actual
+  // error), not an empty problem list.
+  const detail = [...problems, unchecked].filter(Boolean).join("\n");
   if (override) {
     audit(override, `problems=${JSON.stringify(detail.split("\n").slice(0, 6))}`);
     console.error(

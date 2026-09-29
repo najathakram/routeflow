@@ -12,8 +12,27 @@ import path from "node:path";
 const SCRIPT = path.resolve(__dirname, "../../../../scripts/push-guard.mjs");
 const MIB = 1024 * 1024;
 
+// B420: git EXPORTS repo-scoped variables (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, ...) into a hook,
+// and verify runs this spec from inside pre-push, so a plain spawn here would operate on THAT repo
+// (a hijacked GIT_DIR once wrote config into another repository). Every git call and the script's
+// own env go through the ONE `cleanGitEnv()` (scripts/lib/verify-scope.mjs, which strips every GIT_*
+// variable). It is an ES module and this spec is CommonJS, so it is read through a one-off node call.
+const CLEAN_GIT_ENV: NodeJS.ProcessEnv = JSON.parse(
+  spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `import { cleanGitEnv } from ${JSON.stringify(
+        path.resolve(__dirname, "../../../../scripts/lib/verify-scope.mjs"),
+      )}; process.stdout.write(JSON.stringify(cleanGitEnv()));`,
+    ],
+    { encoding: "utf8" },
+  ).stdout,
+);
+
 function git(cwd: string, ...args: string[]): string {
-  const r = spawnSync("git", args, { cwd, encoding: "utf8" });
+  const r = spawnSync("git", args, { cwd, encoding: "utf8", env: CLEAN_GIT_ENV });
   if (r.status !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr}`);
   return r.stdout.trim();
 }
@@ -60,7 +79,7 @@ describe("push-guard.mjs contract (B897)", () => {
       cwd: repo,
       encoding: "utf8",
       input,
-      env: { ...process.env, PUSH_GUARD_OVERRIDE_REASON: "", ...env },
+      env: { ...CLEAN_GIT_ENV, PUSH_GUARD_OVERRIDE_REASON: "", ...env },
     });
   }
 
@@ -206,6 +225,43 @@ describe("push-guard.mjs contract (B897)", () => {
       const head = git(repo, "rev-parse", "HEAD");
       const res = guard([], {}, `refs/heads/feature ${head} refs/heads/feature ${pushed}\n`);
       expect(res.status).toBe(0);
+    });
+
+    it("a STALE origin/master, and another lane's pushed branch merged in, do not trip the guard (everything under origin/* is excluded, not just master)", () => {
+      // origin/master is stale (still at the base). Another lane pushed origin/laneB, which added
+      // a dist file; this branch merged that lane's work, so its range now carries those commits.
+      git(repo, "update-ref", "refs/remotes/origin/master", base);
+      git(repo, "switch", "-q", "-c", "laneB");
+      write("packages/other/dist/a.js", "the other lane's reviewed, already-pushed work");
+      const laneHead = commit("laneB");
+      git(repo, "update-ref", "refs/remotes/origin/laneB", laneHead);
+      git(repo, "switch", "-q", "master");
+      git(repo, "switch", "-q", "-c", "feature");
+      write("src/f.ts", "f");
+      const pushed = commit("feature work");
+      git(repo, "merge", "-q", "--no-edit", "laneB");
+      const head = git(repo, "rev-parse", "HEAD");
+      const res = guard([], {}, `refs/heads/feature ${head} refs/heads/feature ${pushed}\n`);
+      expect(res.status).toBe(0);
+    });
+
+    it("an override on a range the guard could not check logs the ACTUAL error (exit 2 without it, exit 0 with a reasoned override, both naming the cause)", () => {
+      // No origin/master and a remote sha the repo does not have: nothing to resolve a base from.
+      const head = git(repo, "rev-parse", "HEAD");
+      const stdin = `refs/heads/f ${head} refs/heads/f ${"1".repeat(40)}\n`;
+      const refused = guard([], {}, stdin);
+      expect(refused.status).toBe(2);
+      expect(refused.stderr).toContain("could not resolve a base");
+      const res = guard(
+        [],
+        { PUSH_GUARD_OVERRIDE_REASON: "remote unreachable, reviewed by hand" },
+        stdin,
+      );
+      expect(res.status).toBe(0);
+      expect(res.stderr).toContain("could not resolve a base");
+      const log = fs.readFileSync(path.join(repo, ".git", "push-guard.log"), "utf8");
+      expect(log).toContain("remote unreachable, reviewed by hand");
+      expect(log).toContain("could not resolve a base");
     });
 
     it("a branch deletion (local sha all zeros) is never blocked", () => {
