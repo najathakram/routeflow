@@ -4,11 +4,16 @@
  * frozen per line (integer pieces). Component price is the NET line subtotal over the line's
  * pieces, stored at 4 dp on the component row only (SA-589) and shown at 2 dp.
  */
-import { applyBestPromotion, computeLineSubtotal, displayComponentUnitPrice } from "@routeflow/pricing";
+import {
+  applyBestPromotion,
+  computeLineSubtotal,
+  displayComponentUnitPrice,
+} from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import {
   assertComponentSum,
   buildComponentSnapshots,
+  effectiveBoxes,
   planFixedComposition,
   rescaleComposition,
   snapshotUnitBarcode,
@@ -19,7 +24,13 @@ import {
 
 const A = "prod-a";
 const O = "prod-o";
-const recipe = { comps: [{ componentProductId: A, qty: 12 }, { componentProductId: O, qty: 12 }], unitsPerPack: 24 };
+const recipe = {
+  comps: [
+    { componentProductId: A, qty: 12 },
+    { componentProductId: O, qty: 12 },
+  ],
+  unitsPerPack: 24,
+};
 const line = (o: Partial<Parameters<typeof planFixedComposition>[0]["line"]> = {}) => ({
   boxes: 2,
   pieces: 0,
@@ -67,6 +78,24 @@ describe("planFixedComposition", () => {
   });
 });
 
+describe("effectiveBoxes (qty-only line = qty whole packs)", () => {
+  it("boxes > 0 wins over qty", () => {
+    expect(effectiveBoxes({ boxes: 2, pieces: 0, qty: 48 })).toBe(2);
+  });
+  it("boxes/pieces both null or 0 with qty > 0 -> qty", () => {
+    expect(effectiveBoxes({ boxes: null, pieces: null, qty: 3 })).toBe(3);
+    expect(effectiveBoxes({ boxes: 0, pieces: 0, qty: 3 })).toBe(3);
+    expect(effectiveBoxes({ qty: 2.5 })).toBe(2.5);
+  });
+  it("qty 0 (or missing) -> 0", () => {
+    expect(effectiveBoxes({ boxes: null, pieces: null, qty: 0 })).toBe(0);
+    expect(effectiveBoxes({ boxes: 0, pieces: 0 })).toBe(0);
+  });
+  it("loose pieces without boxes is NOT promoted to qty (stays refusable)", () => {
+    expect(effectiveBoxes({ boxes: 0, pieces: 5, qty: 5 })).toBe(0);
+  });
+});
+
 describe("assertComponentSum (I12)", () => {
   it("(5) 48 vs [24,23] -> 400 COMPONENT_SUM_MISMATCH; a matching sum passes", () => {
     const e = thrown(() => assertComponentSum(48, [24, 23]));
@@ -95,7 +124,10 @@ describe("component price is the NET line subtotal over pieces (owner Q1, SA-589
     expect(subtotal).toBe(30);
     const rows = buildComponentSnapshots({
       planned: planFixedComposition({ recipe, line: line() }),
-      products: new Map([[A, product(A, "Almond")], [O, product(O, "Oat")]]),
+      products: new Map([
+        [A, product(A, "Almond")],
+        [O, product(O, "Oat")],
+      ]),
       netSubtotal: subtotal,
       pieces: 48,
     });
@@ -123,12 +155,18 @@ describe("snapshotUnitBarcode (I9, SA-572a ii)", () => {
         { code: "036000291452", symbology: "UPC_A", level: "UNIT", primaryFor: "UNIT" },
       ],
     });
-    expect(snapshotUnitBarcode(p)).toEqual({ unitBarcode: "036000291452", barcodeSymbology: "UPC_A" });
+    expect(snapshotUnitBarcode(p)).toEqual({
+      unitBarcode: "036000291452",
+      barcodeSymbology: "UPC_A",
+    });
   });
 
   it("(7b) no rows, upb 6, legacy barcode -> the synthesized UNIT COPIED code", () => {
     const p = product(A, "Almond", { barcodes: [], barcode: "4006381333931", unitsPerBox: 6 });
-    expect(snapshotUnitBarcode(p)).toEqual({ unitBarcode: "4006381333931", barcodeSymbology: "EAN_13" });
+    expect(snapshotUnitBarcode(p)).toEqual({
+      unitBarcode: "4006381333931",
+      barcodeSymbology: "EAN_13",
+    });
   });
 
   it("(7c) no code at all -> null barcode, unitSku kept on the row", () => {
@@ -140,12 +178,20 @@ describe("snapshotUnitBarcode (I9, SA-572a ii)", () => {
       netSubtotal: 4,
       pieces: 4,
     });
-    expect(rows[0]).toMatchObject({ unitSku: "ALM-U", unitBarcode: null, barcodeSymbology: null, name: "Almond" });
+    expect(rows[0]).toMatchObject({
+      unitSku: "ALM-U",
+      unitBarcode: null,
+      barcodeSymbology: null,
+      name: "Almond",
+    });
   });
 });
 
 describe("rescaleComposition (I11, L-222)", () => {
-  const stored = [{ componentProductId: A, qty: 24 }, { componentProductId: O, qty: 24 }];
+  const stored = [
+    { componentProductId: A, qty: 24 },
+    { componentProductId: O, qty: 24 },
+  ];
 
   it("(8) 2 -> 3 boxes rescales the STORED composition to [36,36] (no Recipe read)", () => {
     expect(rescaleComposition({ stored, unitsPerPack: 24, boxes: 3 })).toEqual([
@@ -155,7 +201,10 @@ describe("rescaleComposition (I11, L-222)", () => {
   });
 
   it("(9) stored components not divisible by the boxes -> COMPOSITION_CORRUPT (500-class, count only)", () => {
-    const corrupt = [{ componentProductId: A, qty: 25 }, { componentProductId: O, qty: 23 }];
+    const corrupt = [
+      { componentProductId: A, qty: 25 },
+      { componentProductId: O, qty: 23 },
+    ];
     const e = thrown(() => rescaleComposition({ stored: corrupt, unitsPerPack: 24, boxes: 3 }));
     expect(e.status).toBe(500);
     expect(e.body.code).toBe(API_ERROR_CODES.COMPOSITION_CORRUPT);
@@ -171,21 +220,26 @@ describe("syncLineCompositions (order side)", () => {
       boxes?: number;
       stamped?: boolean;
       cancelled?: boolean;
+      /** A selling-unit line: boxes/pieces/unitsPerBox null, `qty` is the pack count. */
+      qtyOnly?: boolean;
+      unitLabel?: string | null;
+      qty?: number;
     } = {},
   ) {
     const boxes = opts.boxes ?? 2;
     const lineRow = {
       id: "li-1",
       productId: "recipe-p",
-      boxes,
-      pieces: 0,
-      unitsPerBox: 24,
-      unitLabel: null,
+      qty: opts.qtyOnly ? (opts.qty ?? boxes) : boxes * 24,
+      boxes: opts.qtyOnly ? null : boxes,
+      pieces: opts.qtyOnly ? null : 0,
+      unitsPerBox: opts.qtyOnly ? null : 24,
+      unitLabel: opts.unitLabel ?? null,
       subtotal: 30,
       compositionMode: opts.existing || opts.stamped ? "FIXED" : null,
       recipeId: opts.existing || opts.stamped ? "rec-1" : null,
       recipeVersion: opts.existing || opts.stamped ? 1 : null,
-      product: { id: "recipe-p", kind: "RECIPE" },
+      product: { id: "recipe-p", kind: "RECIPE", unitsPerBox: 24 },
       components: opts.existing
         ? [
             { componentProductId: A, qty: 24 },
@@ -210,7 +264,10 @@ describe("syncLineCompositions (order side)", () => {
         unitsPerPack: 24,
         // existing: differs from the stored rows (12+12 per box) so a re-read is detectable
         comps: opts.existing
-          ? [{ componentProductId: A, qty: 6 }, { componentProductId: O, qty: 18 }]
+          ? [
+              { componentProductId: A, qty: 6 },
+              { componentProductId: O, qty: 18 },
+            ]
           : recipe.comps,
       }),
       activeRecipeFor: jest.fn().mockResolvedValue({
@@ -218,11 +275,17 @@ describe("syncLineCompositions (order side)", () => {
         version: 2,
         unitsPerPack: 24,
         comps: opts.existing
-          ? [{ componentProductId: A, qty: 20 }, { componentProductId: O, qty: 4 }]
+          ? [
+              { componentProductId: A, qty: 20 },
+              { componentProductId: O, qty: 4 },
+            ]
           : recipe.comps,
       }),
       productFacts: jest.fn().mockResolvedValue(
-        new Map([[A, product(A, "Almond")], [O, product(O, "Oat")]]),
+        new Map([
+          [A, product(A, "Almond")],
+          [O, product(O, "Oat")],
+        ]),
       ),
     };
     const ctx = { tenantId: "t-1", enabled: (opts.mode ?? "on") === "on", port };
@@ -243,7 +306,12 @@ describe("syncLineCompositions (order side)", () => {
     await syncLineCompositions(tx as never, ["li-1"], ctx);
     const data = tx.orderItemComponent.createMany.mock.calls[0][0].data;
     expect(data).toHaveLength(2);
-    expect(data.every((r: { tenantId: string; orderItemId: string }) => r.tenantId === "t-1" && r.orderItemId === "li-1")).toBe(true);
+    expect(
+      data.every(
+        (r: { tenantId: string; orderItemId: string }) =>
+          r.tenantId === "t-1" && r.orderItemId === "li-1",
+      ),
+    ).toBe(true);
     expect(data.map((r: { qty: number }) => r.qty)).toEqual([24, 24]);
     expect(data[0].displayUnitPrice4).toBe(0.625);
     expect(tx.orderItem.update).toHaveBeenCalledWith({
@@ -270,7 +338,10 @@ describe("syncLineCompositions (order side)", () => {
       recipeId: "rec-2",
       version: 2,
       unitsPerPack: 24,
-      comps: [{ componentProductId: A, qty: 12 }, { componentProductId: O, qty: 11 }],
+      comps: [
+        { componentProductId: A, qty: 12 },
+        { componentProductId: O, qty: 11 },
+      ],
     });
     await expect(syncLineCompositions(tx as never, ["li-1"], ctx)).rejects.toMatchObject({
       response: { code: API_ERROR_CODES.COMPONENT_SUM_MISMATCH },
@@ -301,6 +372,65 @@ describe("syncLineCompositions (order side)", () => {
     (port.activeRecipeFor as jest.Mock).mockResolvedValue(null);
     await syncLineCompositions(tx as never, ["li-1"], ctx);
     expect(tx.orderItemComponent.createMany).not.toHaveBeenCalled();
+  });
+
+  describe("qty-only (selling-unit) RECIPE line: qty whole packs (SA-593e fold 2)", () => {
+    it("qty 2, pack 24: components sum 48, line stamped FIXED, no OrderItem money column written", async () => {
+      const { tx, ctx } = fixture({ qtyOnly: true, qty: 2 });
+      await syncLineCompositions(tx as never, ["li-1"], ctx);
+      const data = tx.orderItemComponent.createMany.mock.calls[0][0].data;
+      expect(data.map((r: { qty: number }) => r.qty)).toEqual([24, 24]);
+      expect(data.reduce((a: number, r: { qty: number }) => a + r.qty, 0)).toBe(48);
+      expect(data[0].displayUnitPrice4).toBe(0.625);
+      expect(tx.orderItem.update).toHaveBeenCalledTimes(1);
+      expect(tx.orderItem.update).toHaveBeenCalledWith({
+        where: { id: "li-1" },
+        data: { compositionMode: "FIXED", recipeId: "rec-2", recipeVersion: 2 },
+      });
+    });
+
+    it("qty 2.5 -> 400 FIXED_WHOLE_BOXES, nothing written", async () => {
+      const { tx, ctx } = fixture({ qtyOnly: true, qty: 2.5 });
+      await expect(syncLineCompositions(tx as never, ["li-1"], ctx)).rejects.toMatchObject({
+        status: 400,
+        response: { code: API_ERROR_CODES.FIXED_WHOLE_BOXES },
+      });
+      expect(tx.orderItemComponent.createMany).not.toHaveBeenCalled();
+      expect(tx.orderItem.update).not.toHaveBeenCalled();
+    });
+
+    it("no ACTIVE recipe: stays plain, nothing written", async () => {
+      const { tx, port, ctx } = fixture({ qtyOnly: true, qty: 2 });
+      (port.activeRecipeFor as jest.Mock).mockResolvedValue(null);
+      await syncLineCompositions(tx as never, ["li-1"], ctx);
+      expect(tx.orderItemComponent.createMany).not.toHaveBeenCalled();
+      expect(tx.orderItem.update).not.toHaveBeenCalled();
+    });
+
+    it("a qty-only UNIT-AWARE line (unitLabel set) stays plain: no components, no error", async () => {
+      const { tx, port, ctx } = fixture({ qtyOnly: true, qty: 2, unitLabel: "Case" });
+      await expect(syncLineCompositions(tx as never, ["li-1"], ctx)).resolves.toBeUndefined();
+      expect(tx.orderItemComponent.createMany).not.toHaveBeenCalled();
+      expect(port.activeRecipeFor).not.toHaveBeenCalled();
+    });
+
+    it("a struck qty-only line (qty 0) deletes its component rows", async () => {
+      const { tx, ctx } = fixture({ qtyOnly: true, qty: 0, existing: true });
+      await syncLineCompositions(tx as never, ["li-1"], ctx);
+      expect(tx.orderItemComponent.deleteMany).toHaveBeenCalledWith({
+        where: { orderItemId: "li-1", tenantId: "t-1" },
+      });
+      expect(tx.orderItemComponent.createMany).not.toHaveBeenCalled();
+    });
+
+    it("an existing FIXED qty-only line resized 2 -> 3 rescales to [36,36] and never reads a Recipe", async () => {
+      const { tx, port, ctx } = fixture({ qtyOnly: true, qty: 3, existing: true });
+      await syncLineCompositions(tx as never, ["li-1"], ctx);
+      expect(port.recipeById).not.toHaveBeenCalled();
+      expect(port.activeRecipeFor).not.toHaveBeenCalled();
+      const data = tx.orderItemComponent.createMany.mock.calls[0][0].data;
+      expect(data.map((r: { qty: number }) => r.qty)).toEqual([36, 36]);
+    });
   });
 
   it("an empty id list is a no-op (never an unscoped many-write)", async () => {
