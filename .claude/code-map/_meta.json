@@ -1,6 +1,6 @@
 {
-  "mappedSha": "402cf72bdfa8e5deb7c52418f2671237488eeb7c",
-  "generatedAt": "2026-09-29T08:19:27.466Z",
+  "mappedSha": "368e296784f80ccf2010a3e30665e123153ec9e3",
+  "generatedAt": "2026-09-29T09:07:45.592Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1045,
-  "notes": "**2026-09-28 — late landings #2709, #2724, #2713, #2712 (docs-only bookkeeping).** New `mobile/landing-2026-09-28-late.md` (TOC row in `mobile.md`), each grepped in the merged tree. Registry: B889 closed already-fixed (#2709); B891 (+ its root-cause note), B892, B893 filed for the Mac Lead. Lesson L-242 minted (never key a UI draft by a nullable id), L-218 archived. mappedSha -> a215587e. No source changed. See CHANGELOG.md for the full landing list."
+  "notes": "**2026-09-29 — early landings #2134, #2740, #2739, #2287, #2638, #2678, #2672, #2679, #2725, #2066, #2729 (docs-only bookkeeping).** New `api/landing-2026-09-29-early.md` and `mobile/landing-2026-09-29-early.md` (TOC rows in `api.md`/`mobile.md`). mappedSha -> d8ad4de3. No source changed. See CHANGELOG.md for the full landing list."
 }

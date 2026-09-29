@@ -1,0 +1,4 @@
+-- B896 / SA-582 RED fixture: SET LOCAL with no explicit BEGIN; ... COMMIT; wrap. lint:migrations
+-- must refuse this. (Not under prisma/migrations, so no migration run ever picks it up.)
+SET LOCAL lock_timeout = '5s';
+ALTER TABLE "User" ADD COLUMN "lastLoginAt" TIMESTAMP(3);
