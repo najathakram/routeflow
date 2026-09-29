@@ -2,6 +2,7 @@ import * as React from "react";
 import { act } from "react";
 import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import { InlineReturnSection, type InlineReturnSectionState } from "./InlineReturnSection";
+import { creditOverrideProblem } from "@routeflow/returns";
 import type { InlineReturnQuoteChunk, InlineReturnQuoteResponse } from "@routeflow/types";
 
 // Same mocking convention as RecordInlineReturnDialog.test.tsx (this section's own extraction
@@ -365,8 +366,6 @@ describe("InlineReturnSection — #2695 staff credit price override", () => {
     await addProduct("4");
     // The second row of the same product cannot be added through the picker (it filters the
     // product out), so the conflict is asserted at the shared rule the section calls.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { creditOverrideProblem } = require("@routeflow/returns");
     const row = (over: object) => ({ productId: "prod-1", productName: "Widget", ...over });
     expect(
       creditOverrideProblem([
