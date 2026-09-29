@@ -139,6 +139,7 @@ describe("M4a-0 — @routeflow/scanning package shape (R1, R4)", () => {
     it("check-types depends on ^build so the compiled package exists first", () => {
       expect(turbo.tasks?.["check-types"]?.dependsOn).toContain("^build");
     });
+
   });
 
   // The image installs from the lockfile, so @routeflow/scanning's sources must be in
