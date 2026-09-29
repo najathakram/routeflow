@@ -9,6 +9,7 @@ import { Test } from "@nestjs/testing";
 import { EstimatesService } from "./estimates.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
@@ -41,6 +42,13 @@ describe("EstimatesService.convertToInvoice — selling restrictions (F-05)", ()
       providers: [
         EstimatesService,
         { provide: PrismaService, useValue: prisma },
+        {
+          provide: EntitlementAuthority,
+          inject: [EntitlementsService],
+          useFactory: (e: { hasFlag?: (t: string, k: string) => Promise<boolean> }) => ({
+            can: (t: string, k: string) => e.hasFlag?.(t, k) ?? Promise.resolve(false),
+          }),
+        },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
         { provide: NumberingService, useValue: numbering },
         { provide: RegulatedLedgerService, useValue: { writeSaleEntries: jest.fn() } },
