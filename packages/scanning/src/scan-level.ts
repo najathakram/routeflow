@@ -2,12 +2,14 @@ import { defaultSellLevel, type SellLevel } from "@routeflow/pricing";
 import { normalizeScanCode } from "./barcode-normalize";
 
 /**
- * #2717 M4a-1 — the ONE pure scan-level resolver (SA-580 owner rule; replaces SA-572a (i) and
- * pricing's retired `lineMode` resolver).
+ * #2717 M4a-1 — the ONE pure scan-level resolver (SA-580 owner rule, R2 replaced by SA-580b;
+ * replaces SA-572a (i) and pricing's retired `lineMode` resolver).
  *
  * The LEVEL comes from the CODE, never from the line's mode:
  *   R1  a code that resolves only at UNIT -> UNIT; only at BOX -> BOX.
- *   R2  a SHARED code (both levels) -> BOX. There is no per-customer default unit (R3), so no proxy.
+ *   R2  (SA-580b) a SHARED code (both levels) -> the product's DEFAULT SELL UNIT, i.e.
+ *       `defaultSellLevel({ unitsPerBox })`: upb > 1 -> BOX, else UNIT. (Was a fixed BOX in SA-580.)
+ *       There is still no per-customer default unit (R3).
  *   R4  upb <= 1 has no box/unit distinction: the raw level is still BOX|UNIT and total; the CLIENT
  *       keeps today's line shape for that product (SA-578 Q2(a)).
  * Code -> product stays the server's job: every function here takes ONE product.
@@ -32,8 +34,11 @@ export function resolveScanSellLevel(
   product: { unitsPerBox?: number | null },
   levels: readonly SellLevel[],
 ): SellLevel {
-  if (levels.includes("BOX")) return "BOX";
-  if (levels.includes("UNIT")) return "UNIT";
+  const box = levels.includes("BOX");
+  const unit = levels.includes("UNIT");
+  if (box && unit) return defaultSellLevel({ unitsPerBox: product.unitsPerBox });
+  if (box) return "BOX";
+  if (unit) return "UNIT";
   return defaultSellLevel({ unitsPerBox: product.unitsPerBox });
 }
 
