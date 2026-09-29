@@ -197,6 +197,48 @@ describe("lint-migrations.mjs contract (T1 / R2, R3)", () => {
       expect(res.status).toBe(0);
     });
 
+    // Follow-up to the #2746 review: transaction-control spellings and masking.
+    it.each([
+      ["BEGIN WORK ... COMMIT WORK", "BEGIN WORK;\nSET LOCAL lock_timeout = '5s';\nCOMMIT WORK;\n"],
+      [
+        "BEGIN TRANSACTION ... COMMIT TRANSACTION",
+        "BEGIN TRANSACTION;\nSET LOCAL lock_timeout = '5s';\nCOMMIT TRANSACTION;\n",
+      ],
+      ["BEGIN ... END TRANSACTION", "BEGIN;\nSET LOCAL lock_timeout = '5s';\nEND TRANSACTION;\n"],
+      [
+        "START TRANSACTION ISOLATION LEVEL ... COMMIT WORK",
+        "START TRANSACTION ISOLATION LEVEL SERIALIZABLE;\nSET LOCAL lock_timeout = '5s';\nCOMMIT WORK;\n",
+      ],
+      ["BEGIN ... ROLLBACK WORK", "BEGIN;\nSET LOCAL lock_timeout = '5s';\nROLLBACK WORK;\n"],
+      [
+        "a digit in a dollar-quote tag ($fn1$ body with its own SET LOCAL)",
+        "DO $fn1$ BEGIN PERFORM 1; SET LOCAL x = 1; END $fn1$;\n",
+      ],
+      [
+        "an E'..' string with an escaped quote hiding a SET LOCAL",
+        'INSERT INTO "T" ("c") VALUES (E\'it\\\'s; SET LOCAL a = 1;\');\n',
+      ],
+    ])("accepts %s", (_label, sql) => {
+      const res = run(["--files", writeFixture(`b896f-${Math.random()}.sql`, sql as string)]);
+      expect(res.stderr).not.toMatch(/SET LOCAL|BEGIN;/);
+      expect(res.status).toBe(0);
+    });
+
+    it("an E'..' string ending in an escaped BACKSLASH (E'a\\\\') closes at that quote, so a SET LOCAL after it is still refused", () => {
+      const sql = "SELECT E'a\\\\';\nSET LOCAL lock_timeout = '5s';\n";
+      const res = run(["--files", writeFixture(`b896f-${Math.random()}.sql`, sql)]);
+      expect(res.stderr).toMatch(/SET LOCAL outside an explicit BEGIN/);
+      expect(res.status).toBe(1);
+    });
+
+    it("ROLLBACK TO SAVEPOINT does not close the transaction (a SET LOCAL after it stays inside the wrap)", () => {
+      const sql =
+        "BEGIN;\nSAVEPOINT a;\nROLLBACK TO SAVEPOINT a;\nSET LOCAL lock_timeout = '5s';\nCOMMIT;\n";
+      const res = run(["--files", writeFixture(`b896f-${Math.random()}.sql`, sql)]);
+      expect(res.stderr).not.toMatch(/SET LOCAL|BEGIN;/);
+      expect(res.status).toBe(0);
+    });
+
     it("the repo's own migrations tree is not flagged in diff mode, only files in the range are read (history is immutable)", () => {
       const res = run(["--base", "HEAD"]);
       expect(res.stdout).toContain("no migrations in range");
