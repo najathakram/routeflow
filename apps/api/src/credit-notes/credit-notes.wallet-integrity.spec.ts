@@ -90,6 +90,7 @@ import { AuthorizationGuardService } from "../authorizations/authorization-guard
 import { MessagingService } from "../messaging/messaging.service";
 import { StorageService } from "../storage/storage.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
@@ -432,6 +433,13 @@ describe("InvoicesService — voidInvoiceInTx caps/voids credit notes it sourced
         { provide: CreditNotesService, useValue: {} },
         { provide: MessagingService, useValue: {} },
         { provide: StorageService, useValue: {} },
+        {
+          provide: EntitlementAuthority,
+          inject: [EntitlementsService],
+          useFactory: (e: { hasFlag?: (t: string, k: string) => Promise<boolean> }) => ({
+            can: (t: string, k: string) => e.hasFlag?.(t, k) ?? Promise.resolve(false),
+          }),
+        },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
         { provide: CommissionEngineService, useValue: commissionEngine },
         {
