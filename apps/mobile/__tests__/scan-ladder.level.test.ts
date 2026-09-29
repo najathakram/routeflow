@@ -85,6 +85,21 @@ describe("scan ladder — a shared code on an upb<=1 product adds a UNIT (SA-580
   });
 });
 
+describe("SA-580c: a shared code on a units_v1 product = the picker tap as-is (NOT isDefaultSelling)", () => {
+  // Follow-up (owner ruling pending): the picker tap AND the scan should honour ProductUnit.isDefaultSelling
+  // together. Until then a shared code adds exactly what a tap adds: the default BOX-level line.
+  it("upb 6 with a default-selling 'Piece' unit: shared code -> BOX (picker tap's default), no unit-label confirm", async () => {
+    const p = {
+      ...boxed,
+      units: [{ label: "Piece", isDefaultSelling: true }],
+      barcodes: [{ code: "SH", level: "BOX" }, { code: "SH", level: "UNIT" }],
+    } as P;
+    const { scan, accepted } = harness([p]);
+    await scan("SH");
+    expect(accepted).toEqual([{ id: "p1", level: "BOX" }]);
+  });
+});
+
 describe("scan ladder — level from the server rung", () => {
   it("uses the server's scanMatch levels (UNIT-only) when the local list misses", async () => {
     const remote: P = { ...boxed, scanMatch: { code: "ROW-U", levels: ["UNIT"] } };

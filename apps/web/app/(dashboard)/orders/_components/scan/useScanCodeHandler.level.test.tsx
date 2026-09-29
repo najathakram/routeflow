@@ -65,6 +65,16 @@ describe("useScanCodeHandler — passes the scanned level (R1/R2)", () => {
     expect(d.addLineItem).toHaveBeenCalledWith(p, "UNIT");
   });
 
+  it("SA-580c: a shared code on a units_v1 product (default-selling 'Piece') = the picker tap as-is -> 'BOX', NOT isDefaultSelling", async () => {
+    // Follow-up (owner ruling pending): picker tap AND scan honour isDefaultSelling together.
+    const p = boxed({
+      units: [{ label: "Piece", isDefaultSelling: true }],
+      scanMatch: { code: "SH", levels: ["UNIT", "BOX"] },
+    });
+    const d = await scan("SH", p);
+    expect(d.addLineItem).toHaveBeenCalledWith(p, "BOX");
+  });
+
   it("web unitSku scan -> a piece (named behaviour change, SA-578 Q2): no scanMatch, code equals unitSku, upb>1 -> 'UNIT'", async () => {
     const p = boxed();
     const d = await scan("CHIPS-1", p);
