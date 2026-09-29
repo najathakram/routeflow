@@ -151,7 +151,8 @@ describeDb("#2717 M2 family price write-through — real Postgres", () => {
           where: { tenantId, parentProductId: family.id },
         });
         expect(variants).toHaveLength(1);
-        expect(variants[0].priceTier3.toString()).toBe(Number(newTier3).toFixed(2));
+        // Compare as numbers: a Decimal prints "5.5" where toFixed(2) prints "5.50".
+        expect(Number(variants[0].priceTier3)).toBe(Number(newTier3));
       }
       expect(beforeSpy).toHaveBeenCalledTimes(6);
       expect(createSpy).toHaveBeenCalledTimes(6);

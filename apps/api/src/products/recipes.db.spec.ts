@@ -212,7 +212,10 @@ describeDb("#2717 M2 recipes — real Postgres", () => {
     const tenantId = await seedTenant("belt");
     const c = await seedCatalog(tenantId);
     const { v1, v2 } = await seedVersions(tenantId, c);
-    expect(v1.status).toBe("ACTIVE");
+    // `v1` is what create() returned BEFORE activate(): its status is stale (DRAFT). v2/v3 are DRAFT clones
+    // that are never activated here, so the DB row of v1 is the ACTIVE one: re-read it.
+    const v1Row = await prisma.recipe.findUniqueOrThrow({ where: { id: v1.id } });
+    expect(v1Row.status).toBe("ACTIVE");
     await expect(
       prisma.recipe.update({ where: { id: v2.id }, data: { activeFor: c.recipeProduct.id } }),
     ).rejects.toMatchObject({ code: "P2002" });
