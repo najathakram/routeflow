@@ -40,10 +40,11 @@ export const ALLOW: Record<string, { count: number; guard: string; reason: strin
   },
   "scripts/backfill-tobacco-category.mjs": {
     count: 1,
-    guard: "isTobacco",
+    guard: "partitionRecipeLocked",
     reason:
       "Operator-run one-time reconcile of isTobacco vs the Tobacco type (dry-run by default; never " +
-      "part of the app). UNGUARDED against open recipes: listed so a change is deliberate (SA-587a).",
+      "part of the app). Its link step skips every product in a non-RETIRED recipe and reports " +
+      "them as a count-only recipe-locked bucket (SA-587b).",
   },
 };
 
