@@ -148,6 +148,54 @@ describe("backfill-tobacco-category link planner (SA-587b, pure)", () => {
   });
 });
 
+describe("backfill-tobacco-category planTobaccoTenant glue (SA-587b exact-return pin)", () => {
+  const cat = { id: "tob", name: "Tobacco", active: true };
+  const products = [
+    P("free", true, null),
+    P("locked", true, null),
+    P("conf", true, "other"),
+    P("mem", false, "tob"),
+  ];
+  const openRecipes = [
+    {
+      status: "ACTIVE",
+      productId: "r",
+      familyProductId: "f",
+      components: [{ componentProductId: "locked" }],
+    },
+  ];
+
+  it("returns EXACTLY { tenant, ...planTobaccoLink }: no locked id re-added, no extra keys", () => {
+    const out = evalHelper(
+      `const db = {
+         trackedCategory: { findFirst: async () => input.cat },
+         product: { findMany: async () => input.products },
+         recipe: { findMany: async () => input.openRecipes },
+       };
+       const tenant = { id: "t", slug: "s", status: "ACTIVE" };
+       const got = await m.planTobaccoTenant(db, tenant);
+       const want = { tenant, ...m.planTobaccoLink({ tobaccoCat: input.cat, products: input.products, openRecipes: input.openRecipes }) };
+       return { got, want };`,
+      { cat, products, openRecipes },
+    );
+    expect(out.got).toStrictEqual(out.want);
+    expect(Object.keys(out.got).sort()).toEqual(
+      [
+        "conflicts",
+        "createCategory",
+        "flag",
+        "link",
+        "recipeLocked",
+        "tenant",
+        "tobaccoCat",
+      ].sort(),
+    );
+    expect(out.got.link.map((p: { id: string }) => p.id)).toEqual(["free"]);
+    expect(out.got.recipeLocked.map((p: { id: string }) => p.id)).toEqual(["locked"]);
+    expect(out.got.link.map((p: { id: string }) => p.id)).not.toContain("locked");
+  });
+});
+
 describe("backfill-tobacco-category recipe-locked partition (SA-587b)", () => {
   it("a DRAFT-recipe product and an ACTIVE-recipe component are locked; the free one links", () => {
     const out = run([
