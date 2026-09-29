@@ -13,6 +13,13 @@ export interface ProductBarcodeView {
   primaryFor: PackagingLevel | null;
 }
 
+/** #2717 M4a-1: which code a scan hit and the packaging levels that code has on the resolved product
+ *  (additive on the scan-lookup response; a shared code reports both levels). */
+export interface ScanMatchView {
+  code: string;
+  levels: PackagingLevel[];
+}
+
 /** #2717 M1: a product image as the product read model returns it (`origin: "LEGACY"` = synthesized from imageKeys). */
 export interface ProductImageView {
   storageKey: string;
