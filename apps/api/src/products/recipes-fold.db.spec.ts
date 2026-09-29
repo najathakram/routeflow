@@ -310,4 +310,35 @@ describeDb("#2717 M2 fold: recipe invariants are kept — real Postgres", () => 
     expect(rows.find((r) => r.id === c.recipeProduct.id)?.parentProductId).toBeNull();
     expect(rows.find((r) => r.id === c.family.id)?.parentProductId).toBeNull();
   }, 60_000);
+  it("SA-584b: a since-deactivated component is cloned as-is; activate refuses the clone until it is swapped", async () => {
+    const tenantId = await seedTenant("clone-inactive");
+    const c = await seedDraft(tenantId);
+    await inTenant(tenantId, () => recipes.activate(c.draft.id));
+    await prisma.product.update({ where: { id: c.variants[1].id }, data: { isActive: false } });
+
+    const clone = await inTenant(tenantId, () => recipes.createVersion(c.draft.id));
+    expect(clone).toMatchObject({ version: 2, status: "DRAFT" });
+    expect(clone.components.map((x: any) => x.componentProductId).sort()).toEqual(
+      [c.variants[0].id, c.variants[1].id].sort(),
+    );
+
+    const refused: any = await inTenant(tenantId, () => recipes.activate(clone.id)).catch((e) => e);
+    expect(refused.getResponse()).toMatchObject({
+      code: "RECIPE_INVALID",
+      reason: "COMPONENT_INACTIVE",
+    });
+
+    await inTenant(tenantId, () =>
+      recipes.update(clone.id, {
+        components: [
+          { componentProductId: c.variants[0].id, qty: 8 },
+          { componentProductId: c.variants[2].id, qty: 4 },
+        ],
+      } as any),
+    );
+    const activated = await inTenant(tenantId, () => recipes.activate(clone.id));
+    expect(activated).toMatchObject({ status: "ACTIVE" });
+    const v1 = await prisma.recipe.findUniqueOrThrow({ where: { id: c.draft.id } });
+    expect(v1.status).toBe("RETIRED");
+  }, 60_000);
 });
