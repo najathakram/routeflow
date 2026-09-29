@@ -76,6 +76,65 @@ describeDb("#2717 M3 order composition writes — real Postgres", () => {
 
   const inTenant = <T>(tenantId: string, fn: () => Promise<T>) => tenantCtx.run(tenantId, fn);
 
+  /**
+   * Test 31's pause point (SA-591a). When `armedGate` is set, the FIRST ACTIVE-recipe read
+   * (`recipe.findFirst` with `where.activeFor`) inside an OrdersService transaction signals
+   * `reached` after its real result is in hand and then waits for `release` before returning.
+   */
+  interface Gate {
+    reached: Promise<void>;
+    release: Promise<void>;
+    signalReached: () => void;
+    open: () => void;
+    taken: boolean;
+  }
+  let armedGate: Gate | null = null;
+  const newGate = (): Gate => {
+    let signalReached!: () => void;
+    let open!: () => void;
+    const reached = new Promise<void>((r) => (signalReached = r));
+    const release = new Promise<void>((r) => (open = r));
+    return { reached, release, signalReached, open, taken: false };
+  };
+  const gateTx = (tx: any): any =>
+    new Proxy(tx, {
+      get(t, k) {
+        const v = Reflect.get(t, k, t);
+        if (k === "recipe" && v) {
+          return new Proxy(v, {
+            get(rt, rk) {
+              const rv = Reflect.get(rt, rk, rt);
+              if (rk !== "findFirst" || typeof rv !== "function") {
+                return typeof rv === "function" ? rv.bind(rt) : rv;
+              }
+              return async (args: any) => {
+                const result = await rv.call(rt, args);
+                const g = armedGate;
+                if (g && !g.taken && args?.where?.activeFor) {
+                  g.taken = true;
+                  g.signalReached();
+                  await g.release;
+                }
+                return result;
+              };
+            },
+          });
+        }
+        return typeof v === "function" ? v.bind(t) : v;
+      },
+    });
+  const gatedPrisma = (base: PrismaService): any =>
+    new Proxy(base as any, {
+      get(t, k) {
+        if (k === "tenantTransaction") {
+          return (fn: (tx: any) => Promise<unknown>, options?: unknown) =>
+            t.tenantTransaction((tx: any) => fn(gateTx(tx)), options);
+        }
+        const v = Reflect.get(t, k, t);
+        return typeof v === "function" ? v.bind(t) : v;
+      },
+    });
+
   async function seedWorld(label: string): Promise<World> {
     seq += 1;
     const slug = assertTestTenant(
@@ -243,7 +302,7 @@ describeDb("#2717 M3 order composition writes — real Postgres", () => {
       new EncryptionService({ get: () => undefined } as any),
     );
     orders = Object.assign(Object.create(OrdersService.prototype), {
-      prisma,
+      prisma: gatedPrisma(prisma),
       gateway: {
         emitOrderStatusChanged: jest.fn(),
         emitOrderCreated: jest.fn(),
@@ -482,16 +541,21 @@ describeDb("#2717 M3 order composition writes — real Postgres", () => {
     expect(await componentCount(b.tenantId)).toBe(0);
   });
 
-  // BREAK-IT: make the composition read in recipe-snapshot.adapter.ts non-atomic per version, e.g.
-  // split `activeRecipeFor` into a recipe read plus a second `recipeComponent.findMany` keyed on
-  // `recipe: { activeFor: productId }`, or drop the recipe-product row lock (`lockProductRow` in
-  // RecipesService.activate / the FOR UPDATE stock lock in order-stock.ts) so the activation can
-  // commit between the two reads: a line stamped v1 then carries v2's 12 + 36 (or the reverse) ->
-  // the per-round "stamp and components are the same version" assertion is red.
+  // BREAK-IT (SA-591a): in recipe-snapshot.adapter.ts make `activeRecipeFor` select the recipe
+  // WITHOUT components, then read them via `tx.recipeComponent.findMany({ where: { recipe: {
+  // activeFor: productId } } })` (re-resolving the ACTIVE recipe instead of using the recipeId just
+  // read). The gate pauses the create right after its ACTIVE-recipe read; when v2's activation
+  // commits during that pause, the line is stamped v1 but reads v2's components -> the per-round
+  // CONTENT assertion (stamp and ALL components the same version) is red. Dropping the recipe-product
+  // row lock (`lockProductRow` in RecipesService.activate / the FOR UPDATE stock lock in
+  // order-stock.ts) is caught by the same assertion.
   it("31 RACE (4 rounds): activate(v2) vs an order create leaves the line and ALL its components on v1 or ALL on v2", async () => {
     const w = await seedWorld("race");
     const customerId = await seedCustomer(w, "c31");
-    const outcomes: Record<number, number> = { 1: 0, 2: 0 };
+    const outcomes = {
+      version: { 1: 0, 2: 0 } as Record<number, number>,
+      activation: { "committed-during-pause": 0, "queued-behind-create": 0 },
+    };
     for (let round = 0; round < 4; round += 1) {
       // eslint-disable-next-line no-await-in-loop
       const family = await product(w, "family", { kind: "FAMILY" });
@@ -523,38 +587,52 @@ describeDb("#2717 M3 order composition writes — real Postgres", () => {
         recipes.update(v2.id, { components: comps(6, 18) } as never),
       );
 
-      // The holder takes NO KEY UPDATE (never FOR UPDATE / a key update: the recipe rows' FK to this
-      // product would queue behind it) on the recipe product row; the activation (its
-      // lockProductRow FOR UPDATE) and the create (order-stock's FOR UPDATE) both queue behind it.
-      // eslint-disable-next-line no-await-in-loop
-      const holder = await pool.connect();
+      // Pause the create right after its ACTIVE-recipe read, activate v2 meanwhile, then release.
+      const gate = newGate();
+      armedGate = gate;
+      let activation: "committed-during-pause" | "queued-behind-create";
       let both: PromiseSettledResult<unknown>[] = [];
-      let blockedSeen = 0;
       try {
+        const created = create(w, customerId, [line(mix.id, 2)]);
+        // A create that fails before the read must not hang the round.
         // eslint-disable-next-line no-await-in-loop
-        await holder.query("BEGIN");
-        // eslint-disable-next-line no-await-in-loop
-        await holder.query("SET LOCAL lock_timeout = '15s'");
-        // eslint-disable-next-line no-await-in-loop
-        await holder.query('SELECT id FROM "Product" WHERE id = $1 FOR NO KEY UPDATE', [mix.id]);
-        const all = Promise.allSettled([
-          inTenant(w.tenantId, () => recipes.activate(v2.id)),
-          create(w, customerId, [line(mix.id, 2)]),
+        await Promise.race([
+          gate.reached,
+          created.then(
+            () => undefined,
+            () => undefined,
+          ),
         ]);
+        const activated = inTenant(w.tenantId, () => recipes.activate(v2.id));
+        let settled = false;
+        const activatedSettled = activated.then(
+          () => {
+            settled = true;
+          },
+          () => {
+            settled = true;
+          },
+        );
+        // Either the activation commits while the create is paused, or it queues behind the
+        // create's product-row lock. Wait <= 1.5 s for either; never past 4 s (tx timeout 5 s).
+        const started = Date.now();
         // eslint-disable-next-line no-await-in-loop
-        blockedSeen = await waitUntilNBlocked(2);
+        await Promise.race([
+          activatedSettled,
+          waitUntilNBlocked(1),
+          new Promise((r) => setTimeout(r, 1_500)),
+        ]);
+        activation = settled ? "committed-during-pause" : "queued-behind-create";
+        expect(Date.now() - started).toBeLessThan(4_000);
+        gate.open();
         // eslint-disable-next-line no-await-in-loop
-        await holder.query("COMMIT");
-        // eslint-disable-next-line no-await-in-loop
-        both = await all;
+        both = await Promise.allSettled([activated, created]);
       } finally {
-        // eslint-disable-next-line no-await-in-loop
-        await holder.query("ROLLBACK").catch(() => undefined);
-        holder.release();
+        gate.open();
+        armedGate = null;
       }
 
-      // The CONTENT assertions run first, so removing a lock turns this test red on a v1/v2 mix (or
-      // a wrong stamp), not on the barrier. The barrier check is last, with its own message.
+      // CONTENT assertions first: stamp and ALL components are one version, sum = pieces.
       const [activated, ordered] = both;
       expect(activated.status).toBe("fulfilled");
       expect(ordered.status).toBe("fulfilled");
@@ -584,19 +662,15 @@ describeDb("#2717 M3 order composition writes — real Postgres", () => {
             ],
       );
       expect(l.components.reduce((s, c) => s + c.qty, 0)).toBe(Number(l.qty));
-      outcomes[version] += 1;
-      // Barrier proof (after content): both racers really queued behind the holder before release.
-      expect({
-        round,
-        barrier: `expected 2 blocked backends before release, saw ${blockedSeen}`,
-        ok: blockedSeen >= 2,
-      }).toEqual({
-        round,
-        barrier: `expected 2 blocked backends before release, saw ${blockedSeen}`,
-        ok: true,
-      });
+      outcomes.version[version] += 1;
+      // Informational only: which branch this round took (neither fails the test).
+      outcomes.activation[activation] += 1;
     }
-    expect(outcomes[1] + outcomes[2]).toBe(4);
+    expect(outcomes.version[1] + outcomes.version[2]).toBe(4);
+    // eslint-disable-next-line no-console
+    console.info(
+      `test 31: activation committed-during-pause in ${outcomes.activation["committed-during-pause"]} round(s), queued-behind-create in ${outcomes.activation["queued-behind-create"]}; lines on v1=${outcomes.version[1]}, v2=${outcomes.version[2]}`,
+    );
   }, 120_000);
 
   // BREAK-IT (customer hard delete): remove `await tx.orderItem.deleteMany({ where: { orderId: { in:
