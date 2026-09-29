@@ -24,3 +24,20 @@ export async function syncOrderLineCompositions(
     { tenantId, enabled: true, port: recipeSnapshotPort(tx, tenantId) },
   );
 }
+
+/**
+ * #2717 M3: the recipe stamp a moved or created line carries — `{}` for a plain line, so a tenant
+ * that never composes writes exactly the keys it always did.
+ */
+export function compositionStampOf(x: {
+  compositionMode?: string | null;
+  recipeId?: string | null;
+  recipeVersion?: number | null;
+}): { compositionMode?: "FIXED"; recipeId?: string | null; recipeVersion?: number | null } {
+  if (x.compositionMode !== "FIXED") return {};
+  return {
+    compositionMode: "FIXED",
+    recipeId: x.recipeId ?? null,
+    recipeVersion: x.recipeVersion ?? null,
+  };
+}

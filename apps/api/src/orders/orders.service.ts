@@ -56,6 +56,7 @@ import {
   FulfillPath,
   RouteRunStatus,
   RouteRunStopStatus,
+  type Prisma,
 } from "@prisma/client";
 import { ListOrdersDto } from "./dto/list-orders.dto";
 import { nextOrderNumberFor } from "./order-number";
@@ -147,6 +148,9 @@ import * as unitLines from "./unit-line-build";
 import * as unitEdit from "./unit-line-edit";
 import { loadCategoryMapForProducts } from "./category-map";
 import { assertBuyerCartPricesCurrent } from "./buyer-cart-price-check";
+import { compositionStampOf, syncOrderLineCompositions } from "./order-composition";
+import { loadActivePromotionRules } from "./promotion-rules";
+import { FeatureConfigService } from "../billing/feature-config.service";
 import { reportPackWarnings } from "./merge-pack-warnings";
 import {
   warnBannedMergedLines,
@@ -218,6 +222,8 @@ export class OrdersService implements OnApplicationBootstrap {
     private readonly tenantCtx: TenantContextService,
     // #2094: optional so unrelated specs build; `inlineReturn` without it fails closed.
     @Optional() private readonly inlineReturns?: InlineReturnsService,
+    // #2717 M3: the `mixed_packs` mode read; absent = off (no composition work at all).
+    @Optional() private readonly featureConfig?: FeatureConfigService,
   ) {}
 
   /**
@@ -240,17 +246,11 @@ export class OrdersService implements OnApplicationBootstrap {
    * the customer's own buyer checkout, whoever triggers it.
    */
   async loadActivePromotions(role: UserRole): Promise<PromotionRule[]> {
-    if (role !== UserRole.CUSTOMER) return [];
-    const promos = await this.promotionsService.activeForCatalog();
-    return promos.map((p) => ({
-      id: p.id,
-      type: p.type as PromotionRule["type"],
-      value: Number(p.value),
-      minQty: p.minQty,
-      scope: p.scope as PromotionRule["scope"],
-      category: p.category,
-      productIds: p.productIds,
-    }));
+    return loadActivePromotionRules(this.promotionsService, role);
+  }
+
+  private syncCompositions(tx: Prisma.TransactionClient, orderId: string) {
+    return syncOrderLineCompositions(tx, orderId, this.prisma.getTenantId(), this.featureConfig);
   }
 
   /** Extracted verbatim to `buyer-merge-pricing.ts` (B585 prefactor #2); thin delegator. */
@@ -804,6 +804,7 @@ export class OrdersService implements OnApplicationBootstrap {
                     categoryTaxType: write.data.categoryTaxType,
                     categoryTaxRate: write.data.categoryTaxRate,
                     categoryPriceIncludesTax: write.data.categoryPriceIncludesTax,
+                    ...compositionStampOf(write.data),
                   },
                 });
               }
@@ -867,6 +868,7 @@ export class OrdersService implements OnApplicationBootstrap {
             }
 
             // 4. Recompute winner totals.
+            await this.syncCompositions(tx, winner.id);
             const activeItems = await tx.orderItem.findMany({
               where: { orderId: winner.id, status: { not: ItemStatus.CANCELLED } },
             });
@@ -1057,6 +1059,7 @@ export class OrdersService implements OnApplicationBootstrap {
                     categoryTaxType: write.data.categoryTaxType,
                     categoryTaxRate: write.data.categoryTaxRate,
                     categoryPriceIncludesTax: write.data.categoryPriceIncludesTax,
+                    ...compositionStampOf(write.data),
                   },
                 });
               }
@@ -1103,6 +1106,7 @@ export class OrdersService implements OnApplicationBootstrap {
               await tx.orderItem.deleteMany({ where: { orderId: loser.id } });
               await tx.order.delete({ where: { id: loser.id } });
             }
+            await this.syncCompositions(tx, winner.id);
             const activeItems = await tx.orderItem.findMany({
               where: { orderId: winner.id, status: { not: ItemStatus.CANCELLED } },
             });
@@ -2040,6 +2044,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 },
               },
             });
+            await this.syncCompositions(tx, created.id);
             inlineMinted = await applyReturn(tx, inlineRet, {
               customerId,
               orderId: created.id,
@@ -4238,6 +4243,7 @@ export class OrdersService implements OnApplicationBootstrap {
           }
         }
 
+        await this.syncCompositions(tx, orderId);
         // Recalculate order totals from all non-cancelled items
         const activeItems = await tx.orderItem.findMany({
           where: { orderId, status: { not: "CANCELLED" } },
@@ -5177,6 +5183,7 @@ export class OrdersService implements OnApplicationBootstrap {
           }
         }
 
+        await this.syncCompositions(tx, order.id);
         // ── Totals recompute — identical to updateOrderItems :2163-2168 ──────
         const activeItems = await tx.orderItem.findMany({
           where: { orderId: order.id, status: { not: "CANCELLED" } },

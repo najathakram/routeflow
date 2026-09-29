@@ -5,7 +5,10 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
+import { syncOrderLineCompositions } from "../orders/order-composition";
+import { FeatureConfigService } from "../billing/feature-config.service";
 import * as unitAware from "../orders/unit-aware-guard";
 import { assertNoNegativeLineSubtotal } from "../common/money-invariants.util";
 import { randomUUID } from "crypto";
@@ -200,6 +203,7 @@ export class InvoicesService {
     private readonly commissionEngine: CommissionEngineService,
     private readonly numbering: NumberingService,
     private readonly sellingRestrictions: SellingRestrictionsService,
+    @Optional() private readonly featureConfig?: FeatureConfigService,
   ) {}
 
   /**
@@ -2377,6 +2381,7 @@ export class InvoicesService {
       }
     }
 
+    await syncOrderLineCompositions(db, orderId, tenantId, this.featureConfig);
     // B667: cancelling an orphan and rewriting the order's totals — coverage was already
     // confirmed above, before this loop ran.
     return finalizeOrderRecompute({
