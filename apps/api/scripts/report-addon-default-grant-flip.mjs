@@ -36,14 +36,15 @@ import { resolveReportDbUrl } from "./lib/report-db-url.mjs";
 // needing --experimental-vm-modules to dynamic-`import()` an ESM file (see that file's header).
 const require_ = createRequire(import.meta.url);
 const { Client } = require_("pg");
-const { planKeyFromEnum, findPlanDefinition, LEGACY_ADDON_KEY_TO_SKU } = require_(
-  "./lib/feature-registry-mirror.cjs",
-);
-const { TARGET_KEY, BUCKETS, classifyTenant, aggregate } = require_(
+const { planKeyFromEnum, findPlanDefinition, effectivePlanFlagsMirror, LEGACY_ADDON_KEY_TO_SKU } =
+  require_("./lib/feature-registry-mirror.cjs");
+const { TARGET_KEY, BUCKETS, classifyTenant, aggregate, payingOnLiteLine } = require_(
   "./lib/addon-default-grant-flip-classify.cjs",
 );
+// #2700 (SA-559a): the ONE paying predicate for scripts — required, never re-derived.
+const { isPayingTenant } = require_("./lib/paying-tenant.cjs");
 
-export { TARGET_KEY, BUCKETS, classifyTenant, aggregate };
+export { TARGET_KEY, BUCKETS, classifyTenant, aggregate, payingOnLiteLine };
 
 function parseArgs(argv) {
   let json = false;
@@ -134,7 +135,8 @@ async function main() {
 
     const tenants = await q(
       client,
-      `SELECT t.id, t.plan, t."planVersionId", s."planKey" AS "subPlanKey"
+      `SELECT t.id, t.plan, t.status, t.class, t."deletedAt", t."planVersionId",
+              s."planKey" AS "subPlanKey"
          FROM "Tenant" t
          LEFT JOIN "TenantSubscription" s ON s."tenantId" = t.id
         WHERE t."deletedAt" IS NULL`,
@@ -197,7 +199,9 @@ async function main() {
       const activeAddons = activeAddonsByTenant.get(tenant.id) ?? [];
       const activeAddonSet = new Set(activeAddons.map((a) => a.addonKey));
 
-      const flags = new Set(def ? def.featureFlags : []);
+      // #2700 (SA-559(3i)): flags gain forward, exactly as compute() — the LITE row moves
+      // REQUIRES_UNMET → FLIPS_ON when a published catalog adds flag.returns to LITE.
+      const flags = new Set(def ? effectivePlanFlagsMirror(def, version.id, publishedVersion) : []);
       const skuByCode = new Map((version.addonSkus ?? []).map((s) => [s.sku, s]));
       let publishedSkuByCode = null;
       for (const addon of activeAddons) {
@@ -229,6 +233,7 @@ async function main() {
         planKey: effectivePlanKey,
         bucket,
         hasInactiveRow: inactiveTargetTenantIds.has(tenant.id),
+        paying: isPayingTenant(tenant, tenant.subPlanKey),
       });
     }
 
@@ -248,6 +253,8 @@ async function main() {
         DENIED: r.DENIED,
         REQUIRES_UNMET: r.REQUIRES_UNMET,
         INACTIVE_ROW: r.INACTIVE_ROW,
+        PAYING: r.PAYING,
+        PAYING_FLIPS_ON: r.PAYING_FLIPS_ON,
         total: r.total,
       })),
     );
@@ -258,6 +265,8 @@ async function main() {
     console.log(
       `\n${result.totals.FLIPS_ON} tenant(s) newly gain "${TARGET_KEY}" with no TenantAddon row once the default grant ships.\n`,
     );
+    // SA-559a: the line the owner posts on #2554 before AND after the v13 publish (a count only).
+    console.log(`${payingOnLiteLine(result)}\n`);
     console.log("=== END — session was read-only; nothing was modified ===\n");
   } finally {
     await client.end();
