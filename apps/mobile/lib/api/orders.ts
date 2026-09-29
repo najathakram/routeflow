@@ -5,6 +5,7 @@ import type {
   ActiveOrderSummary,
   CancelImpact,
   CustomerPriceHistory,
+  LineComponentView,
   OrderTrackingResponse,
   UnitAwareLineInput,
 } from "@routeflow/types";
@@ -19,6 +20,8 @@ export type {
 
 export interface OrderItem {
   id: string;
+  /** #2717 M3: frozen sub-lines of a composed (mixed-pack) line; absent on a plain line. */
+  components?: LineComponentView[];
   /** Null for an unlisted (ad-hoc, non-catalog) line — `name` carries the label instead. */
   productId: string | null;
   /** Free-text label for an unlisted line (productId null, priceType "MANUAL"). */
