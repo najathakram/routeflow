@@ -321,6 +321,58 @@ describe("useBuyerNotifications — the bell belongs to one seller too (#2142 W2
     await waitFor(() => expect(hook.result.current.notifications).toEqual([oldNotice]));
   });
 
+  it("#2173 N1: the first render after a seller switch already shows only the new seller's notices", async () => {
+    localStorage.setItem(BUYER_KEYS.accessToken, buyerJwt("buyer-a"));
+    const bNotice = { ...oldNotice, id: "n-b", description: "Invoice INV-B has been updated" };
+    localStorage.setItem("rf_buyer_notifications:buyer-a:t-1", JSON.stringify([oldNotice]));
+    localStorage.setItem("rf_buyer_notifications:buyer-a:t-2", JSON.stringify([bNotice]));
+
+    // Record what EVERY render returns — rerender() flushes effects inside act, so reading
+    // result.current afterwards would hide a stale frame the user actually sees painted.
+    const seen: { t: string; ids: string[] }[] = [];
+    const hook = renderHook(
+      ({ t }: { t: string }) => {
+        const r = useBuyerNotifications(t);
+        seen.push({ t, ids: r.notifications.map((n) => n.id) });
+        return r;
+      },
+      { wrapper: Wrapper, initialProps: { t: "t-1" } },
+    );
+    await waitFor(() => expect(hook.result.current.notifications).toEqual([oldNotice]));
+
+    activeSeller("c-mine-at-b", "t-2");
+    hook.rerender({ t: "t-2" });
+    const afterSwitch = seen.filter((s) => s.t === "t-2");
+    expect(afterSwitch.length).toBeGreaterThan(0);
+    for (const frame of afterSwitch) expect(frame.ids).toEqual(["n-b"]);
+  });
+
+  it("#2173 N2: an event that arrives after the switch, before the bell re-renders, is saved under the NEW seller", async () => {
+    localStorage.setItem(BUYER_KEYS.accessToken, buyerJwt("buyer-a"));
+    localStorage.setItem("rf_buyer_notifications:buyer-a:t-1", JSON.stringify([oldNotice]));
+    const hook = mountAt("t-1");
+    await waitFor(() => expect(hook.result.current.notifications).toEqual([oldNotice]));
+    await waitFor(() => expect(fakeSocket.hasListener("order.statusChanged")).toBe(true));
+
+    // The stored active seller is already B (the filter reads it), but the portal has not yet
+    // re-rendered the bell with B's tenant id.
+    activeSeller("c-mine-at-b", "t-2");
+    act(() => {
+      fakeSocket.emit("order.statusChanged", {
+        orderId: "ord-b",
+        customerId: "c-mine-at-b",
+        orderNumber: "ORD-B",
+        status: "DELIVERED",
+      });
+    });
+
+    expect(stored("rf_buyer_notifications:buyer-a:t-1")).toEqual([oldNotice]); // A untouched
+    expect(stored("rf_buyer_notifications:buyer-a:t-2")).toEqual([
+      expect.objectContaining({ description: "Order #ORD-B status changed to Delivered" }),
+    ]);
+    expect(hook.result.current.notifications).toEqual([oldNotice]); // A's list on screen, unchanged
+  });
+
   it("with no active seller the bell persists nothing", async () => {
     localStorage.setItem(BUYER_KEYS.accessToken, buyerJwt("buyer-a"));
     localStorage.setItem("rf_buyer_notifications:buyer-a:t-1", JSON.stringify([oldNotice]));

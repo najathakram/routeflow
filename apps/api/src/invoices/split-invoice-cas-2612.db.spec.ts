@@ -44,6 +44,7 @@ import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { StorageService } from "../storage/storage.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EstimatesService } from "../estimates/estimates.service";
 import { NumberingService } from "../import/numbering.service";
@@ -150,6 +151,7 @@ describeDb(
           { provide: MessagingService, useValue: mockMessaging },
           { provide: StorageService, useValue: mockStorage },
           { provide: EntitlementsService, useValue: mockEntitlements },
+          entitlementAuthorityFromEntitlements, // #2241: EntitlementAuthority
           { provide: CommissionEngineService, useValue: mockCommissionEngine },
         ],
       }).compile();

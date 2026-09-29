@@ -1,5 +1,30 @@
 // ─── Products / inventory / stock-count (wave E / imp-10b) ─────────────────────
 
+import type { BarcodeOrigin, BarcodeSymbology, PackagingLevel } from "./enums";
+
+/** #2717 M1: a product barcode as the product read model returns it. `origin: "LEGACY"` = synthesized from the legacy
+ *  Product.barcode column for a product with no ProductBarcode rows yet (never persisted). */
+export interface ProductBarcodeView {
+  code: string;
+  level: PackagingLevel;
+  symbology: BarcodeSymbology;
+  origin: BarcodeOrigin | "LEGACY";
+  copiedFromLevel: PackagingLevel | null;
+  primaryFor: PackagingLevel | null;
+}
+
+/** #2717 M1: a product image as the product read model returns it (`origin: "LEGACY"` = synthesized from imageKeys). */
+export interface ProductImageView {
+  storageKey: string;
+  url: string | null;
+  focalX: number | null;
+  focalY: number | null;
+  sortOrder: number;
+  isPrimary: boolean;
+  altText: string | null;
+  origin: "ROW" | "LEGACY";
+}
+
 export interface InventoryValuation {
   totalValue: number;
   productCount: number;

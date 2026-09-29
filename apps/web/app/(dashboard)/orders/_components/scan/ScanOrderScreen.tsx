@@ -55,7 +55,7 @@ export interface ScanOrderScreenProps<
   /** The order's lines — the SAME state CreateOrderModal owns; this screen never keeps its own cart. */
   lines: readonly T[];
   /** One row per line. `highlighted` marks the line the last scan touched. */
-  /** `onTapPrice` is undefined for a SPECIAL-priced line (#2696 / B721: not editable until (c)). */
+  /** `onTapPrice` opens the price editor for the line (#2696(c): SPECIAL-priced lines included). */
   renderLine: (line: T, ctx: { highlighted: boolean; onTapPrice?: () => void }) => React.ReactNode;
   /**
    * The price/quantity editor for one line (LANE-S step 6). When given, tapping a row's price opens
@@ -682,8 +682,8 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
             {lines.map((line) =>
               renderLine(line, {
                 highlighted: !!line.productId && line.productId === highlightId,
-                onTapPrice:
-                  line.priceType === "SPECIAL" ? undefined : () => setEditingId(line.tempId),
+                // #2696(c): a SPECIAL-priced line too — an override takes a reason in the editor.
+                onTapPrice: () => setEditingId(line.tempId),
               }),
             )}
           </ul>

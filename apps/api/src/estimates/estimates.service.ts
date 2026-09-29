@@ -7,10 +7,11 @@ import {
 } from "@nestjs/common";
 import { EstimateStatus, PriceType } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
-import { computeLineSubtotal, getTierPrice, roundMoney } from "@routeflow/pricing";
+import { isSpecialTier, computeLineSubtotal, getTierPrice, roundMoney } from "@routeflow/pricing";
 import { loadMsrpMap } from "../common/msrp";
 import { effectiveTaxRateFromTotals } from "../common/tax-rate";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
@@ -42,9 +43,16 @@ export class EstimatesService {
     private readonly numbering: NumberingService,
     private readonly ledger: RegulatedLedgerService,
     private readonly sellingRestrictions: SellingRestrictionsService,
+    // #2198/SA-397: flag.msrp asks the same evaluation point as the route guard.
+    private readonly authority: EntitlementAuthority,
   ) {}
 
   private readonly logger = new Logger(EstimatesService.name);
+
+  /** #2198/SA-397: flag.msrp asks EntitlementAuthority, the same evaluation point as the route guard. */
+  private async msrpEnabled(tenantId: string | null | undefined): Promise<boolean> {
+    return !!tenantId && (await this.authority.can(tenantId, "flag.msrp"));
+  }
 
   /**
    * B70: atomic claim for estimate status transitions. Ensures only one call succeeds
@@ -182,7 +190,7 @@ export class EstimatesService {
           unitPrice = overridePrice;
           priceType = PriceType.DISCOUNTED;
           originalPrice = listPrice;
-        } else if (tierForProduct !== 1) {
+        } else if (isSpecialTier(tierForProduct)) {
           unitPrice = tierPrice;
           priceType = PriceType.SPECIAL;
           originalPrice = listPrice;
@@ -466,12 +474,11 @@ export class EstimatesService {
       // InvoicesService.applyMsrpSnapshots: no-op (every line stays null) when the
       // tenant lacks flag.msrp.
       const tenantId = this.prisma.getTenantId();
-      const msrpMap =
-        tenantId && (await this.entitlements.hasFlag(tenantId, "flag.msrp"))
-          ? await loadMsrpMap(tx, est.customerId, [
-              ...new Set(est.items.map((i) => i.productId).filter(Boolean)),
-            ] as string[])
-          : new Map<string, number | null>();
+      const msrpMap = (await this.msrpEnabled(tenantId))
+        ? await loadMsrpMap(tx, est.customerId, [
+            ...new Set(est.items.map((i) => i.productId).filter(Boolean)),
+          ] as string[])
+        : new Map<string, number | null>();
 
       // B294: the estimate never carries a per-line tax rate, only one flat
       // `taxAmount` over its whole `subtotal` — same shape as an order's
