@@ -16,6 +16,7 @@
 --   DROP TABLE "Recipe";
 --   ALTER TABLE "Product" DROP COLUMN "familyPriceOverride";
 --   DROP TYPE "RecipeStatus";
+BEGIN;
 SET LOCAL lock_timeout = '5s';
 
 -- CreateEnum
@@ -89,3 +90,4 @@ ALTER TABLE "RecipeComponent" ADD CONSTRAINT "RecipeComponent_recipeId_fkey" FOR
 -- AddForeignKey
 ALTER TABLE "RecipeComponent" ADD CONSTRAINT "RecipeComponent_componentProductId_fkey" FOREIGN KEY ("componentProductId") REFERENCES "Product"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
+COMMIT;
