@@ -23,6 +23,11 @@
  *                 splitting and filing attribution for that product — the
  *                 owner resolves these by hand via the product form.
  *
+ *   recipe-locked  (SA-587b) a would-be link product that sits in a non-RETIRED
+ *                 recipe (recipe product, family, or component) is SKIPPED, never
+ *                 written: its tracked category is locked while the recipe is open.
+ *                 Reported as a COUNT ONLY (never names, ids or slugs).
+ *
  * link rows have trackedCategoryId == null, so they carry no subcategory and
  * no synced Product.category — this script deliberately touches ONLY
  * trackedCategoryId / isTobacco, never category / trackedSubcategoryId.
@@ -51,6 +56,11 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { isTestTenant } from "../../../scripts/lib/test-tenants.cjs";
+import {
+  lockedProductIds,
+  openRecipeWhereAny,
+  partitionRecipeLocked,
+} from "./lib/recipe-locked.mjs";
 
 // ─── Connection (mirrors repair-receiving-units.mjs) ──────────────────────────
 function resolveDbUrl() {
@@ -142,11 +152,30 @@ async function planForTenant(tenant) {
       trackedCategory: { select: { name: true } },
     },
   });
+  // SA-587b: a would-be link product in an open (DRAFT/ACTIVE) recipe is skipped, counted only.
+  const linkCandidates = products.filter((p) => p.isTobacco && p.trackedCategoryId == null);
+  const openRecipes =
+    linkCandidates.length > 0
+      ? await prisma.recipe.findMany({
+          where: { tenantId: tenant.id, ...openRecipeWhereAny(linkCandidates.map((p) => p.id)) },
+          select: {
+            status: true,
+            productId: true,
+            familyProductId: true,
+            components: { select: { componentProductId: true } },
+          },
+        })
+      : [];
+  const { free: link, recipeLocked } = partitionRecipeLocked(
+    linkCandidates,
+    lockedProductIds(openRecipes),
+  );
   return {
     tenant,
     tobaccoCat,
-    // Flagged but pointing nowhere → link into the Tobacco type.
-    link: products.filter((p) => p.isTobacco && p.trackedCategoryId == null),
+    // Flagged but pointing nowhere (and in no open recipe) → link into the Tobacco type.
+    link,
+    recipeLocked,
     // Flagged but assigned to a DIFFERENT type → NEVER auto-moved. Reported
     // for the owner to resolve by hand (moving could change invoice splitting
     // and filing attribution for that product).
@@ -161,7 +190,7 @@ async function planForTenant(tenant) {
     // (W1-seed values). Gated on link rows specifically: a tenant whose flagged
     // products are ALL conflicts (assigned elsewhere, never auto-moved) must not
     // get an empty "Tobacco" type it would then carry forever in the hub.
-    createCategory: !tobaccoCat && products.some((p) => p.isTobacco && p.trackedCategoryId == null),
+    createCategory: !tobaccoCat && link.length > 0,
   };
 }
 
@@ -201,11 +230,11 @@ async function executePlan(plan) {
 
 // ─── Reporting ─────────────────────────────────────────────────────────────
 function printPlan(plan) {
-  const { tenant, link, conflicts, flag, createCategory } = plan;
+  const { tenant, link, recipeLocked, conflicts, flag, createCategory } = plan;
   const writeCount = link.length + flag.length + (createCategory ? 1 : 0);
 
   console.log(`\nTenant: ${tenant.slug} (${tenant.status})`);
-  if (writeCount === 0 && conflicts.length === 0) {
+  if (writeCount === 0 && conflicts.length === 0 && recipeLocked.length === 0) {
     console.log(`  clean — nothing to do`);
     return;
   }
@@ -220,6 +249,11 @@ function printPlan(plan) {
     for (const p of link) {
       console.log(`    ${p.id} · ${p.name} · link`);
     }
+  }
+  if (recipeLocked.length > 0) {
+    console.log(
+      `  recipe-locked (${recipeLocked.length}) — in a non-retired recipe, skipped (count only)`,
+    );
   }
   if (flag.length > 0) {
     console.log(`  flag (${flag.length}) — member of Tobacco type, isTobacco=false → set true:`);
