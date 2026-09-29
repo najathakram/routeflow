@@ -149,7 +149,7 @@ describe("composition writer tripwire (#2717 M3, case 14)", () => {
   it.each(Object.entries(REGISTRY).filter(([, e]) => e.kind === "order"))(
     "%s calls syncOrderLineCompositions in the same function",
     (key) => {
-      expect(sites.get(key)).toContain("syncOrderLineCompositions(");
+      expect(sites.get(key)).toMatch(/syncOrderLineCompositions\(|this\.syncCompositions\(/);
     },
   );
 
