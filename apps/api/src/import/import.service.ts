@@ -24,7 +24,13 @@ import { ImportEntityType, InvoiceStatus, MovementType, UserRole } from "@prisma
 import * as bcrypt from "bcrypt";
 import * as crypto from "crypto";
 import { addressStateFields } from "../customers/address-state";
-import { PRODUCT_COLUMNS, CUSTOMER_COLUMNS, resolveColumns, parseRow } from "./import-columns";
+import {
+  PRODUCT_COLUMNS,
+  CUSTOMER_COLUMNS,
+  resolveColumns,
+  parseRow,
+  parseStrictMoneyCell,
+} from "./import-columns";
 import type { CustomerComplianceInput } from "../customers/customer-compliance-input";
 
 /** B858/B859: money fields in PRODUCT_COLUMNS that get rounded-value diff comparison. */
@@ -127,6 +133,62 @@ export function importCalendarDay(
   const parsed = parse(value);
   if (Number.isNaN(parsed.getTime())) return null;
   return new Date(Date.UTC(parsed.getFullYear(), parsed.getMonth(), parsed.getDate()));
+}
+
+type InvoiceMoney =
+  | {
+      ok: true;
+      total: number;
+      subtotal: number;
+      discount: number;
+      shippingFee: number;
+      /** NaN = the Balance Due cell is absent (the status logic relies on that). */
+      balanceDue: number;
+      lines: Map<
+        Record<string, string>,
+        { unitPrice: number; discount: number; itemTotal: number }
+      >;
+    }
+  | { ok: false; reason: string };
+
+/**
+ * #2190: read every money cell of one invoice group with the strict cell check shared with the
+ * products/customers path. A blank cell is absent (today's default: 0, or NaN for Balance Due); a
+ * non-blank cell that is not a number (or overflows Decimal(10,2)) fails the group with a reason
+ * naming the column header as it was read. Negative values are legitimate on an invoice.
+ */
+function readInvoiceMoney(invoiceRows: Record<string, string>[]): InvoiceMoney {
+  let reason: string | null = null;
+  const read = (row: Record<string, string>, headers: string[], absent: number): number => {
+    for (const header of headers) {
+      const raw = row[header];
+      if (raw == null || String(raw).trim() === "") continue;
+      const r = parseStrictMoneyCell(String(raw), { allowNegative: true });
+      if (r.ok) return r.value;
+      reason ??= `${header}: ${r.reason}`;
+      return absent;
+    }
+    return absent;
+  };
+  const first = invoiceRows[0];
+  const total = read(first, ["Total"], 0);
+  const subtotal = read(first, ["SubTotal", "Sub Total"], 0);
+  const discount = read(first, ["Entity Discount Amount", "Discount Amount"], 0);
+  const shippingFee = read(first, ["Shipping Charge"], 0);
+  const balanceDue = read(first, ["Balance Due", "Balance", "Outstanding Amount"], NaN);
+  const lines: Map<
+    Record<string, string>,
+    { unitPrice: number; discount: number; itemTotal: number }
+  > = new Map();
+  for (const row of invoiceRows) {
+    lines.set(row, {
+      unitPrice: read(row, ["Item Price"], 0),
+      discount: read(row, ["Discount Amount"], 0),
+      itemTotal: read(row, ["Item Total"], 0),
+    });
+  }
+  if (reason) return { ok: false, reason };
+  return { ok: true, total, subtotal, discount, shippingFee, balanceDue, lines };
 }
 
 @Injectable()
@@ -1100,6 +1162,17 @@ export class ImportService {
         continue;
       }
 
+      // #2190: a present-but-unparseable money cell skips the WHOLE invoice group before any write
+      // (never a silent $0). Blank/absent cells keep today's defaults.
+      const money = readInvoiceMoney(invoiceRows);
+      if (!money.ok) {
+        skipped++;
+        errors.push(
+          `${(first["Invoice Number"] || "").trim() || (first["Invoice ID"] || "").trim() || customerName}: ${money.reason}`,
+        );
+        continue;
+      }
+
       // Try to find existing customer
       let customer = await this.prisma.forTenant().customer.findFirst({
         where: { businessName: { contains: customerName, mode: "insensitive" } },
@@ -1176,11 +1249,10 @@ export class ImportService {
         continue;
       }
 
-      const total = parseImportMoney(first["Total"] || "0") || 0;
-      const subtotal = parseImportMoney(first["SubTotal"] || first["Sub Total"] || "0") || total;
-      const discount =
-        parseImportMoney(first["Entity Discount Amount"] || first["Discount Amount"] || "0") || 0;
-      const shippingFee = parseImportMoney(first["Shipping Charge"] || "0") || 0;
+      const total = money.total;
+      const subtotal = money.subtotal || total;
+      const discount = money.discount;
+      const shippingFee = money.shippingFee;
       // B268/D4: a row carrying a source number keeps it verbatim (the upsert-by-number
       // branch below repairs status drift on re-import). A row with NO source number is a
       // live mint, not a preserved import — reserved further down, inside the try, via
@@ -1214,9 +1286,7 @@ export class ImportService {
       // Determine status using Zoho's "Balance Due" field, which is more reliable
       // than the status label (Zoho may show "Overdue" for invoices paid in cash outside the system)
       const zohoStatus = this.mapInvoiceStatus(first["Invoice Status"]);
-      const balanceDue = parseImportMoney(
-        first["Balance Due"] || first["Balance"] || first["Outstanding Amount"] || "NaN",
-      );
+      const balanceDue = money.balanceDue;
 
       let status: InvoiceStatus;
       if (zohoStatus === InvoiceStatus.DRAFT) {
@@ -1244,11 +1314,10 @@ export class ImportService {
         const description = (row["Item Name"] || "").replace(/[\n\r]+/g, " ").trim() || "Item";
         const qty = parseImportNumber(row["Quantity"] || "1") || 1;
         if (qty <= 0) continue;
-        const unitPrice = parseImportMoney(row["Item Price"] || "0") || 0;
-        const itemDiscount = parseImportMoney(row["Discount Amount"] || "0") || 0;
-        const sub = roundMoney(
-          parseImportMoney(row["Item Total"] || "0") || qty * unitPrice - itemDiscount,
-        );
+        const line = money.lines.get(row)!;
+        const unitPrice = line.unitPrice;
+        const itemDiscount = line.discount;
+        const sub = roundMoney(line.itemTotal || qty * unitPrice - itemDiscount);
         const sku = (row["SKU"] || "").trim();
 
         let productId: string | undefined;
