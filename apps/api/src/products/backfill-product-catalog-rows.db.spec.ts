@@ -65,14 +65,14 @@ describeDb("backfill-product-catalog-rows backfillProductCatalogRows() (db)", ()
   const liveSlug = `acme-live-2728-${run}`;
   let liveTenantId: string;
 
+  // A per-file MONOTONIC counter, never random digits: ~15 draws from 1000 random values collided
+  // ~10% of runs (F2, #2554 5881265836: the legacy barcode unique in setup, "Barcode already exists"
+  // on an update). `2` + the 8-char run id + a 4-digit counter = 13 characters, unique within the
+  // run's own tenant (and `run` differs per file and per run).
+  let codeSeq = 0;
   async function seedCode(): Promise<string> {
-    // Unique EAN-13-shaped codes per run so re-runs of this file never collide on
-    // `@@unique([tenantId, code, level])`.
-    return `2${run}${Math.floor(Math.random() * 1000)
-      .toString()
-      .padStart(4, "0")}`
-      .padEnd(13, "0")
-      .slice(0, 13);
+    codeSeq += 1;
+    return `2${run}${String(codeSeq).padStart(4, "0")}`;
   }
 
   beforeAll(async () => {
