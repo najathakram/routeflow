@@ -1,4 +1,4 @@
-import { bumpLineForScan } from "./scan-level-line";
+import { bumpLineForScan, explicitBumpLevel } from "./scan-level-line";
 
 // Review item 4 (#2764): a picker TAP (no explicit level) keeps the OLD +1 on a boxSplit line;
 // only an explicit scan level BOX adds a whole case (+upb pieces).

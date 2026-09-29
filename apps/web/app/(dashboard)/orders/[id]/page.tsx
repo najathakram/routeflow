@@ -1251,12 +1251,12 @@ export function EditableLineItems({
     return () => document.removeEventListener("mousedown", onClickOutside);
   }, []);
 
-  function addProduct(p: any, level?: scan.SellLevel) {
+  function addProduct(p: any, level?: scan.SellLevel, explicit?: scan.SellLevel) {
     const existing = items.find((it) => it.productId === p.id && !it.cancelled);
     const unitScan = scan.isUnitScanOnBoxed(p, level ?? "BOX");
     if (existing) {
       onChange(
-        items.map((it) => (it.id === existing.id ? scan.bumpLineForScan(it, unitScan, level) : it)),
+        items.map((it) => (it.id === existing.id ? scan.bumpLineForScan(it, unitScan, explicit) : it)),
       );
       setScrollToId(existing.id);
     } else {
@@ -1318,7 +1318,7 @@ export function EditableLineItems({
           scheduleScannerRefocus(addInputRef, 50, { select: true });
           return;
         }
-        addProduct(result.product, scan.scanLevelForHit(code, result.product));
+        addProduct(result.product, ...scan.scanArgsForHit(code, result.product));
         return;
       }
       // Nothing found — open create-product modal with scanned code as SKU

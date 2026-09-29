@@ -2,7 +2,19 @@ import type { SellLevel } from "@routeflow/pricing";
 import type { PriceType } from "@/lib/api/orders";
 
 export type { SellLevel };
-export { scanLevelForHit } from "../_components/scan/useScanCodeHandler";
+import { scanLevelForHit, scanLevelsForHit } from "../_components/scan/useScanCodeHandler";
+export { scanLevelForHit };
+
+/** addProduct's (level, explicit bump level) for a scanned hit. */
+export function scanArgsForHit(code: string, p: any): [SellLevel, SellLevel | undefined] {
+  return [scanLevelForHit(code, p), explicitBumpLevel(code, p)];
+}
+
+/** SA-580c: only a DISTINCT BOX code (levels == [BOX]) is an explicit case scan; shared == tap. */
+export function explicitBumpLevel(code: string, product: any): SellLevel | undefined {
+  const levels = scanLevelsForHit(code, product);
+  return levels.length === 1 && levels[0] === "BOX" ? "BOX" : undefined;
+}
 
 // #2717 M4a-1 (SA-580 R1/R4): scan-level line helpers, extracted from page.tsx (size ratchet).
 

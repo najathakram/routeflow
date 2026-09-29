@@ -47,19 +47,21 @@ export function isConnectivityError(err: unknown): boolean {
  * `scanMatch.levels` wins when present (it saw the row that hit); otherwise the levels are worked
  * out from the product's cached `barcodes[]` / legacy columns. The line's mode never matters.
  */
-export function scanLevelForHit(code: string, product: any): SellLevel {
+export function scanLevelsForHit(code: string, product: any): SellLevel[] {
   const sm = product?.scanMatch as { levels?: SellLevel[] } | undefined;
-  const levels: SellLevel[] =
-    sm?.levels && sm.levels.length > 0
-      ? sm.levels
-      : levelsForScannedCode(code, {
-          barcode: product?.barcode,
-          sku: product?.sku,
-          unitSku: product?.unitSku,
-          unitsPerBox: product?.unitsPerBox,
-          barcodes: product?.barcodes as ScanBarcodeRow[] | undefined,
-        });
-  return resolveScanSellLevel({ unitsPerBox: product?.unitsPerBox }, levels);
+  return sm?.levels && sm.levels.length > 0
+    ? sm.levels
+    : levelsForScannedCode(code, {
+        barcode: product?.barcode,
+        sku: product?.sku,
+        unitSku: product?.unitSku,
+        unitsPerBox: product?.unitsPerBox,
+        barcodes: product?.barcodes as ScanBarcodeRow[] | undefined,
+      });
+}
+
+export function scanLevelForHit(code: string, product: any): SellLevel {
+  return resolveScanSellLevel({ unitsPerBox: product?.unitsPerBox }, scanLevelsForHit(code, product));
 }
 
 export interface ScanCodeHandlerDeps {
