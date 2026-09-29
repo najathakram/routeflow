@@ -290,7 +290,7 @@ describe("lint-migrations.mjs contract (T1 / R2, R3)", () => {
         `x_${EXPECTED_EXEMPT[0]}`,
         EXPECTED_EXEMPT[0].toUpperCase(),
       ]) {
-        const res = run(["--files", inFolder(`nx-${name}`.replace(/^nx-/, ""), real)]);
+        const res = run(["--files", inFolder(name, real)]);
         expect(res.stderr).toContain("SET LOCAL");
         expect(res.status).toBe(1);
       }
