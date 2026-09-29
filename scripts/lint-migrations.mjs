@@ -28,6 +28,14 @@
 // `^--\s*reason:\s*\S` — otherwise this script prints
 // `<file>:<line>: squawk-ignore without a "-- reason:" line above it` and exits 1.
 //
+// SET LOCAL rule (B896 / SA-582), also BEFORE squawk: `SET LOCAL` only lasts until the end of the
+// current transaction, and a migration file is not guaranteed to run inside one, so every top-level
+// `SET LOCAL` must sit inside an explicit `BEGIN;` ... `COMMIT;` (or `START TRANSACTION;` ... `END;`)
+// wrap. Comments, string literals, quoted identifiers and dollar-quoted bodies are ignored (a
+// function body's own SET LOCAL belongs to that statement, not to the file).
+// `<file>:<line>: SET LOCAL ...` and exit 1 otherwise. Diff mode reads only the migrations in the
+// range, so already-applied history (immutable) is never flagged.
+//
 // Exit code mirrors squawk's own contract: 0 clean, 1 on any (non-excluded) finding — except
 // --all without --strict, which always exits 0 (informational only). 2 is reserved for "the
 // --base range could not be computed", so a broken range can never read as a clean run.
@@ -121,6 +129,86 @@ function checkReasonedIgnores(files) {
   return errors;
 }
 
+// Blanks comments, string literals, quoted identifiers and dollar-quoted bodies to spaces (newlines
+// kept), so offsets and line numbers still match the original text.
+function blankNonCode(sql) {
+  const out = sql.split("");
+  const blank = (from, to) => {
+    for (let k = from; k < to; k++) if (out[k] !== "\n") out[k] = " ";
+  };
+  let i = 0;
+  while (i < sql.length) {
+    const c = sql[i];
+    const two = sql.slice(i, i + 2);
+    if (two === "--") {
+      const end = sql.indexOf("\n", i);
+      const stop = end === -1 ? sql.length : end;
+      blank(i, stop);
+      i = stop;
+    } else if (two === "/*") {
+      const end = sql.indexOf("*/", i + 2);
+      const stop = end === -1 ? sql.length : end + 2;
+      blank(i, stop);
+      i = stop;
+    } else if (c === "'" || c === '"') {
+      let j = i + 1;
+      while (j < sql.length) {
+        if (sql[j] === c && sql[j + 1] === c) j += 2;
+        else if (sql[j] === c) break;
+        else j++;
+      }
+      blank(i, Math.min(j + 1, sql.length));
+      i = j + 1;
+    } else if (c === "$") {
+      const m = /^\$[A-Za-z_]*\$/.exec(sql.slice(i));
+      if (m) {
+        const end = sql.indexOf(m[0], i + m[0].length);
+        const stop = end === -1 ? sql.length : end + m[0].length;
+        blank(i, stop);
+        i = stop;
+      } else i++;
+    } else i++;
+  }
+  return out.join("");
+}
+
+// SET LOCAL rule — see header. Walks the top-level statements, tracking whether an explicit
+// transaction is open.
+function checkSetLocalWrapped(files) {
+  const errors = [];
+  for (const file of files) {
+    const text = fs.readFileSync(file, "utf8");
+    const code = blankNonCode(text);
+    if (!/\bSET\s+LOCAL\b/i.test(code)) continue;
+    const lineAt = (offset) => text.slice(0, offset).split("\n").length;
+    let inTxn = false;
+    let beginLine = 0;
+    let offset = 0;
+    for (const raw of code.split(";")) {
+      const stmt = raw.trim().replace(/\s+/g, " ").toUpperCase();
+      const at = offset + (raw.length - raw.trimStart().length);
+      offset += raw.length + 1;
+      if (stmt === "BEGIN" || stmt.startsWith("BEGIN ") || stmt.startsWith("START TRANSACTION")) {
+        inTxn = true;
+        beginLine = lineAt(at);
+      } else if (stmt === "COMMIT" || stmt === "END" || stmt === "ROLLBACK") {
+        inTxn = false;
+      } else if (/^SET LOCAL\b/.test(stmt) && !inTxn) {
+        errors.push(
+          `${file}:${lineAt(at)}: SET LOCAL outside an explicit BEGIN; ... COMMIT; wrap ` +
+            "(it only lasts to the end of a transaction, and a migration is not guaranteed to run in one)",
+        );
+      }
+    }
+    if (inTxn) {
+      errors.push(
+        `${file}:${beginLine}: BEGIN; with no COMMIT; — a SET LOCAL in this file needs the closing wrap`,
+      );
+    }
+  }
+  return errors;
+}
+
 const opts = parseArgs(process.argv.slice(2));
 
 const files =
@@ -139,6 +227,17 @@ const reasonErrors = checkReasonedIgnores(files);
 if (reasonErrors.length > 0) {
   for (const err of reasonErrors) console.error(err);
   process.exit(1);
+}
+
+const setLocalErrors = checkSetLocalWrapped(files);
+if (setLocalErrors.length > 0) {
+  // --all without --strict is informational (already-applied history is immutable and predates this
+  // rule): report, never gate.
+  for (const err of setLocalErrors) console.error(err);
+  if (!(opts.mode === "all" && !opts.strict)) process.exit(1);
+  console.log(
+    `lint:migrations --all: ${setLocalErrors.length} SET LOCAL wrap finding(s) in existing history (informational)`,
+  );
 }
 
 const res = spawnSync(

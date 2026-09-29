@@ -201,6 +201,12 @@ string` (B20 — free-form intake note, e.g. "DAMAGED_BOX") and its `restock?` d
 
 ### `@routeflow/pricing` (`packages/pricing`)
 
+> **2026-09-22 additions** — `build-line.ts` (`buildLine`, the strict two-axis line builder,
+> PR-1 #1167), `legacy-line-pieces.ts` (`legacyLinePieces` classifier for a boxes-null line,
+> #1202) and `po-line.ts` (`buildPOLine`/`derivedCaseCost`; **`resolvePOLineAmounts(...).totalCost`
+> is the only PO total — re-deriving it over-charges**, #1199). Signatures in
+> [`api/catchup-2026-09-22-units-money.md`](api/catchup-2026-09-22-units-money.md).
+
 **Compiled** workspace package — the ONE copy of RouteFlow money math, replacing the four
 `pricing.ts` copies (api `src/common` + `src/utils`, web `lib`, mobile `lib`). Entry `src/index.ts`
 → `pricing.ts` (`computeLineSubtotal`, `normalizeBoxesPieces`, `roundMoney`, `prorateLineSubtotal`,
