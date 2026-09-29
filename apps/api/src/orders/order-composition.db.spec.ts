@@ -187,11 +187,18 @@ describeDb("#2717 M3 order composition writes — real Postgres", () => {
     qty: boxes * 24,
   });
 
-  const create = (w: World, customerId: string, items: unknown[], status?: "DRAFT" | "PENDING") =>
-    inTenant(w.tenantId, () =>
-      orders.create({ customerId, items, ...(status ? { status } : {}) }, staff(w), {
-        skipAutoMerge: true,
-      }),
+  const create = (
+    w: World,
+    customerId: string,
+    items: unknown[],
+    status?: "DRAFT" | "PENDING",
+  ): Promise<{ id: string }> =>
+    inTenant(
+      w.tenantId,
+      () =>
+        orders.create({ customerId, items, ...(status ? { status } : {}) }, staff(w), {
+          skipAutoMerge: true,
+        }) as Promise<{ id: string }>,
     );
   const edit = (w: World, orderId: string, dto: unknown) =>
     inTenant(w.tenantId, () => orders.updateOrderItems(orderId, dto, staff(w)));
@@ -201,7 +208,8 @@ describeDb("#2717 M3 order composition writes — real Postgres", () => {
       orderBy: { position: "asc" },
       include: { components: { orderBy: { position: "asc" } } },
     });
-  const componentCount = (tenantId: string) => raw.orderItemComponent.count({ where: { tenantId } });
+  const componentCount = (tenantId: string) =>
+    raw.orderItemComponent.count({ where: { tenantId } });
 
   /** Polls until at least `n` backends of this database are blocked by ANYONE (< 5 s: Prisma's tx timeout). */
   async function waitUntilNBlocked(n: number): Promise<boolean> {
@@ -444,7 +452,9 @@ describeDb("#2717 M3 order composition writes — real Postgres", () => {
     const orderA = await create(a, custA, [line(catA.mix.id, 2)]);
 
     // Positive control: A reads its own two components; they are stamped with A's tenant.
-    const seenByA = await inTenant(a.tenantId, () => orders.findOne(orderA.id, staff(a)));
+    const seenByA = (await inTenant(a.tenantId, () => orders.findOne(orderA.id, staff(a)))) as {
+      lineItems: { components: unknown[] }[];
+    };
     expect(seenByA.lineItems).toHaveLength(1);
     expect(seenByA.lineItems[0].components).toHaveLength(2);
     expect(await componentCount(a.tenantId)).toBe(2);
@@ -504,7 +514,9 @@ describeDb("#2717 M3 order composition writes — real Postgres", () => {
       // eslint-disable-next-line no-await-in-loop
       const v2 = await inTenant(w.tenantId, () => recipes.createVersion(v1.id));
       // eslint-disable-next-line no-await-in-loop
-      await inTenant(w.tenantId, () => recipes.update(v2.id, { components: comps(6, 18) } as never));
+      await inTenant(w.tenantId, () =>
+        recipes.update(v2.id, { components: comps(6, 18) } as never),
+      );
 
       // The holder takes NO KEY UPDATE (never FOR UPDATE / a key update: the recipe rows' FK to this
       // product would queue behind it) on the recipe product row; the activation (its
