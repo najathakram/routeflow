@@ -7,8 +7,8 @@ import {
 import type { RecipeDto } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { FeatureConfigService } from "../billing/feature-config.service";
-import { readFamilyPriceMode } from "./family-price";
-import { lockProductRow, type CatalogTx } from "./product-catalog-sync";
+import { lockFamilyRow, readFamilyPriceMode } from "./family-price";
+import { lockProductRow, lockProductRowsShared, type CatalogTx } from "./product-catalog-sync";
 import { CreateRecipeDto, RecipeComponentInputDto, UpdateRecipeDto } from "./dto/recipe.dto";
 import {
   assertRecipeEditable,
@@ -166,6 +166,88 @@ export class RecipesService {
     }
   }
 
+  /**
+   * HOUSE LOCK ORDER (product-catalog-sync.ts, SA-584 B2 c): the FAMILY row FOR UPDATE, then the
+   * recipe-product row FOR UPDATE, then every component row FOR SHARE in id order. A concurrent
+   * re-parent / deactivation / box-size edit of any of them waits for this tx (or has already
+   * committed, and the re-validation below sees it). With no `componentIds` the components are the
+   * recipe's current rows, read AFTER the recipe-product lock (every component writer holds it) and
+   * returned so the caller can re-validate exactly what is locked.
+   */
+  private async lockRecipeRows(
+    tx: CatalogTx,
+    tenantId: string,
+    input: {
+      familyId: string;
+      recipeProductId: string;
+      recipeId?: string;
+      componentIds?: string[];
+    },
+  ): Promise<Array<{ componentProductId: string; qty: number }> | null> {
+    await lockFamilyRow(tx, tenantId, input.familyId);
+    await lockProductRow(tx, tenantId, input.recipeProductId);
+    let current: Array<{ componentProductId: string; qty: number }> | null = null;
+    let ids = input.componentIds;
+    if (!ids) {
+      if (!input.recipeId) throw new Error("lockRecipeRows: recipeId or componentIds required");
+      current = await tx.recipeComponent.findMany({
+        where: { recipeId: input.recipeId, tenantId },
+        select: { componentProductId: true, qty: true },
+        orderBy: { position: "asc" },
+      });
+      ids = (current ?? []).map((c) => c.componentProductId);
+    }
+    await lockProductRowsShared(tx, tenantId, ids);
+    return current;
+  }
+
+  /**
+   * SA-584 B2 (b): the I2/I6/Q1/Q10 rules again, INSIDE the tx and AFTER the locks, on rows read
+   * through `tx` (tenant-scoped like every tx client) — what the pre-lock read validated is only an
+   * expectation (L-239). A component re-parented, deactivated or a family resized since is refused.
+   */
+  private async revalidateShape(
+    tx: CatalogTx,
+    input: {
+      unitsPerPack: number;
+      familyId: string;
+      recipeProductId: string;
+      inputs: Array<{ componentProductId: string; qty: number }>;
+    },
+  ): Promise<void> {
+    const ids = Array.from(
+      new Set([
+        input.familyId,
+        input.recipeProductId,
+        ...input.inputs.map((c) => c.componentProductId),
+      ]),
+    ).filter((id) => typeof id === "string" && id.length > 0);
+    const found: RuleProduct[] = await tx.product.findMany({
+      where: { id: { in: ids } },
+      select: RULE_SELECT,
+    });
+    const byId = new Map(found.map((p) => [p.id, p]));
+    const family = byId.get(input.familyId);
+    if (!family) throw new NotFoundException("Family product not found");
+    const recipeProduct = byId.get(input.recipeProductId);
+    if (!recipeProduct) throw new NotFoundException("Recipe product not found");
+    const recipeProductVariantCount: number = await tx.product.count({
+      where: { parentProductId: input.recipeProductId },
+    });
+    assertRecipeProducts({ family, recipeProduct, recipeProductVariantCount });
+    assertRecipeShape({
+      unitsPerPack: input.unitsPerPack,
+      family,
+      recipeProduct,
+      recipeProductVariantCount,
+      components: input.inputs.map((c) => ({
+        componentProductId: c.componentProductId,
+        qty: c.qty,
+        product: byId.get(c.componentProductId),
+      })),
+    });
+  }
+
   private positioned(inputs: RecipeComponentInputDto[]) {
     return inputs.map((c, i) => ({
       componentProductId: c.componentProductId,
@@ -204,7 +286,11 @@ export class RecipesService {
     });
 
     const created = await this.prisma.tenantTransaction(async (tx: CatalogTx) => {
-      await lockProductRow(tx, tenantId, recipeProduct.id);
+      await this.lockRecipeRows(tx, tenantId, {
+        familyId: family.id,
+        recipeProductId: recipeProduct.id,
+        componentIds: inputs.map((c) => c.componentProductId),
+      });
       const raced = await tx.recipe.findFirst({
         where: { productId: recipeProduct.id, tenantId },
         select: { id: true },
@@ -216,6 +302,12 @@ export class RecipesService {
           409,
         );
       }
+      await this.revalidateShape(tx, {
+        unitsPerPack: dto.unitsPerPack,
+        familyId: family.id,
+        recipeProductId: recipeProduct.id,
+        inputs,
+      });
       let recipe: { id: string; status: string };
       try {
         recipe = await tx.recipe.create({
@@ -297,13 +389,25 @@ export class RecipesService {
     });
 
     const updated = await this.prisma.tenantTransaction(async (tx: CatalogTx) => {
-      await lockProductRow(tx, tenantId, recipe.productId);
-      const fresh: { id: string; status: string } | null = await tx.recipe.findFirst({
-        where: { id: recipe.id, tenantId },
-        select: { id: true, status: true },
+      const current = await this.lockRecipeRows(tx, tenantId, {
+        familyId: recipe.familyProductId,
+        recipeProductId: recipe.productId,
+        recipeId: recipe.id,
+        componentIds: dto.components?.map((c) => c.componentProductId),
       });
+      const fresh: { id: string; status: string; unitsPerPack: number } | null =
+        await tx.recipe.findFirst({
+          where: { id: recipe.id, tenantId },
+          select: { id: true, status: true, unitsPerPack: true },
+        });
       if (!fresh) throw new NotFoundException("Recipe not found");
       assertRecipeEditable(fresh);
+      await this.revalidateShape(tx, {
+        unitsPerPack: dto.unitsPerPack ?? fresh.unitsPerPack,
+        familyId: recipe.familyProductId,
+        recipeProductId: recipe.productId,
+        inputs: dto.components ?? current ?? [],
+      });
       if (dto.unitsPerPack !== undefined) {
         await tx.recipe.update({ where: { id: recipe.id }, data: { unitsPerPack } });
       }
@@ -376,12 +480,15 @@ export class RecipesService {
 
   /** What the activation saw before the lock: the recipe and the ACTIVE version it expects to retire. */
   private async loadActivationPlan(id: string) {
-    const recipe: { id: string; productId: string; status: string } | null = await this.prisma
-      .forTenant()
-      .recipe.findFirst({
-        where: { id },
-        select: { id: true, productId: true, status: true },
-      });
+    const recipe: {
+      id: string;
+      productId: string;
+      familyProductId: string;
+      status: string;
+    } | null = await this.prisma.forTenant().recipe.findFirst({
+      where: { id },
+      select: { id: true, productId: true, familyProductId: true, status: true },
+    });
     if (!recipe) throw new NotFoundException("Recipe not found");
     const prior: { id: string } | null = await this.prisma.forTenant().recipe.findFirst({
       where: { productId: recipe.productId, status: "ACTIVE" },
@@ -401,10 +508,14 @@ export class RecipesService {
     const { recipe, priorActiveId } = await this.loadActivationPlan(id);
     assertRecipeEditable(recipe);
     const activated = await this.prisma.tenantTransaction(async (tx: CatalogTx) => {
-      await lockProductRow(tx, tenantId, recipe.productId);
-      const fresh: { status: string } | null = await tx.recipe.findFirst({
+      const rows = await this.lockRecipeRows(tx, tenantId, {
+        familyId: recipe.familyProductId,
+        recipeProductId: recipe.productId,
+        recipeId: recipe.id,
+      });
+      const fresh: { status: string; unitsPerPack: number } | null = await tx.recipe.findFirst({
         where: { id: recipe.id, tenantId },
-        select: { status: true },
+        select: { status: true, unitsPerPack: true },
       });
       if (!fresh) throw new NotFoundException("Recipe not found");
       if (fresh.status !== "DRAFT") throw recipeActiveConflict();
@@ -422,6 +533,12 @@ export class RecipesService {
           "A recipe needs at least one component to be activated.",
         );
       }
+      await this.revalidateShape(tx, {
+        unitsPerPack: fresh.unitsPerPack,
+        familyId: recipe.familyProductId,
+        recipeProductId: recipe.productId,
+        inputs: rows ?? [],
+      });
       const now = new Date();
       try {
         if (current) {
