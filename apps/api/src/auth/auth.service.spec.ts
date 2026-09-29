@@ -307,12 +307,15 @@ describe("AuthService", () => {
       expect(result.user.id).toBe("user-1");
     });
 
-    it("clicking the link twice is smooth — an already-ACTIVE user just logs in, no update call", async () => {
+    it("clicking the link twice is smooth — an already-ACTIVE user just logs in, no status update", async () => {
       prisma.user.findUnique.mockResolvedValue({ ...INACTIVE_USER, status: "ACTIVE" } as any);
 
       const result = await service.verifyEmailAndLogin("valid.jwt.token");
 
-      expect(prisma.user.update).not.toHaveBeenCalled();
+      // The only user write is login()'s lastLoginAt stamp (#2159 S1) — never a status change.
+      const writes = prisma.user.update.mock.calls.map((c: any[]) => c[0].data);
+      expect(writes.every((d: Record<string, unknown>) => !("status" in d))).toBe(true);
+      expect(writes).toEqual([{ lastLoginAt: expect.any(Date) }]);
       expect(result).toHaveProperty("accessToken");
     });
 
@@ -601,7 +604,10 @@ describe("AuthService", () => {
 
   describe("refresh — in-place rotation (B155)", () => {
     const T0 = new Date("2026-01-01T00:00:00.000Z");
-    const stored = {
+    // B791: built PER TEST. Built at collection time, its 60 s expiry would start when Jest
+    // COLLECTS the file, so a slow run (a loaded host, CI) executed the tests after their own
+    // fixture had expired.
+    const makeStored = () => ({
       id: "rt-1",
       userId: "user-1",
       tokenHash: "h-old",
@@ -611,7 +617,11 @@ describe("AuthService", () => {
       userAgent: null,
       ipAddress: null,
       deviceName: null,
-    };
+    });
+    let stored: ReturnType<typeof makeStored>;
+    beforeEach(() => {
+      stored = makeStored();
+    });
     const sha256 = (value: string) =>
       require("crypto").createHash("sha256").update(value).digest("hex");
     // The rotated token jwtService.sign() mints in this suite is "mock-token";

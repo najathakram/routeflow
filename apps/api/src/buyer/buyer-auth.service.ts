@@ -16,6 +16,7 @@ import { AppConfig } from "../config/configuration";
 import { BuyerJwtPayload } from "./interfaces/buyer-jwt-payload.interface";
 import { BuyerRegisterDto } from "./dto/buyer-register.dto";
 import { BuyerLoginDto } from "./dto/buyer-login.dto";
+import { escapeHtml } from "../common/html-escape";
 
 export interface BuyerDeviceInfo {
   userAgent?: string;
@@ -112,7 +113,7 @@ export class BuyerAuthService {
       subject: "Verify your email for RouteFlow",
       html: `<p>Hi,</p>
 <p>A RouteFlow buyer portal account was created with this email address. Confirm it's yours to unlock instant connections to sellers who already know this email.</p>
-<p><a href="${verifyUrl}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;">Verify my email</a></p>
+<p><a href="${escapeHtml(verifyUrl)}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;">Verify my email</a></p>
 <p>This link expires in <strong>24 hours</strong>.</p>
 <p><strong>Didn't create this account?</strong> Ignore this email and do not click the button — the account will simply stay unverified.</p>`,
       // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
@@ -461,8 +462,8 @@ export class BuyerAuthService {
         to: account.email,
         subject: "A password was set on your RouteFlow account",
         html: `<p>A password was just set on your RouteFlow portal account, which previously signed in with Google only.</p>
-               <p><strong>Time:</strong> ${new Date().toUTCString()}</p>
-               <p><strong>IP address:</strong> ${deviceInfo?.ipAddress ?? "unknown"}</p>
+               <p><strong>Time:</strong> ${escapeHtml(new Date().toUTCString())}</p>
+               <p><strong>IP address:</strong> ${escapeHtml(deviceInfo?.ipAddress ?? "unknown")}</p>
                <p>You can now sign in with your email and this password as well as with Google. If this wasn't you, reset your password immediately and contact support.</p>`,
         // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
         senderClass: "platform",
@@ -523,7 +524,7 @@ export class BuyerAuthService {
         subject: "Reset your RouteFlow password",
         html: `<p>Hi,</p>
 <p>We received a request to reset the password for your RouteFlow portal account.</p>
-<p><a href="${resetUrl}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;">Reset password</a></p>
+<p><a href="${escapeHtml(resetUrl)}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;">Reset password</a></p>
 <p>This link expires in <strong>15 minutes</strong>. If you didn't request this, you can safely ignore this email — your password will not change.</p>`,
         // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
         senderClass: "platform",

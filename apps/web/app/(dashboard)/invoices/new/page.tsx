@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { Button, Card, Input, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import { useQuery } from "@tanstack/react-query";
 import {
   useCreateInvoice,
@@ -939,7 +940,7 @@ export default function NewInvoicePage() {
     setScrollToKey(existing ? existing.key : lineItem.key);
     setErrors((e) => ({ ...e, items: "" }));
     // Refocus the scanner input so a sequence of scans is uninterrupted.
-    setTimeout(() => scanInputRef.current?.focus(), 30);
+    scheduleScannerRefocus(scanInputRef, 30);
   }
 
   // ── Top-of-table scan/search input ───────────────────────────────────────────
@@ -1459,7 +1460,7 @@ export default function NewInvoicePage() {
                     setDeliveredOn(value);
                     setDeliveredNow(value <= todayIso());
                   }}
-                  className="h-9 rounded-lg border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  className="h-9 w-32 rounded-lg border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
               </div>
             </div>

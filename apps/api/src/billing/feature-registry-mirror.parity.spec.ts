@@ -17,7 +17,12 @@
  * DB-backed, end-to-end CLI proof (--apply write/idempotency/refusal/no-PII) lives in
  * publish-and-repin.db.spec.ts.
  */
-import { FEATURE_REGISTRY, addonGateState } from "./feature-registry";
+import {
+  DEFAULT_GRANTED_ADDON_FEATURES,
+  FEATURE_REGISTRY,
+  addonGateState,
+  isDefaultGrantedAddon,
+} from "./feature-registry";
 import {
   DARK_PLAN_FLAGS,
   isPlanFlagEnforcementOn,
@@ -28,6 +33,7 @@ import {
   ALWAYS_ENFORCED_PLAN_KEYS,
   isAlwaysEnforcedPlan,
   PLAN_KEYS,
+  effectivePlanFlags,
 } from "./plan-catalog.constants";
 import { V11_PIN_FIXTURE, LITE_FIXTURE, ALL_FIXTURES } from "./feature-fixtures";
 
@@ -40,6 +46,13 @@ const mirror = require("../../scripts/lib/feature-registry-mirror.cjs") as {
     defaultGranted: boolean;
     billingSkus: string[];
   }>;
+  DEFAULT_GRANT_REQUIRES: Record<string, { allOf?: string[]; anyOf?: string[] }>;
+  isDefaultGrantedAddonMirror: (
+    feature: { key: string; via: string; defaultGranted: boolean },
+    activeAddonSet: Set<string>,
+    entFlags: string[],
+    overrides?: Map<string, "GRANT" | "DENY">,
+  ) => boolean;
   DARK_PLAN_FLAGS: Set<string>;
   ALWAYS_ENFORCED_PLAN_KEYS: Set<string>;
   ALWAYS_EFFECTIVE_TODAY: Set<string>;
@@ -48,6 +61,11 @@ const mirror = require("../../scripts/lib/feature-registry-mirror.cjs") as {
   allowsFlag: (planKey: string, entFlags: string[], key: string, env: NodeJS.ProcessEnv) => boolean;
   isAlwaysEnforcedPlan: (planKey: string | null) => boolean;
   lossMechanism: (feature: { key: string; via: string }) => string;
+  effectivePlanFlagsMirror: (
+    pinnedDef: { planKey: string; featureFlags: string[] },
+    pinnedVersionId: string,
+    published: { id: string; definitions: { planKey: string; featureFlags: string[] }[] } | null,
+  ) => string[];
   computeOldPathEffective: (
     feature: { key: string; via: string; state: string },
     ctx: {
@@ -69,6 +87,40 @@ const mirror = require("../../scripts/lib/feature-registry-mirror.cjs") as {
 };
 
 describe("feature-registry-mirror.cjs parity with the real TypeScript source", () => {
+  it("mirrors `requires` for every default-granted add-on key (owner ruling 2026-09-28)", () => {
+    expect(Object.keys(mirror.DEFAULT_GRANT_REQUIRES).sort()).toEqual(
+      DEFAULT_GRANTED_ADDON_FEATURES.map((f) => f.key).sort(),
+    );
+    for (const f of DEFAULT_GRANTED_ADDON_FEATURES) {
+      expect(mirror.DEFAULT_GRANT_REQUIRES[f.key]).toEqual(f.requires ?? {});
+    }
+  });
+
+  it("isDefaultGrantedAddonMirror === isDefaultGrantedAddon for every key across flag/row/override sets", () => {
+    const byKey = new Map(mirror.FEATURE_REGISTRY_MIRROR.map((f) => [f.key, f]));
+    const flagSets = [[], ["flag.returns"], ["flag.analytics"], ["flag.returns", "flag.reports"]];
+    const rowSets = [[], ["recurring_routes"], ["order_delivery", "orders_inline_returns"]];
+    // SA-540: `requires` honours overrides (a DENY on flag.returns removes it; a GRANT adds it).
+    const overrideSets: Array<Map<string, "GRANT" | "DENY">> = [
+      new Map(),
+      new Map([["flag.returns", "DENY" as const]]),
+      new Map([["flag.returns", "GRANT" as const]]),
+    ];
+    for (const real of FEATURE_REGISTRY) {
+      for (const flags of flagSets) {
+        for (const rows of rowSets) {
+          for (const ov of overrideSets) {
+            const label = [real.key, rows, flags, [...ov]];
+            expect([
+              label,
+              mirror.isDefaultGrantedAddonMirror(byKey.get(real.key)!, new Set(rows), flags, ov),
+            ]).toEqual([label, isDefaultGrantedAddon(real, rows, flags, ov)]);
+          }
+        }
+      }
+    }
+  });
+
   it("has exactly the same key set as FEATURE_REGISTRY", () => {
     const realKeys = new Set(FEATURE_REGISTRY.map((f) => f.key));
     const mirrorKeys = new Set(mirror.FEATURE_REGISTRY_MIRROR.map((f) => f.key));
@@ -376,4 +428,120 @@ describe("publish-and-repin report logic against the shared feature-grants-v2 fi
       }
     }
   });
+});
+
+describe("#2700 (SA-559(2)/559b): flags gain forward — effectivePlanFlagsMirror === effectivePlanFlags", () => {
+  const PINNED = { planKey: "SCALE", featureFlags: ["flag.msrp", "flag.reports"] };
+  const published = (definitions: { planKey: string; featureFlags: string[] }[], id = "v13") => ({
+    id,
+    definitions,
+  });
+  const CASES: Array<[string, Parameters<typeof effectivePlanFlags>]> = [
+    [
+      "same planKey gains a new flag",
+      [
+        PINNED,
+        "v11",
+        published([{ planKey: "SCALE", featureFlags: ["flag.reports", "flag.estimates"] }]),
+      ],
+    ],
+    [
+      "renamed key (SCALE pinned, BUSINESS published)",
+      [PINNED, "v11", published([{ planKey: "BUSINESS", featureFlags: ["flag.estimates"] }])],
+    ],
+    [
+      "pinned version IS the published one: no union",
+      [PINNED, "v13", published([{ planKey: "SCALE", featureFlags: ["flag.estimates"] }])],
+    ],
+    ["nothing published: no union", [PINNED, "v11", null]],
+    [
+      "published lacks the plan: no union",
+      [PINNED, "v11", published([{ planKey: "STARTER", featureFlags: ["flag.estimates"] }])],
+    ],
+    [
+      "a flag dropped later is KEPT (union, never removal)",
+      [PINNED, "v11", published([{ planKey: "SCALE", featureFlags: [] }])],
+    ],
+    [
+      "LITE gains flag.returns (the v13 case)",
+      [
+        { planKey: "LITE", featureFlags: [] },
+        "v12",
+        published([{ planKey: "LITE", featureFlags: ["flag.returns"] }]),
+      ],
+    ],
+  ];
+
+  it.each(CASES)("%s", (_name, args) => {
+    expect(mirror.effectivePlanFlagsMirror(...(args as [any, any, any]))).toEqual(
+      effectivePlanFlags(...args),
+    );
+  });
+
+  it("the expected values themselves (so the pair can't agree on a wrong answer)", () => {
+    expect(CASES.map(([, args]) => effectivePlanFlags(...args))).toEqual([
+      ["flag.msrp", "flag.reports", "flag.estimates"],
+      ["flag.msrp", "flag.reports", "flag.estimates"],
+      ["flag.msrp", "flag.reports"],
+      ["flag.msrp", "flag.reports"],
+      ["flag.msrp", "flag.reports"],
+      ["flag.msrp", "flag.reports"],
+      ["flag.returns"],
+    ]);
+  });
+
+  it("SA-559b: a v11-pinned tenant whose PUBLISHED plan carries a flag is NOT a publish-and-repin loss (no false GRANT on --apply)", () => {
+    const OFF_ENV = { PLAN_FLAG_ENFORCEMENT: "off" } as NodeJS.ProcessEnv;
+    const pinnedDef = V11_PIN_FIXTURE.definitions.find(
+      (d) => d.planKey === V11_PIN_FIXTURE.planKey,
+    )!;
+    const publishedV12 = published(
+      [{ ...pinnedDef, featureFlags: [...pinnedDef.featureFlags, "flag.estimates"] }],
+      "fixture-v12",
+    );
+    const lossesWith = (entFlags: string[]) => {
+      const ctx = { ...ctxFor(V11_PIN_FIXTURE), entFlags };
+      return mirror.FEATURE_REGISTRY_MIRROR.filter(
+        (f) =>
+          mirror.computeOldPathEffective(f, ctx, OFF_ENV) &&
+          !mirror.computeNewPathEffective(f, ctx),
+      ).map((f) => f.key);
+    };
+    // Control: the pinned flags alone read flag.estimates as a loss (it is in the 15 above).
+    expect(lossesWith(pinnedDef.featureFlags)).toContain("flag.estimates");
+    // With the union every script now applies, it is not.
+    const unioned = mirror.effectivePlanFlagsMirror(
+      pinnedDef,
+      V11_PIN_FIXTURE.planVersionId,
+      publishedV12,
+    );
+    expect(lossesWith(unioned)).not.toContain("flag.estimates");
+  });
+
+  it.each([
+    [
+      "scripts/audit-tenant-entitlements.mjs",
+      "effectivePlanFlagsMirror(def, version.id, publishedVersion)",
+    ],
+    [
+      "scripts/report-addon-default-grant-flip.mjs",
+      "effectivePlanFlagsMirror(def, version.id, publishedVersion)",
+    ],
+    [
+      "scripts/publish-and-repin.mjs",
+      "effectivePlanFlagsMirror(def, version.id, catalog.getPublished())",
+    ],
+  ])(
+    "%s resolves plan flags through the ONE mirror, never the pinned definition alone",
+    (file, call) => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const src: string = require("fs").readFileSync(
+        require("path").resolve(__dirname, "../..", file),
+        "utf8",
+      );
+      expect(src).toContain(call);
+      expect(src).not.toMatch(/new Set\(def\.featureFlags\)/);
+      expect(src).not.toMatch(/def \? def\.featureFlags : \[\]/);
+    },
+  );
 });

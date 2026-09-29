@@ -51,6 +51,36 @@ export function hasAnyQtyEntered(lines: InlineReturnLineDraft[]): boolean {
 }
 
 /**
+ * SA-101(2)/B3/B765 interim guard: merges request items that share a `productId` — BEFORE
+ * they reach the wire — by summing `boxes`/`pieces`. `lines` is keyed by `productId`
+ * throughout this dialog (`updateLine`/`removeLine`), so a source order with two lines of
+ * one product (a Case line and a pack line, say) can hydrate two draft rows for the same
+ * product; without this merge each would become its OWN request item, and the server's
+ * per-item allocation (`allocateReturnedPieces`) rebuilds its remaining-supply view fresh
+ * per item rather than decrementing a shared one — two items for the same product would
+ * each draw against the SAME undiminished supply, silently crediting it twice. Other
+ * per-item fields (a capture item's `reason`/`condition`) are kept from the FIRST
+ * occurrence — only quantities are summed. The durable fix (carrying the specific source
+ * line on the wire, so two lines of one product are never conflated into a single qty at
+ * all) is a later PR; this only stops the silent double-count.
+ */
+function mergeDuplicateProductItems<T extends { productId: string; boxes: number; pieces: number }>(
+  items: T[],
+): T[] {
+  const merged = new Map<string, T>();
+  for (const item of items) {
+    const existing = merged.get(item.productId);
+    if (existing) {
+      existing.boxes += item.boxes;
+      existing.pieces += item.pieces;
+    } else {
+      merged.set(item.productId, { ...item });
+    }
+  }
+  return [...merged.values()];
+}
+
+/**
  * Builds the quote request from Step 1's drafts. `boxes`/`pieces` are ALWAYS sent
  * explicitly (never a bare `qty`) — a bare `qty` on a boxed product means BOXES to the API
  * (SA-071a #3), so sending both fields explicitly for every line, boxed or not, removes the
@@ -64,14 +94,16 @@ export function buildQuoteRequest(
   lines: InlineReturnLineDraft[],
   routeRunStopId?: string,
 ): QuoteInlineReturnRequest {
-  const items: QuoteInlineReturnItem[] = lines
-    .map((l) => ({
-      productId: l.productId,
-      boxes: parseNonNegativeInt(l.boxes),
-      pieces: parseNonNegativeInt(l.pieces),
-    }))
-    .filter((i) => i.boxes > 0 || i.pieces > 0)
-    .map((i) => ({ productId: i.productId, qty: 1, boxes: i.boxes, pieces: i.pieces }));
+  const items: QuoteInlineReturnItem[] = mergeDuplicateProductItems(
+    lines
+      .map((l) => ({
+        productId: l.productId,
+        boxes: parseNonNegativeInt(l.boxes),
+        pieces: parseNonNegativeInt(l.pieces),
+      }))
+      .filter((i) => i.boxes > 0 || i.pieces > 0)
+      .map((i) => ({ productId: i.productId, qty: 1, boxes: i.boxes, pieces: i.pieces })),
+  );
   return routeRunStopId ? { customerId, items, routeRunStopId } : { customerId, items };
 }
 
@@ -131,6 +163,50 @@ export function coveredPiecesByProduct(quote: InlineReturnQuoteResponse): Map<st
   return byProduct;
 }
 
+/**
+ * #2693: the plain-words reason option 3 is unavailable (owner's wording: "the retailer has not
+ * bought this item before"). Shown in place of the API's raw `items must contain at least 1
+ * elements`, which is all an empty re-quote ever produced.
+ */
+export const NOTHING_BOUGHT_BEFORE_MESSAGE =
+  "This customer hasn't bought these items before — there's no invoice to return them against.";
+
+/**
+ * #2693: option 3 is only possible when the quote matched at least one piece to an invoice line.
+ * With zero covered pieces `dropExcessAndRequote` would build an EMPTY request, so the option is
+ * disabled and the re-quote is never sent. The one predicate web and mobile both use.
+ */
+export function canReturnOnlyPurchased(quote: InlineReturnQuoteResponse): boolean {
+  for (const pieces of coveredPiecesByProduct(quote).values()) if (pieces > 0) return true;
+  return false;
+}
+
+/**
+ * #2693: the products option 3 would drop entirely (excess on the quote, nothing covered), named
+ * from the operator's own lines in line order, each once. For the "Not bought before: …" note
+ * shown when option 3 is still possible for the other products.
+ */
+export function notBoughtBeforeNames(
+  quote: InlineReturnQuoteResponse,
+  lines: ReadonlyArray<Pick<InlineReturnLineDraft, "productId" | "productName">>,
+): string[] {
+  const covered = coveredPiecesByProduct(quote);
+  const dropped = new Set(
+    quote.chunks
+      .filter(
+        (c) => c.sourceOrderId == null && c.pieces > 0 && !((covered.get(c.productId) ?? 0) > 0),
+      )
+      .map((c) => c.productId),
+  );
+  const names: string[] = [];
+  for (const line of lines) {
+    if (dropped.has(line.productId) && !names.includes(line.productName)) {
+      names.push(line.productName);
+    }
+  }
+  return names;
+}
+
 export function dropExcessAndRequote(
   customerId: string,
   quote: InlineReturnQuoteResponse,
@@ -154,9 +230,23 @@ export function applyCoveredPiecesToLines(
   quote: InlineReturnQuoteResponse,
 ): InlineReturnLineDraft[] {
   const covered = coveredPiecesByProduct(quote);
+  // SA-108b (Opus review of #1293): `covered` is keyed by PRODUCT, but this dialog can carry
+  // TWO rows for one product (see SA-108's lineKey fix — a source order with a Case line and
+  // a pack line, say). Giving EVERY row of that product the FULL covered total, then letting
+  // buildCaptureRequest's own (correct) productId merge sum them, doubled the credit — the
+  // first row alone gets the product's covered amount; every sibling row is zeroed, never
+  // duplicated. A row zeroed this way stays visible in the dialog (0 pieces) but drops out of
+  // the wire request on its own (buildQuoteRequest/buildCaptureRequest already filter out any
+  // item with boxes/pieces both 0).
+  const seenProduct = new Set<string>();
   return lines
     .filter((l) => (covered.get(l.productId) ?? 0) > 0)
-    .map((l) => ({ ...l, boxes: "0", pieces: String(covered.get(l.productId) ?? 0) }));
+    .map((l) => {
+      const isFirstForProduct = !seenProduct.has(l.productId);
+      seenProduct.add(l.productId);
+      const amount = isFirstForProduct ? (covered.get(l.productId) ?? 0) : 0;
+      return { ...l, boxes: "0", pieces: String(amount) };
+    });
 }
 
 // ─── Capture request ────────────────────────────────────────────────────────────
@@ -177,23 +267,24 @@ export function buildCaptureRequest(params: {
   notes?: string;
   routeRunStopId?: string;
 }): CaptureInlineReturnRequest {
-  const items: CaptureInlineReturnItem[] = params.lines
-    .map((l) => ({
-      productId: l.productId,
-      boxes: parseNonNegativeInt(l.boxes),
-      pieces: parseNonNegativeInt(l.pieces),
-      reason: l.reason || undefined,
-      condition: l.note.trim() || undefined,
-    }))
-    .filter((i) => i.boxes > 0 || i.pieces > 0)
-    .map((i) => ({
-      productId: i.productId,
-      qty: 1,
-      boxes: i.boxes,
-      pieces: i.pieces,
-      ...(i.reason ? { reason: i.reason } : {}),
-      ...(i.condition ? { condition: i.condition } : {}),
-    }));
+  const items: CaptureInlineReturnItem[] = mergeDuplicateProductItems(
+    params.lines
+      .map((l) => ({
+        productId: l.productId,
+        boxes: parseNonNegativeInt(l.boxes),
+        pieces: parseNonNegativeInt(l.pieces),
+        reason: l.reason || undefined,
+        condition: l.note.trim() || undefined,
+      }))
+      .filter((i) => i.boxes > 0 || i.pieces > 0),
+  ).map((i) => ({
+    productId: i.productId,
+    qty: 1,
+    boxes: i.boxes,
+    pieces: i.pieces,
+    ...(i.reason ? { reason: i.reason } : {}),
+    ...(i.condition ? { condition: i.condition } : {}),
+  }));
 
   return {
     customerId: params.customerId,
@@ -235,6 +326,47 @@ interface ApiErrorLike {
       code?: string;
       message?: string | string[];
     };
+  };
+}
+
+// ─── Money display helpers (formatting only — no math) ─────────────────────────
+
+/**
+ * The capture response's `refundAmount` is a Prisma Decimal, which JSON carries as a STRING
+ * ("22.5000"); the shared type says `number`. A `typeof === "number"` check therefore never
+ * held and the credit amount never showed (#2097). Accept both, and return null for anything
+ * that is not a finite amount so the row is hidden rather than rendered as $NaN. Shared by
+ * RecordInlineReturnDialog's own result screen and OrderReturnsPanel (#2406) — never a second
+ * hand-rolled copy.
+ */
+export function refundAmountOf(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string" && value.trim() !== "") {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+/** #2424: the capture key was reused with DIFFERENT items; the earlier return WAS recorded. */
+export const INLINE_RETURN_KEY_REUSED_CODE = "INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS";
+
+/**
+ * #2647: the return the server says was ALREADY recorded under this capture key (its 409 body
+ * carries `returnId` / `returnNumber`), or null for any other error. Both clients use it to offer
+ * "Open RET-…" and clear the draft, so the same goods are never re-entered as a "new" return and
+ * credited twice. Shared by web and mobile: never a second hand-rolled copy.
+ */
+export function keyReusedReturnOf(
+  error: unknown,
+): { returnId: string; returnNumber: string | null } | null {
+  const body = (error as ApiErrorLike | undefined)?.response?.data as
+    { code?: string; returnId?: unknown; returnNumber?: unknown } | undefined;
+  if (body?.code !== INLINE_RETURN_KEY_REUSED_CODE) return null;
+  if (typeof body.returnId !== "string" || body.returnId === "") return null;
+  return {
+    returnId: body.returnId,
+    returnNumber: typeof body.returnNumber === "string" ? body.returnNumber : null,
   };
 }
 

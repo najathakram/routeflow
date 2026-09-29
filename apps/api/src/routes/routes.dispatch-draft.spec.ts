@@ -42,16 +42,16 @@ describe("RoutesService — DRAFT orders never ride a dispatch or complete as de
   let gateway: jest.Mocked<
     Pick<
       RouteFlowGateway,
-      | "emitStopCompleted"
-      | "emitOrderCreated"
-      | "emitOrderStatusChanged"
-      | "emitLowStock"
-      | "emitToDriver"
+      "emitStopCompleted" | "emitOrderCreated" | "emitOrderStatusChanged" | "emitToDriver"
     >
   >;
   let notifications: jest.Mocked<Pick<NotificationsService, "sendToDriver">>;
   let messaging: { notify: jest.Mock; notifyEvent: jest.Mock };
-  let invoicesService: { recordDeliveryPaymentInTx: jest.Mock; reverseRunAdvancesInTx: jest.Mock };
+  let invoicesService: {
+    recordDeliveryPaymentInTx: jest.Mock;
+    reconcileDeliveredOrdersInTx: jest.Mock;
+    reverseRunAdvancesInTx: jest.Mock;
+  };
   let storage: { upload: jest.Mock; presignedUrl: jest.Mock; delete: jest.Mock };
 
   beforeEach(async () => {
@@ -61,6 +61,7 @@ describe("RoutesService — DRAFT orders never ride a dispatch or complete as de
       recordDeliveryPaymentInTx: jest
         .fn()
         .mockResolvedValue({ applied: 0, invoiceIds: [], paymentIds: [] }),
+      reconcileDeliveredOrdersInTx: jest.fn().mockResolvedValue(undefined),
       reverseRunAdvancesInTx: jest.fn().mockResolvedValue(0),
     };
 
@@ -68,7 +69,6 @@ describe("RoutesService — DRAFT orders never ride a dispatch or complete as de
       emitStopCompleted: jest.fn(),
       emitOrderCreated: jest.fn(),
       emitOrderStatusChanged: jest.fn(),
-      emitLowStock: jest.fn(),
       emitToDriver: jest.fn(),
     };
 
@@ -121,7 +121,7 @@ describe("RoutesService — DRAFT orders never ride a dispatch or complete as de
       ...prisma,
       routeRunStop: {
         ...prisma.routeRunStop,
-        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
       },
       routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
@@ -241,6 +241,6 @@ describe("RoutesService — DRAFT orders never ride a dispatch or complete as de
       operatorPayload,
     );
 
-    expect(invoicesService.recordDeliveryPaymentInTx.mock.calls[0][1]).toEqual(["ord-2"]);
+    expect(invoicesService.recordDeliveryPaymentInTx.mock.calls[0][2]).toEqual(["ord-2"]); // [1] = #2175 queue
   });
 });

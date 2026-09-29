@@ -19,11 +19,13 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { randomUUID } from "crypto";
 import { EstimatesService } from "./estimates.service";
+import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { NumberingService } from "../import/numbering.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -50,11 +52,16 @@ describeDb("REG-B79 estimates issueDate — real Postgres round-trip (T17)", () 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         EstimatesService,
+        {
+          provide: SellingRestrictionsService,
+          useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+        },
         // REAL NumberingService over the REAL PrismaService above — nextEstNumber() must
         // actually mint through the tenant-scoped NumberingSequence primitive.
         NumberingService,
         { provide: PrismaService, useValue: prisma },
         { provide: EntitlementsService, useValue: mockEntitlements },
+        { provide: RegulatedLedgerService, useValue: {} }, // create() never touches the ledger
       ],
     }).compile();
 

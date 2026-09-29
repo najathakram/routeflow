@@ -9,6 +9,8 @@ import {
   groupQuoteChunks,
   hasAnyQtyEntered,
   isBoxedProduct,
+  keyReusedReturnOf,
+  INLINE_RETURN_KEY_REUSED_CODE,
   mintReturnKey,
   RETURNS_NOT_ENABLED_MESSAGE,
   sumChunkTotals,
@@ -115,6 +117,44 @@ describe("buildQuoteRequest — never a bare qty", () => {
       "stop-1",
     );
   });
+
+  // SA-101(2)/B3/B765: `lines` is keyed by productId elsewhere in the dialog
+  // (updateLine/removeLine), so a source order with two lines of one product (a Case line
+  // and a pack line, say) can hydrate two draft rows sharing a productId. Before this fix
+  // each became its OWN request item; the server's per-item allocation re-derives its
+  // remaining-supply view fresh per item rather than decrementing a shared one, so two
+  // items for one product would each draw against the SAME undiminished supply — a silent
+  // double-count. This pins that the request always merges them into ONE item.
+  it("merges two draft rows sharing a productId into ONE request item, summing boxes/pieces (never double-counted)", () => {
+    const req = buildQuoteRequest("cust-1", [
+      line({ productId: "prod-1", boxes: "1", pieces: "0" }),
+      line({ productId: "prod-1", boxes: "0", pieces: "5" }),
+    ]);
+    expect(req.items).toEqual([{ productId: "prod-1", qty: 1, boxes: 1, pieces: 5 }]);
+  });
+
+  it("three rows sharing a productId still merge into one — not just a pairwise merge", () => {
+    const req = buildQuoteRequest("cust-1", [
+      line({ productId: "prod-1", pieces: "2" }),
+      line({ productId: "prod-1", pieces: "3" }),
+      line({ productId: "prod-1", pieces: "4" }),
+    ]);
+    expect(req.items).toEqual([{ productId: "prod-1", qty: 1, boxes: 0, pieces: 9 }]);
+  });
+
+  it("does NOT merge across different products — each keeps its own item", () => {
+    const req = buildQuoteRequest("cust-1", [
+      line({ productId: "prod-1", pieces: "2" }),
+      line({ productId: "prod-2", pieces: "3" }),
+    ]);
+    expect(req.items).toEqual(
+      expect.arrayContaining([
+        { productId: "prod-1", qty: 1, boxes: 0, pieces: 2 },
+        { productId: "prod-2", qty: 1, boxes: 0, pieces: 3 },
+      ]),
+    );
+    expect(req.items).toHaveLength(2);
+  });
 });
 
 describe("groupQuoteChunks", () => {
@@ -190,6 +230,47 @@ describe("dropExcessAndRequote — option 3, 'return only what was bought'", () 
   });
 });
 
+// #2693: what option 3 can do BEFORE any re-quote is sent. Resolved at call time so a missing
+// export fails these cases (red) rather than the whole file.
+const pkg = require("./inline-return-state");
+
+describe("#2693: 'return only what was bought' availability", () => {
+  it("an all-excess quote (nothing matched to any invoice) cannot return only what was bought", () => {
+    const quote = quoteResponse([chunk({ productId: "prod-2", sourceOrderId: null, pieces: 9 })]);
+    expect(pkg.canReturnOnlyPurchased(quote)).toBe(false);
+  });
+
+  it("a quote with any covered piece can", () => {
+    const quote = quoteResponse([
+      chunk({ productId: "prod-1", sourceOrderId: "order-1", pieces: 4 }),
+      chunk({ productId: "prod-2", sourceOrderId: null, pieces: 9 }),
+    ]);
+    expect(pkg.canReturnOnlyPurchased(quote)).toBe(true);
+  });
+
+  it("names every product that drops to zero (bought never), in line order, each once", () => {
+    const quote = quoteResponse([
+      chunk({ productId: "prod-1", sourceOrderId: "order-1", pieces: 4 }),
+      chunk({ productId: "prod-1", sourceOrderId: null, pieces: 2 }),
+      chunk({ productId: "prod-2", sourceOrderId: null, pieces: 9 }),
+      chunk({ productId: "prod-3", sourceOrderId: null, pieces: 1 }),
+      chunk({ productId: "prod-3", sourceOrderId: null, pieces: 1 }),
+    ]);
+    const lines = [
+      { productId: "prod-3", productName: "Gadget" },
+      { productId: "prod-1", productName: "Widget" },
+      { productId: "prod-2", productName: "Sprocket" },
+    ];
+    expect(pkg.notBoughtBeforeNames(quote, lines)).toEqual(["Gadget", "Sprocket"]);
+  });
+
+  it("the friendly text is the owner's wording, never the DTO's", () => {
+    expect(pkg.NOTHING_BOUGHT_BEFORE_MESSAGE).toBe(
+      "This customer hasn't bought these items before — there's no invoice to return them against.",
+    );
+  });
+});
+
 describe("applyCoveredPiecesToLines — keeps Step 1's own state in sync with option 3", () => {
   it("caps a line's boxes/pieces to the covered total so a later capture never over-sends", () => {
     const covered = chunk({ productId: "prod-1", sourceOrderId: "order-1", pieces: 4 });
@@ -212,6 +293,43 @@ describe("applyCoveredPiecesToLines — keeps Step 1's own state in sync with op
     ];
     const result = applyCoveredPiecesToLines(lines, quoteResponse([covered]));
     expect(result[0]).toMatchObject({ reason: "DAMAGED", note: "dented box", pieces: "4" });
+  });
+
+  // SA-108b (Opus review of #1293): TWO rows of the SAME product (SA-108's own fix made this
+  // possible — a source order with a Case line and a pack line hydrate as two independently
+  // editable rows). Before this fix, BOTH rows were set to the FULL covered total, and
+  // buildCaptureRequest's own (correct) productId merge then summed them — a silent 2x credit.
+  it("two rows of the same product: the FIRST gets the covered total, siblings are zeroed — never each getting the full amount", () => {
+    const covered = chunk({ productId: "prod-1", sourceOrderId: "order-1", pieces: 4 });
+    const lines = [
+      line({ productId: "prod-1", pieces: "3", note: "row A" }),
+      line({ productId: "prod-1", pieces: "7", note: "row B" }),
+    ];
+    const result = applyCoveredPiecesToLines(lines, quoteResponse([covered]));
+    expect(result).toHaveLength(2);
+    expect(result[0]).toMatchObject({ note: "row A", pieces: "4" });
+    expect(result[1]).toMatchObject({ note: "row B", pieces: "0" });
+    // Never both rows carrying the covered amount — that's the exact double-count the fix
+    // guards against.
+    expect(result.filter((l) => l.pieces === "4")).toHaveLength(1);
+  });
+
+  it("the zeroed sibling naturally drops out of the built request — buildCaptureRequest filters boxes/pieces both 0", () => {
+    const covered = chunk({ productId: "prod-1", sourceOrderId: "order-1", pieces: 4 });
+    const lines = [
+      line({ productId: "prod-1", pieces: "3" }),
+      line({ productId: "prod-1", pieces: "7" }),
+    ];
+    const applied = applyCoveredPiecesToLines(lines, quoteResponse([covered]));
+    const req = buildCaptureRequest({
+      customerId: "cust-1",
+      orderId: "order-1",
+      lines: applied,
+      returnKey: "key-1",
+      reason: "DAMAGED",
+    });
+    // Exactly the covered amount — never 8 (4+4, the pre-fix double-count).
+    expect(req.items).toEqual([{ productId: "prod-1", qty: 1, boxes: 0, pieces: 4 }]);
   });
 });
 
@@ -333,6 +451,44 @@ describe("buildCaptureRequest — quantities only, never a price the quote displ
     });
     expect(req.items.map((i) => i.productId)).toEqual(["prod-1"]);
   });
+
+  // SA-101(2)/B3/B765 — same double-count guard as buildQuoteRequest's, on the capture path.
+  it("merges two draft rows sharing a productId into ONE capture item, summing boxes/pieces", () => {
+    const req = buildCaptureRequest({
+      customerId: "cust-1",
+      orderId: "order-1",
+      lines: [
+        line({ productId: "prod-1", boxes: "1", pieces: "0" }),
+        line({ productId: "prod-1", boxes: "0", pieces: "3" }),
+      ],
+      returnKey: "key-1",
+      reason: "DAMAGED",
+    });
+    expect(req.items).toEqual([{ productId: "prod-1", qty: 1, boxes: 1, pieces: 3 }]);
+  });
+
+  it("merging keeps the FIRST occurrence's reason/condition — quantities are the only thing summed", () => {
+    const req = buildCaptureRequest({
+      customerId: "cust-1",
+      orderId: "order-1",
+      lines: [
+        line({ productId: "prod-1", pieces: "2", reason: "DAMAGED", note: "first row" }),
+        line({ productId: "prod-1", pieces: "3", reason: "WRONG_ITEM", note: "second row" }),
+      ],
+      returnKey: "key-1",
+      reason: "QUALITY_ISSUE",
+    });
+    expect(req.items).toEqual([
+      {
+        productId: "prod-1",
+        qty: 1,
+        boxes: 0,
+        pieces: 5,
+        reason: "DAMAGED",
+        condition: "first row",
+      },
+    ]);
+  });
 });
 
 describe("mintReturnKey", () => {
@@ -388,5 +544,30 @@ describe("extractRefusalMessage", () => {
 
   it("falls back for a shape with no response body", () => {
     expect(extractRefusalMessage(new Error("network down"), "fallback text")).toBe("fallback text");
+  });
+});
+
+describe("keyReusedReturnOf (#2647)", () => {
+  const err = (data: unknown, status = 409) => ({ response: { status, data } });
+  it("returns the recorded return from a key-reused 409 body", () => {
+    expect(
+      keyReusedReturnOf(
+        err({ code: INLINE_RETURN_KEY_REUSED_CODE, returnId: "r1", returnNumber: "RET-1" }),
+      ),
+    ).toEqual({ returnId: "r1", returnNumber: "RET-1" });
+  });
+  it("a missing returnNumber is null, not undefined", () => {
+    expect(keyReusedReturnOf(err({ code: INLINE_RETURN_KEY_REUSED_CODE, returnId: "r1" }))).toEqual(
+      { returnId: "r1", returnNumber: null },
+    );
+  });
+  it.each([
+    ["another code", err({ code: "INLINE_RETURN_KEY_CONFLICT", returnId: "r1" })],
+    ["no returnId", err({ code: INLINE_RETURN_KEY_REUSED_CODE })],
+    ["an empty returnId", err({ code: INLINE_RETURN_KEY_REUSED_CODE, returnId: "" })],
+    ["no response", new Error("network")],
+    ["undefined", undefined],
+  ])("%s ⇒ null", (_n, e) => {
+    expect(keyReusedReturnOf(e)).toBeNull();
   });
 });

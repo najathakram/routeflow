@@ -17,12 +17,14 @@ import type {
   BuyerAuthorizationRow,
   BuyerCreateChangeRequestInput,
   BuyerPayment,
+  BuyerProductDetailExtras,
   BuyerPromotion,
   BuyerRemittance,
   BuyerStatement,
   BuyerStockAlerts,
   ExpiringAuthorization,
   LockedCategory,
+  OrderTrackingResponse,
   ReplenishmentEstimate,
   ShelfResponse,
   SubmitBuyerAuthorizationInput,
@@ -141,6 +143,8 @@ export interface BuyerOrder {
     promoFreeUnits?: number | null;
     /** Per-line note, buyer-visible. */
     notes?: string | null;
+    /** units_v1: sold by a non-pack unit (Case, Pallet, Piece…) — null/absent = the pack. */
+    unitLabel?: string | null;
     product?: { id: string; name: string; unit?: string };
   }>;
   /** P5-09: post-dispatch change requests, newest first. */
@@ -161,6 +165,11 @@ export interface BuyerInvoiceItem {
   unitPrice: number;
   discount?: number;
   subtotal: number;
+  boxes?: number | null;
+  pieces?: number | null;
+  /** units_v1: set when this line sells by a named unit (Case, Pallet, Piece…) — `boxes` is
+   *  then the COUNT of that unit (never a physical box). Null = the pack (B758). */
+  unitLabel?: string | null;
   /** BUY_N_GET_M: whole free SELLING units on this line — names the reduced
    *  `subtotal` so it doesn't read as a pricing error. */
   promoFreeUnits?: number | null;
@@ -439,6 +448,31 @@ export function useToggleFavorite() {
   });
 }
 
+// ─── Product detail (#2345, W>M: web portal/[seller]/shop/[productId]) ─────────
+
+/** GET /buyer/products/:id — the catalog row plus images, variants, alert state. */
+export interface BuyerProductDetail
+  extends Omit<BuyerProduct, "imageUrls">, BuyerProductDetailExtras {}
+
+/**
+ * Keyed under "buyer-products" so the favorite toggle's existing invalidation
+ * refreshes an open detail too. A 404/403 is "not available" to the screen
+ * (see product-detail-logic `productDetailState`) — never retried.
+ */
+export function useBuyerProduct(productId: string) {
+  return useQuery<BuyerProductDetail>({
+    queryKey: ["buyer-products", "detail", productId],
+    queryFn: () =>
+      buyerApiClient.get(`/buyer/products/${encodeURIComponent(productId)}`).then((r) => r.data),
+    enabled: !!productId,
+    retry: (failureCount, err: any) => {
+      const status = err?.response?.status;
+      if (status === 404 || status === 403) return false;
+      return failureCount < 2;
+    },
+  });
+}
+
 // ─── Stock alerts / Notify-me (P5-03 twin — P5-16a) ───────────────────────────
 
 export function useBuyerStockAlerts() {
@@ -549,19 +583,8 @@ export function useBuyerOrder(id: string) {
   });
 }
 
-export interface BuyerOrderTracking {
-  status: string;
-  tracking: {
-    runId: string;
-    routeName: string | null;
-    driverName: string | null;
-    runStatus: string;
-    stopNumber: number;
-    stopStatus: string;
-    stopsAhead: number;
-    estimatedArrivalWindow: { start: string | null; end: string | null };
-  } | null;
-}
+/** GET /buyer/orders/:id/tracking — the shared wire shape (#2095), never redeclared here. */
+export type BuyerOrderTracking = OrderTrackingResponse;
 
 /** Live-ish: polls while the order can still move. There is no per-stop push
  *  to the buyer socket namespace today — only order.statusChanged is wired

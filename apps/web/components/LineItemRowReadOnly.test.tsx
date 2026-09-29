@@ -95,6 +95,21 @@ describe("LineItemRowReadOnly — qty, price, total", () => {
     expect(screen.getByText("$67.50")).toBeInTheDocument();
     expect(screen.queryByText("$810.00")).toBeNull();
   });
+
+  it("boxed with its own selling-unit name (units_v1 -> the boxLabel prop): '3 Cases', never 'boxes'", () => {
+    renderRow({ unitPrice: 30, unitsPerBox: 12, boxes: 3, pieces: 0, qty: 36, boxLabel: "Case" });
+    expect(screen.getByText("3 Cases · $30.00 / Case of 12")).toBeInTheDocument();
+  });
+
+  it("#2049: a FACTOR-1 unit line (no split) reads '5 Piece', never a bare '5'", () => {
+    renderRow({ qty: 5, unitPrice: 2, boxLabel: "Piece" });
+    expect(screen.getByText("5 Piece × $2.00")).toBeInTheDocument();
+  });
+
+  it("#2049: no unit name is byte-identical to before this fix", () => {
+    renderRow({ qty: 5, unitPrice: 2 });
+    expect(screen.getByText("5 × $2.00")).toBeInTheDocument();
+  });
 });
 
 describe("LineItemRowReadOnly — money contract (matches what the order bills)", () => {
@@ -214,12 +229,48 @@ describe("LineItemRowReadOnly — SKU, thumbnail, status, delivery, note", () =>
     expect(none.container.textContent).not.toMatch(/delivered/);
   });
 
+  it("a CANCELLED line shows no delivery progress, but a PENDING short line still does (B669)", () => {
+    const cancelled = renderRow({
+      lineStatus: "CANCELLED",
+      deliveredQty: "0.000",
+      qty: "8.000",
+      showDeliveryProgress: true,
+    });
+    expect(cancelled.container.textContent).not.toMatch(/delivered/);
+    cancelled.unmount();
+    renderRow({ lineStatus: "PENDING", deliveredQty: 6, qty: 8, showDeliveryProgress: true });
+    expect(screen.getByText("6 of 8 delivered")).toBeInTheDocument();
+  });
+
   it("deliveredQty is 0 (not null) on an undelivered line: silent until the caller opts in", () => {
     const off = renderRow({ deliveredQty: "0.000", qty: "8.000" });
     expect(off.container.textContent).not.toMatch(/delivered/);
     off.unmount();
     renderRow({ deliveredQty: "0.000", qty: "8.000", showDeliveryProgress: true });
     expect(screen.getByText("0 of 8 delivered")).toBeInTheDocument();
+  });
+
+  it("a boxed line reads progress in boxes + pieces, never raw pieces (B597 web twin)", () => {
+    // qty 51 = 2 boxes of 24 + 3 pieces
+    const r = renderRow({
+      qty: 51,
+      boxes: 2,
+      pieces: 3,
+      unitsPerBox: 24,
+      deliveredQty: 0,
+      showDeliveryProgress: true,
+    });
+    expect(screen.getByText("0 of 2 boxes + 3 pcs delivered")).toBeInTheDocument();
+    r.unmount();
+    renderRow({
+      qty: 51,
+      boxes: 2,
+      pieces: 3,
+      unitsPerBox: 24,
+      deliveredQty: 27,
+      showDeliveryProgress: true,
+    });
+    expect(screen.getByText("1 box + 3 pcs of 2 boxes + 3 pcs delivered")).toBeInTheDocument();
   });
 
   it("compares Decimal strings numerically, never lexicographically (10.000 is not < 8.000)", () => {

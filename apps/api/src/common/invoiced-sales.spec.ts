@@ -12,6 +12,7 @@ import {
   fetchCostIndex,
   fetchInvoicedSaleLines,
   fetchProductCostFacts,
+  netOf,
   resolveUnitCost,
   roundQty,
   soldProductIds,
@@ -296,12 +297,68 @@ describe("accrual net sales (B440/B455/B456)", () => {
   });
 });
 
+// #2118: the B440 arithmetic lives in ONE pure function the sales-facts layer shares with
+// the two fetchers above (whose own pins stay untouched — they are the "signatures and stubs
+// unchanged" proof).
+describe("netOf — the one B440 net composition (#2118)", () => {
+  it("REG-netOf-compose: net = gross - creditNotes - externalRefunds", () => {
+    expect(netOf({ gross: 500, creditNotes: 200, externalRefunds: 50 })).toEqual({
+      gross: 500,
+      creditNotes: 200,
+      externalRefunds: 50,
+      net: 250,
+    });
+  });
+
+  it("REG-netOf-round: every term is rounded to cents BEFORE it is subtracted (no float drift)", () => {
+    // 0.1 + 0.2 = 0.30000000000000004 — must never reach a term or the net.
+    expect(netOf({ gross: 0.1 + 0.2, creditNotes: 0.1, externalRefunds: 0 })).toEqual({
+      gross: 0.3,
+      creditNotes: 0.1,
+      externalRefunds: 0,
+      net: 0.2,
+    });
+    // Half a cent rounds away from zero on EACH term (roundMoney's policy), then the net is
+    // taken from the ROUNDED terms: 2.14 - 0.01 - 1.01 = 1.12. Subtracting the raw values
+    // first (2.135 - 0.005 - 1.005 = 1.125) would round to 1.13 — the order is the contract.
+    expect(netOf({ gross: 2.135, creditNotes: 0.005, externalRefunds: 1.005 })).toEqual({
+      gross: 2.14,
+      creditNotes: 0.01,
+      externalRefunds: 1.01,
+      net: 1.12,
+    });
+  });
+
+  it("REG-netOf-negative: never clamped — a credit-heavy window nets negative", () => {
+    expect(netOf({ gross: 0, creditNotes: 200, externalRefunds: 0.5 }).net).toBe(-200.5);
+  });
+
+  it("REG-netOf-shared: both fetchers return exactly netOf of their own sums", async () => {
+    const db = stubDb({
+      invoiceAgg: { _sum: { total: D("100.10"), taxAmount: D("0.20") } },
+      creditNoteAgg: { _sum: { amount: D("0.30") } },
+      returnAgg: { _sum: { refundAmount: D("0.60") } },
+      invoiceGroupBy: [{ customerId: "c1", _sum: { total: D("100.10"), taxAmount: D("0.20") } }],
+      creditNoteGroupBy: [{ customerId: "c1", _sum: { amount: D("0.30") } }],
+      returnGroupBy: [{ customerId: "c1", _sum: { refundAmount: D("0.60") } }],
+    });
+    const window = { gte: new Date("2026-06-01"), lte: new Date("2026-06-30") };
+    const expected = netOf({ gross: 100.1 - 0.2, creditNotes: 0.3, externalRefunds: 0.6 });
+
+    expect(expected).toEqual({ gross: 99.9, creditNotes: 0.3, externalRefunds: 0.6, net: 99 });
+    expect(await fetchAccrualNetSales(db, "tenant-1", window)).toEqual(expected);
+    expect((await fetchAccrualNetSalesByCustomer(db, "tenant-1", window)).get("c1")).toEqual(
+      expected,
+    );
+  });
+});
+
 describe("cost index", () => {
   const rows = [
-    { productId: "p1", createdAt: new Date("2026-06-10"), avgCostAfter: D(3) },
-    { productId: "p1", createdAt: new Date("2026-06-01"), avgCostAfter: D(2) }, // out of order
-    { productId: "p2", createdAt: new Date("2026-06-05"), avgCostAfter: D(7) },
-    { productId: "p1", createdAt: new Date("2026-06-20"), avgCostAfter: null }, // skipped
+    { productId: "p1", effectiveAt: new Date("2026-06-10"), avgCostAfter: D(3) },
+    { productId: "p1", effectiveAt: new Date("2026-06-01"), avgCostAfter: D(2) }, // out of order
+    { productId: "p2", effectiveAt: new Date("2026-06-05"), avgCostAfter: D(7) },
+    { productId: "p1", effectiveAt: new Date("2026-06-20"), avgCostAfter: null }, // skipped
   ];
 
   it("buildCostIndex groups by product, sorts, Number()s, and skips null snapshots", () => {
@@ -329,7 +386,7 @@ describe("cost index", () => {
 describe("resolveUnitCost fallback ladder", () => {
   const at = new Date("2026-06-05");
   const index = buildCostIndex([
-    { productId: "p1", createdAt: new Date("2026-06-01"), avgCostAfter: D(2) },
+    { productId: "p1", effectiveAt: new Date("2026-06-01"), avgCostAfter: D(2) },
   ]);
 
   it("a point-in-time snapshot wins even for STANDARD products", () => {
@@ -361,8 +418,8 @@ describe("resolveUnitCost fallback ladder", () => {
 
 describe("estimateCogs", () => {
   const index = buildCostIndex([
-    { productId: "p1", createdAt: new Date("2026-06-01"), avgCostAfter: D(2) },
-    { productId: "p1", createdAt: new Date("2026-06-10"), avgCostAfter: D(3) },
+    { productId: "p1", effectiveAt: new Date("2026-06-01"), avgCostAfter: D(2) },
+    { productId: "p1", effectiveAt: new Date("2026-06-10"), avgCostAfter: D(3) },
   ]);
   const facts = new Map([
     ["p1", { costingMethod: "FIFO", standardCost: null, averageCost: D(99) }],
@@ -404,15 +461,20 @@ describe("fetchers", () => {
   it("fetchCostIndex queries snapshots only — any type, non-null avgCostAfter", async () => {
     const until = new Date("2026-06-30");
     const db = stubDb({
-      movements: [{ productId: "p1", createdAt: new Date("2026-06-01"), avgCostAfter: D(2) }],
+      movements: [{ productId: "p1", effectiveAt: new Date("2026-06-01"), avgCostAfter: D(2) }],
     });
 
     const index = await fetchCostIndex(db, ["p1"], until);
 
+    // B562: keyed on effectiveAt (the accounting date), createdAt + id only break ties.
     expect(db.stockMovement.findMany).toHaveBeenCalledWith({
-      where: { productId: { in: ["p1"] }, avgCostAfter: { not: null }, createdAt: { lte: until } },
-      select: { productId: true, createdAt: true, avgCostAfter: true },
-      orderBy: { createdAt: "asc" },
+      where: {
+        productId: { in: ["p1"] },
+        avgCostAfter: { not: null },
+        effectiveAt: { lte: until },
+      },
+      select: { productId: true, effectiveAt: true, avgCostAfter: true },
+      orderBy: [{ effectiveAt: "asc" }, { createdAt: "asc" }, { id: "asc" }],
     });
     expect(costAt(index, "p1", until)).toBe(2);
   });

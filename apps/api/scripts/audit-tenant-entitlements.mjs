@@ -40,7 +40,12 @@
  *     written — every statement below is a SELECT.
  */
 import { createRequire } from "module";
+import { resolveReportDbUrl } from "./lib/report-db-url.mjs";
 const { Client } = createRequire(import.meta.url)("pg");
+// #2700 (SA-559(2)): the ONE flags-gain-forward mirror — required, never re-derived here.
+const { effectivePlanFlagsMirror } = createRequire(import.meta.url)(
+  "./lib/feature-registry-mirror.cjs",
+);
 
 /**
  * Resolve a connection string. Railway's `postgres` service publishes only its
@@ -50,22 +55,11 @@ const { Client } = createRequire(import.meta.url)("pg");
  * proxy URL from the individual parts instead. Credentials are never printed
  * — only host/database.
  */
+// B768: one shared resolver (scripts/lib/report-db-url.mjs) instead of hand-copied ones.
+// Railway's TCP-proxy variables win; DATABASE_URL is the fallback when they are absent.
+// Returns null (after logging why) when nothing usable is set.
 function resolveUrl() {
-  const direct = process.env.DATABASE_URL;
-  if (direct && !direct.includes(".railway.internal")) return direct;
-  const {
-    POSTGRES_USER,
-    POSTGRES_PASSWORD,
-    POSTGRES_DB,
-    RAILWAY_TCP_PROXY_DOMAIN,
-    RAILWAY_TCP_PROXY_PORT,
-  } = process.env;
-  if (RAILWAY_TCP_PROXY_DOMAIN && POSTGRES_USER && POSTGRES_PASSWORD) {
-    const db = POSTGRES_DB || "railway";
-    const port = RAILWAY_TCP_PROXY_PORT || "5432";
-    return `postgresql://${encodeURIComponent(POSTGRES_USER)}:${encodeURIComponent(POSTGRES_PASSWORD)}@${RAILWAY_TCP_PROXY_DOMAIN}:${port}/${db}`;
-  }
-  return direct || null;
+  return resolveReportDbUrl("audit-tenant-entitlements");
 }
 
 const url = resolveUrl();
@@ -240,7 +234,10 @@ async function computeEntitlements(tenant, activeAddons) {
   const skuByCode = new Map(version.addonSkus.map((s) => [s.sku, s]));
 
   const activeCodes = [];
-  const flags = new Set(def.featureFlags);
+  // #2700 (SA-559(2)): flags gain forward from the published version's same plan, as compute().
+  const planFlags = effectivePlanFlagsMirror(def, version.id, publishedVersion);
+  const gainedForward = planFlags.filter((f) => !def.featureFlags.includes(f));
+  const flags = new Set(planFlags);
 
   // An addon SKU introduced in a LATER catalog version than the tenant's
   // pinned one has no row in the pinned catalog — fall back to the published
@@ -274,6 +271,7 @@ async function computeEntitlements(tenant, activeAddons) {
     isPublishedVersion: version.id === publishedVersion.id,
     planKey: effectivePlanKey,
     flags: [...flags],
+    gainedForward,
     addons: [...new Set(activeCodes)],
   };
 }
@@ -407,6 +405,35 @@ async function main() {
         planVersionId: r.planVersionId,
         planKey: r.planKey,
       })),
+    );
+    console.log("");
+  }
+
+  // 3. #2700 (SA-559(3ii)): the reach of "flags gain forward" — per plan, how many tenants are
+  //    pinned to a version whose plan LACKS a flag the published plan carries (they resolve it now,
+  //    through the union). COUNTS ONLY: this is the section the owner posts, never per-tenant lines.
+  console.log(
+    "3. FLAGS GAINED FORWARD (counts per plan; tenants whose pinned plan lacks a published flag)",
+  );
+  const reach = new Map();
+  for (const r of rows) {
+    if (r.gainedForward.length === 0) continue;
+    const row = reach.get(r.planKey) ?? { planKey: r.planKey, tenants: 0, flags: new Set() };
+    row.tenants += 1;
+    for (const f of r.gainedForward) row.flags.add(f);
+    reach.set(r.planKey, row);
+  }
+  if (reach.size === 0) {
+    console.log("   (none)\n");
+  } else {
+    console.table(
+      [...reach.values()]
+        .sort((a, b) => a.planKey.localeCompare(b.planKey))
+        .map((x) => ({
+          planKey: x.planKey,
+          tenants: x.tenants,
+          flags: [...x.flags].sort().join(", "),
+        })),
     );
     console.log("");
   }

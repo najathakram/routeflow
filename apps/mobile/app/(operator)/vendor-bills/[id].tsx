@@ -15,6 +15,7 @@ import {
 import { vendorBillPillFor as billPill } from "../../../lib/vendor-bill-logic";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
+import { getPackSizeUnknownError, packSizeUnknownPrompt } from "../../../lib/pack-size-unknown";
 import { fmtCalendarDate } from "../../../lib/format-date";
 
 function formatCurrency(n: number | string | undefined): string {
@@ -45,12 +46,22 @@ export default function VendorBillDetailScreen() {
 
   const p = billPill(bill.status);
 
-  const onReceive = (acknowledgeUnlinked = false) =>
+  const onReceive = (acknowledgeUnlinked = false, acknowledgePackSizeUnknown = false) =>
     receiveMut.mutate(
-      { id: bill.id, acknowledgeUnlinked },
+      { id: bill.id, acknowledgeUnlinked, acknowledgePackSizeUnknown },
       {
         onSuccess: () => showToast("Bill marked as received"),
         onError: (e: any) => {
+          // B743: a case-sold product's line with no units per case — an explicit choice, with
+          // the loose-pieces consequence spelled out. Keeps this attempt's unlinked acknowledgement.
+          const packUnknown = getPackSizeUnknownError(e);
+          if (packUnknown) {
+            const prompt = packSizeUnknownPrompt(packUnknown);
+            confirm(prompt.title, prompt.message, () => onReceive(acknowledgeUnlinked, true), {
+              confirmText: prompt.confirmText,
+            });
+            return;
+          }
           // Unmapped lines: confirm they'll be skipped, then retry acknowledged
           const unlinked = getUnlinkedItemsError(e);
           if (unlinked) {

@@ -1,6 +1,5 @@
 // PRODUCTION GUARD — must be first executable code
 const { productionGuard } = require("./lib/production-guard");
-productionGuard({ requireFlag: "--i-know-this-deletes-everything" });
 
 /**
  * Reset database (keep operator users) and seed fresh demo data.
@@ -12,7 +11,12 @@ const { PrismaPg } = require("../../../node_modules/@prisma/adapter-pg");
 const { Pool } = require("../../../node_modules/pg");
 const bcrypt = require("../../../node_modules/bcrypt");
 
-const pool = new Pool({ connectionString: "postgresql://user:pass@localhost:5432/routeflow_dev" });
+// #2206: guard the URL this script actually dials, and dial exactly what was checked.
+const target = productionGuard({
+  requireFlag: "--i-know-this-deletes-everything",
+  dbUrl: "postgresql://user:pass@localhost:5432/routeflow_dev",
+});
+const pool = new Pool(target);
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 

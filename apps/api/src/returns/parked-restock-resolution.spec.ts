@@ -86,6 +86,14 @@ describe("ParkedRestockResolutionService", () => {
 
   const movement = () => prisma.stockMovement.create.mock.calls[0]?.[0].data;
 
+  it("#2108: a tenant-less caller (SUPER_ADMIN) is refused before any claim or audit", async () => {
+    (prisma as any).getTenantId = jest.fn().mockReturnValue(null);
+    await expect(service.resolve("pr-1", 12, actor)).rejects.toThrow("tenant-scoped");
+    expect((prisma as any).returnParkedRestock.updateMany).not.toHaveBeenCalled();
+    expect(audit.log).not.toHaveBeenCalled();
+    expect(() => service.list()).toThrow("tenant-scoped");
+  });
+
   it("books EXACTLY the stored qty x the pack: 3 boxes at pack 12 = +36 PIECES, on the RET-<id> reference", async () => {
     const res = await service.resolve("pr-1", 12, actor);
     expect(Number(movement().quantity)).toBe(36);
@@ -306,13 +314,15 @@ describe("cancel() undoes a RESOLVED restock exactly (36 pieces, not the typed 3
         }),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
-      product: { update: jest.fn() },
+      // B562 PR-2: update() returns the written row — the reversing movement reads its counter.
+      product: { update: jest.fn().mockResolvedValue({ currentStock: 0, averageCost: null }) },
       stockMovement: {
         findMany: jest.fn(() => {
           order.push("scan-movements");
           return Promise.resolve([{ productId: booked.productId, quantity: booked.quantity }]);
         }),
         deleteMany: jest.fn(),
+        create: jest.fn().mockResolvedValue({ id: "mv-rev" }),
       },
       returnParkedRestock: { deleteMany: jest.fn(() => order.push("void-parked")) },
       $executeRaw: jest.fn().mockResolvedValue(0),

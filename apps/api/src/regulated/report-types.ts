@@ -21,6 +21,7 @@ export type ReportWarningCode =
   | "UNLINKED_LEDGER_ROWS"
   | "UNMATCHED_LEDGER_LINE"
   | "UNLISTED_PRODUCT_LINE"
+  | "UNCATEGORISED_LINE_IN_RULE_STATE"
   | "PARKED_REVERSALS";
 
 export interface ReportWarning {

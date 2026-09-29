@@ -16,6 +16,7 @@ import { EmailService } from "../email/email.service";
 import { AppConfig } from "../config/configuration";
 import { JwtPayload } from "./jwt-payload.interface";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { escapeHtml } from "../common/html-escape";
 
 export interface DeviceInfo {
   userAgent?: string;
@@ -108,6 +109,20 @@ export class AuthService {
     return result;
   }
 
+  /**
+   * #2159 S1: stamp `User.lastLoginAt` on every interactive session mint (password, Google,
+   * email-verification, set/change password) — the onboarding "admin / drivers have signed in"
+   * checks read it. Best-effort: a failed stamp never blocks a sign-in. Platform impersonation
+   * mints its own tokens elsewhere and deliberately does not come through here.
+   */
+  private async touchLastLogin(userId: string): Promise<void> {
+    try {
+      await this.prisma.user.update({ where: { id: userId }, data: { lastLoginAt: new Date() } });
+    } catch (err) {
+      this.logger.warn(`lastLoginAt stamp failed for user ${userId}: ${(err as Error).message}`);
+    }
+  }
+
   /** 10 consecutive failures → 15-minute lock. The per-IP login throttle
    *  (10/5min) bites first for single-IP attackers; this is layered defense
    *  against distributed guessing, tuned to avoid locking out real staff. */
@@ -142,6 +157,7 @@ export class AuthService {
     if (!user.tenantId && user.role !== "SUPER_ADMIN") {
       throw new UnauthorizedException("Tenant not found");
     }
+    await this.touchLastLogin(user.id);
 
     // Fetch tenant slug if user belongs to a tenant
     let tenantSlug: string | null = null;
@@ -211,9 +227,9 @@ export class AuthService {
             to: (user as any).email as string,
             subject: "New login detected on your RouteFlow account",
             html: `<p>A new login was detected on your RouteFlow account.</p>
-                   <p><strong>Device:</strong> ${deviceName}</p>
-                   <p><strong>IP address:</strong> ${deviceInfo.ipAddress ?? "unknown"}</p>
-                   <p><strong>Time:</strong> ${loginTime}</p>
+                   <p><strong>Device:</strong> ${escapeHtml(deviceName)}</p>
+                   <p><strong>IP address:</strong> ${escapeHtml(deviceInfo.ipAddress ?? "unknown")}</p>
+                   <p><strong>Time:</strong> ${escapeHtml(loginTime)}</p>
                    <p>If this wasn't you, please contact support immediately and change your password.</p>`,
             // email-connect-google PR-3: a security notification must never leave from a
             // tenant's own connected mailbox/SMTP — platform sender only.
@@ -521,7 +537,7 @@ export class AuthService {
         subject: "Reset your RouteFlow password",
         html: `<p>Hi,</p>
 <p>We received a request to reset the password for your RouteFlow account.</p>
-<p><a href="${resetUrl}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;">Reset password</a></p>
+<p><a href="${escapeHtml(resetUrl)}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;">Reset password</a></p>
 <p>This link expires in <strong>15 minutes</strong>. If you didn't request this, you can safely ignore this email — your password will not change.</p>`,
         // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
         senderClass: "platform",
@@ -654,8 +670,8 @@ export class AuthService {
           to: user.email,
           subject: "A password was set on your RouteFlow account",
           html: `<p>A password was just set on your RouteFlow account, which previously signed in with Google only.</p>
-                 <p><strong>Time:</strong> ${new Date().toUTCString()}</p>
-                 <p><strong>IP address:</strong> ${deviceInfo?.ipAddress ?? "unknown"}</p>
+                 <p><strong>Time:</strong> ${escapeHtml(new Date().toUTCString())}</p>
+                 <p><strong>IP address:</strong> ${escapeHtml(deviceInfo?.ipAddress ?? "unknown")}</p>
                  <p>You can now sign in with your username and this password as well as with Google. If this wasn't you, reset your password immediately and contact support.</p>`,
           // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
           senderClass: "platform",
@@ -677,6 +693,7 @@ export class AuthService {
    */
   private async mintSessionForUser(user: User, deviceInfo?: DeviceInfo) {
     await this.prisma.refreshToken.deleteMany({ where: { userId: user.id } });
+    await this.touchLastLogin(user.id);
 
     const jwtConfig = this.configService.get<AppConfig["jwt"]>("jwt")!;
 

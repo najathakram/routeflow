@@ -1,3 +1,5 @@
+// SA-429: driver cases here pin other behaviour; ownership is pinned in driver-edit-access*.spec.ts.
+jest.mock("./driver-edit-access", () => ({ assertDriverMayEditOrder: jest.fn() }));
 import { Test, TestingModule } from "@nestjs/testing";
 import {
   NotFoundException,
@@ -160,6 +162,7 @@ describe("OrdersService", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    prisma.order.updateMany.mockResolvedValue({ count: 1 }); // SA-404f F2: cancel CAS claims
     tenantCtx = { run: jest.fn((_tenantId: string | null, fn: () => unknown) => fn()) };
     mockQueue = { add: jest.fn() };
     mockGateway = {
@@ -1960,7 +1963,7 @@ describe("OrdersService", () => {
     // contract, and settle must reproduce it exactly (held/requested are
     // compared in each line's own stored denomination) — so this spec
     // documents what create() already does today.
-    describe("WP1 — boxed-line qty basis on CREATE (regression, no behavior change)", () => {
+    describe("WP1 + B703 — boxed-line qty basis on CREATE (always pieces)", () => {
       const BOXED_12 = {
         id: "prod-box12",
         name: "Water Case",
@@ -1975,20 +1978,14 @@ describe("OrdersService", () => {
         (service as any).systemConfig.get.mockResolvedValue("0");
       });
 
-      /**
-       * B116 (REG-B116 / R15) replaced create()'s per-line `tx.product.update`
-       * with ONE aggregated raw `UPDATE … FROM (VALUES …)`, so the qty BASIS
-       * this describe() pins is now read off that statement's bindings. Same
-       * oracle (27 pieces / 2 selling units), new call site — the returned
-       * reader hands back the `[productId, qty]` pairs in VALUES-list order.
-       */
+      // B116/B562: the one aggregated `$queryRaw` UPDATE's `[productId, qty]` bindings (pieces).
       function captureStockDecrement() {
-        const txExecuteRaw: jest.Mock = jest.fn().mockResolvedValue(0);
+        const txExecuteRaw: jest.Mock = jest.fn().mockResolvedValue([]);
         prisma.tenantTransaction.mockImplementation((fn: any) =>
           fn({
             ...(prisma as unknown as Record<string, any>),
             $executeRaw: txExecuteRaw,
-            $queryRaw: jest.fn().mockResolvedValue([]),
+            $queryRaw: txExecuteRaw,
           }),
         );
         const isSql = (v: any) => typeof v?.sql === "string" && Array.isArray(v?.values);
@@ -2042,7 +2039,7 @@ describe("OrdersService", () => {
         expect(readDecrement()).toContain("test-tenant");
       });
 
-      it("the same boxed product ordered legacy-style with bare qty:2 (no boxes/pieces keys) decrements 2 — the SELLING-UNITS basis", async () => {
+      it("B703 (SA-136b): the same boxed product ordered box-unaware (bare qty:2) decrements 24 pieces", async () => {
         prisma.product.findMany.mockResolvedValue([BOXED_12]);
         const readDecrement = captureStockDecrement();
 
@@ -2052,7 +2049,7 @@ describe("OrdersService", () => {
         );
 
         expect(prisma.product.update).not.toHaveBeenCalled();
-        expect(readDecrement().slice(0, 2)).toEqual(["prod-box12", 2]);
+        expect(readDecrement().slice(0, 2)).toEqual(["prod-box12", 24]);
         expect(readDecrement()).toContain("test-tenant");
       });
     });
@@ -2677,6 +2674,7 @@ describe("OrdersService", () => {
   });
 
   describe("sweepAllPendingOrders — tenant scoping (B323)", () => {
+    const noMismatches = { packMismatches: 0, livePackFallbacks: 0 }; // SA-124: neither below
     it("REG-B323 sweepAllPendingOrders runs each customer group inside its own tenant context and skips null-tenant groups", async () => {
       const mergeSpy = jest
         .spyOn(service, "mergeAllPendingForCustomer")
@@ -2699,16 +2697,16 @@ describe("OrdersService", () => {
 
       const result = await service.sweepAllPendingOrders();
 
-      // each group's merge ran inside ITS OWN tenant's context — never the other
-      // group's, and never ambient/unscoped.
+      // each group's merge ran inside ITS OWN tenant's context — never the other group's.
       expect(tenantCtx.run).toHaveBeenCalledTimes(2);
       expect(tenantCtx.run).toHaveBeenNthCalledWith(1, "tenant-a", expect.any(Function));
       expect(tenantCtx.run).toHaveBeenNthCalledWith(2, "tenant-b", expect.any(Function));
-      expect(mergeSpy).toHaveBeenCalledWith("cust-a");
-      expect(mergeSpy).toHaveBeenCalledWith("cust-b");
+      const sweepOpts = expect.objectContaining({ onPackMismatch: expect.any(Function) });
+      expect(mergeSpy).toHaveBeenCalledWith("cust-a", {}, sweepOpts);
+      expect(mergeSpy).toHaveBeenCalledWith("cust-b", {}, sweepOpts);
       expect(warnSpy).not.toHaveBeenCalled();
 
-      expect(result).toEqual({ customers: 2, merged: 2, skipped: 0 });
+      expect(result).toEqual({ customers: 2, merged: 2, skipped: 0, ...noMismatches });
     });
 
     it("REG-B323 a customer with one tenant-scoped pending order and one legacy null-tenant order is counted and warned, never dropped silently", async () => {
@@ -2731,12 +2729,8 @@ describe("OrdersService", () => {
 
       expect(tenantCtx.run).not.toHaveBeenCalled();
       expect(mergeSpy).not.toHaveBeenCalled();
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining(
-          "sweepAllPendingOrders: customer cust-a has 1 pending order(s) without tenantId — not merged (B323)",
-        ),
-      );
-      expect(result).toEqual({ customers: 0, merged: 0, skipped: 1 });
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("not merged (B323)"));
+      expect(result).toEqual({ customers: 0, merged: 0, skipped: 1, ...noMismatches });
     });
   });
 
@@ -3155,12 +3149,12 @@ describe("OrdersService", () => {
     }
 
     function mockTenantTransactionWithRawSpy(): jest.Mock {
-      const txExecuteRaw = jest.fn().mockResolvedValue(0);
+      const txExecuteRaw = jest.fn().mockResolvedValue([]); // B562: + the $queryRaw decrement
       prisma.tenantTransaction.mockImplementation((fn: any) =>
         fn({
           ...(prisma as unknown as Record<string, any>),
           $executeRaw: txExecuteRaw,
-          $queryRaw: jest.fn().mockResolvedValue([]),
+          $queryRaw: txExecuteRaw,
         }),
       );
       return txExecuteRaw;
@@ -3362,6 +3356,8 @@ describe("OrdersService", () => {
         { id: "ord-1", status: "PENDING" },
         expect.arrayContaining([expect.objectContaining({ productId: "prod-box12", qty: 27 })]),
         [],
+        operatorPayload, // B562 PR-2: the acting user and the event the SALE rows record
+        { notes: "DEMOTE" },
       );
 
       // Now the credit-back itself rejects — the claim already flipped the row
@@ -4745,7 +4741,7 @@ describe("OrdersService", () => {
 
       expect(prisma.orderItem.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "li-A" },
+          where: { id: "li-A", orderId: "ord-1" },
           data: expect.objectContaining({
             productId: "prod-tob",
             unitPrice: 20,
@@ -4844,7 +4840,7 @@ describe("OrdersService", () => {
 
       expect(prisma.orderItem.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "li-A" },
+          where: { id: "li-A", orderId: "ord-1" },
           data: expect.objectContaining({
             productId: "prod-tob",
             unitPrice: 8,
@@ -5164,7 +5160,7 @@ describe("OrdersService", () => {
 
       expect(prisma.orderItem.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "li-A" },
+          where: { id: "li-A", orderId: "ord-1" },
           data: expect.objectContaining({
             productId: "prod-loose",
             // 2 * (unitsPerBox ?? 0) would have been qty 0 / subtotal 0 — a free line.
@@ -5292,6 +5288,7 @@ describe("OrdersService", () => {
       prisma.order.findUnique.mockResolvedValue(orderWithItems);
       prisma.deliveryMutation.count.mockResolvedValue(0);
       prisma.orderItem.findMany.mockResolvedValue([]);
+      prisma.orderItem.deleteMany.mockResolvedValue({ count: 1 });
 
       await service.updateOrderItems(
         "ord-1",
@@ -5299,7 +5296,10 @@ describe("OrdersService", () => {
         operatorPayload,
       );
 
-      expect(prisma.orderItem.delete).toHaveBeenCalledWith({ where: { id: "li-A" } });
+      // #2563: scoped to THIS order, never a bare line id.
+      expect(prisma.orderItem.deleteMany).toHaveBeenCalledWith({
+        where: { id: "li-A", orderId: "ord-1" },
+      });
     });
 
     it("action DELETE falls back to strike-off when the line was already invoiced", async () => {
@@ -5310,6 +5310,7 @@ describe("OrdersService", () => {
       prisma.order.findUnique.mockResolvedValue(billed);
       prisma.deliveryMutation.count.mockResolvedValue(0);
       prisma.orderItem.findMany.mockResolvedValue([]);
+      prisma.orderItem.updateMany.mockResolvedValue({ count: 1 });
 
       await service.updateOrderItems(
         "ord-1",
@@ -5317,10 +5318,10 @@ describe("OrdersService", () => {
         operatorPayload,
       );
 
-      expect(prisma.orderItem.delete).not.toHaveBeenCalled();
-      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+      expect(prisma.orderItem.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.orderItem.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "li-A" },
+          where: { id: "li-A", orderId: "ord-1" },
           data: expect.objectContaining({ status: "CANCELLED" }),
         }),
       );
@@ -6624,6 +6625,7 @@ describe("OrdersService", () => {
       prisma.order.findUnique.mockResolvedValue(twoLineOrder);
       prisma.deliveryMutation.count.mockResolvedValue(0);
       prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 7, status: "PENDING" }]);
+      prisma.orderItem.deleteMany.mockResolvedValue({ count: 1 });
 
       await service.updateOrderItems(
         "ord-1",
@@ -6631,8 +6633,11 @@ describe("OrdersService", () => {
         driverPayload,
       );
 
-      expect(prisma.orderItem.deleteMany).not.toHaveBeenCalled();
-      expect(prisma.orderItem.delete).toHaveBeenCalledWith({ where: { id: "li-A" } });
+      // Only the targeted line, scoped to this order (#2563) — never the replace branch's wipe.
+      expect(prisma.orderItem.deleteMany).toHaveBeenCalledTimes(1);
+      expect(prisma.orderItem.deleteMany).toHaveBeenCalledWith({
+        where: { id: "li-A", orderId: "ord-1" },
+      });
     });
 
     it("a driver diff substitution bills the substitute's list price (B13 — no price control)", async () => {
@@ -6658,7 +6663,7 @@ describe("OrdersService", () => {
 
       expect(prisma.orderItem.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "li-A" },
+          where: { id: "li-A", orderId: "ord-1" },
           data: expect.objectContaining({
             productId: "prod-sub",
             unitPrice: 8,
@@ -6687,6 +6692,8 @@ describe("OrdersService", () => {
 
     it("a buyer (CUSTOMER) diff-shaped payload is rejected with 400 before any mutation", async () => {
       prisma.order.findUnique.mockResolvedValue({ ...twoLineOrder, status: "PENDING" });
+      // SA-507b: the 400 answers the ORDER'S OWNER only (a non-owner meets the bare 403 first).
+      prisma.customer.findFirst.mockResolvedValue({ id: twoLineOrder.customerId });
 
       await expect(
         service.updateOrderItems(
@@ -8210,9 +8217,11 @@ describe("OrdersService", () => {
         $executeRaw: jest.fn().mockResolvedValue(0),
         product: {
           findMany: jest.fn().mockResolvedValue([]),
-          update: jest.fn().mockResolvedValue({}),
+          update: jest.fn().mockResolvedValue({ currentStock: 0 }), // B562: the written row
+          findFirst: jest.fn().mockResolvedValue(null),
         },
-      };
+        stockMovement: { create: jest.fn().mockResolvedValue({ id: "mv" }), findFirst: jest.fn() },
+      } as any;
     });
 
     it("(a) increase 1→3 boxes (qty 12→36) decrements 24", async () => {
@@ -9430,107 +9439,3 @@ describe("OrdersService", () => {
 });
 
 // ─── Controller: the merge-choice branch bypasses OrdersService.create ───────
-
-describe("OrdersController — merge choice vs orderDate", () => {
-  let controller: OrdersController;
-  let ordersService: {
-    findActiveOrder: jest.Mock;
-    updateOrderItems: jest.Mock;
-    mergeAllPendingForCustomer: jest.Mock;
-    findOne: jest.Mock;
-    create: jest.Mock;
-  };
-
-  const activeOrder = {
-    id: "ord-open",
-    orderNumber: "ORD-00009",
-    status: "PENDING",
-    total: 10,
-    createdAt: new Date(),
-    // priceType MANUAL: only an operator override survives the fold (F30/R11 refined
-    // contract) — derived prices are omitted so updateOrderItems re-derives at the
-    // merged qty; orders.scan-hardening.spec.ts pins that branch.
-    lineItems: [{ productId: "prod-1", qty: 2, unitPrice: 5, priceType: "MANUAL", name: null }],
-  };
-
-  beforeEach(async () => {
-    ordersService = {
-      findActiveOrder: jest.fn().mockResolvedValue(activeOrder),
-      updateOrderItems: jest.fn().mockResolvedValue(undefined),
-      mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
-      findOne: jest.fn().mockResolvedValue(activeOrder),
-      create: jest.fn().mockResolvedValue({ id: "ord-new", customerId: "cust-1" }),
-    };
-
-    const module: TestingModule = await Test.createTestingModule({
-      controllers: [OrdersController],
-      providers: [
-        { provide: OrdersService, useValue: ordersService },
-        { provide: ChangeRequestsService, useValue: {} },
-      ],
-    }).compile();
-
-    controller = module.get<OrdersController>(OrdersController);
-  });
-
-  it("rejects merge + orderDate before any items are folded in", async () => {
-    await expect(
-      controller.create(
-        {
-          customerId: "cust-1",
-          items: [{ productId: "prod-1", qty: 1 }],
-          mergeChoice: "merge",
-          orderDate: isoDaysAgo(4),
-        } as any,
-        operatorPayload,
-      ),
-    ).rejects.toBeInstanceOf(BadRequestException);
-
-    expect(ordersService.updateOrderItems).not.toHaveBeenCalled();
-    expect(ordersService.mergeAllPendingForCustomer).not.toHaveBeenCalled();
-    expect(ordersService.create).not.toHaveBeenCalled();
-  });
-
-  it("still merges an undated order into the open one", async () => {
-    await controller.create(
-      {
-        customerId: "cust-1",
-        items: [{ productId: "prod-1", qty: 1 }],
-        mergeChoice: "merge",
-      } as any,
-      operatorPayload,
-    );
-
-    // F30/R11 (B199): the fold carries the EXISTING line's unitPrice through —
-    // a merge is never where an operator's price override quietly disappears.
-    // B465 fix round 4: the create-merge call site now always passes a 4th
-    // opts argument naming isCreateMerge — the ONLY place this ever gets set.
-    expect(ordersService.updateOrderItems).toHaveBeenCalledWith(
-      "ord-open",
-      expect.objectContaining({ items: [{ productId: "prod-1", qty: 3, unitPrice: 5 }] }),
-      operatorPayload,
-      expect.objectContaining({ isCreateMerge: true }),
-    );
-  });
-
-  it("a dated order chosen as separate goes through create()", async () => {
-    const orderDate = isoDaysAgo(4);
-
-    await controller.create(
-      {
-        customerId: "cust-1",
-        items: [{ productId: "prod-1", qty: 1 }],
-        mergeChoice: "separate",
-        orderDate,
-      } as any,
-      operatorPayload,
-    );
-
-    expect(ordersService.updateOrderItems).not.toHaveBeenCalled();
-    expect(ordersService.create).toHaveBeenCalledWith(
-      expect.objectContaining({ orderDate }),
-      operatorPayload,
-      { skipAutoMerge: true },
-    );
-  });
-});

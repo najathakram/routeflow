@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -21,6 +21,8 @@ export class ParkedRestockResolutionService {
 
   /** The tenant's unresolved parked restocks, oldest first. */
   list() {
+    if (!this.prisma.getTenantId())
+      throw new BadRequestException("Parked restocks are tenant-scoped");
     // (the model exists once the ledger migration's schema is generated; `any` until then, like the writer)
     return (this.prisma.forTenant() as any).returnParkedRestock.findMany({
       where: { resolvedAt: null },
@@ -43,6 +45,7 @@ export class ParkedRestockResolutionService {
    */
   async resolve(id: string, unitsPerBoxSupplied: number, actor: { id: string }) {
     const tenantId = this.prisma.getTenantId();
+    if (!tenantId) throw new BadRequestException("Parked restocks are tenant-scoped");
     const result = await this.prisma.tenantTransaction(async (tx: any) => {
       const row = await tx.returnParkedRestock.findFirst({ where: { id } });
       if (!row) throw new NotFoundException("Parked restock not found");

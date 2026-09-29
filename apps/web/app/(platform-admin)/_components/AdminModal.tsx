@@ -16,6 +16,16 @@ const FOCUSABLE_SELECTOR =
 export function AdminModal({ open, onClose, title, children, footer }: AdminModalProps) {
   const panelRef = React.useRef<HTMLDivElement>(null);
   const triggerRef = React.useRef<HTMLElement | null>(null);
+  const titleId = React.useId();
+  // The latest onClose, read at call time. Callers pass an inline arrow (`() => setX(null)`), a NEW
+  // function on every parent render; with `onClose` in the effect's dependency list, each keystroke
+  // in a controlled field inside the modal re-ran the effect: cleanup focused the trigger, then the
+  // body moved focus to the first focusable (the close button), so typing was cut off after one
+  // character (A3 F9). The effect now depends on `open` alone.
+  const onCloseRef = React.useRef(onClose);
+  React.useEffect(() => {
+    onCloseRef.current = onClose;
+  });
 
   React.useEffect(() => {
     if (!open) return;
@@ -28,7 +38,7 @@ export function AdminModal({ open, onClose, title, children, footer }: AdminModa
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (e.key !== "Tab" || !panel) return;
@@ -58,7 +68,7 @@ export function AdminModal({ open, onClose, title, children, footer }: AdminModa
       window.removeEventListener("keydown", handleKeyDown);
       triggerRef.current?.focus?.();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 
@@ -69,16 +79,21 @@ export function AdminModal({ open, onClose, title, children, footer }: AdminModa
         ref={panelRef}
         role="dialog"
         aria-modal="true"
+        aria-labelledby={titleId}
         tabIndex={-1}
         className="relative w-full max-w-lg rounded-xl bg-slate-800 ring-1 ring-white/10 shadow-2xl"
       >
         <div className="flex items-center justify-between border-b border-slate-700 px-5 py-4">
-          <h3 className="text-base font-semibold text-white">{title}</h3>
+          <h3 id={titleId} className="text-base font-semibold text-white">
+            {title}
+          </h3>
           <button
+            type="button"
             onClick={onClose}
+            aria-label="Close dialog"
             className="text-slate-400 hover:text-white text-lg leading-none"
           >
-            &times;
+            <span aria-hidden="true">&times;</span>
           </button>
         </div>
         <div className="px-5 py-4">{children}</div>

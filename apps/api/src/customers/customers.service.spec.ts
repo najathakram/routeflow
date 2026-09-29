@@ -1616,6 +1616,25 @@ describe("CustomersService", () => {
       );
     });
 
+    // B310, DRAFT half (#719 fixed the concurrency half). DRAFT joins this check directly,
+    // not CREDIT_NOT_APPLICABLE — :1835's exposure reads need DRAFT to stay out of that set.
+    it("REG-B310 an advance cannot be applied to a DRAFT invoice — it has not been sent yet", async () => {
+      prisma.advancePayment.findUnique.mockResolvedValue({ id: "ap-1", balance: 100 });
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-draft",
+        total: 100,
+        status: "DRAFT",
+        dueDate: null,
+        payments: [],
+      });
+      await expect(
+        service.applyAdvancePaymentToInvoice("ap-1", { invoiceId: "inv-draft" }),
+      ).rejects.toThrow("Cannot apply advance payment to invoice with status DRAFT");
+      expect(prisma.invoicePayment.create).not.toHaveBeenCalled();
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+      expect(prisma.advancePayment.update).not.toHaveBeenCalled();
+    });
+
     it("REG-B310 two concurrent applies of the SAME advance never drive its balance negative", async () => {
       // The mocked `withAdvisoryLock` is a module-level jest.fn shared across every test in this
       // file (a prior test above also calls applyAdvancePaymentToInvoice) — clear its call
@@ -2593,101 +2612,9 @@ describe("CustomersService", () => {
     });
   });
 
-  // ─── credit-note deletes must clear order↔credit-note links first ─────────
-  // OrderCreditNote.creditNoteId has no onDelete (Restrict), so deleting a
-  // credit note that is still linked to an order aborts the whole transaction.
-  //
-  // GREEN BY DESIGN — R0's fix is cherry-picked onto this branch (94e98afe,
-  // retitled by d32a1fe5). The three REG-B189 describes below are ORDERING
-  // pins that protect the picked fix from a later edit to any of the three
-  // purge sites; they are NOT this batch's red, and a RED-gate run must not
-  // count them as proof of F02b's own behavior changes.
-
-  describe("REG-B189 deleteAllCustomers — order↔credit-note links", () => {
-    it("deletes orderCreditNote rows for the customers' credit notes before the notes", async () => {
-      prisma.customer.findMany.mockResolvedValue([
-        { id: "cust-1", userId: "user-1" },
-        { id: "cust-2", userId: "user-2" },
-      ]);
-      prisma.creditNote.findMany.mockResolvedValue([{ id: "cn-1" }, { id: "cn-2" }]);
-
-      const result = await service.deleteAllCustomers();
-
-      expect(result).toEqual({ deleted: 2 });
-      expect(prisma.creditNote.findMany).toHaveBeenCalledWith({
-        where: { customerId: { in: ["cust-1", "cust-2"] } },
-        select: { id: true },
-      });
-      expect(prisma.orderCreditNote.deleteMany).toHaveBeenCalledWith({
-        where: { creditNoteId: { in: ["cn-1", "cn-2"] } },
-      });
-      expect(prisma.creditNote.deleteMany).toHaveBeenCalledWith({
-        where: { customerId: { in: ["cust-1", "cust-2"] } },
-      });
-      const linkDelete = prisma.orderCreditNote.deleteMany.mock.invocationCallOrder[0];
-      const noteDelete = prisma.creditNote.deleteMany.mock.invocationCallOrder[0];
-      expect(linkDelete).toBeLessThan(noteDelete);
-    });
-
-    it("skips the link delete when the customers have no credit notes", async () => {
-      prisma.customer.findMany.mockResolvedValue([{ id: "cust-1", userId: "user-1" }]);
-      prisma.creditNote.findMany.mockResolvedValue([]);
-
-      await service.deleteAllCustomers();
-
-      expect(prisma.orderCreditNote.deleteMany).not.toHaveBeenCalled();
-      expect(prisma.creditNote.deleteMany).toHaveBeenCalledWith({
-        where: { customerId: { in: ["cust-1"] } },
-      });
-    });
-  });
-
-  // Green by design — R0's fix is cherry-picked (94e98afe); ordering pin, not this batch's red.
-  describe("REG-B189 deleteCustomer (hard delete) — order↔credit-note links", () => {
-    it("deletes orderCreditNote rows for the customer's credit notes before the notes", async () => {
-      prisma.customer.findUnique.mockResolvedValue({
-        ...MOCK_CUSTOMER,
-        user: { status: "ACTIVE" },
-      });
-      // No orders/invoices/returns → the hard-delete path is taken (counts default to 0).
-      prisma.creditNote.findMany.mockResolvedValue([{ id: "cn-9" }]);
-
-      const result = await service.deleteCustomer("cust-1");
-
-      expect(result).toEqual({ success: true });
-      expect(prisma.orderCreditNote.deleteMany).toHaveBeenCalledWith({
-        where: { creditNoteId: { in: ["cn-9"] } },
-      });
-      const linkDelete = prisma.orderCreditNote.deleteMany.mock.invocationCallOrder[0];
-      const noteDelete = prisma.creditNote.deleteMany.mock.invocationCallOrder[0];
-      expect(linkDelete).toBeLessThan(noteDelete);
-    });
-  });
-
-  // Green by design — R0's fix is cherry-picked (94e98afe); ordering pin, not this batch's red.
-  describe("REG-B189 deleteImportedCustomers — order↔credit-note links", () => {
-    it("deletes orderCreditNote rows for the imported customers' credit notes before the notes", async () => {
-      prisma.customer.findMany.mockResolvedValue([
-        { id: "cust-1", userId: "user-1", customerLink: null },
-        { id: "cust-2", userId: "user-2", customerLink: { status: "ACTIVE" } },
-      ]);
-      prisma.creditNote.findMany.mockResolvedValue([{ id: "cn-3" }]);
-
-      const result = await service.deleteImportedCustomers();
-
-      expect(result).toEqual({ deleted: 1, preserved: 1 });
-      expect(prisma.creditNote.findMany).toHaveBeenCalledWith({
-        where: { customerId: { in: ["cust-1"] } },
-        select: { id: true },
-      });
-      expect(prisma.orderCreditNote.deleteMany).toHaveBeenCalledWith({
-        where: { creditNoteId: { in: ["cn-3"] } },
-      });
-      const linkDelete = prisma.orderCreditNote.deleteMany.mock.invocationCallOrder[0];
-      const noteDelete = prisma.creditNote.deleteMany.mock.invocationCallOrder[0];
-      expect(linkDelete).toBeLessThan(noteDelete);
-    });
-  });
+  // REG-B189 (clear order↔credit-note links before deleting the notes) is superseded by #2587 /
+  // SA-516: a customer delete never deletes a credit note, so there are no links to clear. The
+  // pins live in customer-delete-money-records-2587.spec.ts.
 
   // ─── mergeCustomers: re-pointing + FK-violation guard (F02b R4 / B101) ─────────
   // createMockPrisma()'s tenantTransaction is a pass-through (`fn(models)`) and every
