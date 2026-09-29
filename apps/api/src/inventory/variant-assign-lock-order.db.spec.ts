@@ -32,8 +32,16 @@
  * so either `writer` or `service` reports 40P01 and this spec fails. Fixed order: the service
  * takes F first, blocks holding nothing, the writer takes V and commits, then the service runs.
  *
+ * RETRY INSTRUMENTATION (SA-587e): retryOnTxConflict absorbs the revert's 40P01 (it retries a
+ * deadlock like a 40001), so with the retry in place the revert does not surface as a service
+ * error. The spec records the SQLSTATE of every retried attempt by spying on Nest's
+ * Logger.prototype.warn (common/testing/tx-retry-capture.ts; the retry logs one line per retried
+ * attempt) and asserts ZERO 40P01 each of 3 rounds; the reverted order forces the cycle every
+ * round, so it records at least one 40P01 per round and fails all three.
+ *
  * The lock-edge assert: `blocked` must be true (the service really waited on the writer's family
- * lock) and neither side may report 40P01. WRITTEN, NOT RUN by the fold implementer: F2 owns the
+ * lock) and no 40P01 may be retried or reported by either side. The tuple lock the assign backend holds on F is
+ * GRANTED (it is the first waiter; it waits on the writer's transactionid). WRITTEN, NOT RUN by the fold implementer: F2 owns the
  * DB lane (`npm run local:test:db`). Throwaway `qa-2717-b1-<run>` tenant (assertTestTenant).
  */
 import { randomUUID } from "crypto";
@@ -45,6 +53,7 @@ import { TenantContextService } from "../tenant/tenant-context.service";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { captureRetriedStates } from "../common/testing/tx-retry-capture";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -180,6 +189,7 @@ describeDb("SA-584 B1 — assignToVariants takes the family row first (no 40P01)
     let blockedBackends = -1;
     let blockedOnFamily = false;
     let serviceHoldsVariant = true;
+    let capture: ReturnType<typeof captureRetriedStates> | undefined;
     try {
       await writer.query("BEGIN");
       await writer.query("SET LOCAL lock_timeout = '4s'");
@@ -189,6 +199,8 @@ describeDb("SA-584 B1 — assignToVariants takes the family row first (no 40P01)
       await writer.query('UPDATE "Product" SET "priceTier2" = 8.75 WHERE id = $1', [family.id]);
 
       let settled = false;
+      // Records the SQLSTATE of each attempt the service's retryOnTxConflict re-ran (see header).
+      capture = captureRetriedStates("inventory.assignToVariants");
       const attempt = () =>
         tenantCtx.run(tenantId, () =>
           service.assignToVariants(
@@ -224,13 +236,17 @@ describeDb("SA-584 B1 — assignToVariants takes the family row first (no 40P01)
             [pid],
           )
         ).rows[0].n;
-        // ... and it waits on the FAMILY row's tuple lock (pg_locks), not on some other row
+        // ... and it waits on the FAMILY row F. Postgres queues a row-lock waiter as: it GRANTS
+        //     itself the row's heavyweight tuple lock, then waits (not granted) on the holder's
+        //     transactionid. So under the fixed order the assign backend shows a GRANTED tuple
+        //     lock on F's ctid (and no tuple lock on V); a NOT-granted tuple lock would mean it is
+        //     the second waiter behind another backend, which is not this interleave.
         blockedOnFamily =
           (
             await pool.query(
               `SELECT count(*)::int AS n
                  FROM pg_locks l
-                WHERE NOT l.granted AND l.locktype = 'tuple'
+                WHERE l.granted AND l.locktype = 'tuple'
                   AND l.relation = '"Product"'::regclass
                   AND '(' || l.page || ',' || l.tuple || ')' = $2
                   AND $1::int = ANY(pg_blocking_pids(l.pid))`,
@@ -264,6 +280,7 @@ describeDb("SA-584 B1 — assignToVariants takes the family row first (no 40P01)
       }
       await running;
     } finally {
+      capture?.restore();
       writer.release();
       probe.release();
     }
@@ -279,6 +296,7 @@ describeDb("SA-584 B1 — assignToVariants takes the family row first (no 40P01)
       blockedBackends,
       blockedOnFamily,
       serviceHoldsVariant,
+      retriedStates: capture ? [...capture.states] : [],
       writerError,
       serviceError,
       parentAfter,
@@ -291,6 +309,20 @@ describeDb("SA-584 B1 — assignToVariants takes the family row first (no 40P01)
     for (let n = 1; n <= 3; n += 1) {
       // eslint-disable-next-line no-await-in-loop
       const r = await round(n);
+
+      // (a0) REVERT-RED, on the CODE: the service's retry ABSORBS a deadlock, so serviceError is
+      //      "none" even on the old order. Only the recorded retried-attempt SQLSTATEs (and the
+      //      writer's own error) show it: old order => a 40P01 in EVERY round (the V <-> F cycle
+      //      is forced each time); fixed => none. Plain 40001/P2034 retries are the expected SSI
+      //      case: allowed, and both operations must still FULFIL (asserted below).
+      expect({
+        n,
+        deadlocks: r.retriedStates.filter((s) => s === "40P01").length,
+        writerDeadlock: isDeadlock(r.writerError),
+      }).toEqual({ n, deadlocks: 0, writerDeadlock: false });
+      expect(
+        r.retriedStates.every((s) => ["40001", "P2034", "TransactionWriteConflict"].includes(s)),
+      ).toBe(true);
 
       // (a) REVERT-RED: under the old variant-first order the service holds V and waits on F while
       //     the editor holds F and wants V: 40P01 on one side, EVERY round. Fixed: neither.
