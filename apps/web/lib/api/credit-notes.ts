@@ -156,6 +156,8 @@ export function useUnapplyCreditNote() {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", invoiceId] });
       qc.invalidateQueries({ queryKey: ["customers", data.customerId, "statement"] });
+      // #2404: the order's "Applied credits" panel lists applied credits too.
+      qc.invalidateQueries({ queryKey: ["orders"] });
     },
   });
 }

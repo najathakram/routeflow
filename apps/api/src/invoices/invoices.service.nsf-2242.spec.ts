@@ -24,6 +24,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { InvoiceStatus } from "@prisma/client";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 
 /**
  * #2242 (SA-395 5a) — reconcileOrderDraftInvoice on an ISSUED deposit mirror keeps the invoice's
@@ -66,6 +67,7 @@ describe("#2242 — an order rebuild keeps the NSF fee line", () => {
         { provide: MessagingService, useValue: { notify: jest.fn(), notifyEvent: jest.fn() } },
         { provide: StorageService, useValue: { upload: jest.fn(), presignedUrl: jest.fn() } },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
+        entitlementAuthorityFromEntitlements, // #2241
         {
           provide: CommissionEngineService,
           useValue: { syncInvoiceCommissionSafe: jest.fn().mockResolvedValue(undefined) },

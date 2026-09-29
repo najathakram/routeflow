@@ -181,3 +181,47 @@ describe("pricing mirrors are gone (T3, R5)", () => {
     expect(scanned.filter((file) => /\.(js|jsx|mjs|cjs)$/.test(file)).length).toBeGreaterThan(0);
   });
 });
+
+/**
+ * #2447 (#2430 follow-up): the SA-388 unit-line count rule has ONE home,
+ * `packages/pricing/src/unit-line-count.ts`. Web and mobile had drifting copies before #2276;
+ * they now only import or re-export it. A new local definition anywhere under the app scan
+ * roots — `function unitLineCount(` or `const/let/var unitLineCount =` — fails this tripwire.
+ */
+const UNIT_LINE_COUNT_DEFINITION =
+  /\bfunction\s+unitLineCount\s*[<(]|\b(?:const|let|var)\s+unitLineCount\s*[:=]/;
+
+function findUnitLineCountMirrors(): string[] {
+  const offenders: string[] = [];
+  for (const root of SCAN_ROOTS) {
+    for (const file of collectSourceFiles(root)) {
+      if (UNIT_LINE_COUNT_DEFINITION.test(readFileSync(file, "utf8"))) offenders.push(rel(file));
+    }
+  }
+  return offenders.sort();
+}
+
+describe("unitLineCount has one home: packages/pricing (#2447)", () => {
+  it("no app file defines its own unitLineCount (imports / re-exports only)", () => {
+    expect(findUnitLineCountMirrors()).toEqual([]);
+  });
+
+  it("anti-vacuity: the pattern catches both definition shapes and ignores a re-export", () => {
+    expect(UNIT_LINE_COUNT_DEFINITION.test("export function unitLineCount(li: {})")).toBe(true);
+    expect(UNIT_LINE_COUNT_DEFINITION.test("const unitLineCount = (li) => null;")).toBe(true);
+    expect(
+      UNIT_LINE_COUNT_DEFINITION.test('export { unitLineCount } from "@routeflow/pricing";'),
+    ).toBe(false);
+    expect(
+      UNIT_LINE_COUNT_DEFINITION.test('import { unitLineCount } from "@routeflow/pricing";'),
+    ).toBe(false);
+  });
+
+  it("anti-vacuity: the scan reads both former copies' files (web and mobile)", () => {
+    const scanned = collectScannedFiles();
+    expect(scanned).toContain("apps/mobile/lib/edit-items-draft.ts");
+    expect(scanned).toContain(
+      "apps/web/app/(dashboard)/orders/[id]/_components/unit-line-lock.tsx",
+    );
+  });
+});

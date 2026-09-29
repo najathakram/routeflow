@@ -154,3 +154,6 @@ strix_runs/
 # blanket *.pem rule above would otherwise hide it.
 !docker/mailpit-tls/cert.pem
 !docker/mailpit-tls/key.pem
+
+# #2671: per-worktree Jest caches (each workspace's cacheDirectory) — never source.
+.jest-cache/

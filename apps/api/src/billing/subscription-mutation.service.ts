@@ -247,7 +247,8 @@ export class SubscriptionMutationService {
         select: { planKey: true, cycle: true, periodEnd: true },
       }),
     ]);
-    if (!tenant) throw new NotFoundException("Tenant not found");
+    // #2583 / SA-513: a deleted tenant is refused before the transaction.
+    if (!tenant || tenant.deletedAt) throw new NotFoundException("Tenant not found");
 
     // The plan we are changing FROM — resolved through the legacy enum, so a subscription
     // predating plans-as-data (planKey NULL) is ranked instead of read as "no plan".
@@ -355,10 +356,10 @@ export class SubscriptionMutationService {
       // `lockedFromKey` resolves through the legacy enum for ranking.
       // #2460 / SA-464 (2): an ACTIVE row nets against what the MRR snapshot counted — its STORED
       // basePriceSnapshot (NULL ⇒ 0) — never the catalog price of the plan it holds.
-      const oldPlanMonthly =
-        lockedTenant.status === "ACTIVE" && lockedSub?.planKey
-          ? Number(lockedSub.basePriceSnapshot ?? 0)
-          : 0;
+      // #2583 / SA-513: the SAME paying predicate on both sides — a non-PRODUCTION or deleted row
+      // was never counted (before = 0) and never will be after (after = 0), whatever its status.
+      const oldPlanMonthly = wasPaying ? Number(lockedSub?.basePriceSnapshot ?? 0) : 0;
+      const isPaying = isPayingRow({ ...lockedTenant, status: "ACTIVE" }, input.planKey);
       // #2188 / SA-385 (3): a code's prior is the SAME row findAddonRow re-activates below — the
       // oldest active row matching the shared predicate — so the ledger nets against that row.
       const byAge = [...lockedAddons].sort(
@@ -465,7 +466,7 @@ export class SubscriptionMutationService {
         {
           // SA-444c + SA-464 (2): the new snapshot (override ?? catalog) minus what the MRR snapshot
           // counted — a consistent override row already paying books Δ0; one entering books the fee.
-          amountDelta: roundMoney(Number(newBase ?? 0) - oldPlanMonthly),
+          amountDelta: roundMoney((isPaying ? Number(newBase ?? 0) : 0) - oldPlanMonthly),
           actorId,
           tx,
         },
@@ -797,9 +798,11 @@ export class SubscriptionMutationService {
       this.prisma.tenantSubscription.findUnique({ where: { tenantId } }),
       this.prisma.tenant.findUnique({
         where: { id: tenantId },
-        select: { plan: true, status: true },
+        select: { plan: true, status: true, deletedAt: true },
       }),
     ]);
+    // #2583 / SA-513: a deleted tenant is refused before the transaction.
+    if (tenant?.deletedAt) throw new NotFoundException("Tenant not found");
     const fromKey = this.resolveFromPlanKey(sub?.planKey, tenant?.plan);
     // `fromKey` is never null for a loaded tenant (Tenant.plan defaults to STARTER), so it is
     // NOT the precondition. A row with no planKey of its own is only a real subscription when
@@ -834,8 +837,6 @@ export class SubscriptionMutationService {
     // figures re-agree). The prorated CHARGE below still nets against the catalog entitlement.
     const override = priceOverrideOf(sub);
     const newBase = override ?? newMonthly;
-    const ledgerOldMonthly = sub.planKey ? Number(sub.basePriceSnapshot ?? 0) : 0;
-    const amountDelta = roundMoney(newBase - ledgerOldMonthly);
     const proratedNow =
       override != null ? 0 : this.proration.proratedDiff(sub, newMonthly - oldMonthly);
 
@@ -857,6 +858,20 @@ export class SubscriptionMutationService {
       // #2551 / SA-503a: the house order — Tenant row lock right after the hook, before the
       // subscription write (reconcile/updatePlan/Pricing hold Tenant, then write this row).
       await lockTenantForLedger(tx, tenantId);
+      // #2583 / SA-513: "paying" decided with the shared isPayingRow on the row read UNDER that
+      // lock — Δ = after − before, a non-paying side 0 (a TEST/DEMO-class, non-ACTIVE or deleted
+      // tenant books nothing). The snapshot below is still written, so a later class flip rebases
+      // from it (SA-464 (2)). The guarded write proves `sub` is still the committed row.
+      const lockedTenant = await tx.tenant.findUnique({
+        where: { id: tenantId },
+        select: { status: true, class: true, deletedAt: true },
+      });
+      if (!lockedTenant) throw new NotFoundException("Tenant not found");
+      const wasPaying = isPayingRow(lockedTenant, sub.planKey ?? null);
+      const isPaying = isPayingRow(lockedTenant, planKey);
+      const amountDelta = roundMoney(
+        (isPaying ? newBase : 0) - (wasPaying ? Number(sub.basePriceSnapshot ?? 0) : 0),
+      );
       // Optimistic guard: only apply if still on the expected plan (blocks a concurrent
       // double-upgrade from re-emitting the delta). Matches the STORED key (null matches
       // IS NULL), never the resolved one. #2470: and the negotiated fee it read (null matches

@@ -6,46 +6,15 @@
  * (lib/api/orders.ts) and the buyer surface (lib/api/buyer.ts) can use it.
  */
 
-export type ChangeRequestType = "ADD_ITEM" | "CHANGE_QTY" | "REMOVE_ITEM" | "NOTE";
-export type ChangeRequestStatus = "PENDING" | "APPROVED" | "DECLINED";
-export type ChangeRequestResolution = "MERGED_AT_STOP" | "NEXT_DELIVERY" | "DECLINED";
+// #2703 (SA-562): the row + its enums are ONE declaration in @routeflow/types.
+import type { ChangeRequest } from "@routeflow/types";
+export type {
+  ChangeRequest,
+  ChangeRequestResolution,
+  ChangeRequestStatus,
+  ChangeRequestType,
+} from "@routeflow/types";
 export type ChangeRequestResolveAction = "APPROVE_AT_STOP" | "APPROVE_NEXT_DELIVERY" | "DECLINE";
-
-export interface ChangeRequest {
-  id: string;
-  orderId: string;
-  orderItemId: string | null;
-  productId: string | null;
-  type: ChangeRequestType;
-  status: ChangeRequestStatus;
-  /**
-   * Typed delta. ADD_ITEM {productId,qty,boxes,pieces,productName};
-   * CHANGE_QTY {orderItemId,newQty}; REMOVE_ITEM {orderItemId}; NOTE {text}.
-   * Only ADD_ITEM snapshots a product name — label the others via the order's
-   * line items (post-dispatch lines are CANCELLED, never deleted, so the
-   * lookup stays valid).
-   */
-  payload: {
-    productId?: string;
-    qty?: number;
-    boxes?: number | null;
-    pieces?: number | null;
-    productName?: string;
-    orderItemId?: string;
-    newQty?: number;
-    text?: string;
-  };
-  note: string | null;
-  requestedByName: string | null;
-  requestedByRole: string | null;
-  resolvedByName: string | null;
-  resolvedByRole: string | null;
-  resolution: ChangeRequestResolution | null;
-  resolutionReason: string | null;
-  nextOrderId: string | null;
-  resolvedAt: string | null;
-  createdAt: string;
-}
 
 /** Minimal line shape needed to label CHANGE_QTY/REMOVE_ITEM requests. */
 interface LineForLabel {

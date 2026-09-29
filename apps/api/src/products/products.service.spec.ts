@@ -10,7 +10,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { AddonService } from "../billing/addon.service";
 import { SystemConfigService } from "../system-config/system-config.service";
-import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
@@ -62,8 +62,8 @@ describe("ProductsService", () => {
         // MSRP gate collaborators — flag.msrp defaults OFF; the pre-MSRP tests
         // never send an msrp key, so assertMsrpAllowed is never even called.
         {
-          provide: EntitlementsService,
-          useValue: { hasFlag: jest.fn().mockResolvedValue(false) },
+          provide: EntitlementAuthority,
+          useValue: { can: jest.fn().mockResolvedValue(false) },
         },
         {
           provide: PlanCatalogService,
@@ -2249,7 +2249,7 @@ async function buildBulkDeleteProductsService(prisma: unknown): Promise<Products
       },
       { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(false) } },
       { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
-      { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
+      { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(false) } },
       {
         provide: PlanCatalogService,
         useValue: { upgradeTargetForFlag: jest.fn().mockResolvedValue(null) },
