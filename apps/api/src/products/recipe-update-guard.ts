@@ -55,7 +55,8 @@ export async function lockAndAssertRecipeGuards(
   if (!parentWanted && !boxWanted && !categoryWanted) return;
 
   // 1. family rows, id order. A parentless product may be a recipe product: its family is on the recipe.
-  const ownRecipe: { familyProductId: string } | null = existing.parentProductId
+  // This PRE-lock read only chooses WHICH rows to lock; no refusal rests on it (SA-587).
+  const preLockRecipe: { familyProductId: string } | null = existing.parentProductId
     ? null
     : await tx.recipe.findFirst({
         where: { productId: id, tenantId },
@@ -65,7 +66,7 @@ export async function lockAndAssertRecipeGuards(
   const familyIds = new Set<string>();
   if (existing.parentProductId) familyIds.add(existing.parentProductId);
   if (parentWanted && dto.parentProductId) familyIds.add(dto.parentProductId);
-  if (ownRecipe?.familyProductId) familyIds.add(ownRecipe.familyProductId);
+  if (preLockRecipe?.familyProductId) familyIds.add(preLockRecipe.familyProductId);
   familyIds.delete(id);
   for (const familyId of Array.from(familyIds).sort()) {
     // Serial by design: id order, one lock at a time.
@@ -85,7 +86,12 @@ export async function lockAndAssertRecipeGuards(
     );
   }
 
-  // 3. decide, after the locks.
+  // 3. decide, after the locks — on what is read NOW (SA-587): a recipes.create for this product that
+  // committed while we waited on its row lock must still make the adoption a 409.
+  const ownRecipe: { id: string } | null =
+    parentWanted && dto.parentProductId
+      ? await tx.recipe.findFirst({ where: { productId: id, tenantId }, select: { id: true } })
+      : null;
   if (categoryWanted) {
     const locked = await tx.recipe.findFirst({ where: openRecipeWhere(id), select: { id: true } });
     if (locked) throw recipeCategoryLocked();
