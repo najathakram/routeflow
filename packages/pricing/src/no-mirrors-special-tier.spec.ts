@@ -114,6 +114,50 @@ export function findShape(shape: Shape, source: string): string[] {
     .map((l) => l.trim());
 }
 
+/**
+ * Per-shape, per-file, per-COUNT allow-list. A second copy in an allowed file changes the count
+ * and fails; an entry that matches nothing fails too (see `applyAllowList`).
+ */
+interface Allow {
+  shape: string;
+  file: string;
+  count: number;
+  id: string;
+  reason: string;
+}
+
+const ALLOW: Allow[] = [
+  {
+    shape: "x > 1",
+    file: "apps/api/src/returns/inline-returns-quote.service.ts",
+    count: 1,
+    id: "B-TBD",
+    // returns money module: `> 1` differs from `!== 1` on a null/0 pricingTier; left as is.
+    reason: "returns money module: `> 1` differs from `!== 1` on a null/0 pricingTier; follow-up",
+  },
+];
+
+export function applyAllowList(
+  shapeName: string,
+  hits: Map<string, string[]>,
+  allow: Allow[],
+): { offenders: string[]; unused: string[] } {
+  const offenders: string[] = [];
+  const used = new Set<Allow>();
+  for (const [rel, lines] of hits) {
+    const entry = allow.find((a) => a.shape === shapeName && a.file === rel);
+    if (entry && entry.count === lines.length) {
+      used.add(entry);
+      continue;
+    }
+    for (const l of lines) offenders.push(`${rel}: ${l}`);
+  }
+  const unused = allow
+    .filter((a) => a.shape === shapeName && !used.has(a))
+    .map((a) => `${a.shape} ${a.file} x${a.count}`);
+  return { offenders: offenders.sort(), unused };
+}
+
 function walk(dir: string, out: string[]): void {
   for (const name of readdirSync(dir)) {
     if (SKIP_DIRS.has(name) || name.startsWith(".")) continue;
@@ -146,11 +190,35 @@ describe("no-mirrors: the special-tier rule (isSpecialTier)", () => {
     });
 
     it("no app source contains this shape", () => {
-      const offenders: string[] = [];
+      const hits = new Map<string, string[]>();
       for (const { rel, text } of sources) {
-        for (const line of findShape(shape, text)) offenders.push(`${rel}: ${line}`);
+        const found = findShape(shape, text);
+        if (found.length) hits.set(rel, found);
       }
-      expect(offenders.sort()).toEqual([]);
+      const { offenders, unused } = applyAllowList(shape.name, hits, ALLOW);
+      expect(offenders).toEqual([]);
+      expect(unused).toEqual([]);
+    });
+  });
+
+  describe("allow-list is per file AND count, and must be used", () => {
+    const entry: Allow = { shape: "x > 1", file: "a.ts", count: 1, id: "B-0", reason: "r" };
+    it("passes an exact file + count match", () => {
+      const r = applyAllowList("x > 1", new Map([["a.ts", ["t > 1"]]]), [entry]);
+      expect(r).toEqual({ offenders: [], unused: [] });
+    });
+    it("fails an allow-listed file at count 2", () => {
+      const r = applyAllowList("x > 1", new Map([["a.ts", ["t > 1", "u > 1"]]]), [entry]);
+      expect(r.offenders).toHaveLength(2);
+      expect(r.unused).toHaveLength(1);
+    });
+    it("fails a copy in a different file", () => {
+      const r = applyAllowList("x > 1", new Map([["b.ts", ["t > 1"]]]), [entry]);
+      expect(r.offenders).toHaveLength(1);
+    });
+    it("fails an unused entry", () => {
+      const r = applyAllowList("x > 1", new Map(), [entry]);
+      expect(r.unused).toHaveLength(1);
     });
   });
 });
