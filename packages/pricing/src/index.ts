@@ -13,3 +13,5 @@ export * from "./units-label";
 export * from "./unit-line-count";
 export * from "./po-display-total";
 export * from "./nsf-line";
+export * from "./component-price";
+export * from "./largest-remainder";
