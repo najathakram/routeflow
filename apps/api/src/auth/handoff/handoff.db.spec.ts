@@ -14,6 +14,7 @@ import { Pool } from "pg";
 import { describeDb, requireLocalDatabaseUrl } from "../../common/testing/db-spec";
 import { hashSignedToken, mintSignedToken } from "../../common/signed-token";
 import { HandoffCodeService } from "./handoff-code.service";
+import { withReadBarrier } from "./read-barrier";
 import { StaffHandoffService } from "./staff-handoff.service";
 import { BuyerHandoffService } from "../../buyer/buyer-handoff.service";
 import { BuyerAuthService } from "../../buyer/buyer-auth.service";
@@ -137,14 +138,24 @@ describeDb("#2653 sign-in handoff — both realms (real Postgres)", () => {
     expect(await prisma.authHandoffCode.count({ where: { userId: u.id } })).toBe(0);
   });
 
-  it("single-use under a REAL race: of 5 concurrent exchanges exactly one succeeds", async () => {
+  it("single use under a FORCED interleave: both exchanges read the row before either deletes it, exactly one succeeds", async () => {
     const t = await tenant();
     const u = await operator(t);
     const { code } = await staff.mint(staffJwt(u), "ios-race");
-    const results = await Promise.allSettled(
-      Array.from({ length: 5 }, () => staff.exchange(code, {})),
-    );
+    // Each consume's findFirst does its real read, then waits until the other has read too, so both
+    // reach deleteMany holding the row; only the `count === 1` check separates one winner from two.
+    const gatedCodes = new HandoffCodeService({
+      authHandoffCode: withReadBarrier(prisma.authHandoffCode as never, 2),
+    } as never);
+    const gatedStaff = new StaffHandoffService(gatedCodes, prisma as any, { login } as any);
+    login.mockClear();
+    const results = await Promise.allSettled([
+      gatedStaff.exchange(code, {}),
+      gatedStaff.exchange(code, {}),
+    ]);
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(login).toHaveBeenCalledTimes(1);
+    expect(await prisma.authHandoffCode.count({ where: { userId: u.id } })).toBe(0);
   });
 
   it("TTL: a row past its expiresAt is refused (and left for the next mint to clear)", async () => {

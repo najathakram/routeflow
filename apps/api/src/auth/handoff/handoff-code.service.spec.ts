@@ -9,6 +9,7 @@ import {
   HandoffCodeService,
   handoffTokenSecret,
 } from "./handoff-code.service";
+import { withReadBarrier } from "./read-barrier";
 
 const SECRET = "h".repeat(40);
 
@@ -144,16 +145,24 @@ describe("HandoffCodeService (#2653)", () => {
     });
   });
 
-  it("of two racing exchanges exactly one wins (deleteMany count must be 1)", async () => {
+  it("of two exchanges that BOTH read the row before either deletes it, exactly one wins (count must be 1)", async () => {
     const { prisma } = fakeDb();
-    const svc = new HandoffCodeService(prisma as never);
-    const { code } = await svc.mint(STAFF, "d1");
+    const minter = new HandoffCodeService(prisma as never);
+    const { code } = await minter.mint(STAFF, "d1");
+    // Forced interleave: each consume's findFirst returns the row, then waits until the other
+    // has read it too, so both reach deleteMany holding a row that only one of them can delete.
+    const gated = {
+      authHandoffCode: withReadBarrier(prisma.authHandoffCode as never, 2),
+    };
+    const svc = new HandoffCodeService(gated as never);
     const results = await Promise.allSettled([
       svc.consume("STAFF", code),
       svc.consume("STAFF", code),
     ]);
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     expect(results.filter((r) => r.status === "rejected")).toHaveLength(1);
+    // Discriminates: both reads really happened before any delete.
+    expect(prisma.authHandoffCode.findFirst).toHaveBeenCalledTimes(2);
   });
 
   it("expires after 60 s (TTL)", async () => {
