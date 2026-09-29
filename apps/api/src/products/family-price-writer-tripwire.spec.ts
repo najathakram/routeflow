@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync, statSync } from "fs";
 import { join, relative } from "path";
+import { WRITE_METHODS, callBlocks, opaqueProductWrites } from "./tripwire-scan";
 
 /**
  * #2717 M2 test 23 (SA-574 Q2, SA-E95, L-223): the family owns its variants' prices only if EVERY
@@ -17,7 +18,6 @@ const API_ROOT = join(__dirname, "..", "..");
 const SRC_ROOT = join(API_ROOT, "src");
 
 const COLUMNS = ["pricePerUnit", "priceTier2", "priceTier3", "priceTier4", "priceTier5"];
-const WRITE_METHODS = ["create", "update", "upsert", "createMany", "updateMany"];
 const UPDATE_METHODS = ["update", "upsert", "updateMany"];
 
 /** File -> symbols family-price.ts exports that the file must call (the routing proof). */
@@ -60,32 +60,6 @@ function listFiles(dir: string, exts: RegExp): string[] {
       out.push(...listFiles(full, exts));
     } else if (exts.test(entry) && !/\.spec\.ts$|\.d\.ts$/.test(entry)) {
       out.push(full);
-    }
-  }
-  return out;
-}
-
-function balanced(text: string, openIdx: number): string {
-  let depth = 1;
-  let i = openIdx + 1;
-  while (i < text.length && depth > 0) {
-    if (text[i] === "(") depth++;
-    else if (text[i] === ")") depth--;
-    i++;
-  }
-  return text.slice(openIdx, i);
-}
-
-function callBlocks(text: string, receiver: string, methods: string[]): string[] {
-  const out: string[] = [];
-  for (const method of methods) {
-    const needle = `.${receiver}.${method}(`;
-    let from = 0;
-    for (;;) {
-      const idx = text.indexOf(needle, from);
-      if (idx === -1) break;
-      out.push(balanced(text, idx + needle.length - 1));
-      from = idx + needle.length;
     }
   }
   return out;
@@ -215,60 +189,48 @@ describe("family price writer tripwire: scripts and prisma (Q2 ii)", () => {
  * carry a price column the scan never sees. Every such write is either listed here by file with a
  * reason it can never carry a price column onto a governed row, or the tripwire fails.
  */
-export type DataArg = "literal" | "spread" | "opaque" | "none";
+/**
+ * File (relative to apps/api/src) -> the EXACT number of variable/spread product writes it may hold,
+ * with why none of them can carry a price column onto a governed row. A NEW opaque writer in an
+ * allow-listed file changes the count and fails (SA-587 lead LOW: per count, not per file).
+ */
+export const OPAQUE_DATA_ALLOW: Record<string, { count: number; reason: string }> = {
+  "inventory/inventory.service.ts": {
+    count: 3,
+    reason:
+      "createVariantRowInTx spreads `priceColumns`: the family's own five columns re-read under its " +
+      "row lock (familyPricesForNewVariant) with the mode on, the parent's as before with it off; the " +
+      "cost-basis write with a ternary `data` names only cost columns.",
+  },
+  "products/family-price.ts": {
+    count: 2,
+    reason:
+      "propagateFamilyPrice IS the authority writer: it copies the family's own five columns " +
+      "(pickPriceColumns) onto its variants and its non-override recipe products.",
+  },
+  "products/products.service.ts": {
+    count: 2,
+    reason:
+      "update() writes `data` after applyFamilyPriceBeforeUpdate rewrote it (a governed row's price " +
+      "columns replaced by the family's or stripped); the ROUTED table above pins that call.",
+  },
+};
 
-export function dataArgKind(block: string): DataArg {
-  const m = /(^|[\s{,(])data\b\s*([:,}])/m.exec(block);
-  if (!m) return "none";
-  if (m[2] !== ":") return "opaque";
-  const rest = block.slice(m.index + m[0].length).trimStart();
-  if (rest.startsWith("{") || rest.startsWith("[")) {
-    const open = rest[0];
-    const inner = balancedGeneric(rest, 0, open, open === "{" ? "}" : "]");
-    // `...(cond ? { k: v } : {})` spreads a literal built in place; `...dto` / `...rest` spreads a value
-    // the scan cannot see into.
-    return /\.\.\.\s*[A-Za-z_$]/.test(inner) ? "spread" : "literal";
-  }
-  return "opaque";
-}
-
-function balancedGeneric(text: string, openIdx: number, open: string, close: string): string {
-  let depth = 1;
-  let i = openIdx + 1;
-  while (i < text.length && depth > 0) {
-    if (text[i] === open) depth++;
-    else if (text[i] === close) depth--;
-    i++;
-  }
-  return text.slice(openIdx, i);
-}
-
-/** Every product write call block whose data argument is a variable or contains a spread. */
-export function opaqueProductWrites(text: string): string[] {
+/** Files whose opaque-write count is not exactly the allow-listed number (or that are not listed at all). */
+export function opaqueCountViolations(
+  found: Map<string, number>,
+  allow: Record<string, { count: number; reason: string }>,
+): string[] {
   const out: string[] = [];
-  for (const receiver of ["product", "products"]) {
-    const methods = receiver === "product" ? WRITE_METHODS : ["create", "update"];
-    for (const block of callBlocks(text, receiver, methods)) {
-      const kind = dataArgKind(block);
-      if (kind === "opaque" || kind === "spread") out.push(block);
-    }
+  for (const [file, n] of found) {
+    if (!(file in allow)) out.push(`${file}: ${n} (not allow-listed)`);
+    else if (allow[file].count !== n) out.push(`${file}: found ${n}, allowed ${allow[file].count}`);
+  }
+  for (const [file, { count }] of Object.entries(allow)) {
+    if (!found.has(file)) out.push(`${file}: allow-listed ${count} but none found (stale)`);
   }
   return out;
 }
-
-/** File (relative to apps/api/src) -> why its variable/spread `data` can never carry a price column onto a governed row. */
-const OPAQUE_DATA_ALLOW: Record<string, string> = {
-  "inventory/inventory.service.ts":
-    "createVariantRowInTx spreads `priceColumns`: the family's own five columns re-read under its " +
-    "row lock (familyPricesForNewVariant) with the mode on, the parent's as before with it off; the " +
-    "cost-basis write with a ternary `data` names only cost columns.",
-  "products/family-price.ts":
-    "propagateFamilyPrice IS the authority writer: it copies the family's own five columns " +
-    "(pickPriceColumns) onto its variants and its non-override recipe products.",
-  "products/products.service.ts":
-    "update() writes `data` after applyFamilyPriceBeforeUpdate rewrote it (a governed row's price " +
-    "columns replaced by the family's or stripped); the ROUTED table above pins that call.",
-};
 
 describe("family price writer tripwire: variable and spread data (SA-584 fold)", () => {
   it("sees a spread, a shorthand and a variable data argument, and ignores a literal", () => {
@@ -310,15 +272,30 @@ describe("family price writer tripwire: variable and spread data (SA-584 fold)",
     if (n > 0) opaque.set(rel(SRC_ROOT, file), n);
   }
 
-  it("every file with a variable/spread product write is allow-listed with a reason", () => {
-    const offenders = [...opaque.keys()].filter((f) => !(f in OPAQUE_DATA_ALLOW));
-    expect(offenders).toEqual([]);
+  it("the allow-list matches the found opaque writers exactly, per file and per count", () => {
+    expect(opaqueCountViolations(opaque, OPAQUE_DATA_ALLOW)).toEqual([]);
   });
 
-  it("every allow-listed file has a reason and still has such a write (a stale row fails)", () => {
-    for (const [file, reason] of Object.entries(OPAQUE_DATA_ALLOW)) {
+  it("every allow-listed file carries a reason", () => {
+    for (const { reason } of Object.values(OPAQUE_DATA_ALLOW)) {
       expect(reason.length).toBeGreaterThan(20);
-      expect(opaque.has(file)).toBe(true);
     }
+  });
+
+  it("the count check is not vacuous: one extra writer in an allow-listed file, a new file, and a stale row all fail", () => {
+    const allow = { "a.ts": { count: 2, reason: "x".repeat(30) } };
+    expect(opaqueCountViolations(new Map([["a.ts", 2]]), allow)).toEqual([]);
+    expect(opaqueCountViolations(new Map([["a.ts", 3]]), allow)).toHaveLength(1);
+    expect(opaqueCountViolations(new Map([["a.ts", 1]]), allow)).toHaveLength(1);
+    expect(
+      opaqueCountViolations(
+        new Map([
+          ["a.ts", 2],
+          ["b.ts", 1],
+        ]),
+        allow,
+      ),
+    ).toHaveLength(1);
+    expect(opaqueCountViolations(new Map(), allow)).toHaveLength(1);
   });
 });

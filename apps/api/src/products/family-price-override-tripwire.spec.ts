@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync, statSync } from "fs";
 import { join, relative } from "path";
+import { opaqueProductWrites } from "./tripwire-scan";
 
 /**
  * SA-584 C1 (#2717 M2 fold): `Product.familyPriceOverride` has NO writer in M2 (no DTO field, no
@@ -21,6 +22,70 @@ const WRITE_METHODS = ["create", "update", "upsert", "createMany", "updateMany"]
 
 /** file (relative to apps/api) -> the reason it may write the flag. EMPTY on purpose. */
 const ALLOW: Record<string, string> = {};
+
+/**
+ * SA-587 lead LOW: the `data:` scan above only sees a LITERAL object. A Product write whose data is a
+ * variable or carries a spread (`const patch = { familyPriceOverride: true }; ...update({ data: patch })`)
+ * hides the key. Every such write (file relative to apps/api -> EXACT count, with a reason none of them can
+ * carry the flag) is listed here; a new one, or one more in a listed file, fails.
+ */
+export const OPAQUE_ALLOW: Record<string, { count: number; reason: string }> = {
+  "src/inventory/inventory.service.ts": {
+    count: 3,
+    reason:
+      "createVariantRowInTx spreads the family's five price columns and a cost-basis `data`; " +
+      "neither names familyPriceOverride (the flag has no writer in M2, SA-584a).",
+  },
+  "src/products/family-price.ts": {
+    count: 2,
+    reason:
+      "propagateFamilyPrice copies pickPriceColumns (five price columns only) onto variants and " +
+      "non-override recipe products; it reads the flag in its where, never writes it.",
+  },
+  "src/products/products.service.ts": {
+    count: 2,
+    reason:
+      "create/update write a `data` built from the typed DTO, which has no familyPriceOverride " +
+      "field (pinned by the DTO scan above), after the family-price routing.",
+  },
+  "scripts/demo-seed.js": {
+    count: 2,
+    reason:
+      "Seeds the routeflow-demo tenant only: batch rows built in the script and a demo row " +
+      "re-write; none sets the override flag.",
+  },
+  "scripts/reset-seed.js": {
+    count: 1,
+    reason: "Seed script for a scratch/test database: spreads its own dummy product rows, no flag.",
+  },
+  "scripts/sales-facts-timing.ts": {
+    count: 1,
+    reason: "Timing harness creating synthetic products in a test tenant via a map; no flag.",
+  },
+  "scripts/seed-marketing-screenshot-products.js": {
+    count: 2,
+    reason: "Marketing-screenshot seed for the demo tenant: definitional fields only, no flag.",
+  },
+  "scripts/seed-test-catalog.js": {
+    count: 2,
+    reason: "Seeds the approved test tenant catalog: definitional fields only, no flag.",
+  },
+};
+
+export function opaqueViolations(
+  found: Map<string, number>,
+  allow: Record<string, { count: number; reason: string }>,
+): string[] {
+  const out: string[] = [];
+  for (const [file, n] of found) {
+    if (!(file in allow)) out.push(`${file}: ${n} (not allow-listed)`);
+    else if (allow[file].count !== n) out.push(`${file}: found ${n}, allowed ${allow[file].count}`);
+  }
+  for (const [file, { count }] of Object.entries(allow)) {
+    if (!found.has(file)) out.push(`${file}: allow-listed ${count} but none found (stale)`);
+  }
+  return out;
+}
 
 export const REMEDIATION =
   "familyPriceOverride now has a writer. Before it can land you MUST re-run the Q10 pack check " +
@@ -127,6 +192,28 @@ describe("familyPriceOverride writer tripwire (SA-584 C1)", () => {
     expect(
       familyPriceOverrideWriters("scripts/x.js", `UPDATE "Product" SET "${KEY}" = true`),
     ).toEqual(["quoted SQL identifier"]);
+  });
+
+  it("no variable/spread Product write exists outside OPAQUE_ALLOW (file + exact count + reason)", () => {
+    const found = new Map<string, number>();
+    for (const f of files) {
+      const n = opaqueProductWrites(readFileSync(f, "utf8")).length;
+      if (n > 0) found.set(rel(f), n);
+    }
+    expect(opaqueViolations(found, OPAQUE_ALLOW)).toEqual([]);
+    for (const { reason } of Object.values(OPAQUE_ALLOW)) expect(reason.length).toBeGreaterThan(20);
+  });
+
+  it("the opaque scan is not vacuous: a variable that carries the flag is caught, and the count check bites", () => {
+    const variable = `const patch = { ${KEY}: true };\nawait tx.product.update({ where: { id }, data: patch });`;
+    const spread = `await tx.product.update({ where: { id }, data: { ...dto } });`;
+    expect(opaqueProductWrites(variable)).toHaveLength(1);
+    expect(opaqueProductWrites(spread)).toHaveLength(1);
+    expect(familyPriceOverrideWriters("src/x.ts", variable)).toEqual([]); // the literal scan alone misses it
+    const allow = { "src/x.ts": { count: 1, reason: "r".repeat(30) } };
+    expect(opaqueViolations(new Map([["src/x.ts", 1]]), allow)).toEqual([]);
+    expect(opaqueViolations(new Map([["src/x.ts", 2]]), allow)).toHaveLength(1);
+    expect(opaqueViolations(new Map([["src/y.ts", 1]]), allow)).toHaveLength(2);
   });
 
   it("the failure text tells a future writer to re-run the Q10 pack check", () => {
