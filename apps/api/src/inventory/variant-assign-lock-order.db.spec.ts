@@ -15,8 +15,8 @@
  * family (new W -> `familyPricesForNewVariant`): step 3 closes V -> F against F -> V and Postgres
  * aborts one side with 40P01. Fixed: the service blocks on the family while holding nothing, the
  * editor takes V at once, and both finish; V and W both end with the edited tier price. If the
- * Serializable service tx gets a plain 40001 (it snapshotted before the editor committed), one
- * bounded retry runs; that is the pre-existing SSI case, never a deadlock.
+ * Serializable service tx gets a plain 40001 (it snapshotted before the editor committed), the
+ * service's own retryOnTxConflict (SA-587e) re-runs it; that is the SSI case, never a deadlock.
  *
  * WHY THE WRITER TAKES F `FOR NO KEY UPDATE` (not FOR UPDATE): a real family price edit is an
  * UPDATE of non-key columns, which takes exactly that mode. It matters here: assignToVariants
@@ -176,7 +176,6 @@ describeDb("SA-584 B1 — assignToVariants takes the family row first (no 40P01)
     const probe = await pool.connect();
     let writerError: unknown;
     let serviceError: unknown;
-    let serviceAttempts = 0;
     let blocked = false;
     let blockedBackends = -1;
     let blockedOnFamily = false;
@@ -203,22 +202,13 @@ describeDb("SA-584 B1 — assignToVariants takes the family row first (no 40P01)
             userId,
           ),
         );
+      // The service retries a plain 40001/P2034 itself (SA-587e retryOnTxConflict), so the spec
+      // makes ONE call and asserts on its outcome; there is no retry loop here.
       const running = (async () => {
         try {
-          for (;;) {
-            serviceAttempts += 1;
-            try {
-              await attempt();
-              return;
-            } catch (err) {
-              // The service tx is Serializable and the editor commits a row it snapshotted
-              // before waiting: a plain 40001 is the pre-existing SSI retry case, not a deadlock,
-              // and the second attempt runs after the editor committed. Only a bounded retry.
-              if (sqlState(err) === "40001" && serviceAttempts < 3) continue;
-              serviceError = err;
-              return;
-            }
-          }
+          await attempt();
+        } catch (err) {
+          serviceError = err;
         } finally {
           settled = true;
         }
