@@ -32,8 +32,15 @@ const tmpdir = () => realpathForTmp(osTmpdir());
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
-import { deriveDesired, mapPriority, registryDigest } from "./plane-sync.mjs";
-import { createClient, gitEnv, repoRoot, machineRoot, CLOSED_MARKER } from "./plane-client.mjs";
+import { deriveDesired, mapPriority, registryDigest, shortenDeploymentIds } from "./plane-sync.mjs";
+import {
+  createClient,
+  gitEnv,
+  repoRoot,
+  machineRoot,
+  CLOSED_MARKER,
+  scanForbidden,
+} from "./plane-client.mjs";
 import { startFakePlane, DEFAULT_STATES } from "./plane-fake-server.mjs";
 
 // B588: a hard 15s kill turned a merely-slow child (a loaded fleet host) into `code: null`, and every
@@ -2825,6 +2832,40 @@ check(
   countFixtureTmpDirs(),
   tmpDirsBefore,
 );
+
+// T24 — a Railway deployment id quoted in ledger evidence is uuid-shaped and
+// used to trip the tenant-uuid denylist, so six rows never synced. It is
+// shortened to 8 characters in the description; any other uuid is untouched
+// and still trips the scan.
+{
+  const dep = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+  const other = "5a6b7c8d-1e2f-4a3b-9c4d-5e6f7a8b9c0d";
+  check(
+    "T24: a uuid after the word deployment is shortened to 8 chars",
+    shortenDeploymentIds(`merged #1 (master abc1234); api deployment ${dep} SUCCESS`),
+    "merged #1 (master abc1234); api deployment 0a1b2c3d SUCCESS",
+  );
+  check(
+    "T24: the shortened evidence no longer trips the tenant-uuid scan",
+    scanForbidden(shortenDeploymentIds(`api deployment ${dep} SUCCESS`)),
+    null,
+  );
+  check(
+    "T24: a uuid NOT after the word deployment is left alone and still trips",
+    scanForbidden(shortenDeploymentIds(`tenant ${other}`))?.name,
+    "tenant-uuid",
+  );
+  check(
+    "T24: a deployment id and a stray uuid in one line: only the deployment id is shortened",
+    scanForbidden(shortenDeploymentIds(`api deployment ${dep}; tenant ${other}`))?.name,
+    "tenant-uuid",
+  );
+  check(
+    "T24: text without a uuid is unchanged",
+    shortenDeploymentIds("api deployment 48a688fb"),
+    "api deployment 48a688fb",
+  );
+}
 
 console.log(
   failures
