@@ -9,7 +9,12 @@ import { join, relative } from "path";
  * never asserts the recipe is DRAFT.
  */
 const SRC_ROOT = join(__dirname, "..");
-const ALLOW = new Set(["products/recipes.service.ts"]);
+const ALLOW = new Set([
+  "products/recipes.service.ts",
+  // #2717 M3: writes InvoiceItemComponent rows (a nested `components: { create }` on an
+  // invoiceItem), a DOCUMENT snapshot, NOT RecipeComponent; the text scan cannot tell them apart.
+  "invoices/invoice-line-composition.ts",
+]);
 const WRITES = ["create", "createMany", "update", "updateMany", "upsert", "delete", "deleteMany"];
 
 function listTs(dir: string): string[] {
