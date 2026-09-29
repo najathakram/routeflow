@@ -7,8 +7,11 @@ import type { InlineReturnQuoteChunk, InlineReturnQuoteResponse } from "@routefl
 
 // Same mocking convention as RecordInlineReturnDialog.test.tsx (this section's own extraction
 // source) — mock the hook module directly rather than apiClient.
+// The entry order the section prefills its rows from (undefined = no prefill). A `mock`-prefixed
+// name so the hoisted factory may read it.
+let mockEntryOrder: unknown;
 jest.mock("@/lib/api/orders", () => ({
-  useOrder: () => ({ data: undefined }),
+  useOrder: (id: string) => ({ data: id ? mockEntryOrder : undefined }),
 }));
 
 const PRODUCT = { id: "prod-1", name: "Widget", unit: "each", unitsPerBox: null };
@@ -74,6 +77,7 @@ beforeEach(() => {
   quoteIsPending = false;
   productResults = [PRODUCT];
   authRole = undefined;
+  mockEntryOrder = undefined;
 });
 
 function renderSection(
@@ -360,18 +364,86 @@ describe("InlineReturnSection — #2695 staff credit price override", () => {
     expect(screen.getByRole("button", { name: /get quote/i })).toBeEnabled();
   });
 
-  it("two rows of one product with different overrides disable Get quote and name the product", async () => {
-    authRole = "OPERATOR";
-    renderSection({ entryOrderId: undefined });
-    await addProduct("4");
-    // The second row of the same product cannot be added through the picker (it filters the
-    // product out), so the conflict is asserted at the shared rule the section calls.
-    const row = (over: object) => ({ productId: "prod-1", productName: "Widget", ...over });
-    expect(
-      creditOverrideProblem([
-        row({ creditUnitPrice: "3", overrideReason: "a" }),
-        row({ creditUnitPrice: "2", overrideReason: "a" }),
-      ]),
-    ).toMatch(/^Widget: two rows of this product have different credit prices/);
+  describe("two prefilled rows of ONE product (a Case line and a pack line on the source order)", () => {
+    const twoRows = () => {
+      mockEntryOrder = {
+        id: "ord-1",
+        lineItems: [
+          { id: "li-1", productId: "prod-1", name: "Widget (case)", qty: 2, status: "OPEN" },
+          { id: "li-2", productId: "prod-1", name: "Widget (pack)", qty: 6, status: "OPEN" },
+        ],
+      };
+      renderSection({ entryOrderId: "ord-1" });
+    };
+    const qtyInputs = () => screen.getAllByLabelText(/qty \(pieces\)/i);
+    const priceInputs = () => screen.getAllByLabelText(/credit price/i);
+    const reasonInputs = () => screen.getAllByLabelText(/why the lower price/i);
+    const quoteButton = () => screen.getByRole("button", { name: /get quote/i });
+
+    it("two priced rows with DIFFERENT overrides disable Get quote and say why", async () => {
+      authRole = "OPERATOR";
+      twoRows();
+      await waitFor(() => expect(qtyInputs()).toHaveLength(2));
+      fireEvent.change(qtyInputs()[0], { target: { value: "1" } });
+      fireEvent.change(qtyInputs()[1], { target: { value: "2" } });
+      fireEvent.change(priceInputs()[0], { target: { value: "3" } });
+      fireEvent.change(reasonInputs()[0], { target: { value: "dented" } });
+      // The second row carries no override: one row priced, one not, on the same product.
+      expect(quoteButton()).toBeDisabled();
+      expect(
+        screen.getByText(/two rows of this product have different credit prices/i),
+      ).toBeInTheDocument();
+    });
+
+    it("the same override on both rows quotes ONE merged item carrying it", async () => {
+      authRole = "OPERATOR";
+      twoRows();
+      await waitFor(() => expect(qtyInputs()).toHaveLength(2));
+      fireEvent.change(qtyInputs()[0], { target: { value: "1" } });
+      fireEvent.change(qtyInputs()[1], { target: { value: "2" } });
+      for (const i of [0, 1]) {
+        fireEvent.change(priceInputs()[i], { target: { value: "3" } });
+        fireEvent.change(reasonInputs()[i], { target: { value: "dented" } });
+      }
+      expect(quoteButton()).toBeEnabled();
+      fireEvent.change(screen.getAllByLabelText(/^reason$/i)[0], { target: { value: "DAMAGED" } });
+      fireEvent.click(quoteButton());
+      await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
+      expect(quoteMutate.mock.calls[0][0].items).toEqual([
+        {
+          productId: "prod-1",
+          qty: 1,
+          boxes: 0,
+          pieces: 3,
+          creditUnitPrice: 3,
+          overrideReason: "dented",
+        },
+      ]);
+    });
+
+    it("an UNTOUCHED duplicate row (no quantity) is skipped, not a blocker: the quote sends the touched row only", async () => {
+      authRole = "OPERATOR";
+      twoRows();
+      await waitFor(() => expect(qtyInputs()).toHaveLength(2));
+      fireEvent.change(qtyInputs()[0], { target: { value: "2" } });
+      fireEvent.change(priceInputs()[0], { target: { value: "3" } });
+      fireEvent.change(reasonInputs()[0], { target: { value: "dented" } });
+      expect(
+        screen.queryByText(/two rows of this product have different credit prices/i),
+      ).not.toBeInTheDocument();
+      expect(quoteButton()).toBeEnabled();
+      fireEvent.click(quoteButton());
+      await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
+      expect(quoteMutate.mock.calls[0][0].items).toEqual([
+        {
+          productId: "prod-1",
+          qty: 1,
+          boxes: 0,
+          pieces: 2,
+          creditUnitPrice: 3,
+          overrideReason: "dented",
+        },
+      ]);
+    });
   });
 });
