@@ -42,6 +42,7 @@ import { EstimatesService } from "../estimates/estimates.service";
 import { NumberingService } from "../import/numbering.service";
 import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -123,6 +124,7 @@ describeDb("a price adjustment never taxes the NSF fee line (#2243)", () => {
           provide: EntitlementsService,
           useValue: { hasFlag: jest.fn().mockResolvedValue(false) },
         },
+        entitlementAuthorityFromEntitlements, // #2241
         {
           provide: CommissionEngineService,
           useValue: {
