@@ -12,14 +12,15 @@ import { SCAN_CLOSE_FALLBACK_MS, planScanPriceEdit } from "../lib/scan-price-edi
 
 const ROOT = path.join(__dirname, "..");
 const SRC = fs.readFileSync(path.join(ROOT, "components/NewOrderScreen.tsx"), "utf8");
+const HOOK = fs.readFileSync(path.join(ROOT, "lib/use-scan-price-edit.ts"), "utf8");
 const SHEET = fs.readFileSync(path.join(ROOT, "components/ScanOrderSheet.tsx"), "utf8");
 
-function between(start: string, end: string): string {
-  const s = SRC.indexOf(start);
+function between(start: string, end: string, text: string = SRC): string {
+  const s = text.indexOf(start);
   expect(s).toBeGreaterThanOrEqual(0);
-  const e = SRC.indexOf(end, s);
+  const e = text.indexOf(end, s);
   expect(e).toBeGreaterThan(s);
-  return SRC.slice(s, e);
+  return text.slice(s, e);
 }
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -64,8 +65,12 @@ describe("planScanPriceEdit (B901)", () => {
   });
 });
 
-describe("NewOrderScreen wiring (B901, source pins)", () => {
-  const handler = between("const onTrayEditPrice = useCallback(", "const handleScanSheetDismiss");
+describe("useScanPriceEdit sequencing (B901, source pins)", () => {
+  const handler = between(
+    "const onTrayEditPrice = useCallback(",
+    "const handleScanSheetDismiss",
+    HOOK,
+  );
 
   it("onTrayEditPrice closes the scan sheet BEFORE presenting the price modal", () => {
     const close = handler.indexOf("setScanOpen(false)");
@@ -91,7 +96,11 @@ describe("NewOrderScreen wiring (B901, source pins)", () => {
   });
 
   it("handleScanSheetDismiss presents from the pending ref, once", () => {
-    const h = between("const handleScanSheetDismiss = useCallback(", "const closePriceEdit");
+    const h = between(
+      "const handleScanSheetDismiss = useCallback(",
+      "const closePriceEdit",
+      HOOK,
+    );
     expect(h).toContain("pendingPriceEditIdRef.current");
     expect(h.indexOf("pendingPriceEditIdRef.current = null")).toBeLessThan(
       h.indexOf("setPriceEditId("),
@@ -99,24 +108,35 @@ describe("NewOrderScreen wiring (B901, source pins)", () => {
     expect(h).toContain("setPriceEditId(");
   });
 
+  it("modal close helper reopens the scan sheet via the resume flag", () => {
+    const helper = HOOK.slice(HOOK.indexOf("const closePriceEdit"));
+    expect(helper).toContain("resumeScanRef.current");
+    expect(helper).toContain("setScanOpen(true)");
+  });
+
+  it("unmount clears the pending timer", () => {
+    expect(HOOK).toContain("if (priceTimerRef.current) clearTimeout(priceTimerRef.current);");
+  });
+});
+
+describe("NewOrderScreen wiring (B901, source pins)", () => {
+  it("calls useScanPriceEdit and holds no sequencing state itself", () => {
+    expect(SRC).toContain("useScanPriceEdit({");
+    expect(SRC).not.toContain("pendingPriceEditIdRef");
+    expect(SRC).not.toContain("planScanPriceEdit");
+  });
+
   it("passes onDismiss to <ScanOrderSheet", () => {
     const sheet = between("<ScanOrderSheet", "onDone={() => setScanOpen(false)}");
     expect(sheet).toContain("onDismiss={handleScanSheetDismiss}");
   });
 
-  it("modal onClose and onSave reopen the scan sheet via the resume flag", () => {
-    const helper = between("const closePriceEdit", "const priceEditTarget");
-    expect(helper).toContain("resumeScanRef.current");
-    expect(helper).toContain("setScanOpen(true)");
+  it("modal onClose and onSave both go through closePriceEdit", () => {
     const modal = between("<LinePriceModal", "<CartModal");
     expect(modal).toContain("onClose={closePriceEdit}");
     const save = modal.slice(modal.indexOf("onSave="));
     expect(save).toContain("closePriceEdit()");
     expect(save).not.toContain("setPriceEditId(null)");
-  });
-
-  it("unmount clears the pending timer", () => {
-    expect(SRC).toContain("if (priceTimerRef.current) clearTimeout(priceTimerRef.current);");
   });
 
   it("paused= expression is unchanged", () => {

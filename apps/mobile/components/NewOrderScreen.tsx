@@ -115,7 +115,7 @@ import { CartModal } from "./new-order/CartModal";
 import { CreateCreditNoteSheet } from "./new-order/CreateCreditNoteSheet";
 import { CustomerPickerView } from "./new-order/CustomerPickerView";
 import { LinePriceModal } from "./new-order/LinePriceModal";
-import { planScanPriceEdit } from "../lib/scan-price-edit";
+import { useScanPriceEdit } from "../lib/use-scan-price-edit";
 import { UnlistedItemModal } from "./new-order/UnlistedItemModal";
 import { styles } from "./new-order/styles";
 import type { UnlistedLine } from "./new-order/types";
@@ -485,20 +485,6 @@ function ProductPickView({
   const [scanOpen, setScanOpen] = useState(false);
   /** Tray line (catalog id or unlisted local id) whose price is being edited. */
   const [priceEditId, setPriceEditId] = useState<string | null>(null);
-  // B901: mirrors of scanOpen / "reopen the scan sheet when the price modal
-  // closes" for the memoized tray callback, plus the pending present timer.
-  const scanOpenRef = useRef(false);
-  scanOpenRef.current = scanOpen;
-  const resumeScanRef = useRef(false);
-  const priceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Line whose price modal waits for the scan sheet to finish dismissing.
-  const pendingPriceEditIdRef = useRef<string | null>(null);
-  useEffect(
-    () => () => {
-      if (priceTimerRef.current) clearTimeout(priceTimerRef.current);
-    },
-    [],
-  );
   // Newest-first ids for the scan tray + which row is flashing. Both are scan-UI
   // only: the order payload never reads them.
   const [scanOrder, setScanOrder] = useState<string[]>([]);
@@ -1355,50 +1341,13 @@ function ProductPickView({
     if (a.isUnlisted(id)) a.removeUnlisted(id);
     else a.removeLine(id);
   }, []);
-  // Reprice without leaving the camera. Until now the only price editor on
-  // this surface lived in CartModal, reachable only by leaving scan mode —
-  // while the order EDIT screen has had a one-tap edit under its scanner for
-  // two releases.
-  // iOS rule (B901): a Modal cannot be presented over another Modal — it is
-  // queued until the first dismisses. ScanOrderSheet is a Modal, so close it,
-  // present the price modal after the dismissal, and reopen the scanner when
-  // the price modal closes (closePriceEdit).
-  const onTrayEditPrice = useCallback((id: string) => {
-    const a = actionsRef.current;
-    if (!a.isUnlisted(id) && a.isSpecialLine(id)) {
-      a.showInline("Contract price — not editable on this order");
-      return;
-    }
-    const plan = planScanPriceEdit(scanOpenRef.current, Platform.OS);
-    if (plan.closeScan) setScanOpen(false);
-    resumeScanRef.current = plan.resumeScanOnClose;
-    if (priceTimerRef.current) clearTimeout(priceTimerRef.current);
-    pendingPriceEditIdRef.current = id;
-    if (plan.present === "now") {
-      pendingPriceEditIdRef.current = null;
-      setPriceEditId(id);
-    } else if (plan.present === "timer") {
-      priceTimerRef.current = setTimeout(() => {
-        priceTimerRef.current = null;
-        pendingPriceEditIdRef.current = null;
-        setPriceEditId(id);
-      }, plan.fallbackDelayMs);
-    }
-    // "onDismiss": handleScanSheetDismiss presents it once the sheet is gone.
-  }, []);
-  const handleScanSheetDismiss = useCallback(() => {
-    const id = pendingPriceEditIdRef.current;
-    if (id == null) return;
-    pendingPriceEditIdRef.current = null;
-    setPriceEditId(id);
-  }, []);
-  const closePriceEdit = () => {
-    setPriceEditId(null);
-    if (resumeScanRef.current) {
-      resumeScanRef.current = false;
-      setScanOpen(true);
-    }
-  };
+  // Reprice without leaving the camera (B901 sequencing lives in the hook).
+  const { onTrayEditPrice, handleScanSheetDismiss, closePriceEdit } = useScanPriceEdit({
+    scanOpen,
+    setScanOpen,
+    setPriceEditId,
+    getActions: () => actionsRef.current,
+  });
   // Resolved lazily (two map lookups) rather than memoized: it is null on every
   // render but the handful where the sheet is open.
   const priceEditTarget = ((): {
