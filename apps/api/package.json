@@ -34,6 +34,7 @@
     "db:publish:catalog:v13": "ts-node -r tsconfig-paths/register prisma/publish-plan-catalog-v13.ts",
     "db:backfill:catalog-rows": "ts-node -r tsconfig-paths/register prisma/backfill-product-catalog-rows.ts",
     "db:report:barcode-conflicts": "ts-node -r tsconfig-paths/register prisma/report-product-barcode-conflicts.ts",
+    "db:report:variant-tier-drift": "ts-node -r tsconfig-paths/register prisma/report-variant-tier-drift.ts",
     "db:drift": "node scripts/schema-drift.mjs",
     "smoke:pdf": "node scripts/pdf-render-smoke.mjs",
     "postinstall": "prisma generate"
