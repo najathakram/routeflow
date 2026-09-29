@@ -9,6 +9,7 @@ import {
 } from "@nestjs/common";
 import { syncOrderLineCompositions } from "../orders/order-composition";
 import { invoiceCompositionFields } from "./invoice-line-composition";
+import { applyComposedLineEdits } from "./invoice-composed-edit";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import * as unitAware from "../orders/unit-aware-guard";
 import { assertNoNegativeLineSubtotal } from "../common/money-invariants.util";
@@ -3177,6 +3178,7 @@ export class InvoicesService {
           const patch = row ? inPlacePatch(l, row) : null;
           if (patch) await tx.invoiceItem.update({ where: { id: l.rowId }, data: patch });
         }
+        await applyComposedLineEdits(tx, inv, editLines, storedRows); // #2717 M3: case 18
         // SA-189: history must tell an attested pack (the operator's explicit unitsPerBox) from a recovered one.
         const attested = editLines.flatMap((l) =>
           l.attestedPack ? [{ rowId: l.rowId, unitsPerBox: l.attestedPack }] : [],
