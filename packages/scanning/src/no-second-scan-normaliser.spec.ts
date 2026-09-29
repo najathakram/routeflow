@@ -47,6 +47,7 @@ const DEFINITION = new RegExp(
 );
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
 
+const rel = (f: string) => path.relative(REPO_ROOT, f).split(path.sep).join("/");
 const FILES = ROOTS.flatMap((r) => collect(r));
 
 describe("no second scan normaliser (M4a-0)", () => {
@@ -65,7 +66,7 @@ describe("no second scan normaliser (M4a-0)", () => {
     const offenders = FILES.filter((f) => !f.startsWith(SCANNING_ROOT + path.sep)).filter((f) =>
       DEFINITION.test(strip(fs.readFileSync(f, "utf8"))),
     );
-    expect(offenders.map((f) => path.relative(REPO_ROOT, f))).toEqual([]);
+    expect(offenders.map((f) => rel(f))).toEqual([]);
   });
 
   it("scanUnitKind and inferBarcodeSymbology have exactly one definition, inside packages/scanning (M4a-1)", () => {
@@ -74,7 +75,7 @@ describe("no second scan normaliser (M4a-0)", () => {
         new RegExp(String.raw`(?:function\s+${name}\b|(?:const|let|var)\s+${name}\s*[=:])`).test(
           strip(fs.readFileSync(f, "utf8")),
         ),
-      ).map((f) => path.relative(REPO_ROOT, f));
+      ).map((f) => rel(f));
     // inferBarcodeSymbology moved (packages/scanning/src/barcode-symbology.ts); scanUnitKind is
     // deleted outright, replaced by resolveScanSellLevel in packages/scanning/src/scan-level.ts.
     expect(only("inferBarcodeSymbology")).toEqual(["packages/scanning/src/barcode-symbology.ts"]);
@@ -109,7 +110,7 @@ describe("dependency direction (M4a-0)", () => {
     const offenders = pricingFiles.filter((f) =>
       fs.readFileSync(f, "utf8").includes("@routeflow/scanning"),
     );
-    expect(offenders.map((f) => path.relative(REPO_ROOT, f))).toEqual([]);
+    expect(offenders.map((f) => rel(f))).toEqual([]);
     const pkg = JSON.parse(
       fs.readFileSync(path.join(REPO_ROOT, "packages", "pricing", "package.json"), "utf8"),
     );
