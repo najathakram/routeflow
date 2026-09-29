@@ -27,6 +27,15 @@
 // NOTHING IS WRITTEN without --execute, and --execute additionally requires
 // --confirm-tenant=<slug> typed back. Default output is a report to review.
 //
+// #2717 M1 (SA-572e, #2728 M1 follow-up): `Product.unitsPerBox` is mirrored into `ProductBarcode`
+// rows by the app's own dual-write (products.service.ts) and by the one-time backfill
+// (backfill-product-catalog-rows.ts) — those rows are a MIRROR of the legacy column, never a second
+// source of truth. Writing `unitsPerBox` here with raw SQL bypasses that sync, so this script clears
+// this product's `ProductBarcode` rows in the SAME transaction as the `unitsPerBox` write: the
+// product falls back to being row-less (read-model fallback = `synthesizeLegacyBarcodes`, planned
+// fresh from the just-written column) until the next backfill run re-mirrors it. Never leave a stale
+// row (planned from the OLD unitsPerBox) sitting next to a legacy column that has already moved on.
+//
 //   railway run --service postgres node apps/api/scripts/propose-pack-sizes.mjs
 //   ... --tenant=<slug>          scope to one tenant (default: all ACTIVE)
 //   ... --min-confidence=HIGH    only propose HIGH rows (default: HIGH)
@@ -258,15 +267,31 @@ for (const t of tenants) {
     const apply = [...tiers.HIGH, ...(MIN_CONFIDENCE === "MEDIUM" ? tiers.MEDIUM : [])];
     let n = 0;
     for (const r of apply) {
-      // Re-assert the precondition inside the write: never overwrite a pack size
-      // someone set between the report and the run.
-      const res = await client.query(
-        `UPDATE "Product" SET "unitsPerBox" = $1, "updatedAt" = now()
-          WHERE id = $2 AND "tenantId" = $3
-            AND ("unitsPerBox" IS NULL OR "unitsPerBox" <= 1)`,
-        [r.packSize, r.id, t.id],
-      );
-      n += res.rowCount;
+      // #2717 M1 (SA-572e): the unitsPerBox write and the mirror-clearing delete happen in ONE
+      // transaction on this same client — either both land or neither does, so the legacy column
+      // and its ProductBarcode mirror (or lack of one) can never observably disagree.
+      await client.query("BEGIN");
+      try {
+        // Re-assert the precondition inside the write: never overwrite a pack size
+        // someone set between the report and the run.
+        const res = await client.query(
+          `UPDATE "Product" SET "unitsPerBox" = $1, "updatedAt" = now()
+            WHERE id = $2 AND "tenantId" = $3
+              AND ("unitsPerBox" IS NULL OR "unitsPerBox" <= 1)`,
+          [r.packSize, r.id, t.id],
+        );
+        if (res.rowCount > 0) {
+          await client.query(
+            `DELETE FROM "ProductBarcode" WHERE "productId" = $1 AND "tenantId" = $2`,
+            [r.id, t.id],
+          );
+        }
+        await client.query("COMMIT");
+        n += res.rowCount;
+      } catch (e) {
+        await client.query("ROLLBACK").catch(() => undefined);
+        throw e;
+      }
     }
     console.log(`   ✅ APPLIED pack size to ${n} product(s) on ${t.slug}.`);
   }
