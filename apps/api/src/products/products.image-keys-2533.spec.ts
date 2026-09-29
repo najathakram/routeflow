@@ -178,6 +178,24 @@ describe("ProductsService — cross-tenant image keys (#2533)", () => {
     });
   });
 
+  it("#2717 M1 (SA-572f): an edit SUCCEEDS while another product's row holds this product's image key; that key is skipped", async () => {
+    // Legacy data: k1 is (unexpectedly) already mirrored by ANOTHER product; k2 is free. A price-only
+    // PATCH must not 500 on the (tenantId, storageKey) unique: k1 is skipped, k2 mirrors.
+    prisma.product.findUnique.mockResolvedValue(row([own(1), own(2)]));
+    prisma.product.findFirst.mockResolvedValue(null);
+    prisma.product.update.mockResolvedValue({
+      ...row([own(1), own(2)]),
+      barcode: null,
+      unitsPerBox: null,
+    });
+    prisma.productImage.findMany.mockImplementation(async ({ where }: { where: any }) =>
+      "storageKey" in where ? [{ storageKey: own(1) }] : [],
+    );
+    await expect(service.update(P, { pricePerUnit: "9.99" } as any)).resolves.toBeDefined();
+    const created = prisma.productImage.create.mock.calls.map((c: any[]) => c[0].data.storageKey);
+    expect(created).toEqual([own(2)]);
+  });
+
   it("#2717 M1: image rows sync from the value the UPDATE wrote, not the earlier read (a concurrent upload is kept)", async () => {
     // The PATCH carries no imageKeys; between update()'s read ([own(1)]) and its write, a concurrent
     // upload pushed own(2). The UPDATE returns the post-write row, so the rows must follow it.
