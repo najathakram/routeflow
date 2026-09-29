@@ -1656,6 +1656,10 @@ if (process.platform === "win32" && CMD_UNSAFE.test(winBase)) {
   );
 }
 
+// A directory link: a "dir" symlink needs a privilege a normal Windows user lacks (EPERM); a junction
+// does not (the same pattern as the win32 junction case above).
+const DIR_LINK_TYPE = process.platform === "win32" ? "junction" : "dir";
+
 // #2671 (the lead's condition on #2672): a symlink inside a Jest cache root (a `.jest-cache` and a
 // `jest_*` one) is never followed for age and never swept, and its target survives an apply. The
 // whole thing runs in a tmp SANDBOX (mkdtemp); no real cache or worktree is ever touched.
@@ -1675,13 +1679,13 @@ if (process.platform === "win32" && CMD_UNSAFE.test(winBase)) {
       mkdirSync(root, { recursive: true });
       // (a) a stale symlink ENTRY pointing outside the cache
       const link = join(root, "linked-entry");
-      symlinkSync(outside, link, "dir");
+      symlinkSync(outside, link, DIR_LINK_TYPE);
       lutimesSync(link, old, old);
       // (b) a stale REAL entry that contains a symlink pointing outside
       const real = join(root, "haste-map-old");
       mkdirSync(real);
       writeFileSync(join(real, "data"), "x");
-      symlinkSync(outside, join(real, "inner-link"), "dir");
+      symlinkSync(outside, join(real, "inner-link"), DIR_LINK_TYPE);
       lutimesSync(join(real, "inner-link"), old, old);
       utimesSync(join(real, "data"), old, old);
       utimesSync(real, old, old);

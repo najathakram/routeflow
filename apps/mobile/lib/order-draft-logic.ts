@@ -96,6 +96,8 @@ export interface ResumeUnitLineInput {
   priceType?: "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL";
   unitPrice?: number;
   priceSource?: "history" | "operator";
+  /** #2696(c): the override's reason, re-applied with it (a special line bills it only so). */
+  overrideReason?: string;
 }
 
 /** One `UnitOption`-shaped price, the only fields this decision reads. */
@@ -184,6 +186,8 @@ export interface ResumeLinePricingResult {
   /** A genuine operator override — from either branch below, always tagged "operator" (a
    *  history-sourced price is never carried across a resume, so it never reaches here). */
   unitPrice?: number;
+  /** #2696(c): the parked override's reason, restored alongside `unitPrice`. */
+  overrideReason?: string;
   /** W/N (Opus REQUIRED, B747): CartRow's margin-hint pieces-per-unit basis — see
    *  ResumeUnitPriceDecision.unitFactor. Undefined for a plain pack line (marginFactorFor then
    *  reads the product's own unitsPerBox instead, same as a freshly-picked pack line). */
@@ -219,11 +223,17 @@ export function resolveResumeLinePricing(
       unitBasePrice: decision.unitBasePrice,
       unitFactor: decision.unitFactor,
     };
-    if (decision.operatorUnitPrice != null) result.unitPrice = decision.operatorUnitPrice;
+    if (decision.operatorUnitPrice != null) {
+      result.unitPrice = decision.operatorUnitPrice;
+      if (li.overrideReason?.trim()) result.overrideReason = li.overrideReason;
+    }
     return result;
   }
   if (li.priceType === "MANUAL" && li.priceSource !== "history" && li.unitPrice != null) {
-    return { unitPrice: li.unitPrice };
+    return {
+      unitPrice: li.unitPrice,
+      ...(li.overrideReason?.trim() ? { overrideReason: li.overrideReason } : {}),
+    };
   }
   return {};
 }

@@ -13,7 +13,7 @@ import { useTenant } from "@/components/tenant-provider";
 import { setTenantCookie } from "@/lib/tenant-cookie";
 import { GoogleIcon, startGoogleSignIn } from "@/lib/google-oauth";
 import { tenantSlugFromHostname } from "@/lib/tenant-host";
-import { safeOperatorRedirect } from "@/lib/portal-routing";
+import { safeOperatorRedirect, landingForRole } from "@/lib/portal-routing";
 import { usePortalPresence } from "@/lib/hooks/usePortalPresence";
 import { AuthShell } from "@/components/auth";
 import { DRIVER_APP_LOGIN_URL } from "@/lib/driver-app-link";
@@ -103,8 +103,9 @@ export default function LoginPage() {
     try {
       const user = await authLogin(data.username, data.password);
       // Read at submit time (not via useSearchParams) so /login keeps prerendering its form — a Suspense boundary here would blank the whole page until hydration.
-      const redirectTarget = safeOperatorRedirect(
-        new URLSearchParams(window.location.search).get("redirect"),
+      const redirectTarget = landingForRole(
+        safeOperatorRedirect(new URLSearchParams(window.location.search).get("redirect")),
+        user.role,
       );
       if (user.forcePasswordChange) router.push("/change-password");
       else router.push(redirectTarget);

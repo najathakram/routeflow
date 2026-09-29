@@ -7,7 +7,7 @@ import {
 } from "@nestjs/common";
 import { EstimateStatus, PriceType } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
-import { computeLineSubtotal, getTierPrice, roundMoney } from "@routeflow/pricing";
+import { isSpecialTier, computeLineSubtotal, getTierPrice, roundMoney } from "@routeflow/pricing";
 import { loadMsrpMap } from "../common/msrp";
 import { effectiveTaxRateFromTotals } from "../common/tax-rate";
 import { EntitlementsService } from "../billing/entitlements.service";
@@ -190,7 +190,7 @@ export class EstimatesService {
           unitPrice = overridePrice;
           priceType = PriceType.DISCOUNTED;
           originalPrice = listPrice;
-        } else if (tierForProduct !== 1) {
+        } else if (isSpecialTier(tierForProduct)) {
           unitPrice = tierPrice;
           priceType = PriceType.SPECIAL;
           originalPrice = listPrice;
