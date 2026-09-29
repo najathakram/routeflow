@@ -88,3 +88,24 @@ export function productDataLiterals(text: string): string[] {
   }
   return out;
 }
+
+/** Every `create: { ... }` / `update: { ... }` object literal of a `.product|.products` upsert. */
+export function productUpsertLiterals(text: string): string[] {
+  const out: string[] = [];
+  for (const receiver of ["product", "products"]) {
+    for (const call of callBlocks(text, receiver, ["upsert"])) {
+      for (const key of ["create", "update"]) {
+        const at = call.search(new RegExp(`\\b${key}\\s*:\\s*\\{`));
+        if (at !== -1) out.push(balancedGeneric(call, call.indexOf("{", at), "{", "}"));
+      }
+    }
+  }
+  return out;
+}
+
+/** Every write-call block on the `.trackedCategory` / `.trackedSubcategory` delegates. */
+export function trackedDelegateWrites(text: string): string[] {
+  return ["trackedCategory", "trackedSubcategory"].flatMap((r) =>
+    callBlocks(text, r, [...WRITE_METHODS, "delete"]),
+  );
+}
