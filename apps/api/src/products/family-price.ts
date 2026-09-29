@@ -182,10 +182,8 @@ export async function propagateFamilyPrice(
     (id) => typeof id === "string" && id.length > 0,
   );
 
-  const variants: { count: number } = await tx.product.updateMany({
-    where: { tenantId, parentProductId: familyId },
-    data,
-  });
+  // House lock order (product-catalog-sync.ts): the family row is already held by the caller, then
+  // the recipe products, THEN the variant rows.
   let recipes = { count: 0 };
   if (recipeProductIds.length > 0) {
     recipes = await tx.product.updateMany({
@@ -193,6 +191,10 @@ export async function propagateFamilyPrice(
       data,
     });
   }
+  const variants: { count: number } = await tx.product.updateMany({
+    where: { tenantId, parentProductId: familyId },
+    data,
+  });
 
   if (variants.count + recipes.count > 0) {
     await tx.auditLog.create({

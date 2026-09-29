@@ -10,7 +10,11 @@ import * as crypto from "crypto";
 import { CostingMethod, MovementType, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { FeatureConfigService } from "../billing/feature-config.service";
-import { familyPricesForNewVariant, readFamilyPriceMode } from "../products/family-price";
+import {
+  familyPricesForNewVariant,
+  lockFamilyRow,
+  readFamilyPriceMode,
+} from "../products/family-price";
 import { normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
 import { fetchInvoicedSaleLines, roundQty } from "../common/invoiced-sales";
 import { poLineFromInput } from "./po-line-input";
@@ -503,6 +507,15 @@ export class InventoryService {
 
     const result = await this.prisma.tenantTransaction(
       async (tx) => {
+        // #2717 M2 (SA-584 B1, house lock order: family -> recipe product -> variant rows): with the
+        // family price authority on, take the FAMILY row before anything else. The target loop writes
+        // existing variants (row lock V) and a NEW variant reads the family under FOR UPDATE
+        // (`familyPricesForNewVariant`); a family price edit holds F and then writes V, so V -> F here
+        // against F -> V there is a 40P01. Taken before the parent read too (lock first, read after).
+        const lockTenantId = this.prisma.getTenantId();
+        if (familyMode === "on" && lockTenantId) {
+          await lockFamilyRow(tx, lockTenantId, dto.parentProductId);
+        }
         const parent = await tx.product.findUnique({ where: { id: dto.parentProductId } });
         if (!parent) throw new NotFoundException("Product not found");
         // One level only: a variant of a variant is impossible in this model
