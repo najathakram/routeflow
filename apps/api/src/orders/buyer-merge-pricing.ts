@@ -11,21 +11,13 @@ import {
   applyBestPromotion,
   computeLineSubtotal,
   getTierPrice,
+  isSpecialTier,
   normalizeBoxesPieces,
   promotionMatchesProduct,
   roundMoney,
   type PromoContext,
   type PromotionRule,
 } from "@routeflow/pricing";
-
-/** B465: a tier different from 1 (list/STANDARD) is this customer's documented
- * contract price for the product — shared by every call site that must decide
- * whether a line is a SPECIAL-tier line, never re-derived ad hoc. A module-level
- * pure function (not a class method) so it works when called detached from an
- * OrdersService instance — e.g. `(OrdersService.prototype as any).resolveBuyerLinePrice(...)`
- * in order-templates.service.spec.ts, where `this` inside resolveBuyerLinePrice
- * is undefined and `this.isSpecialTier(...)` would throw (#815 verify finding). */
-export const isSpecialTier = (tierForProduct: number): boolean => tierForProduct !== 1;
 
 /**
  * BUY_N_GET_M free units for a line whose QUANTITY changed while its stored

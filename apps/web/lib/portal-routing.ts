@@ -77,6 +77,22 @@ export function resolveLandingTarget(
 
 export const DEFAULT_OPERATOR_LANDING = "/dashboard";
 
+/** PHASE 1a (web driver mode): a DRIVER-role account's own landing view. */
+export const DRIVER_LANDING = "/routes/my-runs";
+
+/**
+ * PHASE 1a: a DRIVER role lands on their own runs view, not the dashboard —
+ * but only when the resolved path is the plain default (no explicit redirect
+ * requested, or the requested one already fell back to the default). An
+ * explicit valid redirect (e.g. a deep link that bounced through /login) still
+ * wins for a driver same as for anyone else.
+ */
+export function landingForRole(resolvedPath: string, role: string | null | undefined): string {
+  return role === "DRIVER" && resolvedPath === DEFAULT_OPERATOR_LANDING
+    ? DRIVER_LANDING
+    : resolvedPath;
+}
+
 /**
  * Validates the `redirect` query parameter of the operator sign-in page. Only a
  * same-origin operator path survives; anything else (absolute URLs, protocol-
@@ -114,4 +130,19 @@ export function portalSwitchTarget(
   return presence.op
     ? { href: "/dashboard", variant: "switch" }
     : { href: "/login", variant: "signIn" };
+}
+
+/**
+ * A DRIVER's "My Routes" and "Today's route" nav items need the routes OR the
+ * delivery add-on (GET /route-runs/my-runs is gated the same way server-side).
+ */
+export function driverNavItemVisible(
+  href: string,
+  access: { routesAccess: boolean; deliveryAccess: boolean },
+): boolean {
+  const hasRuns = access.routesAccess || access.deliveryAccess;
+  // /dashboard bounces a driver with runs access to DRIVER_LANDING, so the link is dead for them.
+  if (href === "/dashboard") return !hasRuns;
+  if (href !== "/routes" && href !== DRIVER_LANDING) return true;
+  return hasRuns;
 }
