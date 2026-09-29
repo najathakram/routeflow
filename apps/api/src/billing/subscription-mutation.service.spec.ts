@@ -858,6 +858,8 @@ describe("SubscriptionMutationService.upgrade", () => {
   // ledger MRR re-agree. The charge (proration) still nets against the catalog entitlement.
   it("#2460: an ACTIVE catalog row with a NULL snapshot books the FULL new price", async () => {
     const { svc, events } = make({
+      // #2583 / SA-513: a PAYING (ACTIVE) tenant — upgrade() now books on the shared predicate.
+      tenantStatus: "ACTIVE",
       sub: {
         planKey: "STARTER",
         cycle: "MONTHLY",
@@ -872,6 +874,8 @@ describe("SubscriptionMutationService.upgrade", () => {
 
   it("#2460: a consistent catalog row nets against its stored snapshot", async () => {
     const { svc, events } = make({
+      // #2583 / SA-513: a PAYING (ACTIVE) tenant — upgrade() now books on the shared predicate.
+      tenantStatus: "ACTIVE",
       sub: {
         planKey: "STARTER",
         cycle: "MONTHLY",
@@ -924,6 +928,8 @@ describe("SubscriptionMutationService.upgrade", () => {
 
   it("applies instantly (optimistic guard) with MRR delta = new − old", async () => {
     const { svc, tx, events } = make({
+      // #2583 / SA-513: a PAYING (ACTIVE) tenant — upgrade() now books on the shared predicate.
+      tenantStatus: "ACTIVE",
       sub: {
         planKey: "STARTER",
         cycle: "MONTHLY",
@@ -3223,5 +3229,135 @@ describe("#2551 lock-order conformance — Tenant lock before the subscription w
     await svc.resume("t1", "admin");
 
     expect(order.slice(0, 2)).toEqual(["tenant-lock", "sub-write"]);
+  });
+});
+
+// #2583 / SA-513 (tier 1): subscribe() and upgrade() decide "paying" with the shared isPayingRow
+// (status ACTIVE + class PRODUCTION + not deleted + a planKey), read UNDER the Tenant lock:
+// Δ = after − before, a non-paying side counting 0. The snapshot is still WRITTEN for a non-paying
+// row (a later class flip rebases from it, SA-464 (2)); a deleted tenant is refused before the tx.
+describe("#2583 subscribe()/upgrade() book on the shared paying predicate", () => {
+  const tenantRow = (status: string, cls: string, deletedAt: Date | null = null) => ({
+    status,
+    plan: "STARTER",
+    class: cls,
+    deletedAt,
+  });
+  /** Pre-tx and under-lock reads return the same row unless `locked` differs (a race). */
+  const arrange = (h: ReturnType<typeof make>, pre: any, locked: any = pre) => {
+    h.prisma.tenant.findUnique.mockResolvedValue(pre);
+    h.tx.tenant.findUnique.mockResolvedValue(locked);
+  };
+
+  describe("upgrade() STARTER (snapshot 59) → BUSINESS (349)", () => {
+    const sub = (planKey: string | null, snapshot: number | null) => ({
+      planKey,
+      cycle: "MONTHLY",
+      periodStart: null,
+      periodEnd: null,
+      basePriceSnapshot: snapshot,
+      priceOverrideMonthly: null,
+    });
+    it.each([
+      ["ACTIVE PRODUCTION (control)", tenantRow("ACTIVE", "PRODUCTION"), sub("STARTER", 59), 290],
+      ["ACTIVE TEST class", tenantRow("ACTIVE", "TEST"), sub("STARTER", 59), 0],
+      ["ACTIVE DEMO class", tenantRow("ACTIVE", "DEMO"), sub("STARTER", 59), 0],
+      [
+        "READ_ONLY PRODUCTION (not paying either side)",
+        tenantRow("READ_ONLY", "PRODUCTION"),
+        sub("STARTER", 59),
+        0,
+      ],
+      [
+        "ACTIVE PRODUCTION, planKey NULL (enters the set)",
+        tenantRow("ACTIVE", "PRODUCTION"),
+        sub(null, null),
+        349,
+      ],
+      ["ACTIVE TEST, planKey NULL", tenantRow("ACTIVE", "TEST"), sub(null, null), 0],
+    ])("%s ⇒ the expected Δ; the snapshot is still written 349", async (_l, tenant, s, delta) => {
+      const h = make({ sub: s });
+      arrange(h, tenant);
+      await h.svc.upgrade("t1", "BUSINESS", "admin");
+      expect(deltaOf(h.events, BILLING_EVENTS.PLAN_CHANGED)).toBe(delta);
+      expect(h.tx.tenantSubscription.updateMany.mock.calls[0][0].data.basePriceSnapshot).toBe(349);
+    });
+
+    // SA-513a (b): the three older paying pins moved to ACTIVE; this keeps the TRIAL case explicit —
+    // a TRIAL tenant is outside the paying set, so its upgrade books Δ0 in exactly ONE plan.changed.
+    it("a TRIAL (non-paying) tenant's upgrade books Δ0 in exactly one plan.changed", async () => {
+      const h = make({ sub: sub("STARTER", 59) });
+      arrange(h, tenantRow("TRIAL", "PRODUCTION"));
+      await h.svc.upgrade("t1", "BUSINESS", "admin");
+      const planChanged = h.events.emit.mock.calls.filter(
+        (c: any[]) => c[1] === BILLING_EVENTS.PLAN_CHANGED,
+      );
+      expect(planChanged.map((c: any[]) => c[3]?.amountDelta)).toEqual([0]);
+    });
+
+    it("the class is read UNDER the Tenant lock: PRODUCTION pre-tx but TEST under the lock ⇒ Δ0", async () => {
+      const h = make({ sub: sub("STARTER", 59) });
+      arrange(h, tenantRow("ACTIVE", "PRODUCTION"), tenantRow("ACTIVE", "TEST"));
+      await h.svc.upgrade("t1", "BUSINESS", "admin");
+      expect(deltaOf(h.events, BILLING_EVENTS.PLAN_CHANGED)).toBe(0);
+    });
+
+    it("a deleted tenant is refused before the transaction", async () => {
+      const h = make({ sub: sub("STARTER", 59) });
+      arrange(h, tenantRow("ACTIVE", "PRODUCTION", new Date("2026-09-01")));
+      await expect(h.svc.upgrade("t1", "BUSINESS", "admin")).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(h.prisma.$transaction).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("subscribe() to BUSINESS (349) MONTHLY", () => {
+    it.each([
+      ["TRIAL PRODUCTION (control: enters the set)", tenantRow("TRIAL", "PRODUCTION"), null, 349],
+      ["TRIAL TEST class (never enters the set)", tenantRow("TRIAL", "TEST"), null, 0],
+      [
+        "ACTIVE TEST class re-choice (neither side paying)",
+        tenantRow("ACTIVE", "TEST"),
+        { planKey: "STARTER", cycle: "MONTHLY", periodEnd: null, basePriceSnapshot: 59 },
+        0,
+      ],
+      [
+        "ACTIVE PRODUCTION re-choice (control: nets the stored snapshot)",
+        tenantRow("ACTIVE", "PRODUCTION"),
+        { planKey: "STARTER", cycle: "MONTHLY", periodEnd: null, basePriceSnapshot: 59 },
+        290,
+      ],
+    ])("%s ⇒ the expected Δ", async (_l, tenant, s, delta) => {
+      const h = make({ sub: s });
+      arrange(h, tenant);
+      await h.svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" } as any, "admin");
+      expect(deltaOf(h.events, BILLING_EVENTS.PLAN_CHANGED)).toBe(delta);
+    });
+
+    it("the snapshot is still written for a non-paying (TEST) tenant", async () => {
+      const h = make({});
+      arrange(h, tenantRow("TRIAL", "TEST"));
+      await h.svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" } as any, "admin");
+      const up = h.tx.tenantSubscription.upsert.mock.calls[0][0];
+      expect(up.create.basePriceSnapshot).toBe(349);
+      expect(up.update.basePriceSnapshot).toBe(349);
+    });
+
+    it("the class is read UNDER the Tenant lock: PRODUCTION pre-tx but TEST under the lock ⇒ Δ0", async () => {
+      const h = make({});
+      arrange(h, tenantRow("TRIAL", "PRODUCTION"), tenantRow("TRIAL", "TEST"));
+      await h.svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" } as any, "admin");
+      expect(deltaOf(h.events, BILLING_EVENTS.PLAN_CHANGED)).toBe(0);
+    });
+
+    it("a deleted tenant is refused before the transaction", async () => {
+      const h = make({});
+      arrange(h, tenantRow("TRIAL", "PRODUCTION", new Date("2026-09-01")));
+      await expect(
+        h.svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" } as any, "admin"),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(h.prisma.$transaction).not.toHaveBeenCalled();
+    });
   });
 });

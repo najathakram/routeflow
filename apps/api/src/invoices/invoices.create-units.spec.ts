@@ -15,6 +15,7 @@ import { BadRequestException, ForbiddenException, NotFoundException } from "@nes
 import { InvoicesService } from "./invoices.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 /** Any collaborator method resolves undefined; `then`/symbols stay undefined (a thenable mock hangs `await`). */
@@ -70,6 +71,7 @@ describe("InvoicesService.create — sell a line by a unit (units_v1, 4c-1)", ()
       .useMocker((token) => {
         if (token === PrismaService) return prisma;
         if (token === EntitlementsService) return { hasFlag };
+        if (token === EntitlementAuthority) return { can: hasFlag };
         return autoMock();
       })
       .compile();
