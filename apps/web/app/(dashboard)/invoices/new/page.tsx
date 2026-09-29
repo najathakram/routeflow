@@ -42,6 +42,7 @@ import { apiClient } from "@/lib/api-client";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { displayProductName } from "@/lib/product-display";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
+import { bumpInvoiceLine, scanLevelForHit, seedLineQty } from "../invoice-scan-level";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { fmt, fmtCalendarDate } from "@/lib/formatting";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
@@ -50,6 +51,7 @@ import {
   getTierPrice,
   normalizeBoxesPieces,
   perUnitPrice,
+  type SellLevel,
 } from "@routeflow/pricing";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MarginHint } from "@/components/MarginHint";
@@ -193,6 +195,8 @@ function ProductSearchInput({
     unitPrice: string,
     avgCost?: number,
     unitsPerBox?: number,
+    /** #2717 M4a-1: the level a SCAN resolved (undefined for a picker tap). */
+    scanLevel?: SellLevel,
   ) => void;
   onCreateProduct?: (searchTerm: string) => void;
   onBarcodeNotFound?: (barcode: string) => void;
@@ -228,13 +232,14 @@ function ProductSearchInput({
     return () => document.removeEventListener("mousedown", handle);
   }, []);
 
-  function selectProduct(p: any) {
+  function selectProduct(p: any, scanLevel?: SellLevel) {
     onChange(
       p.name,
       p.id,
       String(p.pricePerUnit),
       p.averageCost ? parseFloat(String(p.averageCost)) : undefined,
       p.unitsPerBox ? Number(p.unitsPerBox) : undefined,
+      scanLevel,
     );
     setQuery(p.name);
     setOpen(false);
@@ -265,7 +270,7 @@ function ProductSearchInput({
               .get(`/products/barcode/${encodeURIComponent(code)}`)
               .then((r) => r.data);
             if (product) {
-              selectProduct(product);
+              selectProduct(product, scanLevelForHit(code, product));
               return;
             }
           } catch {
@@ -876,7 +881,7 @@ export default function NewInvoicePage() {
    * If the product is already on the invoice, just bump its qty by one box
    * (or 1 unit) — same ergonomics as the order scan flow.
    */
-  function addProductFromCatalog(product: any) {
+  function addProductFromCatalog(product: any, scanLevel?: SellLevel) {
     const upb = boxedUnitsPerBox(product.unitsPerBox);
     const listPrice = parseFloat(String(product.pricePerUnit ?? 0));
     // Per-product tier override first, then the customer's own tier ladder —
@@ -897,7 +902,7 @@ export default function NewInvoicePage() {
       // standalone — "Strawberry" by itself doesn't tell the customer
       // which product family it came from.
       description: displayProductName(product),
-      qty: upb ? upb : 1,
+      qty: seedLineQty(upb, scanLevel).qty ?? 1,
       unitPrice: effectivePrice,
       discount: 0,
       taxable: false,
@@ -906,8 +911,8 @@ export default function NewInvoicePage() {
       avgCost: product.averageCost ? parseFloat(String(product.averageCost)) : undefined,
       category: product.category ?? undefined,
       unitsPerBox: upb,
-      boxes: upb ? 1 : undefined,
-      pieces: upb ? 0 : undefined,
+      boxes: seedLineQty(upb, scanLevel).boxes,
+      pieces: seedLineQty(upb, scanLevel).pieces,
     };
 
     const existing = items.find((it) => it.productId === product.id);
@@ -915,18 +920,7 @@ export default function NewInvoicePage() {
       // If product is already on the invoice, increment its qty instead of duplicating.
       const existingIdx = prev.findIndex((it) => it.productId === product.id);
       if (existingIdx >= 0) {
-        return prev.map((it, idx) => {
-          if (idx !== existingIdx) return it;
-          if (it.unitsPerBox) {
-            const nextBoxes = (it.boxes ?? 0) + 1;
-            return {
-              ...it,
-              boxes: nextBoxes,
-              qty: nextBoxes * it.unitsPerBox + (it.pieces ?? 0),
-            };
-          }
-          return { ...it, qty: Number(it.qty) + 1 };
-        });
+        return prev.map((it, idx) => (idx !== existingIdx ? it : bumpInvoiceLine(it, scanLevel)));
       }
       // Replace the seeded blank row if it's the only one and is empty.
       const onlyBlank =
@@ -982,7 +976,7 @@ export default function NewInvoicePage() {
         .get(`/products/barcode/${encodeURIComponent(code)}`)
         .then((r) => r.data);
       if (product?.id) {
-        addProductFromCatalog(product);
+        addProductFromCatalog(product, scanLevelForHit(code, product));
         return;
       }
     } catch {
@@ -999,7 +993,7 @@ export default function NewInvoicePage() {
       const skuExact = matches.find((p) => (p.sku ?? "").toLowerCase() === code.toLowerCase());
       const toAdd = skuExact ?? matches[0];
       if (toAdd) {
-        addProductFromCatalog(toAdd);
+        addProductFromCatalog(toAdd, scanLevelForHit(code, toAdd));
         return;
       }
     } catch {
@@ -1821,7 +1815,7 @@ export default function NewInvoicePage() {
                           setCreateProductTargetIdx(idx);
                           setCreateProductOpen(true);
                         }}
-                        onChange={(desc, pid, price, avgCost, unitsPerBox) => {
+                        onChange={(desc, pid, price, avgCost, unitsPerBox, scanLevel) => {
                           const specialPrice = pid ? priceMap[pid] : undefined;
                           const effectivePrice =
                             specialPrice ?? (price ? parseFloat(price) : item.unitPrice);
@@ -1835,9 +1829,9 @@ export default function NewInvoicePage() {
                             isSpecialPrice: specialPrice !== undefined,
                             avgCost,
                             unitsPerBox: upb,
-                            boxes: upb ? 1 : undefined,
-                            pieces: upb ? 0 : undefined,
-                            qty: upb ? upb : item.qty || 1,
+                            ...(upb
+                              ? seedLineQty(upb, scanLevel)
+                              : { boxes: undefined, pieces: undefined, qty: item.qty || 1 }),
                           });
                         }}
                       />
