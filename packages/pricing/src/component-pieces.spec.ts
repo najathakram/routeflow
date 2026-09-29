@@ -11,6 +11,7 @@ import {
   allocateComponentPieces,
   componentSubLineText,
   MoneyInvariantError,
+  roundMoney,
 } from "./index";
 
 const A = "prod-a";
@@ -104,10 +105,12 @@ describe("allocateComponentPieces (cumulative, so partials telescope from a scal
 });
 
 describe("largest-remainder caller condition (lead condition 2)", () => {
-  it("an unrounded float sum through the allocator does not throw and stays whole cents", () => {
+  it("an unrounded float sum is refused; rounded at the call site it splits whole cents", () => {
     const unrounded = 0.1 + 0.2; // 0.30000000000000004
-    expect(() => allocateCentsLargestRemainder(unrounded, [1, 1, 1])).not.toThrow();
-    expect(allocateCentsLargestRemainder(unrounded, [1, 1, 1])).toEqual([0.1, 0.1, 0.1]);
+    expect(() => allocateCentsLargestRemainder(unrounded, [1, 1, 1])).toThrow();
+    expect(allocateCentsLargestRemainder(roundMoney(unrounded), [1, 1, 1])).toEqual([
+      0.1, 0.1, 0.1,
+    ]);
   });
 });
 

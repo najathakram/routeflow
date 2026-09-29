@@ -7,6 +7,7 @@ import { FeatureConfigService } from "../billing/feature-config.service";
 import { FeatureConfigStore } from "../billing/feature-config.store";
 import { FeatureOverrideService } from "../billing/feature-override.service";
 import { AddonService } from "../billing/addon.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { AuditService } from "../audit/audit.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -355,7 +356,7 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
       { provide: StorageService, useValue: { presignedUrls: jest.fn().mockResolvedValue([]) } },
       { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(false) } },
       { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
-      { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(true) } },
+      { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(true) } },
       { provide: PlanCatalogService, useValue: { upgradeTargetForFlag: jest.fn() } },
       { provide: RouteFlowGateway, useValue: gateway },
     ];
