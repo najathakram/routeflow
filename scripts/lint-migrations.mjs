@@ -40,6 +40,7 @@
 // --all without --strict, which always exits 0 (informational only). 2 is reserved for "the
 // --base range could not be computed", so a broken range can never read as a clean run.
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -52,6 +53,20 @@ const MIGRATIONS_DIR = "apps/api/prisma/migrations";
 // Anchored to the repo root like SQUAWK_CONFIG/SQUAWK_BIN: a cwd-relative migrations path would
 // make the script report "no migrations in range" (exit 0) from any other directory.
 const MIGRATIONS_ABS = path.resolve(REPO_ROOT, MIGRATIONS_DIR);
+// SA-582a: applied-on-prod migrations cannot be edited, so the SET LOCAL wrap rule (and only that
+// rule) skips a file whose FOLDER NAME and migration.sql sha256 both match an entry here exactly.
+// An edited applied file (sha changed) is checked normally; an entry whose folder does not exist
+// yet simply matches nothing. Pinned by lint-migrations-script.spec.ts.
+const EXEMPT_TABLE = JSON.parse(
+  fs.readFileSync(path.resolve(__dirname, "lib/set-local-exempt-migrations.json"), "utf8"),
+);
+function isSetLocalExempt(file) {
+  const folder = path.basename(path.dirname(file));
+  const entry = EXEMPT_TABLE.find((e) => e.folder === folder);
+  if (!entry) return false;
+  const sha = createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+  return sha === entry.sha256;
+}
 const REASON_RE = /^--\s*reason:\s*\S/;
 const IGNORE_RE = /^--\s*squawk-ignore/;
 
@@ -184,6 +199,7 @@ function blankNonCode(sql) {
 function checkSetLocalWrapped(files) {
   const errors = [];
   for (const file of files) {
+    if (isSetLocalExempt(file)) continue;
     const text = fs.readFileSync(file, "utf8");
     const code = blankNonCode(text);
     if (!/\bSET\s+LOCAL\b/i.test(code)) continue;
