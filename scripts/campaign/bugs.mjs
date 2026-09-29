@@ -95,6 +95,7 @@ import { tmpdir, uptime } from "node:os";
 import { execFileSync, execSync, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { scrubbedGitEnv } from "../lib/check-git-hooks.mjs";
 import { normalizeEvidence } from "./normalize-evidence.mjs";
 import {
   hasRegToken,
@@ -3257,19 +3258,8 @@ cmds["self-test"] = () => {
   // here — every check below (the real-repo ones included) discovers the
   // repository from the process cwd, which is what they meant all along.
   // Deliberately not restored: `self-test` is a terminal command.
-  for (const k of [
-    "GIT_DIR",
-    "GIT_WORK_TREE",
-    "GIT_INDEX_FILE",
-    "GIT_COMMON_DIR",
-    "GIT_OBJECT_DIRECTORY",
-    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-    "GIT_QUARANTINE_PATH",
-    "GIT_PREFIX",
-    "GIT_NAMESPACE",
-    "GIT_CEILING_DIRECTORIES",
-  ])
-    delete process.env[k];
+  const cleanGit = scrubbedGitEnv();
+  for (const k of Object.keys(process.env)) if (!(k in cleanGit)) delete process.env[k];
 
   let failures = 0;
   const check = (name, got, want) => {

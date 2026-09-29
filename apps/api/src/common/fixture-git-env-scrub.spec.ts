@@ -9,10 +9,14 @@
  * (`.claude/hooks/stop.gates.spec.mjs`). `scripts/campaign/bugs.mjs`'s self-test already scrubs.
  *
  * Two guards:
- *  1. static — every tracked-source file that runs a fixture `git init` must carry a scrub
- *     (literal GIT_DIR, a `GIT_` prefix filter, or the shared `gitEnv()` helper);
+ *  1. static — every source file that runs a fixture `git init` must CALL the shared helper
+ *     (`scrubbedGitEnv()` from scripts/lib/check-git-hooks.mjs, or `gitEnv()`); merely mentioning
+ *     GIT_DIR, or carrying a private copy of the filter, does not count;
  *  2. behavioral — `stop.gates.spec.mjs` run with GIT_DIR/GIT_WORK_TREE pointed at a throwaway
  *     "poison" repo must leave that repo untouched (never the real one).
+ *
+ * The helper has ONE definition, scripts/lib/scrubbed-git-env.cjs (re-exported by
+ * scripts/lib/check-git-hooks.mjs for .mjs callers; required here because ts-jest compiles CJS).
  */
 import { spawnSync } from "child_process";
 import * as fs from "fs";
@@ -22,18 +26,37 @@ import * as path from "path";
 const REPO_ROOT = path.resolve(__dirname, "../../../..");
 const SELF = path.basename(__filename);
 const SCAN_DIRS = [
-  ".claude/hooks",
-  ".claude/skills",
+  ".claude",
   "scripts",
   "apps/api/scripts",
   "apps/api/src",
+  "apps/web",
+  "apps/mobile",
+  "packages",
 ];
-const SKIP_DIRS = new Set(["node_modules", ".next", "dist", "worktrees", ".git"]);
+const SKIP_DIRS = new Set([
+  "node_modules",
+  ".next",
+  "dist",
+  "worktrees",
+  ".git",
+  ".turbo",
+  ".expo",
+  "coverage",
+]);
 
-// A fixture repo is created: `["init", ...]` or `git("init", "-q", ...)`.
-const FIXTURE_INIT_RE = /\[\s*["']init["']\s*[,\]]|\(\s*["']init["']\s*,\s*["']-/;
-// Any accepted scrub form.
-const SCRUB_RE = /GIT_DIR|\^GIT_|startsWith\(\s*["']GIT_["']\s*\)|\bgitEnv\b/;
+// A fixture repo is created: `["init", ...]`, `git("init", "-q", ...)`, or the string form
+// `execSync("git init ...")` / `exec("git init`.
+const FIXTURE_INIT_RE =
+  /\[\s*["']init["']\s*[,\]]|\(\s*["']init["']\s*,\s*["']-|exec(?:Sync)?\(\s*["'`]git\s+init\b/;
+// The ONLY accepted scrub: a CALL to the shared helper (or plane-client's gitEnv()).
+const SCRUB_RE = /\b(scrubbedGitEnv|gitEnv)\(/;
+
+// Same single definition the .mjs scripts get through check-git-hooks.mjs.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { scrubbedGitEnv } = require("../../../../scripts/lib/scrubbed-git-env.cjs") as {
+  scrubbedGitEnv: (env?: NodeJS.ProcessEnv) => NodeJS.ProcessEnv;
+};
 
 function walk(dir: string, out: string[] = []): string[] {
   if (!fs.existsSync(dir)) return out;
@@ -47,32 +70,15 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-const GIT_KEYS = [
-  "GIT_DIR",
-  "GIT_WORK_TREE",
-  "GIT_INDEX_FILE",
-  "GIT_COMMON_DIR",
-  "GIT_OBJECT_DIRECTORY",
-  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-  "GIT_QUARANTINE_PATH",
-  "GIT_PREFIX",
-  "GIT_NAMESPACE",
-  "GIT_CEILING_DIRECTORIES",
-];
-
-function cleanEnv(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
-  for (const k of GIT_KEYS) delete env[k];
-  return env;
-}
-
 describe("fixture git repos scrub git's repo-scoped env", () => {
-  it("every file that runs a fixture `git init` carries a GIT_* scrub", () => {
-    const offenders = SCAN_DIRS.flatMap((d) => walk(path.join(REPO_ROOT, d)))
-      .filter((f) => {
-        const src = fs.readFileSync(f, "utf8");
-        return FIXTURE_INIT_RE.test(src) && !SCRUB_RE.test(src);
-      })
+  it("every file that runs a fixture `git init` calls the shared GIT_* scrub", () => {
+    const files = SCAN_DIRS.flatMap((d) => walk(path.join(REPO_ROOT, d)));
+    const fixtureFiles = files.filter((f) => FIXTURE_INIT_RE.test(fs.readFileSync(f, "utf8")));
+    // The scan must be looking at something, or an empty walk would pass vacuously.
+    expect(files.length).toBeGreaterThan(0);
+    expect(fixtureFiles.length).toBeGreaterThan(0);
+    const offenders = fixtureFiles
+      .filter((f) => !SCRUB_RE.test(fs.readFileSync(f, "utf8")))
       .map((f) => path.relative(REPO_ROOT, f).split(path.sep).join("/"))
       .sort();
     expect(offenders).toEqual([]);
@@ -81,7 +87,7 @@ describe("fixture git repos scrub git's repo-scoped env", () => {
   it("stop.gates.spec.mjs never touches the repo GIT_DIR points at", () => {
     const poison = fs.mkdtempSync(path.join(os.tmpdir(), "poison-repo-"));
     const git = (args: string[]) =>
-      spawnSync("git", args, { cwd: poison, encoding: "utf8", env: cleanEnv() });
+      spawnSync("git", args, { cwd: poison, encoding: "utf8", env: scrubbedGitEnv() });
     try {
       git(["init", "-q"]);
       git(["config", "user.name", "poison-sentinel"]);
@@ -101,7 +107,7 @@ describe("fixture git repos scrub git's repo-scoped env", () => {
           encoding: "utf8",
           timeout: 120_000,
           env: {
-            ...process.env,
+            ...scrubbedGitEnv(),
             GIT_DIR: path.join(poison, ".git"),
             GIT_WORK_TREE: poison,
           },
