@@ -156,9 +156,7 @@ describe("T2 — golden money table (R2, R7)", () => {
 
   describe("allocateCentsLargestRemainder — LARGEST_REMAINDER_FIXTURES (#2717)", () => {
     itEachFixture("LARGEST_REMAINDER_FIXTURES", "golden: $label", (row: AnyRow) => {
-      expect(callFn("allocateCentsLargestRemainder", row.total, row.weights)).toEqual(
-        row.expected,
-      );
+      expect(callFn("allocateCentsLargestRemainder", row.total, row.weights)).toEqual(row.expected);
     });
   });
 
