@@ -150,6 +150,7 @@ import * as unitEdit from "./unit-line-edit";
 import { loadCategoryMapForProducts } from "./category-map";
 import { assertBuyerCartPricesCurrent } from "./buyer-cart-price-check";
 import { compositionStampOf, syncOrderLineCompositions } from "./order-composition";
+import { captureCompositionCarry } from "./order-edit-composition";
 import { loadActivePromotionRules } from "./promotion-rules";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import { reportPackWarnings } from "./merge-pack-warnings";
@@ -3210,6 +3211,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // references survive); client-supplied unlisted input is ignored on the
           // buyer path. Drivers keep today's authoring behavior.
           // SA-422 (1): a buyer save never deletes the seller's CANCELLED rows (F07 reopen marks).
+          const carry = await captureCompositionCarry(tx, order.lineItems ?? [], dto.items); // #2717 SA-591(b)
           await tx.orderItem.deleteMany({
             where: {
               orderId,
@@ -3299,7 +3301,7 @@ export class OrdersService implements OnApplicationBootstrap {
                   priceType: PriceType.STANDARD,
                   freeUnits: 0,
                 };
-            await tx.orderItem.create({
+            const made = await tx.orderItem.create({
               data: {
                 orderId,
                 productId: item.productId,
@@ -3340,6 +3342,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 position: pos++,
               },
             });
+            await carry.restore(tx, made.id, item);
           }
           if (isBuyerEdit) {
             // B51: the buyer's payload never mentions preserved unlisted rows,
@@ -3486,6 +3489,8 @@ export class OrdersService implements OnApplicationBootstrap {
               assertReplaceAllPackMatchesLive(item, Number(product.unitsPerBox ?? 0));
             }
 
+            // #2717 SA-591(b): a surviving FIXED line keeps its stamp + components (I11).
+            const carry = await captureCompositionCarry(tx, order.lineItems ?? [], dto.items);
             await tx.orderItem.deleteMany({ where: { orderId } });
             // R2: full replace — stamp position from the client's array order.
             let pos = 0;
@@ -3523,7 +3528,10 @@ export class OrdersService implements OnApplicationBootstrap {
 
               const lineData = buildReplaceAllLineData(itemCtx, item, product);
               if (!lineData) continue;
-              await tx.orderItem.create({ data: { orderId, ...lineData, position: pos++ } });
+              const made = await tx.orderItem.create({
+                data: { orderId, ...lineData, position: pos++ },
+              });
+              await carry.restore(tx, made.id, item);
             }
           } else {
             // Individual item updates (dispatcher workflow with explicit item IDs).

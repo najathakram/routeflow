@@ -54,6 +54,10 @@ const REGISTRY: Record<string, Entry> = {
     kind: "exempt",
     reason: "called only from updateOrderItems, which syncs at its end",
   },
+  "orders/order-edit-composition.ts::restoreCarriedComposition": {
+    kind: "exempt",
+    reason: "re-stamps a surviving line's stored composition after a replace-all; updateOrderItems syncs at its end",
+  },
   "orders/unit-line-edit.ts::createUnitLine": {
     kind: "exempt",
     reason: "a unit-aware line is never composed (COMPOSED_UNIT_LINE)",
