@@ -1,0 +1,181 @@
+/**
+ * #2716c — the ONE staff price-override rule (`decideStaffOverride`, @routeflow/pricing) as the
+ * three order-edit call sites use it: existing-line edit (B), add-during-edit (C), replaceAll
+ * changed-price arm (SA-558d). Below list => DISCOUNTED, at/above list => MANUAL, originalPrice =
+ * LIST; an untouched line keeps its stored type (forward-only, no re-stamp).
+ */
+import { BadRequestException } from "@nestjs/common";
+import {
+  decideAddedLinePrice,
+  decideEditedLinePrice,
+  decideReplaceAllLinePrice,
+} from "./staff-line-price";
+
+describe("decideEditedLinePrice (B: existing-line edit, baseline = stored price)", () => {
+  const base = {
+    storedPrice: 4.99,
+    listPrice: 6,
+    isSpecialTier: false,
+    hasReason: false,
+    isUnlisted: false,
+    productName: "Widget",
+  };
+
+  it("a price below list is DISCOUNTED with originalPrice = list", () => {
+    expect(decideEditedLinePrice({ ...base, overridePrice: 4 })).toEqual({
+      priceType: "DISCOUNTED",
+      unitPrice: 4,
+      originalPrice: 6,
+    });
+  });
+
+  it("a price above list is MANUAL with originalPrice = list; AT list is MANUAL too", () => {
+    expect(decideEditedLinePrice({ ...base, overridePrice: 8 })).toEqual({
+      priceType: "MANUAL",
+      unitPrice: 8,
+      originalPrice: 6,
+    });
+    expect(decideEditedLinePrice({ ...base, overridePrice: 6 })?.priceType).toBe("MANUAL");
+  });
+
+  it("within half a cent of the STORED price is untouched (null: no re-stamp)", () => {
+    expect(decideEditedLinePrice({ ...base, overridePrice: 4.994 })).toBeNull();
+    expect(decideEditedLinePrice({ ...base, overridePrice: null })).toBeNull();
+  });
+
+  it("a special-tier line with no sent or stored reason is refused", () => {
+    expect(() => decideEditedLinePrice({ ...base, isSpecialTier: true, overridePrice: 4 })).toThrow(
+      new BadRequestException(
+        "A reason is required to change Widget — it's this customer's special price",
+      ),
+    );
+  });
+
+  it("a STORED reason counts (baseline = stored price, reason = sent-or-stored)", () => {
+    expect(
+      decideEditedLinePrice({ ...base, isSpecialTier: true, hasReason: true, overridePrice: 4 }),
+    ).toEqual({ priceType: "DISCOUNTED", unitPrice: 4, originalPrice: 6 });
+  });
+
+  it("an unlisted line has no list: MANUAL, rounded, originalPrice null", () => {
+    expect(decideEditedLinePrice({ ...base, isUnlisted: true, overridePrice: 7.777 })).toEqual({
+      priceType: "MANUAL",
+      unitPrice: 7.78,
+      originalPrice: null,
+    });
+  });
+});
+
+describe("decideAddedLinePrice (C: add-during-edit, baseline = the customer's tier price)", () => {
+  const base = {
+    tierPrice: 5,
+    listPrice: 6,
+    isSpecialTier: false,
+    hasReason: false,
+    productName: "Widget",
+  };
+
+  it("below list is DISCOUNTED / above list is MANUAL, both anchored to list", () => {
+    expect(decideAddedLinePrice({ ...base, overridePrice: 4 })).toEqual({
+      priceType: "DISCOUNTED",
+      unitPrice: 4,
+      originalPrice: 6,
+    });
+    expect(decideAddedLinePrice({ ...base, overridePrice: 8 })).toEqual({
+      priceType: "MANUAL",
+      unitPrice: 8,
+      originalPrice: 6,
+    });
+  });
+
+  it("a special-tier price within half a cent of the tier price is SPECIAL at the clean tier price", () => {
+    expect(decideAddedLinePrice({ ...base, isSpecialTier: true, overridePrice: 5.004 })).toEqual({
+      priceType: "SPECIAL",
+      unitPrice: 5,
+      originalPrice: 6,
+    });
+  });
+
+  it("a special-tier change without a reason is refused; the create-merge skip lets it through", () => {
+    expect(() => decideAddedLinePrice({ ...base, isSpecialTier: true, overridePrice: 4 })).toThrow(
+      BadRequestException,
+    );
+    expect(
+      decideAddedLinePrice({ ...base, isSpecialTier: true, overridePrice: 4, hasReason: true }),
+    ).toEqual({ priceType: "DISCOUNTED", unitPrice: 4, originalPrice: 6 });
+  });
+
+  it("a non-special typed price equal to list stays STANDARD with no original", () => {
+    expect(decideAddedLinePrice({ ...base, tierPrice: 6, overridePrice: 6 })).toEqual({
+      priceType: "STANDARD",
+      unitPrice: 6,
+      originalPrice: null,
+    });
+  });
+});
+
+describe("decideReplaceAllLinePrice (SA-558d: replaceAll changed-price arm)", () => {
+  const stored = { unitPrice: 4, priceType: "MANUAL", originalPrice: 6 } as const;
+  const base = {
+    tierPrice: 5,
+    listPrice: 6,
+    isSpecialTier: false,
+    hasReason: false,
+    skipReasonGuard: false,
+    productName: "Widget",
+  };
+
+  it("an echo of a stored MANUAL-below-list line is preserved verbatim (never re-stamped)", () => {
+    expect(decideReplaceAllLinePrice({ ...base, existing: stored, overridePrice: 4.003 })).toEqual({
+      priceType: "MANUAL",
+      unitPrice: 4,
+      originalPrice: 6,
+      repriced: false,
+    });
+  });
+
+  it("a changed price against the stored line: below list DISCOUNTED, above MANUAL", () => {
+    const e = { unitPrice: 4.99, priceType: "STANDARD", originalPrice: null } as const;
+    expect(decideReplaceAllLinePrice({ ...base, existing: e, overridePrice: 4 })).toEqual({
+      priceType: "DISCOUNTED",
+      unitPrice: 4,
+      originalPrice: 6,
+      repriced: true,
+    });
+    expect(decideReplaceAllLinePrice({ ...base, existing: e, overridePrice: 8 })).toMatchObject({
+      priceType: "MANUAL",
+      originalPrice: 6,
+      repriced: true,
+    });
+  });
+
+  it("a new line (no stored counterpart) classifies against the tier price", () => {
+    expect(decideReplaceAllLinePrice({ ...base, existing: null, overridePrice: 4 })).toEqual({
+      priceType: "DISCOUNTED",
+      unitPrice: 4,
+      originalPrice: 6,
+      repriced: true,
+    });
+    expect(decideReplaceAllLinePrice({ ...base, existing: null, overridePrice: 8 })).toMatchObject({
+      priceType: "MANUAL",
+    });
+  });
+
+  it("a typed price at the tier price is not an override (STANDARD, no original)", () => {
+    expect(decideReplaceAllLinePrice({ ...base, existing: null, overridePrice: 5.002 })).toEqual({
+      priceType: "STANDARD",
+      unitPrice: 5,
+      originalPrice: null,
+      repriced: false,
+    });
+  });
+
+  it("special tier: refused without a reason; create-merge new line skips the guard", () => {
+    const sp = { ...base, isSpecialTier: true, existing: null, overridePrice: 4 };
+    expect(() => decideReplaceAllLinePrice(sp)).toThrow(BadRequestException);
+    expect(decideReplaceAllLinePrice({ ...sp, skipReasonGuard: true })).toMatchObject({
+      priceType: "DISCOUNTED",
+      repriced: true,
+    });
+  });
+});
