@@ -36,6 +36,12 @@ describe("allocateCentsLargestRemainder", () => {
     expect(allocateCentsLargestRemainder(0.02, [1, 2, 1])).toEqual([0.01, 0.01, 0]);
   });
 
+  it("the weight-desc key decides an equal-remainder tie: 0.02 over [1,3] -> [0, 0.02] (index-only order would give [0.01, 0.01])", () => {
+    // 2 cents over weights 1 and 3: both remainders are 2 (of 4), floors 0 and 1, one cent left.
+    // Weight desc hands it to the weight-3 part.
+    expect(allocateCentsLargestRemainder(0.02, [1, 3])).toEqual([0, 0.02]);
+  });
+
   it("total 0 -> zeros, even with all-zero weights", () => {
     expect(allocateCentsLargestRemainder(0, [3, 0, 2])).toEqual([0, 0, 0]);
     expect(allocateCentsLargestRemainder(0, [0, 0])).toEqual([0, 0]);
@@ -48,6 +54,24 @@ describe("allocateCentsLargestRemainder", () => {
   it("total > 0 with all-zero weights throws MoneyInvariantError", () => {
     expect(() => allocateCentsLargestRemainder(1, [0, 0])).toThrow(MoneyInvariantError);
     expect(() => allocateCentsLargestRemainder(1, [])).toThrow(MoneyInvariantError);
+  });
+
+  it.each([
+    ["a sub-cent total (0.005: under one cent, not zero)", 0.005, [1, 1]],
+    ["a sub-cent total (0.001)", 0.001, [1, 3]],
+    ["a non-whole-cents total (10.005)", 10.005, [1, 1]],
+    ["a non-whole-cents total (19.999)", 19.999, [2, 1]],
+  ])("refuses %s rather than silently rounding it", (_label, total, weights) => {
+    expect(() => allocateCentsLargestRemainder(total as number, weights as number[])).toThrow(
+      MoneyInvariantError,
+    );
+  });
+
+  it("whole-cent totals that are inexact in floats still pass (19.99, 1.10, 4.35, 0.07)", () => {
+    for (const t of [19.99, 1.1, 4.35, 0.07]) {
+      const parts = allocateCentsLargestRemainder(t, [1, 1, 1]);
+      expect(sumCents(parts)).toBe(cents(t));
+    }
   });
 
   it.each([
@@ -173,6 +197,8 @@ describe("prorateComponentCredit — refusals", () => {
     ["negative linePieces", { linePieces: -6 }],
     ["negative subtotal", { storedSubtotal: -1 }],
     ["NaN subtotal", { storedSubtotal: NaN }],
+    ["non-whole-cents subtotal (10.005)", { storedSubtotal: 10.005 }],
+    ["sub-cent subtotal (0.004)", { storedSubtotal: 0.004 }],
   ])("%s throws", (_label, patch) => {
     expect(() => prorateComponentCredit({ ...base, ...patch })).toThrow(MoneyInvariantError);
   });
