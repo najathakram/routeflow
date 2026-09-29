@@ -114,7 +114,6 @@ export async function findScanMatches(
 
   const productRows: RowLike[] = rowsByProduct.get(product.id) ?? [];
   const ownRows: any[] = Array.isArray(product.barcodes) ? product.barcodes : [];
-  const hasRows = ownRows.length > 0 || productRows.length > 0;
   const barcodes: ProductBarcodeView[] = ownRows.length
     ? barcodeRowsToView(ownRows)
     : productRows.length
