@@ -39,3 +39,14 @@ export function toLineComponentViews(
     .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
     .map(toLineComponentView);
 }
+
+/**
+ * The findOne wiring (order `lineItems`, invoice `items`): every line that carries a `components`
+ * list gets it as views; a line without the key (a plain line, a mocked read) is returned as is.
+ */
+export function withComponentViews<T extends { components?: ComponentRowLike[] | null }>(
+  lines: T[] | null | undefined,
+): T[] | null | undefined {
+  if (!lines) return lines;
+  return lines.map((l) => (l.components ? { ...l, components: toLineComponentViews(l.components) } : l));
+}

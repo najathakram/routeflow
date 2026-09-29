@@ -32,6 +32,8 @@ import {
   inferredGoodsFlatRate,
 } from "@routeflow/pricing";
 import { computeDepositFields } from "./deposit-fields";
+import { deriveInvoiceDetailFields } from "./invoice-detail-read";
+import { withComponentViews } from "../orders/component-view";
 import { orderLineShape, orderLineUnchanged } from "./order-backsync-lines";
 import {
   buildEditedLines,
@@ -3035,49 +3037,14 @@ export class InvoicesService {
       // A customer must never see an upsell's base price on their invoice.
       redactUpsellForCustomer(inv);
     }
-    // F03/R1: CONFIRMED (PAID) payments only. VOID payments (manually voided OR
-    // bounced checks) must not count toward the paid amount — and neither must an
-    // unconfirmed DRAFT one; every other paid-sum in this file matches.
-    //
-    // B421: paidAmount is CASH-ONLY; creditApplied/advanceApplied are separate
-    // — see findAll's matching comment for why balanceDue/deposit still use
-    // the full confirmed total.
-    const { cash: paidAmount, creditApplied, advanceApplied } = splitConfirmed(inv.payments);
-    const totalConfirmed = paidAmount + creditApplied + advanceApplied;
-    const isSettled =
-      inv.status === InvoiceStatus.PAID ||
-      inv.status === InvoiceStatus.VOID ||
-      inv.status === InvoiceStatus.WRITTEN_OFF;
-    // B421 (review F3): roundMoney before the > 0 comparison — see findAll's
-    // matching comment (totalConfirmed sums three floats; a sub-cent remnant
-    // would otherwise render a red "Balance Due $0.00" on a settled invoice).
-    const balanceDue = isSettled ? 0 : Math.max(0, roundMoney(Number(inv.total) - totalConfirmed));
-    // RF-202: date-string comparison — invoice due today is NOT overdue.
-    const dueDateIso = inv.dueDate
-      ? (inv.dueDate instanceof Date ? inv.dueDate : new Date(inv.dueDate))
-          .toISOString()
-          .slice(0, 10)
-      : null;
-    const todayIso = new Date().toISOString().slice(0, 10);
-    const isOverdue = !isSettled && balanceDue > 0 && dueDateIso != null && dueDateIso < todayIso;
-    const { depositAmount, depositOverdue } = computeDepositFields(
-      inv as any,
-      totalConfirmed,
-      todayIso,
-    );
     // Rides the invoice payload (not /settings/invoice, which is operator-only)
     // so CUSTOMER viewers of this same document honor the tenant's
     // hide-original-price preference too.
     const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
     return {
       ...inv,
-      balanceDue,
-      paidAmount,
-      creditApplied,
-      advanceApplied,
-      isOverdue,
-      depositAmount,
-      depositOverdue,
+      ...deriveInvoiceDetailFields(inv),
+      items: withComponentViews(inv.items) as typeof inv.items, // #2717 M3: displayUnitPrice4 as a number
       hideOriginalPrice,
     };
   }

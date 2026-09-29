@@ -150,6 +150,7 @@ import * as unitEdit from "./unit-line-edit";
 import { loadCategoryMapForProducts } from "./category-map";
 import { assertBuyerCartPricesCurrent } from "./buyer-cart-price-check";
 import { compositionStampOf, syncOrderLineCompositions } from "./order-composition";
+import { withComponentViews } from "./component-view";
 import { captureCompositionCarry } from "./order-edit-composition";
 import { loadActivePromotionRules } from "./promotion-rules";
 import { FeatureConfigService } from "../billing/feature-config.service";
@@ -535,6 +536,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // `editableUntil` (the soft cutoff countdown) stays null until the per-weekday
     // routes-cutoff config lands — the HARD close is dispatch, which is authoritative.
     (order as any).editWindow = computeEditWindow(order, user.role);
+    order.lineItems = withComponentViews(order.lineItems) as typeof order.lineItems; // #2717 M3
 
     return order;
   }
