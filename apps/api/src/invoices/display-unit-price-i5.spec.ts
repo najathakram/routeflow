@@ -16,6 +16,7 @@ const ALLOW: Record<string, string> = {
   "invoices/invoice-composed-edit.ts": "writer: re-stamps the rows on a DRAFT edit",
   "invoices/invoice-pdf-item.ts": "reader: the PDF sub-line price text",
   "orders/component-view.ts": "reader: read mapper for the component view (findOne)",
+  "orders/order-edit-composition.ts": "carry: restores the stored rows' value on an edit (SA-591), never summed",
 };
 
 /** Files that compute money from lines; they must never name the identifier at all. */

@@ -65,7 +65,9 @@ describe("recipes: no document join (I11)", () => {
     }
     for (const name of ["OrderItem", "InvoiceItem"]) {
       const f = Prisma.dmmf.datamodel.models.find((m) => m.name === name)?.fields.find((x) => x.name === "recipeId");
-      expect(f).toMatchObject({ kind: "scalar", type: "String", isRequired: false });
+      // the runtime dmmf omits `isRequired` for optional scalars: assert "not required", not "false"
+      expect(f).toMatchObject({ kind: "scalar", type: "String" });
+      expect(f?.isRequired ?? false).toBe(false);
     }
   });
 });
