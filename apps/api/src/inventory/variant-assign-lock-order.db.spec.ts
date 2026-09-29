@@ -3,18 +3,34 @@
  * FAMILY row before any variant row, so it cannot deadlock against a family price edit
  * (house order: family -> recipe product -> variant/component rows).
  *
- * One deterministic interleaving on two connections (the sa218-lock-order.db.spec.ts style):
- *   1. the WRITER (a raw `pg` connection) plays the family price edit: it takes the FAMILY row
- *      FOR UPDATE (`lockFamilyRow`);
+ * One deterministic interleaving on two connections, repeated for 3 rounds on fresh fixtures:
+ *   1. the EDITOR (a raw `pg` connection) plays the family price edit: it UPDATEs the family tier
+ *      price, holding the FAMILY row F until COMMIT;
  *   2. the SERVICE starts assignToVariants [existing V, new W]; a barrier waits until Postgres
- *      reports it BLOCKED by the writer (`pg_blocking_pids`), so the interleaving is real;
- *   3. only then does the writer take the variant row V FOR UPDATE (what `propagateFamilyPrice`'s
- *      updateMany does next) and commit.
+ *      reports it BLOCKED by the editor (`pg_blocking_pids`), so the interleaving is real, then
+ *      asserts the lock edges: exactly one blocked backend, waiting on F's tuple lock (pg_locks),
+ *      while V can still be locked NOWAIT by a third connection (the service holds no V lock);
+ *   3. only then does the editor propagate to V (what `propagateFamilyPrice` does next) and commit.
  * Before the fix the service had already written V (holding its row lock) and blocked later on the
  * family (new W -> `familyPricesForNewVariant`): step 3 closes V -> F against F -> V and Postgres
  * aborts one side with 40P01. Fixed: the service blocks on the family while holding nothing, the
- * writer takes V at once, and both finish. The writer only LOCKS (writes nothing), which isolates
- * the lock-ORDER property from Serializable's SSI 40001 (pre-existing, not a deadlock).
+ * editor takes V at once, and both finish; V and W both end with the edited tier price. If the
+ * Serializable service tx gets a plain 40001 (it snapshotted before the editor committed), one
+ * bounded retry runs; that is the pre-existing SSI case, never a deadlock.
+ *
+ * WHY THE WRITER TAKES F `FOR NO KEY UPDATE` (not FOR UPDATE): a real family price edit is an
+ * UPDATE of non-key columns, which takes exactly that mode. It matters here: assignToVariants
+ * inserts a StockMovement whose FK takes FOR KEY SHARE on the family row, and FOR UPDATE conflicts
+ * with KEY SHARE. With a FOR UPDATE writer the OLD (variant-first) order therefore blocked on that
+ * FK insert BEFORE it wrote any variant, never held V, and the spec stayed green against the bug
+ * (F2's finding, #2554). NO KEY UPDATE lets the old order get past the FK insert, write V, and only
+ * then block on the family read (FOR UPDATE), which is the real V -> F edge.
+ *
+ * REVERT-RED MECHANISM (old order, family lock moved after the target loop): the service holds V
+ * (row update) and waits on F (new W -> familyPricesForNewVariant FOR UPDATE) while the writer holds
+ * F and, once released by the barrier, wants V: a V <-> F cycle. Postgres aborts one side (40P01),
+ * so either `writer` or `service` reports 40P01 and this spec fails. Fixed order: the service
+ * takes F first, blocks holding nothing, the writer takes V and commits, then the service runs.
  *
  * The lock-edge assert: `blocked` must be true (the service really waited on the writer's family
  * lock) and neither side may report 40P01. WRITTEN, NOT RUN by the fold implementer: F2 owns the
@@ -97,7 +113,8 @@ describeDb("SA-584 B1 — assignToVariants takes the family row first (no 40P01)
 
   /** Polls until some backend is blocked by `blockerPid`; false if `done()` or the deadline comes first. */
   async function waitUntilBlockedBy(blockerPid: number, done: () => boolean): Promise<boolean> {
-    const deadline = Date.now() + 10_000;
+    // < 5 s: Prisma's interactive tx timeout is 5 s (race-probe harness rule).
+    const deadline = Date.now() + 4_000;
     while (Date.now() < deadline && !done()) {
       // eslint-disable-next-line no-await-in-loop
       const { rows } = await pool.query(
@@ -111,12 +128,21 @@ describeDb("SA-584 B1 — assignToVariants takes the family row first (no 40P01)
     return false;
   }
 
-  it("assign [existing V, new W] while a family price edit holds F and then wants V: no 40P01, both finish", async () => {
+  const isDeadlock = (err: unknown) =>
+    err !== undefined && (sqlState(err) === "40P01" || /deadlock/i.test(describeErr(err)));
+  const isTimeout = (err: unknown) =>
+    err !== undefined && /timeout|timed out|55P03|57014/i.test(describeErr(err));
+
+  /**
+   * One forced interleave on fresh fixtures. Returns what was observed; the it() asserts.
+   * Editor (raw pg): UPDATE family tier price (holds F) ... [barrier] ... propagate to V, COMMIT.
+   */
+  async function round(n: number) {
     const family = await prisma.product.create({
       data: {
         tenantId,
-        name: `Family ${run}`,
-        sku: `FAM-${run}`,
+        name: `Family ${run}-${n}`,
+        sku: `FAM-${run}-${n}`,
         unit: "case",
         unitsPerBox: 12,
         pricePerUnit: "10.00",
@@ -131,31 +157,41 @@ describeDb("SA-584 B1 — assignToVariants takes the family row first (no 40P01)
     const existing = await prisma.product.create({
       data: {
         tenantId,
-        name: `Family ${run} - Cherry`,
+        name: `Family ${run}-${n} - Cherry`,
         variantName: "Cherry",
-        sku: `VAR-${run}-C`,
+        sku: `VAR-${run}-${n}-C`,
         unit: "case",
         unitsPerBox: 12,
         parentProductId: family.id,
         pricePerUnit: "10.00",
+        priceTier2: "9.50",
         currentStock: 0,
       },
     });
+    const familyCtid = (
+      await pool.query('SELECT ctid::text AS c FROM "Product" WHERE id = $1', [family.id])
+    ).rows[0].c as string;
 
     const writer = await pool.connect();
+    const probe = await pool.connect();
     let writerError: unknown;
     let serviceError: unknown;
+    let serviceAttempts = 0;
     let blocked = false;
+    let blockedBackends = -1;
+    let blockedOnFamily = false;
+    let serviceHoldsVariant = true;
     try {
       await writer.query("BEGIN");
-      await writer.query("SET LOCAL lock_timeout = '15s'");
+      await writer.query("SET LOCAL lock_timeout = '4s'");
       const pid = Number((await writer.query("SELECT pg_backend_pid() AS pid")).rows[0].pid);
-      // 1. the family price edit's first lock (lockFamilyRow)
-      await writer.query('SELECT id FROM "Product" WHERE id = $1 FOR UPDATE', [family.id]);
+      // 1. the family price edit: UPDATE the family tier price. This takes F in FOR NO KEY UPDATE
+      //    mode (see the header) and leaves it held until COMMIT.
+      await writer.query('UPDATE "Product" SET "priceTier2" = 8.75 WHERE id = $1', [family.id]);
 
       let settled = false;
-      const running = tenantCtx
-        .run(tenantId, () =>
+      const attempt = () =>
+        tenantCtx.run(tenantId, () =>
           service.assignToVariants(
             {
               parentProductId: family.id,
@@ -166,21 +202,71 @@ describeDb("SA-584 B1 — assignToVariants takes the family row first (no 40P01)
             } as any,
             userId,
           ),
-        )
-        .then(
-          () => undefined,
-          (err) => {
-            serviceError = err;
-          },
-        )
-        .finally(() => {
+        );
+      const running = (async () => {
+        try {
+          for (;;) {
+            serviceAttempts += 1;
+            try {
+              await attempt();
+              return;
+            } catch (err) {
+              // The service tx is Serializable and the editor commits a row it snapshotted
+              // before waiting: a plain 40001 is the pre-existing SSI retry case, not a deadlock,
+              // and the second attempt runs after the editor committed. Only a bounded retry.
+              if (sqlState(err) === "40001" && serviceAttempts < 3) continue;
+              serviceError = err;
+              return;
+            }
+          }
+        } finally {
           settled = true;
-        });
-      // 2. the service must really be waiting on the writer's family lock
+        }
+      })();
+
+      // 2. lock-edge assert: the service must really be waiting on the editor
       blocked = await waitUntilBlockedBy(pid, () => settled);
+      if (blocked) {
+        // count ALL backends the editor blocks (must be exactly the one assign backend)
+        blockedBackends = (
+          await pool.query(
+            "SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))",
+            [pid],
+          )
+        ).rows[0].n;
+        // ... and it waits on the FAMILY row's tuple lock (pg_locks), not on some other row
+        blockedOnFamily =
+          (
+            await pool.query(
+              `SELECT count(*)::int AS n
+                 FROM pg_locks l
+                WHERE NOT l.granted AND l.locktype = 'tuple'
+                  AND l.relation = '"Product"'::regclass
+                  AND '(' || l.page || ',' || l.tuple || ')' = $2
+                  AND $1::int = ANY(pg_blocking_pids(l.pid))`,
+              [pid, familyCtid],
+            )
+          ).rows[0].n === 1;
+        // ... while holding NO lock on the variant row V. Row locks are not in pg_locks, so probe
+        // it: FOR UPDATE NOWAIT succeeds iff nobody (in particular the assign backend) holds V.
+        await probe.query("BEGIN");
+        try {
+          await probe.query('SELECT id FROM "Product" WHERE id = $1 FOR UPDATE NOWAIT', [
+            existing.id,
+          ]);
+          serviceHoldsVariant = false;
+        } catch {
+          serviceHoldsVariant = true;
+        } finally {
+          await probe.query("ROLLBACK").catch(() => undefined);
+        }
+      }
       try {
-        // 3. propagateFamilyPrice's next lock: the variant rows
-        await writer.query('SELECT id FROM "Product" WHERE id = $1 FOR UPDATE', [existing.id]);
+        // 3. release: propagateFamilyPrice's next lock + write, the variant row V, then COMMIT
+        await writer.query(
+          'UPDATE "Product" SET "priceTier2" = 8.75 WHERE "parentProductId" = $1',
+          [family.id],
+        );
         await writer.query("COMMIT");
       } catch (err) {
         writerError = err;
@@ -189,22 +275,70 @@ describeDb("SA-584 B1 — assignToVariants takes the family row first (no 40P01)
       await running;
     } finally {
       writer.release();
+      probe.release();
     }
 
-    expect({
-      blocked,
-      writer: describeErr(writerError),
-      service: describeErr(serviceError),
-    }).toEqual({ blocked: true, writer: "none", service: "none" });
-
+    // wait for the refetch: read only after both sides have settled and committed
     const parentAfter = await prisma.product.findUniqueOrThrow({ where: { id: family.id } });
     const variantAfter = await prisma.product.findUniqueOrThrow({ where: { id: existing.id } });
     const created = await prisma.product.findMany({
       where: { tenantId, parentProductId: family.id, variantName: "Grape" },
     });
-    expect(Number(parentAfter.currentStock)).toBe(10);
-    expect(Number(variantAfter.currentStock)).toBe(5);
-    expect(created).toHaveLength(1);
-    expect(Number(created[0].currentStock)).toBe(5);
-  }, 60_000);
+    return {
+      blocked,
+      blockedBackends,
+      blockedOnFamily,
+      serviceHoldsVariant,
+      writerError,
+      serviceError,
+      parentAfter,
+      variantAfter,
+      created,
+    };
+  }
+
+  it("assign [existing V, new W] vs a family price edit (F then V), 3 rounds: no 40P01, assign waits on F holding no V lock, both effects applied", async () => {
+    for (let n = 1; n <= 3; n += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      const r = await round(n);
+
+      // (a) REVERT-RED: under the old variant-first order the service holds V and waits on F while
+      //     the editor holds F and wants V: 40P01 on one side, EVERY round. Fixed: neither.
+      expect({ n, dead: isDeadlock(r.writerError) || isDeadlock(r.serviceError) }).toEqual({
+        n,
+        dead: false,
+      });
+      expect(describeErr(r.writerError)).not.toMatch(/40P01|deadlock|timeout/i);
+      expect(describeErr(r.serviceError)).not.toMatch(/40P01|deadlock|timeout/i);
+      expect(isTimeout(r.writerError) || isTimeout(r.serviceError)).toBe(false);
+      expect({
+        n,
+        writer: describeErr(r.writerError),
+        service: describeErr(r.serviceError),
+      }).toEqual({ n, writer: "none", service: "none" });
+
+      // (b) lock edges (old order: service holds V, so serviceHoldsVariant is true and this fails)
+      expect({
+        n,
+        blocked: r.blocked,
+        blockedBackends: r.blockedBackends,
+        blockedOnFamily: r.blockedOnFamily,
+        serviceHoldsVariant: r.serviceHoldsVariant,
+      }).toEqual({
+        n,
+        blocked: true,
+        blockedBackends: 1,
+        blockedOnFamily: true,
+        serviceHoldsVariant: false,
+      });
+
+      // (c) end state: stock moved exactly once AND the edited tier price reached V and W
+      expect(Number(r.parentAfter.currentStock)).toBe(10);
+      expect(Number(r.variantAfter.currentStock)).toBe(5);
+      expect(Number(r.variantAfter.priceTier2)).toBe(8.75);
+      expect(r.created).toHaveLength(1);
+      expect(Number(r.created[0].currentStock)).toBe(5);
+      expect(Number(r.created[0].priceTier2)).toBe(8.75);
+    }
+  }, 90_000);
 });
