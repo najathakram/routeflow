@@ -46,6 +46,7 @@ describeDb("#2716c — staff price-override rule, real Postgres", () => {
   const slug = assertTestTenant(`qa-2716-${run}`, "staff-override-rule.db.spec.ts");
   let tenantId = "";
   let operatorUserId = "";
+  let buyerUserId = "";
   let customerId = "";
   const productIds: string[] = [];
   const orderIds: string[] = [];
@@ -132,9 +133,14 @@ describeDb("#2716c — staff price-override rule, real Postgres", () => {
         data: { email: `o-${run}@example.test`, username: `o-${run}`, role: "OPERATOR", tenantId },
       })
     ).id;
+    buyerUserId = (
+      await raw.user.create({
+        data: { email: `b-${run}@example.test`, username: `b-${run}`, role: "CUSTOMER", tenantId },
+      })
+    ).id;
     customerId = (
       await raw.customer.create({
-        data: { businessName: "2716 co", contactName: "Tester", tenantId },
+        data: { userId: buyerUserId, businessName: "2716 co", contactName: "Tester", tenantId },
       })
     ).id;
   }, 120_000);
@@ -146,7 +152,7 @@ describeDb("#2716c — staff price-override rule, real Postgres", () => {
     await raw.stockMovement.deleteMany({ where: { productId: { in: productIds } } });
     await raw.product.deleteMany({ where: { id: { in: productIds } } });
     await raw.customer.deleteMany({ where: { id: customerId } });
-    await raw.user.deleteMany({ where: { id: operatorUserId } });
+    await raw.user.deleteMany({ where: { id: { in: [operatorUserId, buyerUserId] } } });
     await raw.tenant.deleteMany({ where: { id: tenantId } });
     await prisma?.$disconnect();
     await raw?.$disconnect();

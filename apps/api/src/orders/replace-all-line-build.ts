@@ -10,11 +10,11 @@
  * — the only call site, in updateOrderItems — still supplies itself). Returns `null` exactly
  * where the original `continue`d (a normalized qty <= 0).
  */
-import { BadRequestException } from "@nestjs/common";
 import {
   isSpecialTier,
   categoryTaxSnapshotOf,
   computeLineSubtotal,
+  getTierPrice,
   normalizeBoxesPieces,
   type PromotionRule,
   type TrackedCategoryRow,
@@ -23,6 +23,7 @@ import { PriceType } from "@prisma/client";
 import { rescaleBogoFreeUnits, resolveBuyerLinePrice } from "./buyer-merge-pricing";
 import { decideTierOverride } from "./staff-override";
 import type { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
+import { decideReplaceAllLinePrice } from "./staff-line-price";
 
 interface ExistingLineForReplaceAll {
   unitPrice: number;
@@ -181,13 +182,9 @@ export function buildReplaceAllLineData(
   const replaceAllExisting = sourceLineId
     ? ctx.existingLineById.get(sourceLineId)
     : ctx.existingLineByProduct.get(productId);
-  const replaceAllPriceUnchanged =
-    replaceAllExisting != null &&
-    (overridePrice === null || Math.abs(overridePrice - replaceAllExisting.unitPrice) <= 0.005);
   const replaceAllTierForProduct = ctx.isStaffEdit
     ? (ctx.operatorCpMap.get(productId) ?? ctx.operatorDefaultTier)
     : 1;
-  const replaceAllIsSpecialTier = isSpecialTier(replaceAllTierForProduct);
   const replaceAllHasOverrideReason = !!(
     (item.overrideReason && item.overrideReason.trim()) ||
     (replaceAllExisting?.overrideReason && replaceAllExisting.overrideReason.trim())
@@ -211,37 +208,39 @@ export function buildReplaceAllLineData(
   const skipAsCreateMergeNewLine = !!ctx.isCreateMerge && replaceAllExisting == null;
   // #2696(c) SA-558d (i): that NEW line IS a staff create, so it takes create's rule A
   // (decideTierOverride: tier baseline, the sent reason, the same 400; within ½¢ of tier ⇒ the
-  // tier ladder below) — a fresh order and a folded one price the same payload identically. The
-  // existing-line pairing (B60) and the operator's own replaceAll edit arm are untouched.
+  // tier ladder below) — a fresh order and a folded one price the same payload identically.
   const createMergeDecision =
     skipAsCreateMergeNewLine && overridePrice !== null && !bogoPriceUnchanged
       ? decideTierOverride(product, replaceAllTierForProduct, overridePrice, item.overrideReason)
       : null;
   const createMergeOverride = createMergeDecision?.overridden ? createMergeDecision : null;
-  // In-band on that arm = no typed price (the ladder), exactly as create() does.
-  const pricedOverride = createMergeDecision && !createMergeOverride ? null : overridePrice;
-  if (
-    !bogoPriceUnchanged &&
-    !replaceAllPriceUnchanged &&
-    !skipAsCreateMergeNewLine &&
-    overridePrice !== null &&
-    replaceAllIsSpecialTier &&
-    !replaceAllHasOverrideReason
-  ) {
-    throw new BadRequestException(
-      `A reason is required to change ${product.name ?? "this"} — it's this customer's special price`,
-    );
-  }
-  // An explicit price DIFFERENT from catalog is a genuine operator override
-  // (MANUAL); one that EQUALS catalog is still an operator-typed price and is
-  // stored verbatim as STANDARD/list — unchanged behavior, and the only way to
-  // sell a tiered customer at list for one order. WP1: ONLY a line carrying no
-  // price at all falls through to the tier ladder, and only for staff. A price
-  // the BOGO branch above already treated as unchanged is never a MANUAL
-  // override either, even if it differs from today's catalog list price.
+  // #2716c / SA-558d: ONE rule (staff-line-price.ts -> decideStaffOverride) for a typed price that
+  // is not the BOGO snapshot's echo. Against a stored counterpart the baseline is its stored
+  // price and an echo is preserved verbatim (never re-stamped); otherwise the tier price. A
+  // special-tier change needs a reason (B465); below list is DISCOUNTED, at/above list MANUAL,
+  // originalPrice = list. WP1: ONLY a line carrying no price at all falls through to the tier
+  // ladder, and only for staff.
+  const replaceAllDecision =
+    !bogoPriceUnchanged && overridePrice !== null && !skipAsCreateMergeNewLine
+      ? decideReplaceAllLinePrice({
+          overridePrice,
+          existing: replaceAllExisting ?? null,
+          tierPrice: Number(getTierPrice(product, replaceAllTierForProduct)),
+          listPrice: catalogPrice,
+          isSpecialTier: isSpecialTier(replaceAllTierForProduct),
+          hasReason: replaceAllHasOverrideReason,
+          skipReasonGuard: skipAsCreateMergeNewLine,
+          productName: product.name,
+        })
+      : null;
   const isManualOverride = createMergeDecision
     ? !!createMergeOverride
-    : !bogoPriceUnchanged && overridePrice !== null && overridePrice !== catalogPrice;
+    : !!replaceAllDecision?.repriced;
+  // An echo of the stored counterpart keeps that line's own attribution (like the BOGO arm).
+  const echoedExisting =
+    replaceAllDecision && !replaceAllDecision.repriced && replaceAllExisting
+      ? replaceAllExisting
+      : null;
   const upb = Number(product.unitsPerBox ?? 0);
   // B661-sweep: box-unaware multiply, converts to regulatedUnitBasis in a follow-up PR.
   const qtyPieces = boxes != null ? qty : upb > 1 ? qty * upb : qty;
@@ -279,11 +278,11 @@ export function buildReplaceAllLineData(
           priceType: PriceType[createMergeOverride.priceType],
           freeUnits: 0,
         }
-      : pricedOverride !== null
+      : replaceAllDecision
         ? {
-            unitPrice: pricedOverride,
-            originalPrice: isManualOverride ? catalogPrice : null,
-            priceType: isManualOverride ? PriceType.MANUAL : PriceType.STANDARD,
+            unitPrice: replaceAllDecision.unitPrice,
+            originalPrice: replaceAllDecision.originalPrice,
+            priceType: replaceAllDecision.priceType,
             freeUnits: 0,
           }
         : ctx.isStaffEdit
@@ -342,10 +341,10 @@ export function buildReplaceAllLineData(
           ? item.overrideReason.trim()
           : item.overrideReason
         : (replaceAllExisting?.overrideReason ?? null)
-      : (preservedOverride?.overrideReason ?? null),
+      : (preservedOverride?.overrideReason ?? echoedExisting?.overrideReason ?? null),
     overriddenBy: isManualOverride
       ? (ctx.userId ?? null)
-      : (preservedOverride?.overriddenBy ?? null),
+      : (preservedOverride?.overriddenBy ?? echoedExisting?.overriddenBy ?? null),
     // Snapshot the regulated category (spec §7).
     trackedCategoryId: product.trackedCategoryId ?? null,
     // RF-3: reporting-only subcategory snapshot (mirrors trackedCategoryId).
