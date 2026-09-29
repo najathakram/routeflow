@@ -426,7 +426,7 @@ export class AppleOAuthService {
           emailVerified: true,
         },
       });
-      this.logger.log(`BuyerAccount created via Apple: ${email}`);
+      this.logger.log(`BuyerAccount created via Apple: ${buyer.id}`);
     }
 
     const sellerCount = await this.prisma.customerLink.count({
@@ -495,7 +495,7 @@ export class AppleOAuthService {
     });
     if (!cas.linked) return;
 
-    this.logger.log(`Apple account linked for user ${userId} (${email})`);
+    this.logger.log(`Apple account linked for user ${userId}`);
 
     if (user.email) {
       void this.emailService

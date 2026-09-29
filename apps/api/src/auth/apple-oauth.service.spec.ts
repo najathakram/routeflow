@@ -1165,3 +1165,103 @@ describe("AppleOAuthService — algorithm pinning", () => {
     expect(prisma.user.update).not.toHaveBeenCalled();
   });
 });
+
+describe("AppleOAuthService — no PII or credentials in logs (lead Opus on #2486)", () => {
+  const STAFF_EMAIL = "op@acme.example";
+  const BUYER_EMAIL = "newbuyer@example.com";
+  const spies: jest.SpyInstance[] = [];
+
+  function spyLogs() {
+    const seen: string[] = [];
+    for (const level of ["log", "warn", "error", "debug", "verbose", "fatal"] as const) {
+      spies.push(
+        jest.spyOn(Logger.prototype, level).mockImplementation((...args: unknown[]) => {
+          seen.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" "));
+        }),
+      );
+    }
+    return seen;
+  }
+
+  afterEach(() => {
+    while (spies.length) spies.pop()!.mockRestore();
+  });
+
+  it("a buyer created via Apple logs the account id, never the email or a credential", async () => {
+    const seen = spyLogs();
+    const { service, prisma, privateKey } = await buildService();
+    prisma.buyerAccount.findFirst.mockResolvedValue(null);
+    prisma.buyerAccount.create.mockResolvedValue({
+      id: "buyer-new",
+      email: BUYER_EMAIL,
+      status: "ACTIVE",
+      passwordSet: false,
+    });
+    const { nonce, identityToken } = await mintAndSign(service, privateKey, {
+      context: "buyer-standalone",
+      tokenOverrides: { email: BUYER_EMAIL, sub: "apple-sub-pii" },
+    });
+    await service.signIn({
+      identityToken,
+      authorizationCode: "auth-code-secret",
+      nonce,
+      context: "buyer-standalone",
+    });
+
+    const logs = seen.join("\n");
+    expect(logs).toContain("buyer-new");
+    for (const secret of [BUYER_EMAIL, identityToken, "auth-code-secret", nonce])
+      expect(logs).not.toContain(secret);
+  });
+
+  it("a staff account linked via Apple logs the user id, never the email or a credential", async () => {
+    const seen = spyLogs();
+    const { service, prisma, privateKey } = await buildService();
+    prisma.user.findUnique.mockResolvedValue({
+      id: "user-1",
+      tenantId: "tenant-1",
+      deletedAt: null,
+      appleId: null,
+      email: STAFF_EMAIL,
+    });
+    prisma.user.findFirst.mockResolvedValue(null);
+    prisma.user.updateMany.mockResolvedValue({ count: 1 });
+    const { nonce } = await service.mintNonce(undefined, "staff");
+    const identityToken = await signIdentityToken(privateKey, {
+      nonce: sha256hex(nonce),
+      sub: "apple-sub-pii",
+      email: STAFF_EMAIL,
+    });
+    await service.linkAppleAccount("user-1", identityToken, nonce);
+
+    const logs = seen.join("\n");
+    expect(logs).toContain("user-1");
+    for (const secret of [STAFF_EMAIL, identityToken, nonce]) expect(logs).not.toContain(secret);
+  });
+
+  it("the spy is discriminating: it sees a log call that does carry an email", () => {
+    const seen = spyLogs();
+    new Logger("probe").log(`linked (${STAFF_EMAIL})`);
+    expect(seen.join("\n")).toContain(STAFF_EMAIL);
+  });
+});
+
+describe("AppleOAuthService — issuer pinning", () => {
+  it("a token signed with a valid key but a foreign issuer is rejected before any lookup", async () => {
+    const { service, prisma, privateKey } = await buildService();
+    const { nonce, identityToken } = await mintAndSign(service, privateKey, {
+      context: "buyer-standalone",
+      tokenOverrides: { iss: "https://evil.example.com" },
+    });
+    await expect(
+      service.signIn({
+        identityToken,
+        authorizationCode: "code",
+        nonce,
+        context: "buyer-standalone",
+      }),
+    ).rejects.toThrow("apple_token_invalid");
+    expect(prisma.buyerAccount.findFirst).not.toHaveBeenCalled();
+    expect(prisma.buyerAccount.create).not.toHaveBeenCalled();
+  });
+});

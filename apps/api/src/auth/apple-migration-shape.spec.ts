@@ -48,6 +48,13 @@ describe("apple sign-in migration shape (#2309, SA-597)", () => {
     expect(count(/^CREATE UNIQUE INDEX /gim, sql)).toBe(2);
   });
 
+  it("adds nullable columns only: no NOT NULL and no DEFAULT (a table rewrite / backfill)", () => {
+    expect(sql).not.toMatch(/NOT NULL/i);
+    expect(sql).not.toMatch(/\bDEFAULT\b/i);
+    expect(/NOT NULL/i.test('ADD COLUMN "x" TEXT NOT NULL')).toBe(true);
+    expect(/\bDEFAULT\b/i.test("ADD COLUMN \"x\" TEXT DEFAULT 'a'")).toBe(true);
+  });
+
   it("sorts after the M1 migration (the handoff's newest folder)", () => {
     expect(FOLDER > "20260929190000").toBe(true);
   });
