@@ -7,7 +7,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { MeterService } from "../billing/meter.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
-import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { EmailService } from "../email/email.service";
@@ -85,8 +85,8 @@ describe("Portal approvals — decline endpoint + richer pending payloads", () =
         { provide: MeterService, useValue: { read: jest.fn() } },
         { provide: PlanCatalogService, useValue: { getPublishedVersion: jest.fn() } },
         {
-          provide: EntitlementsService,
-          useValue: { hasFlag: jest.fn().mockResolvedValue(false) },
+          provide: EntitlementAuthority,
+          useValue: { can: jest.fn().mockResolvedValue(false) },
         },
       ],
     }).compile();
