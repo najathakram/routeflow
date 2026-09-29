@@ -30,6 +30,8 @@ import {
 } from "../../../lib/api/routes";
 import { startLocationTracking } from "../../../lib/location-tracker";
 import { useAuthStore } from "../../../lib/auth-store";
+import { useTenantOnboarding } from "../../../lib/api/onboarding";
+import { ONBOARDING_STAGE_CUSTOMER_LABEL, tenantOnboardingSummary } from "@routeflow/types";
 import { useDeliveryAccess, useDeveloperMode, useRoutesAccess } from "../../../lib/api/addons";
 
 function routeStatusLabel(r: AdminRoute): {
@@ -55,6 +57,12 @@ function driverDisplayName(driver: AdminDriver | undefined): string {
 export default function OperatorHomeScreen() {
   const router = useRouter();
   const { user } = useAuthStore();
+  // #2159 S4: while this workspace is being onboarded, point staff at "Getting started".
+  const onboardingQ = useTenantOnboarding(
+    user?.role === "TENANT_ADMIN" || user?.role === "OPERATOR",
+  );
+  const onboarding = onboardingQ.data?.onboarding ?? null;
+  const onboardingSummary = tenantOnboardingSummary(onboarding);
   // Owner split 2026-08-25: the dispatch-readiness hero and "Routes today" are
   // recurring-routes surfaces (useAdminRoutes keeps the SCHEDULED default), so
   // they follow the routes addon; drivers is shared by both features, matching
@@ -211,6 +219,27 @@ export default function OperatorHomeScreen() {
         <DriverInlineView />
       ) : (
         <ScrollView showsVerticalScrollIndicator={false}>
+          {/* Onboarding in progress (#2159 S4) */}
+          {onboarding && onboardingSummary ? (
+            <View style={{ paddingHorizontal: 16, paddingTop: 14 }}>
+              <Pressable
+                testID="getting-started-card"
+                accessibilityRole="button"
+                style={styles.onboardingCard}
+                onPress={() => router.push("/(operator)/getting-started")}
+              >
+                <Ionicons name="flag-outline" size={20} color={ios.brand} />
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.onboardingTitle}>
+                    Onboarding: {ONBOARDING_STAGE_CUSTOMER_LABEL[onboarding.stage]}
+                  </Text>
+                  <Text style={styles.onboardingSub}>{onboardingSummary}</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color={ios.gray[1]} />
+              </Pressable>
+            </View>
+          ) : null}
+
           {/* Readiness hero */}
           {routesAccess.enabled ? (
             <View style={{ paddingHorizontal: 16, paddingTop: 14 }}>
@@ -606,6 +635,17 @@ function DriverInlineView() {
 }
 
 const styles = StyleSheet.create({
+  onboardingCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    minHeight: 44,
+    backgroundColor: ios.bgElev,
+    borderRadius: 14,
+    padding: 14,
+  },
+  onboardingTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label },
+  onboardingSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
   safe: { flex: 1, backgroundColor: ios.bg },
   center: { alignItems: "center", justifyContent: "center", padding: 24, gap: 6 },
   // ── Mode switcher ─────────────────────────────────────────────────────────

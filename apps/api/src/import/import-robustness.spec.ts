@@ -55,6 +55,7 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 describe("ImportService — import robustness (F17)", () => {
   let service: ImportService;
@@ -89,6 +90,12 @@ describe("ImportService — import robustness (F17)", () => {
         // idempotency for source-numberless rows). `findLocalId` → null is
         // "never imported before", the state every suite here assumes.
         { provide: ExternalRefService, useValue: externalRefs },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
       ],
     }).compile();
     service = mod.get(ImportService);
@@ -343,6 +350,13 @@ describe("ImportService — import robustness (F17)", () => {
         Object.assign(invoiceStore[where.id], data);
         return invoiceStore[where.id];
       });
+      // SA-424 N2: the end sweep is a compare-and-set on the status it read.
+      prisma.invoice.updateMany.mockImplementation(async ({ where, data }: any) => {
+        const inv = invoiceStore[where.id];
+        if (!inv || inv.status !== where.status) return { count: 0 };
+        Object.assign(inv, data);
+        return { count: 1 };
+      });
       const transaction = prisma.$transaction as unknown as jest.Mock;
       transaction.mockImplementation(async (ops: any) => Promise.all(ops));
 
@@ -487,6 +501,12 @@ describe("ImportService — import robustness (F17)", () => {
         Object.assign(invoice, data);
         return invoice;
       });
+      // SA-424 N2: the end sweep is a compare-and-set on the status it read.
+      prisma.invoice.updateMany.mockImplementation(async ({ where, data }: any) => {
+        if (invoice.status !== where.status) return { count: 0 };
+        Object.assign(invoice, data);
+        return { count: 1 };
+      });
       (prisma.$transaction as unknown as jest.Mock).mockImplementation(async (ops: any) =>
         Promise.all(ops),
       );
@@ -601,6 +621,13 @@ describe("ImportService — import robustness (F17)", () => {
         const inv = invoiceStore.find((i) => i.id === where.id)!;
         Object.assign(inv, data);
         return inv;
+      });
+      // SA-424 N2: the end sweep is a compare-and-set on the status it read.
+      prisma.invoice.updateMany.mockImplementation(async ({ where, data }: any) => {
+        const inv = invoiceStore.find((i) => i.id === where.id);
+        if (!inv || inv.status !== where.status) return { count: 0 };
+        Object.assign(inv, data);
+        return { count: 1 };
       });
       (prisma.$transaction as unknown as jest.Mock).mockImplementation(async (ops: any) =>
         Promise.all(ops),

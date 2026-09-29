@@ -1,0 +1,33 @@
+{
+  "task": {
+    "id": "DBT-F51",
+    "title": "NEED-DB spec (authored here, run by the F2 prover, never in engine gates)",
+    "type": "feature",
+    "files": ["apps/api/src/common/override-activation-ledger.db.spec.ts"],
+    "tests": [],
+    "dependsOn": ["FIX-864", "FIX-865B", "FIX-865C"],
+    "risk": "HIGH",
+    "briefPath": "/Users/maznahamanullah/code/routeflow/.claude/worktrees/zealous-franklin-2c1741/.claude/pipeline/2026-09-25-f51-billing-mrr-ledger/tasks/DBT-F51/brief.md",
+    "redRun": {
+      "ran": false,
+      "results": [
+        {
+          "command": "npx tsc --noEmit -p apps/api/tsconfig.json (from apps/api)",
+          "exitCode": 0,
+          "output": "0 error TS lines in output; new file apps/api/src/common/override-activation-ledger.db.spec.ts type-checks cleanly against real PlatformAdminService/SubscriptionMutationService/MrrService/PlanCatalogService/BillingEventService signatures and Prisma model shapes. This was a type-check only, not a test execution."
+        }
+      ]
+    },
+    "blocked": true,
+    "blockerFindings": [
+      {
+        "file": "(scope)",
+        "severity": "blocker",
+        "phase": "Author tests",
+        "summary": "test author touched non-test files: apps/api/src/common/override-activation-ledger.db.spec.ts",
+        "detail": "Task DBT-F51's declared tests are []; per-path rule matched: apps/api/src/common/override-activation-ledger.db.spec.ts (in this task's own implementation files (t.files)). Reverted to HEAD / deleted before the red gate ran: [\"apps/api/src/common/override-activation-ledger.db.spec.ts\"]."
+      }
+    ]
+  },
+  "progressLine": "Task DBT-F51: blocked (1 blocker(s))"
+}

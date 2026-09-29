@@ -13,6 +13,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { NumberingService } from "../import/numbering.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 const category = (rate: number) => ({
   id: "cat-1",
@@ -62,6 +63,10 @@ describe("EstimatesService.convertToInvoice — regulated levy and quoted pack (
     const mod = await Test.createTestingModule({
       providers: [
         EstimatesService,
+        {
+          provide: SellingRestrictionsService,
+          useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+        },
         { provide: PrismaService, useValue: prisma },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
         { provide: NumberingService, useValue: numbering },

@@ -25,13 +25,13 @@ describe("#2055: price-suffix noun wiring", () => {
     expect(src).toMatch(/lineUnitsPerBox\(li\)/);
   });
 
-  it("operator edit-items.tsx: routes both the editable and read-only price rows through the shared priceUnitSuffix", () => {
+  it("operator edit-items DraftItemCard.tsx (sliced from edit-items.tsx by #2390): routes both the editable and read-only price rows through the shared priceUnitSuffix", () => {
     const src = readFileSync(
-      join(__dirname, "..", "app/(operator)/(tabs)/orders/[id]/edit-items.tsx"),
+      join(__dirname, "..", "components/edit-items/DraftItemCard.tsx"),
       "utf8",
     );
     expect(src).toMatch(
-      /import\s*\{\s*priceUnitSuffix\s*\}\s*from\s*"\.\.\/\.\.\/\.\.\/\.\.\/\.\.\/lib\/invoice-line-display"/,
+      /import\s*\{\s*priceUnitSuffix\s*\}\s*from\s*"\.\.\/\.\.\/lib\/invoice-line-display"/,
     );
     const calls = src.match(/priceUnitSuffix\(item,\s*upb\)/g) ?? [];
     // Both the canEditPrice and the read-only branch had their own copy of the buggy
@@ -44,9 +44,9 @@ describe("#2055: price-suffix noun wiring", () => {
     expect(src).toMatch(/const isBoxed = upb > 1 && canSplitBoxes && !item\.unitLabel;/);
   });
 
-  it("operator edit-items.tsx's product-picker row (a live CATALOGUE product, not an order line) is deliberately left as plain 'box' — products carry no unitLabel to read", () => {
+  it("operator edit-items ProductPicker.tsx's product-picker row (a live CATALOGUE product, not an order line) is deliberately left as plain 'box' — products carry no unitLabel to read", () => {
     const src = readFileSync(
-      join(__dirname, "..", "app/(operator)/(tabs)/orders/[id]/edit-items.tsx"),
+      join(__dirname, "..", "components/edit-items/ProductPicker.tsx"),
       "utf8",
     );
     // Confirms the one remaining `/ box of ${upb}` match is exactly this row (`p`, a

@@ -33,8 +33,10 @@ import { useProducts } from "@/lib/api/products";
 import { unitsLabel } from "@/lib/stock-label";
 import { useFinanceDashboard } from "@/lib/api/finance";
 import { useInvoices, type Invoice } from "@/lib/api/invoices";
-import { useRoutesAccess } from "@/lib/api/addons";
+import { useRoutesAccess, useDeliveryAccess } from "@/lib/api/addons";
 import { DriverAppBanner } from "./DriverAppBanner";
+import { GettingStartedBanner } from "./GettingStartedBanner";
+import { useTenantOnboarding } from "@/lib/api/onboarding";
 
 // ─── Column definitions (stable refs, defined outside component) ───────────────
 
@@ -510,7 +512,8 @@ export default function DashboardPage() {
   // the shell's "Drive mode" menu item / exit chip in (dashboard)/layout.tsx —
   // otherwise a recurring_routes tenant can enter drive mode but lands back
   // here with no mode pill and no driver content.
-  const { enabled: routesAccess } = useRoutesAccess();
+  const { enabled: routesAccess, resolved: addonsResolved } = useRoutesAccess();
+  const { enabled: deliveryAccess } = useDeliveryAccess();
 
   const baseIsOperator =
     !user?.role ||
@@ -519,6 +522,14 @@ export default function DashboardPage() {
     user.role === "TENANT_ADMIN";
   const isCustomer = user?.role === "CUSTOMER";
   const baseIsDriver = user?.role === "DRIVER";
+  // #2159 S4: the onboarding banner is for the workspace's own staff only.
+  const onboardingQuery = useTenantOnboarding(
+    user?.role === "TENANT_ADMIN" || user?.role === "OPERATOR",
+  );
+  // #2254: /orders is OPERATOR+CUSTOMER only; /invoices and /bookkeeping/finance-dashboard are
+  // OPERATOR only. A DRIVER fired all five here (403s) and saw "Could not load recent orders."
+  const readsBusinessData = !baseIsDriver;
+  const driverWithoutRuns = baseIsDriver && addonsResolved && !routesAccess && !deliveryAccess;
 
   const canActAsDriver = user?.canActAsDriver === true && baseIsOperator && routesAccess;
 
@@ -557,16 +568,16 @@ export default function DashboardPage() {
     data: allOrdersData,
     isLoading: ordersLoading,
     isError: ordersError,
-  } = useOrders({ page: 1, limit: 100 }, POLL);
+  } = useOrders({ page: 1, limit: 100 }, { ...POLL, enabled: readsBusinessData });
   const { data: urgentOrdersData, isLoading: urgentLoading } = useOrders(
     { urgent: true, limit: 5 },
-    POLL,
+    { ...POLL, enabled: readsBusinessData },
   );
   const {
     data: recentOrdersData,
     isLoading: recentLoading,
     isError: recentError,
-  } = useOrders({ page: 1, limit: 5 }, POLL);
+  } = useOrders({ page: 1, limit: 5 }, { ...POLL, enabled: readsBusinessData });
   // `/route-runs` and `/drivers` are addon-gated server-side (403 without a
   // dispatch addon), so the 30s polls must be skipped for tenants that can't see
   // the cards they feed — same condition as the render gates below.
@@ -582,10 +593,13 @@ export default function DashboardPage() {
     { isActive: true, stockStatus: "LOW", limit: 5 },
     POLL,
   );
-  const { data: financeData, isLoading: financeLoading } = useFinanceDashboard(POLL);
+  const { data: financeData, isLoading: financeLoading } = useFinanceDashboard({
+    ...POLL,
+    enabled: readsBusinessData,
+  });
   const { data: overdueData, isLoading: overdueLoading } = useInvoices(
     { isOverdue: true, limit: 5, sortBy: "dueDate", sortOrder: "asc" },
-    POLL,
+    { ...POLL, enabled: readsBusinessData },
   );
 
   // ── KPI calculations ──
@@ -640,11 +654,25 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6 p-6">
+      {/* ── Onboarding in progress (#2159 S4) ── */}
+      <GettingStartedBanner onboarding={onboardingQuery.data?.onboarding} />
+
       {/* ── Driver-app nudge (DRIVER-role account, web) ── */}
       <DriverAppBanner
         visible={baseIsDriver && !driverBannerDismissed}
         onDismiss={() => setDriverBannerDismissed(true)}
       />
+
+      {/* ── Driver with neither the routes nor the delivery add-on (#2254) ── */}
+      {driverWithoutRuns && (
+        <Card>
+          <h2 className="text-base font-semibold text-navy">No routes to show yet</h2>
+          <p className="mt-1 text-sm text-navy/70">
+            Your company&apos;s plan doesn&apos;t include routes or deliveries, so there&apos;s
+            nothing assigned to you here. Ask your admin to turn on Routes.
+          </p>
+        </Card>
+      )}
 
       {/* ── Mode switcher (dual-role users only) ── */}
       {canActAsDriver && (
@@ -1020,43 +1048,45 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* ── Recent Orders ── */}
-      <Card>
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-base font-semibold text-navy">Recent Orders</h2>
-          <Link
-            href="/orders"
-            className="flex items-center gap-1 text-sm text-brand-500 hover:underline"
-          >
-            View all orders
-            <ArrowRight className="h-3.5 w-3.5" />
-          </Link>
-        </div>
-        {recentLoading ? (
-          <div className="animate-pulse space-y-3">
-            {[1, 2, 3, 4, 5].map((i) => (
-              <div key={i} className="h-10 rounded bg-navy/10" />
-            ))}
+      {/* ── Recent Orders (not for a DRIVER: /orders is OPERATOR+CUSTOMER only, #2254) ── */}
+      {readsBusinessData && (
+        <Card>
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="text-base font-semibold text-navy">Recent Orders</h2>
+            <Link
+              href="/orders"
+              className="flex items-center gap-1 text-sm text-brand-500 hover:underline"
+            >
+              View all orders
+              <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
           </div>
-        ) : recentError ? (
-          <ErrorBanner message="Could not load recent orders." />
-        ) : (
-          <div className="-mx-6 -mb-6">
-            <Table
-              data={recentOrders}
-              columns={orderColumns}
-              emptyState={
-                <EmptyState
-                  variant="orders"
-                  size={56}
-                  title="No orders yet"
-                  description="New orders will appear here as they come in."
-                />
-              }
-            />
-          </div>
-        )}
-      </Card>
+          {recentLoading ? (
+            <div className="animate-pulse space-y-3">
+              {[1, 2, 3, 4, 5].map((i) => (
+                <div key={i} className="h-10 rounded bg-navy/10" />
+              ))}
+            </div>
+          ) : recentError ? (
+            <ErrorBanner message="Could not load recent orders." />
+          ) : (
+            <div className="-mx-6 -mb-6">
+              <Table
+                data={recentOrders}
+                columns={orderColumns}
+                emptyState={
+                  <EmptyState
+                    variant="orders"
+                    size={56}
+                    title="No orders yet"
+                    description="New orders will appear here as they come in."
+                  />
+                }
+              />
+            </div>
+          )}
+        </Card>
+      )}
     </div>
   );
 }

@@ -123,7 +123,7 @@ function StatTile({
         ring === "danger" && "border-danger",
       )}
     >
-      <span className="overline block">{label}</span>
+      <span className="eyebrow-label block">{label}</span>
       <span
         className={cn(
           "mt-1.5 block text-2xl text-navy",
@@ -805,7 +805,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
               ))}
             </select>
           </div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div>
               <label className="mb-1.5 block text-sm font-medium text-navy/80">Bill Date</label>
               <input
@@ -1230,7 +1230,7 @@ function InventoryPurchasesTab() {
               value={markPaidDate}
               onChange={(e) => setMarkPaidDate(e.target.value)}
               title="Payment date"
-              className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             />
             <Button
               variant="danger"
@@ -1284,7 +1284,7 @@ function InventoryPurchasesTab() {
                 : "border-surface-border bg-white",
           )}
         >
-          <span className="overline block">Unlinked Items{needsMappingOnly ? " ✕" : ""}</span>
+          <span className="eyebrow-label block">Unlinked Items{needsMappingOnly ? " ✕" : ""}</span>
           <span
             className={cn(
               "mt-1.5 block text-2xl font-semibold tracking-[-0.02em]",
@@ -1339,7 +1339,7 @@ function InventoryPurchasesTab() {
               setPage(1);
             }}
             title="Bill date from"
-            className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-10 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
           <span className="text-navy/70">–</span>
           <input
@@ -1351,7 +1351,7 @@ function InventoryPurchasesTab() {
               setPage(1);
             }}
             title="Bill date to"
-            className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-10 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
           {(dateFrom || dateTo) && (
             <button
@@ -1952,7 +1952,7 @@ function OtherExpensesTab() {
             setFrom(e.target.value);
             setPage(1);
           }}
-          className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
         <input
           type="date"
@@ -1961,7 +1961,7 @@ function OtherExpensesTab() {
             setTo(e.target.value);
             setPage(1);
           }}
-          className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
         {(categoryId || from || to) && (
           <button

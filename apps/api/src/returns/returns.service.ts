@@ -63,6 +63,9 @@ export interface FindAllReturnsOptions {
   status?: string;
   reason?: string;
   search?: string;
+  /** #2406: STANDARD (default, unchanged list) | INLINE | ALL (no kind filter). Validated by
+   * the controller's whitelist before it ever reaches here. */
+  kind?: "STANDARD" | "INLINE" | "ALL";
   page?: number;
   limit?: number;
 }
@@ -389,13 +392,24 @@ export class ReturnsService {
    * `refundEstimateReason`, so a real $0 is distinguishable from a refusal.
    */
   async findAll(options: FindAllReturnsOptions = {}) {
-    const { orderId, customerId, driverId, status, reason, search, page = 1, limit = 20 } = options;
+    const {
+      orderId,
+      customerId,
+      driverId,
+      status,
+      reason,
+      search,
+      kind = "STANDARD",
+      page = 1,
+      limit = 20,
+    } = options;
     const skip = (page - 1) * limit;
-    // M6/§2.3: this list is the STANDARD (post-delivery RMA) surface only — an INLINE
-    // return has its own list/queue (PR-1c/1d §7 "Needs attention"), not this one, and
-    // its money fields (ReturnItem.unitPrice/subtotal/taxAmount, priced at capture) are
-    // not shaped for the priceReturn()/billedBasisFor() logic below.
-    const where: any = { kind: "STANDARD" };
+    // M6/§2.3, extended by #2406: the default (STANDARD) keeps this the post-delivery RMA
+    // surface only, unchanged. `kind: "INLINE"` or `"ALL"` is opt-in (the order-detail panel,
+    // SA-484c) — an INLINE row's money is already resolved at capture (ReturnItem.unitPrice/
+    // subtotal), so it SKIPS the priceReturn()/billedBasisFor() enrichment below entirely.
+    const where: any = {};
+    if (kind !== "ALL") where.kind = kind;
     if (orderId) where.orderId = orderId;
     if (customerId) where.customerId = customerId;
     // A relation filter, not a scalar FK — Return carries no driverId of its
@@ -450,17 +464,29 @@ export class ReturnsService {
       this.prisma.forTenant().return.count({ where }),
     ]);
     const enriched = data.map((ret: any) => {
+      // The invoice graph above is fetched ONLY to price a STANDARD row — it never crosses
+      // the wire (GET /returns is readable by DRIVER/CUSTOMER roles). The response's
+      // `order` keeps exactly the { id, orderNumber } shape it had before B75.
+      const { order, ...rest } = ret;
+      const strippedOrder = order ? { id: order.id, orderNumber: order.orderNumber } : order;
+      // #2406: an INLINE row's money was already resolved at capture (refundAmount, on `rest`
+      // via the ReturnItem/order graph) — it never calls priceReturn, and reports its refusal
+      // as "INLINE" so a client can tell it apart from a STANDARD row's real refusal/estimate.
+      if (ret.kind === "INLINE") {
+        return {
+          ...rest,
+          order: strippedOrder,
+          refundEstimate: null,
+          refundEstimateReason: "INLINE",
+        };
+      }
       // Pure, DB-free pricing: the read path must never issue a per-row query (the
       // list is fetched with limit 500 for the KPI tile) and must never swallow a
       // refusal into a silent $0 — the reason travels with the row instead.
       const { amount, refusal } = this.priceReturn(ret.items ?? [], ret.order ?? undefined);
-      // The invoice graph above is fetched ONLY to price the row — it never crosses
-      // the wire (GET /returns is readable by DRIVER/CUSTOMER roles). The response's
-      // `order` keeps exactly the { id, orderNumber } shape it had before B75.
-      const { order, ...rest } = ret;
       return {
         ...rest,
-        order: order ? { id: order.id, orderNumber: order.orderNumber } : order,
+        order: strippedOrder,
         refundEstimate: amount,
         refundEstimateReason: refusal ?? null,
       };
@@ -946,19 +972,31 @@ export class ReturnsService {
         const undo = new Map<string, number>();
         for (const m of moved)
           undo.set(m.productId, (undo.get(m.productId) ?? 0) + Number(m.quantity));
+        // B562 PR-2 (SA-136 §2): nothing deletes a movement. The undo APPENDS one reversing RETURN row
+        // per product (negative quantity, same reference, notes RETURN_CANCELLED) with `stockAfter`
+        // read from the decrement's own result, so the reference nets to zero and the history stays.
         for (const [productId, qty] of undo) {
-          await tx.product.update({
+          if (qty === 0) continue;
+          const updated = await tx.product.update({
             where: { id: productId },
             data: { currentStock: { decrement: qty } },
           });
-        }
-        for (const item of fresh.items) {
-          await tx.stockMovement.deleteMany({
-            where: { productId: item.productId, reference: returnRef },
+          await tx.stockMovement.create({
+            data: {
+              productId,
+              type: "RETURN",
+              quantity: new Prisma.Decimal(qty).neg(),
+              unitCost: updated.averageCost ?? null,
+              avgCostAfter: updated.averageCost ?? null,
+              stockAfter: updated.currentStock,
+              reference: returnRef,
+              notes: "RETURN_CANCELLED",
+              performedById: user?.sub ?? null,
+            },
           });
         }
         // W5c: undo the regulated ledger reversal written at receive() (symmetric
-        // to deleting the stock movements above). cancel() blocks REFUNDED returns,
+        // to reversing the stock movements above). cancel() blocks REFUNDED returns,
         // so a finalized reversal is never touched.
         await this.ledger.unreverseReturnEntries({ returnId: fresh.id, db: tx });
       }
@@ -1015,10 +1053,11 @@ export class ReturnsService {
       },
     });
     if (!ret) throw new NotFoundException("Return not found");
-    // M6/§2.3: same STANDARD-only boundary as findAll — an INLINE return's detail
-    // view is its own (PR-1c/1d) surface, and its pricing is already resolved at
-    // capture, not re-derived here.
-    if (ret.kind === "INLINE") throw new BadRequestException(INLINE_RETURN_USE_INLINE_ENDPOINTS);
+    // #2406 (SA-484c): findOne now RENDERS an INLINE row (the order-detail panel links to
+    // it) — only the standard-path mutation endpoints (approve/reject/markInTransit/receive/
+    // processRefund/cancel, above) still refuse INLINE with INLINE_RETURN_USE_INLINE_ENDPOINTS.
+    // An INLINE row's pricing was already resolved at capture (refundAmount), so it skips the
+    // priceReturn() re-derivation below, same as findAll.
 
     // Enrich each return item with orderedQty from the original order. `orderedQty`
     // uses the same pooled-across-lines basis as create()'s cap (soldQtyForProduct,
@@ -1051,7 +1090,15 @@ export class ReturnsService {
     // money itself. Pure and DB-free: a read never runs the mint-time headroom
     // query, and an unrefundable basis reports 0 WITH a reason rather than being
     // swallowed into a silent $0 (which is indistinguishable from a DB failure).
-    const { amount: refundEstimate, refusal } = this.priceReturn(ret.items, ret.order ?? undefined);
+    // #2406: an INLINE row skips this — its money was already resolved at capture.
+    let refundEstimate: number | null;
+    let refusal: string | null | undefined;
+    if (ret.kind === "INLINE") {
+      refundEstimate = null;
+      refusal = "INLINE";
+    } else {
+      ({ amount: refundEstimate, refusal } = this.priceReturn(ret.items, ret.order ?? undefined));
+    }
 
     // The invoice graph is fetched only to price the row — strip it back out (this
     // read returned no invoice money before F08 B53).

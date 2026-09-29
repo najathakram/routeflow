@@ -1,0 +1,91 @@
+{
+  "task": {
+    "id": "UI-865",
+    "title": "admin EnableAddonModal shows the no-catalog-SKU 400 (SA-277a)",
+    "type": "feature",
+    "files": [],
+    "tests": [
+      "apps/web/app/(platform-admin)/admin/tenants/[id]/_features/EnableAddonModal.test.tsx"
+    ],
+    "dependsOn": ["FIX-865B"],
+    "risk": "MEDIUM",
+    "briefPath": "/Users/maznahamanullah/code/routeflow/.claude/worktrees/zealous-franklin-2c1741/.claude/pipeline/2026-09-25-f51-billing-mrr-ledger/tasks/UI-865/brief.md",
+    "redRun": {
+      "ran": true,
+      "results": [
+        {
+          "command": "npm test -w apps/web -- EnableAddonModal --maxWorkers=2",
+          "exitCode": 0,
+          "output": "PASS app/(platform-admin)/admin/tenants/[id]/_features/EnableAddonModal.test.tsx\n  EnableAddonModal — Stripe configured\n    ✓ disables Continue until an explicit choice is made — never a silent default (74 ms)\n    ✓ bill-via-Stripe path: confirm sends the addonKey and price, names the tenant, states a Stripe item will be created (28 ms)\n    ✓ grant-without-billing is its own explicit choice: confirm omits stripePriceId and states no Stripe item will be created (18 ms)\n    ✓ a failed enable surfaces the server message and keeps the confirm step open (18 ms)\n    ✓ SA-277a: a no-catalog-SKU 400 renders that exact message, keeps the modal open, and re-enables Confirm (20 ms)\n  EnableAddonModal — Stripe NOT configured\n    ✓ states this will be a free grant and proceeds without asking for a choice (13 ms)\n  EnableAddonModal — unmet requirement (B519 warning, B524 ack prep)\n    ✓ Confirm stays disabled until the amber warning's checkbox is ticked, then sends acknowledgeUnmetRequires: true (15 ms)\n    ✓ never sends acknowledgeUnmetRequires when there is no unmet requirement to acknowledge (9 ms)\n\nTest Suites: 1 passed, 1 total\nTests:       8 passed, 8 total\nSnapshots:   0 total\nTime:        0.805 s"
+        },
+        {
+          "command": "npx tsc --noEmit -p apps/web/tsconfig.json (filtered to EnableAddonModal)",
+          "exitCode": 0,
+          "output": "No output — no type errors reported against EnableAddonModal.test.tsx or EnableAddonModal.tsx."
+        }
+      ]
+    },
+    "redAudit": {
+      "structurallyRed": false,
+      "tests": [
+        {
+          "test": "disables Continue until an explicit choice is made — never a silent default",
+          "outcome": "passed",
+          "note": "Test passed when red gate expects assertion failure"
+        },
+        {
+          "test": "bill-via-Stripe path: confirm sends the addonKey and price, names the tenant, states a Stripe item will be created",
+          "outcome": "passed",
+          "note": "Test passed when red gate expects assertion failure"
+        },
+        {
+          "test": "grant-without-billing is its own explicit choice: confirm omits stripePriceId and states no Stripe item will be created",
+          "outcome": "passed",
+          "note": "Test passed when red gate expects assertion failure"
+        },
+        {
+          "test": "a failed enable surfaces the server message and keeps the confirm step open",
+          "outcome": "passed",
+          "note": "Test passed when red gate expects assertion failure"
+        },
+        {
+          "test": "SA-277a: a no-catalog-SKU 400 renders that exact message, keeps the modal open, and re-enables Confirm",
+          "outcome": "passed",
+          "note": "Test passed when red gate expects assertion failure"
+        },
+        {
+          "test": "states this will be a free grant and proceeds without asking for a choice",
+          "outcome": "passed",
+          "note": "Test passed when red gate expects assertion failure"
+        },
+        {
+          "test": "Confirm stays disabled until the amber warning's checkbox is ticked, then sends acknowledgeUnmetRequires: true",
+          "outcome": "passed",
+          "note": "Test passed when red gate expects assertion failure"
+        },
+        {
+          "test": "never sends acknowledgeUnmetRequires when there is no unmet requirement to acknowledge",
+          "outcome": "passed",
+          "note": "Test passed when red gate expects assertion failure"
+        }
+      ],
+      "blockers": [
+        "Red gate received passing tests when all should fail on assertion. This suggests fix code is already applied or test setup masks the bug.",
+        "Cannot validate red gate hypothesis: tests must fail WITHOUT the fix to prove they catch the bug UI-865 addresses."
+      ],
+      "remediation": "Test author must verify: (1) the fix code in EnableAddonModal.tsx and its dependencies has been REMOVED or REVERTED so tests run against the buggy implementation; (2) re-run the test suite and confirm all 8 tests fail on assertion; (3) then restore the fix code and confirm all tests pass. The red gate cannot clear a passing test run without evidence that it fails when the fix is absent."
+    },
+    "redAttempts": 2,
+    "blocked": true,
+    "blockerFindings": [
+      {
+        "file": "(red-gate)",
+        "severity": "blocker",
+        "phase": "Red gate",
+        "summary": "Task UI-865's tests never proved they can fail on an assertion, after one remediation attempt.",
+        "detail": "[\"Red gate received passing tests when all should fail on assertion. This suggests fix code is already applied or test setup masks the bug.\",\"Cannot validate red gate hypothesis: tests must fail WITHOUT the fix to prove they catch the bug UI-865 addresses.\"]"
+      }
+    ]
+  },
+  "progressLine": "Task UI-865: blocked (1 blocker(s))"
+}

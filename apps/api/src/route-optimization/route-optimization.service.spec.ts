@@ -6,6 +6,8 @@ import { RouteOptimizationService, RouteVariant } from "./route-optimization.ser
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { RouteFlowGateway } from "../gateways/routeflow.gateway";
+import { RouteRealtime } from "../routes/route-realtime";
 
 describe("RouteOptimizationService", () => {
   let service: RouteOptimizationService;
@@ -28,6 +30,7 @@ describe("RouteOptimizationService", () => {
           provide: SystemConfigService,
           useValue: { get: systemConfigGet, set: jest.fn() },
         },
+        { provide: RouteFlowGateway, useValue: { emitRouteProgress: jest.fn() } },
       ],
     }).compile();
     service = mod.get(RouteOptimizationService);
@@ -233,8 +236,8 @@ describe("RouteOptimizationService", () => {
             customer: {
               id: "cust-1",
               businessName: "A",
-              deliveryWindowStart: null,
-              deliveryWindowEnd: null,
+              deliveryWindowStart: null as string | null,
+              deliveryWindowEnd: null as string | null,
             },
             customerAddress: { id: "addr-1", lat: 40.01, lng: -73.99 },
           },
@@ -245,8 +248,8 @@ describe("RouteOptimizationService", () => {
             customer: {
               id: "cust-2",
               businessName: "B",
-              deliveryWindowStart: null,
-              deliveryWindowEnd: null,
+              deliveryWindowStart: null as string | null,
+              deliveryWindowEnd: null as string | null,
             },
             customerAddress: { id: "addr-2", lat: 40.02, lng: -73.98 },
           },
@@ -1432,6 +1435,27 @@ describe("RouteOptimizationService", () => {
       expect(result.windowsChecked).toBe(true);
     });
 
+    it("#2095: re-sequencing a run tells its customers (route.progress) after the reorder commits", async () => {
+      arrange(RouteRunStatus.SCHEDULED);
+      const events: string[] = [];
+      prisma.$transaction = jest.fn(async () => {
+        events.push("commit");
+        return [];
+      }) as unknown as typeof prisma.$transaction;
+      const progress = jest
+        .spyOn(RouteRealtime.prototype, "runProgress")
+        .mockImplementation(async () => {
+          events.push("announce");
+        });
+
+      await service.optimizeRoute("run-1", { lat: 0, lng: 0 });
+
+      expect(progress).toHaveBeenCalledTimes(1);
+      expect(progress).toHaveBeenCalledWith("run-1");
+      expect(events).toEqual(["commit", "announce"]);
+      progress.mockRestore();
+    });
+
     it("REG-B177: an underway run with no caller clock is never reordered on its stale scheduled departure", async () => {
       const etaSpy = arrange(RouteRunStatus.IN_PROGRESS);
 
@@ -1621,6 +1645,48 @@ describe("RouteOptimizationService", () => {
         where: { id: "run-1" },
         data: { manuallyReordered: false },
       });
+    });
+
+    it("#2095: re-numbering a run's stops tells its customers after the transaction; a template-only apply does not", async () => {
+      const progress = jest
+        .spyOn(RouteRealtime.prototype, "runProgress")
+        .mockResolvedValue(undefined);
+      const events: string[] = [];
+      prisma.$transaction = jest.fn(async () => {
+        events.push("commit");
+        return [];
+      }) as unknown as typeof prisma.$transaction;
+      progress.mockImplementation(async () => {
+        events.push("announce");
+      });
+
+      await service.applyRouteVariant("route-1", {
+        stopIds: ["stop-2", "stop-1"],
+        optimizeBy: "TIME",
+        avoidTolls: false,
+      });
+      expect(progress).not.toHaveBeenCalled();
+
+      prisma.forTenant().routeRun.findFirst.mockResolvedValue({
+        id: "run-1",
+        routeId: "route-1",
+        status: RouteRunStatus.SCHEDULED,
+        stops: [
+          { id: "runstop-a", routeStopId: "stop-1", stopNumber: 1 },
+          { id: "runstop-b", routeStopId: "stop-2", stopNumber: 2 },
+        ],
+      });
+      events.length = 0;
+      await service.applyRouteVariant("route-1", {
+        stopIds: ["stop-2", "stop-1"],
+        optimizeBy: "TIME",
+        avoidTolls: false,
+        runId: "run-1",
+      });
+      expect(progress).toHaveBeenCalledTimes(1);
+      expect(progress).toHaveBeenCalledWith("run-1");
+      expect(events).toEqual(["commit", "announce"]);
+      progress.mockRestore();
     });
 
     it("404s when the named run doesn't belong to this route", async () => {

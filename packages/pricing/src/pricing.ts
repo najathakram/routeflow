@@ -44,6 +44,17 @@ export function roundMoney(n: number): number {
   return (sign * cents) / 100;
 }
 
+/**
+ * True when `n` is a finite amount in whole cents — the ONE predicate for "is this a cents
+ * amount" (#2695, SA-557c). Defined by {@link roundMoney}, so it agrees with every rounded write:
+ * `19.99` passes even though `19.99 * 100` is `1998.9999999999998` in floats (a hand-rolled
+ * `Math.round(n * 100) === n * 100` refuses 1,146 of the 10,001 cent values in $0–$100).
+ * Sign is not its concern: a caller that needs ≥ 0 checks that itself.
+ */
+export function isWholeCents(n: number): boolean {
+  return Number.isFinite(n) && roundMoney(n) === n;
+}
+
 export interface NormalizedQty {
   /** Whole boxes (null for non-boxed products / no split). */
   boxes: number | null;
@@ -112,6 +123,25 @@ export function packFromOwnSplit(input: {
   const qty = Number(input.qty ?? 0);
   const pack = (qty - pieces) / boxes;
   return Number.isInteger(pack) && pack > 1 ? pack : null;
+}
+
+/**
+ * Does a stored box/piece split add up to its qty? True only when the pack is known and greater than 1 and
+ * `boxes x pack + pieces === qty` (tolerance 1e-6 on qty). A split with no pack (null, 0 or 1) is never
+ * "matching": it cannot be checked. ONE definition, used by the invoice edit plan and the invoice -> order
+ * back-sync (SA-257), so a split one writes is never one the other would refuse.
+ */
+export function splitMatchesQty(input: {
+  qty: number;
+  boxes?: number | null;
+  pieces?: number | null;
+  unitsPerBox?: number | null;
+}): boolean {
+  const pack = Number(input.unitsPerBox ?? 0);
+  if (!(pack > 1)) return false;
+  const boxes = Number(input.boxes ?? 0);
+  const pieces = Number(input.pieces ?? 0);
+  return Math.abs(boxes * pack + pieces - Number(input.qty ?? 0)) < 1e-6;
 }
 
 export interface LineSubtotalInput {
