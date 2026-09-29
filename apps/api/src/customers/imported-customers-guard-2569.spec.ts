@@ -16,6 +16,7 @@ import { StorageService } from "../storage/storage.service";
 import { MeterService } from "../billing/meter.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
@@ -79,6 +80,7 @@ describe("CustomersService.deleteImportedCustomers — invoice guard (#2569)", (
         },
         { provide: PlanCatalogService, useValue: { getPublishedVersion: jest.fn() } },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
+        entitlementAuthorityFromEntitlements, // #2241: EntitlementAuthority
         {
           provide: CommissionEngineService,
           useValue: {

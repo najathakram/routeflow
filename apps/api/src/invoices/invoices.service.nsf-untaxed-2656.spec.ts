@@ -35,6 +35,7 @@ import { AuthorizationGuardService } from "../authorizations/authorization-guard
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { InvoiceStatus } from "@prisma/client";
 import { BadRequestException } from "@nestjs/common";
@@ -118,6 +119,7 @@ describe("InvoicesService — #2656 the NSF line is never taxed", () => {
         { provide: MessagingService, useValue: mockMessaging },
         { provide: StorageService, useValue: mockStorage },
         { provide: EntitlementsService, useValue: mockEntitlements },
+        entitlementAuthorityFromEntitlements, // #2241
         { provide: CommissionEngineService, useValue: mockCommissionEngine },
         { provide: NumberingService, useValue: mockNumbering },
       ],
