@@ -44,6 +44,7 @@ import { findExactScanMatch, levelsForScan, looksLikeScanCode } from "../lib/wed
 import { makeScanHandler, runWedgeSubmit } from "../lib/scan-ladder";
 import { createScanAttempt, createWedgeSubmitHandler } from "../lib/wedge-submit";
 import { createScanAcceptGuard } from "../lib/scan-accept-guard";
+import { needsUnitLabelConfirm } from "../lib/scan-unit-confirm";
 // Compose "<Parent> - <Variant>" so scanned variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../lib/product-display";
 import { effectiveQty, getTierPrice, roundMoney } from "@routeflow/pricing";
@@ -1019,7 +1020,7 @@ function ProductPickView({
   // whole unit, not one loose piece — confirm rather than silently adding a large jump.
   const acceptScannedProduct = (product: Product, level: SellLevel = "BOX"): ScanOutcome => {
     const label = items[product.id]?.unitLabel;
-    if (level !== "UNIT" || !label) return finishAccept(product, level);
+    if (!needsUnitLabelConfirm(level, product, label)) return finishAccept(product, level);
     const onYes = () => {
       const o = finishAccept(product, level);
       if (o?.feedback?.kind === "added") showInline(o.feedback.text);
