@@ -92,31 +92,36 @@ export function parseCreditOverride(
 
 /** The first problem that stops the lines' overrides being sent, named — null when every line is
  *  sendable. A host disables "Get quote" on it (the server would refuse the same request with a
- *  400). Two kinds:
- *   - a line whose own override is invalid (see {@link parseCreditOverride});
- *   - TWO ROWS OF ONE PRODUCT with different overrides (one priced, one not, or two different
- *     prices/reasons). The request merges same-product rows into ONE item that keeps the first
- *     row's override (`mergeDuplicateProductItems`), so a second, different override would be
+ *  400). Only rows that WILL be sent are judged: a row with no quantity (boxes and pieces both
+ *  blank or 0) is filtered out of the request, so an untouched duplicate row, or an override typed
+ *  on a row with no quantity, never blocks the quote. Two kinds of problem:
+ *   - a sendable line whose own override is invalid (see {@link parseCreditOverride});
+ *   - TWO SENDABLE ROWS OF ONE PRODUCT with different overrides (one priced, one not, or two
+ *     different prices/reasons). The request merges same-product rows into ONE item that keeps the
+ *     first row's override (`mergeDuplicateProductItems`), so a second, different override would be
  *     silently dropped — or would silently price the other row's pieces at the first row's price.
  *     It is refused here, visibly, instead: one price per product. */
 export function creditOverrideProblem(
   lines: Pick<
     InlineReturnLineDraft,
-    "productId" | "productName" | "creditUnitPrice" | "overrideReason"
+    "productId" | "productName" | "boxes" | "pieces" | "creditUnitPrice" | "overrideReason"
   >[],
 ): string | null {
-  for (const line of lines) {
+  const sendable = lines.filter(
+    (l) => parseNonNegativeInt(l.boxes) > 0 || parseNonNegativeInt(l.pieces) > 0,
+  );
+  for (const line of sendable) {
     const parsed = parseCreditOverride(line);
     if (parsed.kind === "invalid") return `${line.productName}: ${parsed.message}`;
   }
-  const seen = new Map<string, { name: string; key: string; anyOverride: boolean }>();
-  for (const line of lines) {
+  const seen = new Map<string, { name: string; key: string }>();
+  for (const line of sendable) {
     const parsed = parseCreditOverride(line);
     const key =
       parsed.kind === "ok" ? `${parsed.creditUnitPrice}|${parsed.overrideReason}` : "none";
     const prior = seen.get(line.productId);
     if (!prior) {
-      seen.set(line.productId, { name: line.productName, key, anyOverride: key !== "none" });
+      seen.set(line.productId, { name: line.productName, key });
     } else if (prior.key !== key) {
       return (
         `${prior.name}: two rows of this product have different credit prices. ` +

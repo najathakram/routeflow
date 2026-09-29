@@ -24,6 +24,8 @@ export interface LineItemRowItem {
   listPrice: number; // standard pricePerUnit from product catalog
   specialPrice?: number; // permanent customer-specific price (from CustomerPrice)
   discountedPrice?: number; // one-time ad-hoc override (below list = discount, above = upsell)
+  /** #2696(c): why the price moved — required when it moves off a special (tier) price. */
+  overrideReason?: string;
   unitPrice: number; // effective price used for display totals
   priceType: "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL";
   qty: number; // total pieces (authoritative)
@@ -114,6 +116,10 @@ export interface LineItemRowProps {
   lineStatus?: BadgeStatus;
   deliveredQty?: number | null;
 }
+
+/** SA-558d: the ONE case/unit wording, shared by the row and the scan screen's PriceEditor. */
+export const caseWord = (n: number | null | undefined) => (n === 1 ? "case" : "cases");
+export const unitWord = (n: number | null | undefined) => (n === 1 ? "unit" : "units");
 
 /**
  * Renders one order line item: name/price display, the case/unit qty controls
@@ -410,7 +416,7 @@ export function LineItemRow({
                   className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
                   title="Number of whole cases"
                 />
-                <span className="text-xs text-navy/70">cases</span>
+                <span className="text-xs text-navy/70">{caseWord(li.boxes ?? 0)}</span>
               </span>
               {showLooseUnits ? (
                 <span className="flex items-center gap-1.5 whitespace-nowrap">
@@ -426,7 +432,7 @@ export function LineItemRow({
                     title="Extra loose units (less than a full case)"
                     aria-label="Extra loose units"
                   />
-                  <span className="text-xs text-navy/70">units</span>
+                  <span className="text-xs text-navy/70">{unitWord(li.pieces ?? 0)}</span>
                   {/* SA-563: hidden at 0 cases — the units ARE the line then, never a removable extra. */}
                   {(li.boxes ?? 0) >= 1 && (
                     <button

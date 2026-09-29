@@ -3244,3 +3244,72 @@ citations, closed-out with its own post-init assertion guard).
 - **Guard:** `REG-B861-AB`/`AD` assert `BadRequestException`.
   (Archived 2026-09-28 to make room at cap for L-242: one outside citation, a handoff note that
   still resolves here; guard = the REG-B861-AB/AD specs asserting BadRequestException, unchanged.)
+
+### L-234 · 2026-09-27 · testing · a whole-database script needs an explicit scope allowlist, not a rerun (B824, train C)
+
+- **Symptom:** `publish-and-repin.db.spec.ts` failed three different ways under `--maxWorkers=2` — an unrelated tenant tripped `--only-test-tenants`'s refusal, an unscoped `--apply --live` wrote onto a sibling spec's own fixture tenant, and this spec's fixture received unwanted writes back — each time green when run alone, so it read all night as "a known flake, verify alone before treating as a blocker."
+- **Root cause:** `publish-and-repin.mjs`'s `computeDiff()` correctly scans the WHOLE database for a real prod run, but under parallel jest workers it also picks up sibling `*.db.spec.ts` files' own live fixture tenants — real cross-suite contamination, not a stale-count race a retry masks. Running it alone "fixes" all three by removing the siblings, which is exactly why that green is not a safety signal.
+- **Lesson:** **A `*.db.spec.ts` (or script) that computes a diff/apply, or any read+write, over a shared, unscoped table under parallel workers must scope every call to its own fixture rows (an id/slug allowlist flag on the tool it drives). "Green alone, red in the full lane" for such a spec means look for a missing scope, not a flake to rerun past.**
+- **Guard:** `publish-and-repin.mjs --only-tenants <slugs>`; `publish-and-repin.db.spec.ts`'s `runCli()` passes its own 3 fixture slugs on every call (report, preview, live apply).
+  (Archived 2026-09-29 whole and verbatim to make room at cap for L-244..L-248: zero or one outside
+  citation and a shipped guard named in the entry; lead-directed, #2731's compaction still pending.)
+
+### L-233 · 2026-09-27 · security · a role check is not an ownership check (#2386, SA-429, train B)
+
+- **Symptom:** the DRIVER branch of `updateOrderItems` checked only `role === "DRIVER"` — any driver in the tenant could edit any order's items, not just orders on their own active run.
+- **Root cause:** the branch was written assuming the role check was the whole authorization decision; no assignment/ownership predicate existed at all, and the gap is easy to miss because the code "looks done" (it correctly 403s the wrong role, just not the wrong instance).
+- **Lesson:** **For a tenant-scoped, role-gated write path, "the role is correct" and "this principal is entitled to touch this specific resource" are two separate checks. A new role-gated branch needs an explicit resource-ownership assertion — re-derived from the resource's own foreign-key chain, never a denormalized shortcut field — written and tested as its own predicate, run before any other guard AND re-checked under the row lock.**
+- **Guard:** `orders/driver-edit-access.ts`'s `assertDriverMayEditOrder` (follows `order.routeRunStopId → RouteRunStop → RouteRun`, never `order.routeRunId` directly); called first in `updateOrderItems`, before the cancelled-order check, and again under the Order `FOR UPDATE`. `driver-edit-access.spec.ts`, `driver-edit-access.db.spec.ts`.
+- **Recurred 2026-09-27 (train D, #2398/#2391, SA-434):** the SAME predicate was missing (or independently reinvented weaker) at two MORE call sites reachable by the DRIVER role: `orders.service.ts`'s `changeStatus()` had no check at all, and `change-requests.service.ts`'s `resolve()` checked only `order.routeRun.driverId` with no run/stop status. The fix reused `assertDriverMayEditOrder` verbatim rather than writing a third bespoke check. Confirms the lesson generalizes beyond the one endpoint it was first found on: audit EVERY role-gated write path reachable by the same role, not just the one a report named.
+  (Archived 2026-09-29 whole and verbatim to make room at cap for L-244..L-248: zero or one outside
+  citation and a shipped guard named in the entry; lead-directed, #2731's compaction still pending.)
+
+### L-239 · 2026-09-28 · domain · a guarded destructive write: lock, then read, then compare-and-set (#2566, #2584, #2594, #2607)
+
+- **Symptom:** customer deletes destroyed issued/paid invoices, money records and delivery
+  history; `updateTenantClass` booked its BillingEvent from a read taken before its lock; an
+  insert landing after the last read turned the final delete into a 500.
+- **Root cause:** deciding reads taken before the lock (or only outside the transaction), deletes
+  keyed on the parent id alone, and table lists that differed between the guard and the delete.
+- **Lesson:** **For a destructive or money-booking write gated on business state: take the row
+  lock, read the deciding state AFTER it, make each destructive statement a compare-and-set that
+  expects the guarded row set and throws 409 on a mismatch, drive the pre-flight, the in-tx
+  re-check and every delete from ONE list of protected tables, and map a late insert's FK
+  violation to the same 409. A pre-flight outside the transaction is UX, not protection.**
+- **Guard:** `customers/customer-delete-preflight.ts` (`assertNoBlockingInvoices`,
+  `readInvoicesAssertingNoneBlocking`, `deleteNonBlockingInvoicesCas`, `deleteMoneyRecordCas`,
+  `deleteCustomerRowsFkRaceAs409`); `customer-delete-race-2558.db.spec.ts` (a real second
+  connection), `customer-delete-money-records-2587.db.spec.ts`,
+  `customer-delete-fk-race-2572.db.spec.ts`; `common/update-tenant-class-ledger.db.spec.ts`.
+  Cf. [[L-217]], [[L-221]].
+  (Archived 2026-09-29 whole and verbatim to make room at cap for L-244..L-248: zero or one outside
+  citation and a shipped guard named in the entry; lead-directed, #2731's compaction still pending.)
+
+### L-232 · 2026-09-27 · domain · a calendar-day field keeps the client's literal day, never a re-derived one (#2249, train B)
+
+- **Symptom:** `invoices.service.ts` stored `new Date(dto.issueDate)` raw, so a client datetime with a time component or offset crossing a UTC day boundary (e.g. `23:30-04:00`) silently landed one day later — breaking the UTC-midnight symbolic convention that statements, the regulated report and sales-facts buckets all assume.
+- **Root cause:** the field is a day-granular calendar stamp, not a real instant, but the write path treated the client's string as an instant and let the day move with it. An earlier version made it worse by re-reading in the tenant timezone.
+- **Lesson:** **A DTO field documented or consumed as a calendar day (statements, invoices, schedules) must be normalized at the write boundary through a literal first-10-characters day extractor — never `new Date(rawString)` directly, and never re-derived from a timezone. A shape that names no real day is a 400, checked before anything else is read.**
+- **Guard:** `common/calendar-date.ts`'s `calendarStampFromInput`/`issueDateStamp`, called as `InvoicesService.create()`'s first statement; `calendar-date.pins.spec.ts`, `invoice-issue-date-b2197.db.spec.ts`. Cf. the F25 calendar-date convention (archived L-047) — this is the same house rule recurring at a new call site.
+  (Archived 2026-09-29 whole and verbatim to make room at cap for L-244..L-248: zero or one outside
+  citation and a shipped guard named in the entry; lead-directed, #2731's compaction still pending.)
+
+### L-225 · 2026-09-26 · domain · a display fix proven on one screen must become a shared helper, or sibling screens reproduce the same bug (B653, B757-B759)
+
+- **Symptom:** the invoice-detail screens' qty/unit-label formatting bug (#1275) reappeared,
+  unfixed, on both order-detail screens (web's `OrderLineItemsTable`, mobile's operator and
+  customer order detail) — each had hand-formatted a boxed line's qty text inline instead of
+  reusing the already-proven fix, so a `unitLabel`'d line (Case, Pallet) still showed a bare
+  boxes/pieces split and a factor-1 unit line skipped unit display entirely.
+- **Root cause:** the first fix landed as inline logic on the screen it was reported against,
+  not as a shared helper — nothing forced every OTHER screen rendering the same kind of line to
+  pick it up, so each sibling screen kept its own copy of the original bug.
+- **Lesson:** **When a display/formatting bug is fixed on one screen, extract the fix into a
+  shared helper and audit every sibling screen rendering the same data shape for the same bug —
+  a proof against one screen is not a proof against its copies.**
+- **Guard:** `apps/*/lib/invoice-line-display[.ts]`'s `usesUnitDisplay`/`invoiceLineQtyText` is
+  now the one qty-text formatter, imported by all four affected screens; a `describe.each` wiring
+  test (`order-detail-unit-display-wiring.test.ts` / its web equivalent) pins the same import and
+  condition across every one of them.
+  (Archived 2026-09-29 whole and verbatim to make room at cap for L-244..L-248: zero or one outside
+  citation and a shipped guard named in the entry; lead-directed, #2731's compaction still pending.)
