@@ -51,9 +51,7 @@ const CODES = [
 
 describe("SA-595 parity: client levelsForScannedCode == server findScanMatches", () => {
   const cases = CODES.flatMap(([name, code]) =>
-    [6, 1].flatMap((upb) =>
-      [true, false].map((withRows) => [name, code, upb, withRows] as const),
-    ),
+    [6, 1].flatMap((upb) => [true, false].map((withRows) => [name, code, upb, withRows] as const)),
   );
   it.each(cases)("%s (%s) upb %i rows=%s", async (_n, code, upb, withRows) => {
     const p = make(upb, withRows);

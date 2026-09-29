@@ -1251,13 +1251,13 @@ export function EditableLineItems({
     return () => document.removeEventListener("mousedown", onClickOutside);
   }, []);
 
-  function addProduct(p: any, level: scan.SellLevel = "BOX") {
+  function addProduct(p: any, level?: scan.SellLevel) {
     // If this product is already in the list (not cancelled), increment qty instead of adding duplicate
     const existing = items.find((it) => it.productId === p.id && !it.cancelled);
-    const unitScan = scan.isUnitScanOnBoxed(p, level);
+    const unitScan = scan.isUnitScanOnBoxed(p, level ?? "BOX");
     if (existing) {
       onChange(
-        items.map((it) => (it.id === existing.id ? scan.bumpLineForScan(it, unitScan) : it)),
+        items.map((it) => (it.id === existing.id ? scan.bumpLineForScan(it, unitScan, level) : it)),
       );
       setScrollToId(existing.id);
     } else {

@@ -13,11 +13,12 @@ export function isUnitScanOnBoxed(p: any, level: SellLevel): boolean {
 /**
  * Bump an existing line for a scan. A split line counts PIECES (qty = boxes * upb + pieces); a
  * plain boxed line counts SELLING UNITS (cases). A UNIT scan switches the line to the split form
- * so the loose piece is never hidden; a BOX scan on a split line adds a whole case of pieces.
+ * so the loose piece is never hidden; an EXPLICIT scan level BOX on a split line adds a whole case
+ * of pieces. `scanLevel` is undefined for a picker TAP, which keeps the old +1 on a split line.
  */
 export function bumpLineForScan<
   T extends { qty: number; unitsPerBox?: any; unitLabel?: any; boxSplit?: boolean },
->(it: T, unitScan: boolean): T {
+>(it: T, unitScan: boolean, scanLevel?: SellLevel): T {
   const lineUpb = Number(it.unitsPerBox ?? 0);
   const boxedLine = lineUpb > 1 && it.unitLabel == null;
   if (!boxedLine) return { ...it, qty: it.qty + 1 };
@@ -26,7 +27,9 @@ export function bumpLineForScan<
       ? { ...it, qty: it.qty + 1 }
       : { ...it, qty: it.qty * lineUpb + 1, boxSplit: true };
   }
-  return it.boxSplit ? { ...it, qty: it.qty + lineUpb } : { ...it, qty: it.qty + 1 };
+  return it.boxSplit && scanLevel === "BOX"
+    ? { ...it, qty: it.qty + lineUpb }
+    : { ...it, qty: it.qty + 1 };
 }
 
 /** No hidden quantity (SA-580): a split line counts PIECES, so say cases + loose. */
