@@ -8,7 +8,7 @@ import { PriceType } from "@prisma/client";
 import { InvoicesService } from "../invoices/invoices.service";
 import { appendOrderRevision } from "./order-revisions";
 import { collectUnlistedLoserItems } from "./merge-unlisted-lines";
-import { buildExistingLineMaps } from "./replace-all-line-build";
+import { buildBogoCounterpart, buildExistingLineMaps } from "./replace-all-line-build";
 
 // buildInvoiceItemData is pure (reads no `this.*`), so a bare instance is enough.
 const service = new (InvoicesService as any)();
@@ -135,5 +135,37 @@ describe("replaceAll existing-line map (replace-all-line-build buildExistingLine
       overrideReason: "promo",
       overriddenBy: "u-1",
     });
+  });
+});
+
+describe("replaceAll BOGO counterpart snapshot (replace-all-line-build buildBogoCounterpart)", () => {
+  it("carries priceType + originalPrice verbatim from an edited below-list line, with attribution", () => {
+    expect(
+      buildBogoCounterpart({
+        qty: "3",
+        boxes: 3,
+        unitPrice: "4.0000",
+        priceType: PriceType.DISCOUNTED,
+        originalPrice: "6.0000",
+        overrideReason: "promo",
+        overriddenBy: "u-1",
+        promoFreeUnits: "1",
+      }),
+    ).toEqual({
+      qty: 3,
+      boxes: 3,
+      unitPrice: 4,
+      priceType: "DISCOUNTED",
+      originalPrice: 6,
+      overrideReason: "promo",
+      overriddenBy: "u-1",
+      promoFreeUnits: 1,
+    });
+  });
+
+  it("a STANDARD line keeps a null original and null attribution", () => {
+    expect(
+      buildBogoCounterpart({ qty: 1, unitPrice: 6, priceType: "STANDARD", promoFreeUnits: 2 }),
+    ).toMatchObject({ priceType: "STANDARD", originalPrice: null, overrideReason: null });
   });
 });
