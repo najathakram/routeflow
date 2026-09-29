@@ -36,6 +36,7 @@ import {
   normalizeBoxesPieces,
   regulatedUnitBasis,
   roundMoney,
+  withinStaffOverrideTolerance,
   type CategoryTaxType,
   type PromotionRule,
 } from "@routeflow/pricing";
@@ -4041,16 +4042,14 @@ export class OrdersService implements OnApplicationBootstrap {
                     ? (operatorCpMap.get(li.productId) ?? operatorDefaultTier)
                     : 1;
                 const storedOverrideReason = (li as any).overrideReason ?? null;
-                // #2716c: ONE rule (staff-line-price.ts -> decideStaffOverride). B465: a
-                // special-tier line refuses a changed price with no reason anywhere — a stored
-                // reason counts (the client re-saving under it); the baseline is the STORED price,
-                // so an echo within half a cent is no repricing and the row keeps its stored type
-                // (forward-only, no re-stamp). Otherwise below list is DISCOUNTED, at/above list
+                // #2716c: ONE rule (staff-line-price.ts -> decideStaffOverride). B465: a special-tier
+                // change needs a reason (a stored one counts); the baseline is the STORED price, so
+                // an echo is no repricing (forward-only, no re-stamp). Below list DISCOUNTED, at/above
                 // MANUAL, originalPrice = the product's LIST price (never the line's prior net).
                 let editProduct: { name: string | null; pricePerUnit: unknown } | null = null;
                 if (
                   overridePrice !== null &&
-                  Math.abs(overridePrice - existingUnitPrice) > 0.005 &&
+                  !withinStaffOverrideTolerance(overridePrice, existingUnitPrice) &&
                   !isUnlisted &&
                   li.productId
                 ) {
