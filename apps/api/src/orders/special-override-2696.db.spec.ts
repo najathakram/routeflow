@@ -313,9 +313,11 @@ describeDb("#2696(c) staff price override — real Postgres", () => {
         staff(),
       ),
     );
+    // SA-558c (#2716): a typed tier price on an added line is class C -> rule A, so it stores
+    // SPECIAL (it was MANUAL before the one staff override rule); deliberate rule change.
     expect(cols(await lineOf(order.id))).toMatchObject({
       unitPrice: 8,
-      priceType: "MANUAL",
+      priceType: "SPECIAL",
       originalPrice: 10,
       overrideReason: null,
     });
