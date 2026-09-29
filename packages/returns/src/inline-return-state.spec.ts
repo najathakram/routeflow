@@ -617,10 +617,11 @@ describe("#2695 (SA-557): the staff credit price override on the wire", () => {
   });
 
   it("names the first line that can't be sent, so the host can disable Get quote", () => {
-    expect(creditOverrideProblem([line(), line({ productId: "p2", ...cheap })])).toBeNull();
-    expect(creditOverrideProblem([line({ productName: "Gadget", creditUnitPrice: "2" })])).toMatch(
-      /^Gadget: /,
-    );
+    const q = { pieces: "1" }; // only rows with a quantity are judged (they are the ones sent)
+    expect(creditOverrideProblem([line(q), line({ productId: "p2", ...q, ...cheap })])).toBeNull();
+    expect(
+      creditOverrideProblem([line({ productName: "Gadget", ...q, creditUnitPrice: "2" })]),
+    ).toMatch(/^Gadget: /);
   });
 
   it("the quote and the capture send the SAME override, trimmed; a line without one sends neither field", () => {
@@ -703,12 +704,15 @@ describe("#2695 (SA-557): the staff credit price override on the wire", () => {
   it("two rows of ONE product must agree on the override: a conflict is refused visibly, never silently dropped (lead, inline-return-state :634)", () => {
     const other = { creditUnitPrice: "2.00", overrideReason: "goodwill" };
     const conflicts: Array<[string, ReturnType<typeof line>[]]> = [
-      ["priced + unpriced", [line({ ...cheap }), line()]],
-      ["unpriced + priced (the second override would be dropped)", [line(), line({ ...cheap })]],
-      ["two different prices", [line({ ...cheap }), line({ ...other })]],
+      ["priced + unpriced", [line({ pieces: "1", ...cheap }), line({ pieces: "1" })]],
+      [
+        "unpriced + priced (the second override would be dropped)",
+        [line({ pieces: "1" }), line({ pieces: "1", ...cheap })],
+      ],
+      ["two different prices", [line({ pieces: "1", ...cheap }), line({ pieces: "1", ...other })]],
       [
         "same price, different reason",
-        [line({ ...cheap }), line({ ...cheap, overrideReason: "x" })],
+        [line({ pieces: "1", ...cheap }), line({ pieces: "1", ...cheap, overrideReason: "x" })],
       ],
     ];
     for (const [, lines] of conflicts) {
@@ -717,9 +721,16 @@ describe("#2695 (SA-557): the staff credit price override on the wire", () => {
       );
     }
     // Identical overrides (trim-insensitive), both blank, and different products are all fine.
-    expect(creditOverrideProblem([line({ ...cheap }), line({ ...cheap })])).toBeNull();
-    expect(creditOverrideProblem([line(), line()])).toBeNull();
-    expect(creditOverrideProblem([line({ ...cheap }), line({ productId: "p2" })])).toBeNull();
+    expect(
+      creditOverrideProblem([line({ pieces: "1", ...cheap }), line({ pieces: "1", ...cheap })]),
+    ).toBeNull();
+    expect(creditOverrideProblem([line({ pieces: "1" }), line({ pieces: "1" })])).toBeNull();
+    expect(
+      creditOverrideProblem([
+        line({ pieces: "1", ...cheap }),
+        line({ productId: "p2", pieces: "1" }),
+      ]),
+    ).toBeNull();
   });
 
   it("the override roles are OPERATOR and TENANT_ADMIN, checked against the shared UserRole type (not an untyped string list)", () => {
@@ -731,5 +742,54 @@ describe("#2695 (SA-557): the staff credit price override on the wire", () => {
     );
     expect(src).toMatch(/\bUserRole,\n\} from "@routeflow\/types"/); // a type-only import block
     expect(src).toContain("satisfies readonly `${UserRole}`[]");
+  });
+
+  describe("rows that will never be sent are skipped (the #2743 follow-up)", () => {
+    const qty = { pieces: "2" };
+    const cheap2 = { creditUnitPrice: "3.50", overrideReason: "damaged box" };
+
+    it("an untouched duplicate row (no qty, no override) does not block the quote", () => {
+      expect(creditOverrideProblem([line({ ...qty, ...cheap2 }), line()])).toBeNull();
+      expect(creditOverrideProblem([line(), line({ ...qty, ...cheap2 })])).toBeNull();
+    });
+
+    it("a no-qty duplicate row is skipped even with an override typed on it (nothing of it is sent)", () => {
+      expect(
+        creditOverrideProblem([
+          line({ ...qty, ...cheap2 }),
+          line({ creditUnitPrice: "1", overrideReason: "x" }),
+        ]),
+      ).toBeNull();
+    });
+
+    it("an invalid override on a no-qty row does not block either (it is never sent)", () => {
+      expect(
+        creditOverrideProblem([line({ ...qty }), line({ creditUnitPrice: "abc" })]),
+      ).toBeNull();
+    });
+
+    it("boxes count as a quantity too", () => {
+      expect(
+        creditOverrideProblem([
+          line({ ...qty, ...cheap2 }),
+          line({ boxes: "1", creditUnitPrice: "2", overrideReason: "x" }),
+        ]),
+      ).toMatch(/^Widget: two rows of this product have different credit prices/);
+    });
+
+    it("two rows WITH quantities and different overrides still conflict", () => {
+      expect(
+        creditOverrideProblem([
+          line({ ...qty, ...cheap2 }),
+          line({ ...qty, creditUnitPrice: "2", overrideReason: "x" }),
+        ]),
+      ).toMatch(/^Widget: two rows of this product have different credit prices/);
+    });
+
+    it("an invalid override on a row that has a quantity still blocks", () => {
+      expect(creditOverrideProblem([line({ ...qty, creditUnitPrice: "3.50" })])).toMatch(
+        /^Widget: /,
+      );
+    });
   });
 });

@@ -167,6 +167,30 @@
 - **Guard:** the lane brief rule (write bodies to a file first); production commands are owner-run on
   the Mac mini only, with no railway CLI or link on the MacBook.
 
+### L-244 · 2026-09-29 · process · a merge reads every ruling posted after the last PASS, not only the PASS (#2678)
+
+- **Symptom:** #2678 landed on a PASS that predated a binding fold ruling (SA-551a, #2554
+  5867986094); the fold it required never shipped.
+- **Root cause:** the merge decision read the PR's last PASS and stopped, so a later ruling on the
+  same PR (a fold, HOLD or FAIL) was invisible to it.
+- **Lesson:** **A PASS is only current until the next comment that names the PR. Before a merge, list
+  every board comment that names the PR and was posted after its last PASS; an open fold, HOLD or
+  FAIL blocks the merge.**
+- **Guard:** the coordinator's pre-merge step (fleet-lead log entry 2026-09-29 #2678); no script yet.
+
+### L-246 · 2026-09-29 · process · a code-map stamp never goes inside a PR that gets squashed
+
+- **Symptom:** a code-map `mappedSha` (or a sha in a landing bullet) written inside a PR that was then
+  squash-merged named a commit that never reached master, so the map read as stale from the moment it
+  landed and its cited sha resolved to nothing.
+- **Root cause:** a squash merge replaces the branch's commits with one new commit; any sha a PR
+  records about itself, or about its own branch, does not exist on master afterwards.
+- **Lesson:** **Stamp `mappedSha` and cite shas only from the docs follow-up PR, and only shas that are
+  already on master (the squash commit). Never write the PR's own head or a branch sha into the map.**
+- **Guard:** Bookkeeping Option B (the code PR carries `Bookkeeping-Follow-Up: pending`; the follow-up
+  cites the merged sha). No script yet: propose `git merge-base --is-ancestor <sha> origin/master`
+  before any stamp.
+
 ## tooling
 
 ### L-206 · 2026-09-18 · tooling · a test that pins a literal from another workspace's prose is an invisible cross-workspace coupling
@@ -436,12 +460,19 @@
 - **Lesson:** **Build every money or unit fixture with the production writer (or copy its exact shape: base-piece qty, `net + tax` amounts, the maps it stores). Before asserting an overshoot or edge state, confirm the writer can reach it; if only a downstream clamp stops it, test that clamp.**
 - **Guard:** review checks each fixture against the writer's call site (train A: `credit-notes.service.ts` caps, `returns.service.ts` return maps); `regulated-ledger-price-correction.db.spec.ts` drives the real writers.
 
-### L-234 · 2026-09-27 · testing · a whole-database script needs an explicit scope allowlist, not a rerun (B824, train C)
+### L-247 · 2026-09-29 · testing · swapping a constructor dependency has construction sites tsc does not check (#2241)
 
-- **Symptom:** `publish-and-repin.db.spec.ts` failed three different ways under `--maxWorkers=2` — an unrelated tenant tripped `--only-test-tenants`'s refusal, an unscoped `--apply --live` wrote onto a sibling spec's own fixture tenant, and this spec's fixture received unwanted writes back — each time green when run alone, so it read all night as "a known flake, verify alone before treating as a blocker."
-- **Root cause:** `publish-and-repin.mjs`'s `computeDiff()` correctly scans the WHOLE database for a real prod run, but under parallel jest workers it also picks up sibling `*.db.spec.ts` files' own live fixture tenants — real cross-suite contamination, not a stale-count race a retry masks. Running it alone "fixes" all three by removing the siblings, which is exactly why that green is not a safety signal.
-- **Lesson:** **A `*.db.spec.ts` (or script) that computes a diff/apply, or any read+write, over a shared, unscoped table under parallel workers must scope every call to its own fixture rows (an id/slug allowlist flag on the tool it drives). "Green alone, red in the full lane" for such a spec means look for a missing scope, not a flake to rerun past.**
-- **Guard:** `publish-and-repin.mjs --only-tenants <slugs>`; `publish-and-repin.db.spec.ts`'s `runCli()` passes its own 3 fixture slugs on every call (report, preview, live apply).
+- **Symptom:** #2241 replaced `EntitlementsService` with `EntitlementAuthority` in two services; 12 specs
+  built those services with a `useValue` stub of the dead dependency, and only a boot or a spec run
+  shows a wrong provider (the L-113 class).
+- **Root cause:** a Nest constructor change is type-checked at the class, but every spec provider
+  array and every importing module is a construction site that `useValue` stubs and mocks hide from
+  tsc.
+- **Lesson:** **When a constructor dependency is added, removed or swapped, grep every construction
+  site of the class (spec provider arrays, other modules' providers, test builders) and change them in
+  the same PR; then boot the real container.**
+- **Guard:** the compose boot gate (`local:up`) proves the real DI graph; no automated
+  construction-site scan yet.
 
 ## domain
 
@@ -593,31 +624,6 @@
 - **Lesson:** **Before declaring one writer for a ledger or event stream, grep the whole tree for every emit of those events and every `amountDelta:` site, not only the call sites the brief named. Route each one through the writer or exempt it explicitly.**
 - **Guard:** #2186: `subscribe()` (`subscription-mutation.service.ts` :395-421 at review) was the writer the sweep missed and now calls `emitAddonDelta`. On master, `ADDON_ENABLED/DISABLED` is emitted only in `billing/addon-ledger.ts`. No structural pin yet; propose one beside `mrr-paying-predicate.parity.spec.ts`.
 
-### L-225 · 2026-09-26 · domain · a display fix proven on one screen must become a shared helper, or sibling screens reproduce the same bug (B653, B757-B759)
-
-- **Symptom:** the invoice-detail screens' qty/unit-label formatting bug (#1275) reappeared,
-  unfixed, on both order-detail screens (web's `OrderLineItemsTable`, mobile's operator and
-  customer order detail) — each had hand-formatted a boxed line's qty text inline instead of
-  reusing the already-proven fix, so a `unitLabel`'d line (Case, Pallet) still showed a bare
-  boxes/pieces split and a factor-1 unit line skipped unit display entirely.
-- **Root cause:** the first fix landed as inline logic on the screen it was reported against,
-  not as a shared helper — nothing forced every OTHER screen rendering the same kind of line to
-  pick it up, so each sibling screen kept its own copy of the original bug.
-- **Lesson:** **When a display/formatting bug is fixed on one screen, extract the fix into a
-  shared helper and audit every sibling screen rendering the same data shape for the same bug —
-  a proof against one screen is not a proof against its copies.**
-- **Guard:** `apps/*/lib/invoice-line-display[.ts]`'s `usesUnitDisplay`/`invoiceLineQtyText` is
-  now the one qty-text formatter, imported by all four affected screens; a `describe.each` wiring
-  test (`order-detail-unit-display-wiring.test.ts` / its web equivalent) pins the same import and
-  condition across every one of them.
-
-### L-232 · 2026-09-27 · domain · a calendar-day field keeps the client's literal day, never a re-derived one (#2249, train B)
-
-- **Symptom:** `invoices.service.ts` stored `new Date(dto.issueDate)` raw, so a client datetime with a time component or offset crossing a UTC day boundary (e.g. `23:30-04:00`) silently landed one day later — breaking the UTC-midnight symbolic convention that statements, the regulated report and sales-facts buckets all assume.
-- **Root cause:** the field is a day-granular calendar stamp, not a real instant, but the write path treated the client's string as an instant and let the day move with it. An earlier version made it worse by re-reading in the tenant timezone.
-- **Lesson:** **A DTO field documented or consumed as a calendar day (statements, invoices, schedules) must be normalized at the write boundary through a literal first-10-characters day extractor — never `new Date(rawString)` directly, and never re-derived from a timezone. A shape that names no real day is a 400, checked before anything else is read.**
-- **Guard:** `common/calendar-date.ts`'s `calendarStampFromInput`/`issueDateStamp`, called as `InvoicesService.create()`'s first statement; `calendar-date.pins.spec.ts`, `invoice-issue-date-b2197.db.spec.ts`. Cf. the F25 calendar-date convention (archived L-047) — this is the same house rule recurring at a new call site.
-
 ### L-237 · 2026-09-28 · domain · a side effect fired inside a transaction still fires when it rolls back (#2526)
 
 - **Symptom:** invoice realtime events told operators and buyers about changes whose transaction
@@ -643,25 +649,6 @@
 - **Guard:** `orders/order-line-removal.ts` (`writeLineRemoval`, `assertRemovalsNameALine`),
   `order-line-removal.spec.ts`, `order-line-removal.db.spec.ts`.
 
-### L-239 · 2026-09-28 · domain · a guarded destructive write: lock, then read, then compare-and-set (#2566, #2584, #2594, #2607)
-
-- **Symptom:** customer deletes destroyed issued/paid invoices, money records and delivery
-  history; `updateTenantClass` booked its BillingEvent from a read taken before its lock; an
-  insert landing after the last read turned the final delete into a 500.
-- **Root cause:** deciding reads taken before the lock (or only outside the transaction), deletes
-  keyed on the parent id alone, and table lists that differed between the guard and the delete.
-- **Lesson:** **For a destructive or money-booking write gated on business state: take the row
-  lock, read the deciding state AFTER it, make each destructive statement a compare-and-set that
-  expects the guarded row set and throws 409 on a mismatch, drive the pre-flight, the in-tx
-  re-check and every delete from ONE list of protected tables, and map a late insert's FK
-  violation to the same 409. A pre-flight outside the transaction is UX, not protection.**
-- **Guard:** `customers/customer-delete-preflight.ts` (`assertNoBlockingInvoices`,
-  `readInvoicesAssertingNoneBlocking`, `deleteNonBlockingInvoicesCas`, `deleteMoneyRecordCas`,
-  `deleteCustomerRowsFkRaceAs409`); `customer-delete-race-2558.db.spec.ts` (a real second
-  connection), `customer-delete-money-records-2587.db.spec.ts`,
-  `customer-delete-fk-race-2572.db.spec.ts`; `common/update-tenant-class-ledger.db.spec.ts`.
-  Cf. [[L-217]], [[L-221]].
-
 ### L-242 · 2026-09-28 · domain · never key a UI draft or map by a nullable id (B889, #2709)
 
 - **Symptom:** mobile buyer edit-items keyed its draft by `productId`. The seller's custom lines
@@ -674,6 +661,18 @@
   definition (`isUnlisted = !productId`).**
 - **Guard:** #2709's pins in `apps/mobile/__tests__/buyer-edit-items-custom-lines.test.ts`
   (`isCustomLine` skips seller custom lines in `hydrateBuyerDraft`).
+
+### L-248 · 2026-09-29 · domain · one rounding body per precision; never inline a Math.round nudge (#2717, SA-574 H1)
+
+- **Symptom:** an inlined `Math.round(n * 1e4) / 1e4` (or a `+ Number.EPSILON` nudge) rounds a
+  half-at-the-last-decimal value DOWN, so the same number lands a unit apart on two paths (the
+  REG-B122 class, now at 4 dp).
+- **Root cause:** scaling by 1e4 puts the half-way case within EPSILON of a float boundary; a nudge
+  cannot be right for every magnitude, and a second copy of the body drifts from the first.
+- **Lesson:** **`round4` in `packages/pricing` is the only 4-decimal rounding body (and `roundMoney`
+  the only cents body); every 4-dp value goes through it, never through a re-inlined expression.**
+- **Guard:** `round4` (half away from zero via the decimal-string path) with `roundUnitCost` delegating
+  to it; pinned by `golden.spec.ts` (ROUND4_FIXTURES) and `component-price.spec.ts`.
 
 ## security
 
@@ -695,14 +694,6 @@
 - **Root cause:** the guard and the driver parsed the same string differently (`?host=`, `hostaddr`, `service`, multi-host lists, sockets, an encoded `?` in the database name).
 - **Lesson:** **A safety guard on a connection string must parse it the way the DRIVER does (pg-connection-string), then dial the vetted explicit fields, never the raw string it just approved.**
 - **Guard:** `scripts/lib/local-db-target.cjs` and its bypass-list spec (`local-db-target.spec.ts`).
-
-### L-233 · 2026-09-27 · security · a role check is not an ownership check (#2386, SA-429, train B)
-
-- **Symptom:** the DRIVER branch of `updateOrderItems` checked only `role === "DRIVER"` — any driver in the tenant could edit any order's items, not just orders on their own active run.
-- **Root cause:** the branch was written assuming the role check was the whole authorization decision; no assignment/ownership predicate existed at all, and the gap is easy to miss because the code "looks done" (it correctly 403s the wrong role, just not the wrong instance).
-- **Lesson:** **For a tenant-scoped, role-gated write path, "the role is correct" and "this principal is entitled to touch this specific resource" are two separate checks. A new role-gated branch needs an explicit resource-ownership assertion — re-derived from the resource's own foreign-key chain, never a denormalized shortcut field — written and tested as its own predicate, run before any other guard AND re-checked under the row lock.**
-- **Guard:** `orders/driver-edit-access.ts`'s `assertDriverMayEditOrder` (follows `order.routeRunStopId → RouteRunStop → RouteRun`, never `order.routeRunId` directly); called first in `updateOrderItems`, before the cancelled-order check, and again under the Order `FOR UPDATE`. `driver-edit-access.spec.ts`, `driver-edit-access.db.spec.ts`.
-- **Recurred 2026-09-27 (train D, #2398/#2391, SA-434):** the SAME predicate was missing (or independently reinvented weaker) at two MORE call sites reachable by the DRIVER role: `orders.service.ts`'s `changeStatus()` had no check at all, and `change-requests.service.ts`'s `resolve()` checked only `order.routeRun.driverId` with no run/stop status. The fix reused `assertDriverMayEditOrder` verbatim rather than writing a third bespoke check. Confirms the lesson generalizes beyond the one endpoint it was first found on: audit EVERY role-gated write path reachable by the same role, not just the one a report named.
 
 ### L-236 · 2026-09-28 · security · a stored storage key is trusted only after an exact own-prefix segment match (#2538, #2547)
 
@@ -786,3 +777,14 @@
 - **Guard:** #1133 (b8765689) added `data-testid="line-total"`; spec 13's `readLineTotal` reads it
   via `getByTestId`.
 
+### L-245 · 2026-09-29 · deploy · SET LOCAL in a Prisma migration is a no-op without an explicit BEGIN/COMMIT (SA-582)
+
+- **Symptom:** a migration used `SET LOCAL` to scope a setting to its own statements; the setting
+  never applied, and nothing failed.
+- **Root cause:** Prisma applies a migration file non-atomically here, statement by statement outside
+  a transaction, and `SET LOCAL` only lasts until the end of a transaction, so with no enclosing
+  transaction it changes nothing. Squawk did not flag it.
+- **Lesson:** **A migration that relies on `SET LOCAL` (or any transaction-scoped setting) must open
+  its own explicit `BEGIN` and end with `COMMIT`; otherwise the statement is a silent no-op.**
+- **Guard:** `scripts/lint-migrations.mjs` (`npm run lint:migrations`) refuses `SET LOCAL` with no
+  enclosing BEGIN/COMMIT (B896, #2746); pinned by `lint-migrations-script.spec.ts`.

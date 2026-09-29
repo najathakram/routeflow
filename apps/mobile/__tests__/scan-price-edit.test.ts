@@ -80,9 +80,11 @@ describe("useScanPriceEdit sequencing (B901, source pins)", () => {
     expect(close).toBeLessThan(present);
   });
 
-  it("plans with the platform and keeps the contract-price refusal", () => {
+  it("plans with the platform; a SPECIAL line no longer refuses (#2696(c))", () => {
     expect(handler).toContain("planScanPriceEdit(scanOpenRef.current, Platform.OS)");
-    expect(handler).toContain("Contract price — not editable on this order");
+    // #2696(c): the contract-price refusal is gone — LinePriceModal asks the override reason.
+    expect(handler).not.toContain("Contract price — not editable on this order");
+    expect(handler).not.toContain("isSpecialLine");
   });
 
   it("the timer only exists on the 'timer' path and clears the pending ref when it fires", () => {
@@ -96,11 +98,7 @@ describe("useScanPriceEdit sequencing (B901, source pins)", () => {
   });
 
   it("handleScanSheetDismiss presents from the pending ref, once", () => {
-    const h = between(
-      "const handleScanSheetDismiss = useCallback(",
-      "const closePriceEdit",
-      HOOK,
-    );
+    const h = between("const handleScanSheetDismiss = useCallback(", "const closePriceEdit", HOOK);
     expect(h).toContain("pendingPriceEditIdRef.current");
     expect(h.indexOf("pendingPriceEditIdRef.current = null")).toBeLessThan(
       h.indexOf("setPriceEditId("),

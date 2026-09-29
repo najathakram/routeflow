@@ -145,12 +145,7 @@ export function ScanOrderSheet({
   const itemsLabel = `${totalItems} item${totalItems === 1 ? "" : "s"}`;
 
   return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      onRequestClose={onDone}
-      onDismiss={onDismiss}
-    >
+    <Modal visible={visible} animationType="slide" onRequestClose={onDone} onDismiss={onDismiss}>
       <View style={styles.root}>
         <View style={styles.capture}>
           {visible && granted ? (

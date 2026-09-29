@@ -2,18 +2,10 @@ import { useCallback, useEffect, useRef } from "react";
 import { Platform } from "react-native";
 import { planScanPriceEdit } from "./scan-price-edit";
 
-interface ScanPriceEditActions {
-  isUnlisted: (id: string) => boolean;
-  isSpecialLine: (id: string) => boolean;
-  showInline: (message: string) => void;
-}
-
 interface Args {
   scanOpen: boolean;
   setScanOpen: (open: boolean) => void;
   setPriceEditId: (id: string | null) => void;
-  /** Read lazily (ref-backed) so the memoized tray callback never goes stale. */
-  getActions: () => ScanPriceEditActions;
 }
 
 /**
@@ -22,7 +14,7 @@ interface Args {
  * present the price modal after the dismissal, and reopen the scanner when the
  * price modal closes (closePriceEdit).
  */
-export function useScanPriceEdit({ scanOpen, setScanOpen, setPriceEditId, getActions }: Args) {
+export function useScanPriceEdit({ scanOpen, setScanOpen, setPriceEditId }: Args) {
   // Mirrors of scanOpen / "reopen the scan sheet when the price modal closes"
   // for the memoized tray callback, plus the pending present timer.
   const scanOpenRef = useRef(false);
@@ -39,11 +31,7 @@ export function useScanPriceEdit({ scanOpen, setScanOpen, setPriceEditId, getAct
   );
   const onTrayEditPrice = useCallback(
     (id: string) => {
-      const a = getActions();
-      if (!a.isUnlisted(id) && a.isSpecialLine(id)) {
-        a.showInline("Contract price — not editable on this order");
-        return;
-      }
+      // #2696(c): a SPECIAL line opens the editor too — the reason is asked in LinePriceModal.
       const plan = planScanPriceEdit(scanOpenRef.current, Platform.OS);
       if (plan.closeScan) setScanOpen(false);
       resumeScanRef.current = plan.resumeScanOnClose;
