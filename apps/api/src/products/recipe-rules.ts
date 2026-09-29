@@ -245,3 +245,15 @@ export function recipeCategoryLocked(): ConflictException {
       "This product is part of a recipe that is not retired, so its tracked category cannot change.",
   });
 }
+
+/** 409 RECIPE_FAMILY_LOCKED (SA-584 B2 a): a re-parent or a box-size change an open recipe forbids. */
+export function recipeFamilyLocked(reason: "PARENT" | "UNITS_PER_BOX"): ConflictException {
+  return new ConflictException({
+    code: API_ERROR_CODES.RECIPE_FAMILY_LOCKED,
+    reason,
+    message:
+      reason === "PARENT"
+        ? "This product is a component of a recipe that is not retired, so it cannot leave its family."
+        : "This product is the family or the recipe product of a recipe that is not retired, so its box size cannot change.",
+  });
+}
