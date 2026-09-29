@@ -141,6 +141,7 @@ describe("ProductsService recipe guards", () => {
     });
 
     it("a reference-free product is still hard-deleted", async () => {
+      prisma.$transaction.mockResolvedValue([] as any);
       const result = await service.clearAll();
       expect(result).toMatchObject({ deleted: 1, softDeleted: 0 });
     });

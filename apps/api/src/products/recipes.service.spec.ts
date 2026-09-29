@@ -97,7 +97,7 @@ function makeStore(seed: { products: Row[]; recipes?: Row[]; components?: Row[] 
     },
   })) as any;
   prisma.recipe.create = track("recipe.create", ({ data }: any) => {
-    const row = { id: `r${++seq}`, retiredAt: null, effectiveFrom: null, ...data };
+    const row = { id: `new-r${++seq}`, retiredAt: null, effectiveFrom: null, ...data };
     recipes.push(row);
     return row;
   }) as any;
@@ -119,7 +119,7 @@ function makeStore(seed: { products: Row[]; recipes?: Row[]; components?: Row[] 
     ({ where }: any) => components.filter((c) => matches(c, where)).length,
   ) as any;
   prisma.recipeComponent.createMany = track("recipeComponent.createMany", ({ data }: any) => {
-    for (const d of data) components.push({ id: `c${++seq}`, ...d });
+    for (const d of data) components.push({ id: `new-c${++seq}`, ...d });
     return { count: data.length };
   }) as any;
   prisma.recipeComponent.deleteMany = track("recipeComponent.deleteMany", ({ where }: any) => {
