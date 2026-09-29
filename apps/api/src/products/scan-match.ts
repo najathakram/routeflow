@@ -121,21 +121,15 @@ export async function findScanMatches(
       ? barcodeRowsToView(productRows as any)
       : synthesizeLegacyBarcodes(product);
 
-  const levels = new Set<SellLevel>();
-  for (const r of [...productRows, ...ownRows]) if (ci(r.code, code)) levels.add(r.level);
-  // Legacy columns (the shared client function, so server and clients agree): barcode -> BOX+UNIT when
-  // boxed else UNIT, sku -> BOX, unitSku -> UNIT. A product with rows ignores its barcode column.
-  for (const l of levelsForScannedCode(code, {
+  // The ONE shared derivation (server and clients agree): rows replace only the barcode column.
+  const levels = levelsForScannedCode(code, {
     ...product,
-    barcode: hasRows ? null : product.barcode,
-    barcodes: [],
-  })) {
-    levels.add(l);
-  }
+    barcodes: [...productRows, ...ownRows],
+  });
 
   return {
     product: { ...product, barcodes },
-    scanMatch: { code, levels: [...levels] },
+    scanMatch: { code, levels },
     barcodes,
   };
 }

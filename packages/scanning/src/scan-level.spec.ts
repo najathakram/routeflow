@@ -203,9 +203,9 @@ describe("levelsForScannedCode — ProductBarcode rows (R1/R2 on rows)", () => {
     expect(resolveScanSellLevel(plain, levelsForScannedCode("SHARED", plain))).toBe(UNIT);
   });
 
-  it("when barcodes[] is present it is authoritative over the legacy columns (a stale unitSku column does not add UNIT)", () => {
+  it("SA-595: rows are authoritative over the barcode column only (a unitSku equal to a BOX row code adds UNIT: shared)", () => {
     const p = { ...withRows, unitSku: "BOXCODE" };
-    expect(levelsForScannedCode("BOXCODE", p)).toEqual([BOX]);
+    expect([...levelsForScannedCode("BOXCODE", p)].sort()).toEqual([BOX, UNIT]);
   });
 
   it("an empty barcodes[] array means 'no rows' -> legacy fallback (L-159: one presence check, not per field)", () => {

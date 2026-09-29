@@ -48,9 +48,9 @@ export function resolveBuyerScanSellLevel(product: { unitsPerBox?: number | null
 }
 
 /**
- * The levels the scanned `code` has on `product`. `barcodes[]` rows are authoritative when present
- * (non-empty); otherwise the legacy columns, exactly as M1 synthesizes them: barcode -> BOX+UNIT
- * when upb > 1 else UNIT; sku -> BOX; unitSku -> UNIT. Matching is case-insensitive over the
+ * The levels the scanned `code` has on `product`. `barcodes[]` rows (non-empty) replace only the
+ * legacy `barcode` column's contribution (barcode -> BOX+UNIT when upb > 1 else UNIT); `sku` -> BOX
+ * and `unitSku` -> UNIT always apply (SA-595). Matching is case-insensitive over the
  * `normalizeScanCode` candidate set. No match -> [].
  */
 export function levelsForScannedCode(code: string, product: ScanLevelProduct): SellLevel[] {
@@ -59,16 +59,15 @@ export function levelsForScannedCode(code: string, product: ScanLevelProduct): S
     typeof v === "string" && v.length > 0 && candidates.has(v.trim().toLowerCase());
   const found = new Set<SellLevel>();
 
+  // SA-595: rows supersede ONLY the barcode-column contribution; sku -> BOX and unitSku -> UNIT
+  // always resolve (the server and every client share this one derivation).
   if (product.barcodes && product.barcodes.length > 0) {
     for (const row of product.barcodes) if (hit(row.code)) found.add(row.level);
-  } else {
-    const boxed = typeof product.unitsPerBox === "number" && product.unitsPerBox > 1;
-    if (hit(product.barcode)) {
-      found.add("UNIT");
-      if (boxed) found.add("BOX");
-    }
-    if (hit(product.sku)) found.add("BOX");
-    if (hit(product.unitSku)) found.add("UNIT");
+  } else if (hit(product.barcode)) {
+    found.add("UNIT");
+    if (typeof product.unitsPerBox === "number" && product.unitsPerBox > 1) found.add("BOX");
   }
+  if (hit(product.sku)) found.add("BOX");
+  if (hit(product.unitSku)) found.add("UNIT");
   return [...found];
 }
