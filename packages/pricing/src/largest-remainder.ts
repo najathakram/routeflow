@@ -70,7 +70,9 @@ export interface ComponentCredit {
 export function prorateComponentCredit(input: ComponentCreditInput): ComponentCredit {
   const { storedSubtotal, linePieces, priorPieces, parts } = input;
   if (!Number.isFinite(storedSubtotal) || storedSubtotal < 0) {
-    throw new MoneyInvariantError(`stored subtotal must be a finite amount >= 0 (got ${storedSubtotal})`);
+    throw new MoneyInvariantError(
+      `stored subtotal must be a finite amount >= 0 (got ${storedSubtotal})`,
+    );
   }
   if (!Number.isInteger(linePieces) || linePieces <= 0) {
     throw new MoneyInvariantError(`linePieces must be an integer > 0 (got ${linePieces})`);
