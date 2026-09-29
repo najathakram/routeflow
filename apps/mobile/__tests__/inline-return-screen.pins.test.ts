@@ -71,9 +71,11 @@ describe("inline-return screen wiring pins", () => {
 });
 
 describe("inline-return screen: 'return only what was bought' with nothing bought (#2693)", () => {
-  it("the re-quote is guarded by the shared canReturnOnlyPurchased BEFORE dropExcessAndRequote", () => {
+  it("the re-quote is guarded by the shared canReturnOnlyPurchased BEFORE the re-quote (#2695: onlyPurchasedRequote wraps dropExcessAndRequote and carries the credit override)", () => {
     const guard = screen.indexOf("if (!canReturnOnlyPurchased(screen.quote)) return;");
-    const requote = screen.indexOf("dropExcessAndRequote(customerId, screen.quote)");
+    const requote = screen.indexOf(
+      "onlyPurchasedRequote(customerId, screen.quote, screen.quotedLines)",
+    );
     expect(guard).toBeGreaterThan(-1);
     expect(requote).toBeGreaterThan(guard);
   });

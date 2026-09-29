@@ -99,6 +99,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
+/** The auth context, or null outside an AuthProvider — for a UI gate that must fail CLOSED (show
+ *  nothing role-gated) rather than throw where no provider is mounted. */
+export function useOptionalAuth(): AuthContextValue | null {
+  return React.useContext(AuthContext);
+}
+
 export function useAuth(): AuthContextValue {
   const ctx = React.useContext(AuthContext);
   if (!ctx) throw new Error("useAuth must be used within AuthProvider");
