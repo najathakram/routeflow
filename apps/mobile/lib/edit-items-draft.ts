@@ -19,6 +19,7 @@
  * screen's BUY_N_GET_M netting through so the drawer, the line card and the
  * footer cannot disagree.
  */
+import { needsUnitLabelConfirm } from "./scan-unit-confirm";
 import {
   roundMoney,
   effectiveQty,
@@ -526,9 +527,16 @@ export function resolvePickTarget(
   const existingUnitEntry = Object.entries(draft).find(
     ([, it]) => it.productId === input.productId && it.unitLabel,
   );
-  const existingLabel = existingUnitEntry?.[1].unitLabel ?? undefined;
+  // SA-580b: the unit-label keying + confirm apply only to a UNIT scan on a BOXED product (same
+  // rule as NewOrderScreen's needsUnitLabelConfirm); upb <= 1 behaves like a picker tap.
+  const unitLabelScan = needsUnitLabelConfirm(
+    input.level,
+    { unitsPerBox: input.unitsPerBox },
+    existingUnitEntry?.[1].unitLabel,
+  );
+  const existingLabel = unitLabelScan ? (existingUnitEntry?.[1].unitLabel ?? undefined) : undefined;
   const key =
-    input.level === "UNIT" && existingUnitEntry
+    unitLabelScan && existingUnitEntry
       ? existingUnitEntry[0]
       : resolveDraftKeyForPick(draft, input.productId, null);
   const apply = (d: Record<string, DraftItem>) =>
