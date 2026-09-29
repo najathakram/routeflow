@@ -6,6 +6,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
 import { UnitPickerRow } from "../../components/UnitPickerRow";
 import { unitPriceBase, type UnitOption } from "../../lib/unit-options";
+import { priceUnitSuffix } from "../../lib/invoice-line-display";
 import {
   classifyMargin,
   computeLineSubtotal,
@@ -162,13 +163,7 @@ export function DraftItemCard({
                   numberOfLines={2}
                 >
                   ${item.unitPrice.toFixed(2)}
-                  {isBoxed
-                    ? ` / box of ${upb}`
-                    : item.unitLabel
-                      ? ` / ${item.unitLabel}`
-                      : item.unit
-                        ? ` / ${item.unit}`
-                        : ""}
+                  {priceUnitSuffix(item, upb)}
                   {perUnitHint != null ? ` · ≈ $${perUnitHint.toFixed(2)}/unit` : ""}
                 </Text>
                 {isUpsell ? (
@@ -192,13 +187,7 @@ export function DraftItemCard({
                   numberOfLines={2}
                 >
                   ${item.unitPrice.toFixed(2)}
-                  {isBoxed
-                    ? ` / box of ${upb}`
-                    : item.unitLabel
-                      ? ` / ${item.unitLabel}`
-                      : item.unit
-                        ? ` / ${item.unit}`
-                        : ""}
+                  {priceUnitSuffix(item, upb)}
                   {perUnitHint != null ? ` · ≈ $${perUnitHint.toFixed(2)}/unit` : ""}
                 </Text>
                 {isUpsell ? (
