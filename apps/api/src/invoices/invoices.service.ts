@@ -54,7 +54,7 @@ import { packAtSaleByProduct, priorUnitsPerBoxMap, toSaleLedgerLines } from "./p
 import { assertIntegerPieces, billPackOf } from "./unit-line-bill-guard";
 import { clampLimit } from "../common/pagination";
 import { isInternalEmail } from "../common/internal-email";
-import { loadMsrpMap } from "../common/msrp";
+import { stampMsrpSnapshots } from "./msrp-snapshots";
 import { effectiveTaxRateFromTotals } from "../common/tax-rate";
 import {
   checkOrderCoverage,
@@ -207,24 +207,9 @@ export class InvoicesService {
     @Optional() private readonly featureConfig?: FeatureConfigService,
   ) {}
 
-  /**
-   * Stamp each line's MSRP at creation time. Snapshot, not a live read: an issued invoice
-   * must never change because someone later edited the product's MSRP. No-ops (leaving
-   * msrp null) when the tenant does not have flag.msrp, so a tenant that turns the feature
-   * off simply stops emitting MSRP on NEW invoices while old ones keep what they printed.
-   */
-  private async applyMsrpSnapshots<
-    T extends { productId?: string | null; msrp?: number | null; unitLabel?: string | null },
-  >(db: any, customerId: string, itemsData: T[]): Promise<void> {
-    const tenantId = this.prisma.getTenantId();
-    if (!tenantId || !(await this.entitlements.hasFlag(tenantId, "flag.msrp"))) return;
-    const ids = [...new Set(itemsData.map((i) => i.productId).filter(Boolean))] as string[];
-    if (ids.length === 0) return;
-    const map = await loadMsrpMap(db, customerId, ids);
-    for (const it of itemsData) {
-      // units_v1: the MSRP map is per PACK, a unit line is priced per UNIT — never stamp it
-      if (it.productId && !it.unitLabel) it.msrp = map.get(it.productId) ?? null;
-    }
+  /** Extracted to msrp-snapshots.ts (size ratchet); stamps each line's MSRP at creation time. */
+  private applyMsrpSnapshots(db: any, customerId: string, itemsData: any[]): Promise<void> {
+    return stampMsrpSnapshots(this.prisma, this.entitlements, db, customerId, itemsData);
   }
 
   /**
@@ -1758,6 +1743,7 @@ export class InvoicesService {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
           include: {
+            components: { orderBy: { position: "asc" } },
             product: {
               select: {
                 name: true,
@@ -2074,6 +2060,7 @@ export class InvoicesService {
           lineItems: {
             where: { status: { not: "CANCELLED" } },
             include: {
+              components: { orderBy: { position: "asc" } },
               product: {
                 select: {
                   name: true,
@@ -2176,6 +2163,7 @@ export class InvoicesService {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
           include: {
+            components: { orderBy: { position: "asc" } },
             product: {
               select: {
                 name: true,
