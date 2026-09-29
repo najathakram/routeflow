@@ -225,14 +225,29 @@ export function recipeUniqueViolation(e: unknown): "activeFor" | "productVersion
   return null;
 }
 
+/** The statuses that hold a recipe's invariants: DRAFT and ACTIVE (RETIRED locks nothing). */
+const OPEN_RECIPE_STATUS = { in: ["DRAFT", "ACTIVE"] as Array<"DRAFT" | "ACTIVE"> };
+
 /** I6 helper: the query that says whether a product sits in a non-RETIRED recipe in any role. */
 export function openRecipeWhere(productId: string) {
   return {
-    status: { in: ["DRAFT", "ACTIVE"] as Array<"DRAFT" | "ACTIVE"> },
+    status: OPEN_RECIPE_STATUS,
     OR: [
       { productId },
       { familyProductId: productId },
       { components: { some: { componentProductId: productId } } },
+    ],
+  };
+}
+
+/** `openRecipeWhere` for a set of products (any of them, in any role) — the bulk writers' form. */
+export function openRecipeWhereAny(productIds: string[]) {
+  return {
+    status: OPEN_RECIPE_STATUS,
+    OR: [
+      { productId: { in: productIds } },
+      { familyProductId: { in: productIds } },
+      { components: { some: { componentProductId: { in: productIds } } } },
     ],
   };
 }
