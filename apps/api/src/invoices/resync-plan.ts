@@ -1,4 +1,5 @@
 import { InvoiceStatus } from "@prisma/client";
+import { isNsfLine, type NsfLineFacts } from "./nsf-line";
 
 /**
  * The pure planning half of `InvoicesService.resyncOrderInvoicesForEdit` (post-delivery order edit
@@ -8,21 +9,40 @@ import { InvoiceStatus } from "@prisma/client";
  */
 
 /**
+ * The invoice-line fields the resync reads: provenance, the pack snapshot the rebuild keeps
+ * (priorUnitsPerBoxMap), and the two `isNsfLine` reads (#2268).
+ */
+export const RESYNC_ITEM_SELECT = {
+  orderItemId: true,
+  unitsPerBox: true,
+  systemKind: true,
+  description: true,
+} as const;
+
+type ResyncItem = NsfLineFacts & { orderItemId?: string | null };
+
+/**
  * Map each order line → the ONE invoice that already bills it, or null when the partition is
  * unclean and the resync must bail:
  * - a provenance-less (manual/freeform) line: we can't prove which order line it bills, so we
  *   can't safely rebuild it;
  * - a line shared by two invoices (double-bill risk).
+ *
+ * #2268: a system NSF fee line (`isNsfLine`, the shared predicate) is NOT an order line and never
+ * makes the partition unclean. It is skipped here, and `rebuildSiblingDrafts` keeps the same row
+ * untouched (`preservedNsfLines`, #2242), adding its fee to the rebuilt subtotal and total outside
+ * the tax. Before this, one bounced check froze the invoice against every later order edit.
  */
 export function partitionInvoiceLines(
-  invoices: Array<{ id: string; items?: Array<{ orderItemId?: string | null }> }>,
+  invoices: Array<{ id: string; items?: ResyncItem[] }>,
 ): Map<string, string> | null {
-  const hasUntracked = (i: any) => (i.items ?? []).some((it: any) => !it.orderItemId);
-  if (invoices.some(hasUntracked)) return null;
+  const orderLines = (i: { items?: ResyncItem[] }) =>
+    (i.items ?? []).filter((it) => !isNsfLine(it));
+  if (invoices.some((i) => orderLines(i).some((it) => !it.orderItemId))) return null;
 
   const invoiceByLine = new Map<string, string>();
   for (const inv of invoices) {
-    for (const it of inv.items ?? []) {
+    for (const it of orderLines(inv)) {
       const oid = it.orderItemId as string;
       if (invoiceByLine.has(oid)) return null; // shared → unclean
       invoiceByLine.set(oid, inv.id);

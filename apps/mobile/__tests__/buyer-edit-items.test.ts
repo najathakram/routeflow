@@ -70,7 +70,7 @@ describe("readOnlyQtyText: a read-only row still SHOWS its quantity (#2316 revie
     ["a pack line reads its qty + unit", packLine(), "3 ea"],
   ])("%s", (_n, li, expected) => {
     const d = hydrateBuyerDraft([li]);
-    expect(readOnlyQtyText(d[li.productId])).toBe(expected);
+    expect(readOnlyQtyText(d[li.productId as string])).toBe(expected); // fixtures are catalog lines
   });
 });
 

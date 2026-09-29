@@ -10,6 +10,7 @@
 // beyond what InlineReturnSection already does for the QUOTE (an estimate only; the actual
 // return is captured server-side as part of the order write).
 import * as React from "react";
+import Link from "next/link";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { ORDERS_INLINE_RETURNS_ADDON } from "@/lib/api/addons";
@@ -47,12 +48,18 @@ export interface OrderInlineReturnsSectionProps {
    *  visible with the form/edit mode still open, never the quote-only inline error
    *  InlineReturnSection already renders for its own quote calls). */
   refusalMessage?: string;
+  /** #2647: the return already recorded under this capture key (a key-reused 409): shown as a
+   *  link, so the operator checks what was credited before returning anything else. */
+  refusalReturn?: { returnId: string; returnNumber: string | null } | null;
 }
 
 export const OrderInlineReturnsSection = React.forwardRef<
   OrderInlineReturnsSectionHandle,
   OrderInlineReturnsSectionProps
->(function OrderInlineReturnsSection({ customerId, entryOrderId, refusalMessage }, ref) {
+>(function OrderInlineReturnsSection(
+  { customerId, entryOrderId, refusalMessage, refusalReturn },
+  ref,
+) {
   const hasInlineReturns = useHasAddon(ORDERS_INLINE_RETURNS_ADDON);
   const [expanded, setExpanded] = React.useState(false);
   const [confirmDiscard, setConfirmDiscard] = React.useState(false);
@@ -139,6 +146,15 @@ export const OrderInlineReturnsSection = React.forwardRef<
         <p data-testid="order-return-refusal" className="text-sm text-danger">
           {refusalMessage}
         </p>
+      )}
+      {refusalReturn && (
+        <Link
+          data-testid="order-return-recorded-link"
+          href={`/returns/${refusalReturn.returnId}`}
+          className="text-sm font-medium text-plum underline"
+        >
+          Open {refusalReturn.returnNumber ?? "the recorded return"}
+        </Link>
       )}
     </section>
   );

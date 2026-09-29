@@ -57,6 +57,15 @@ describe("LoginPage (operator)", () => {
     window.history.replaceState(null, "", "/login");
   });
 
+  // B891: the Enter-in-username handler focuses getElementById("password"); the field's id is
+  // explicit, so the useId default can never break it.
+  it("the password field is findable by its explicit id, and its label targets it", () => {
+    renderWithProviders(<LoginPage />);
+    const byId = document.getElementById("password");
+    expect(byId).toBeInstanceOf(HTMLInputElement);
+    expect(screen.getByLabelText("Password")).toBe(byId);
+  });
+
   it("shows the zod validation message and never calls the API when a required field is empty", async () => {
     const user = userEvent.setup();
     renderWithProviders(<LoginPage />);

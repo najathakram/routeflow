@@ -31,6 +31,13 @@ export interface QuoteInlineReturnItem {
   qty?: number;
   boxes: number;
   pieces: number;
+  /** #2695 (SA-557): OPERATOR/TENANT_ADMIN only — a lower-only per-SELLING-unit credit price
+   *  (one box when boxed), capped at the engine's default (400 `RETURN_CREDIT_OVER_CAP` above it).
+   *  Always sent WITH `overrideReason`, on the quote and the capture alike; a driver or buyer
+   *  request carrying either field is a 400. */
+  creditUnitPrice?: number;
+  /** #2695: why — required with `creditUnitPrice`, trimmed, ≤ 200 characters. */
+  overrideReason?: string;
 }
 
 export interface QuoteInlineReturnRequest {
@@ -56,6 +63,10 @@ export interface CaptureInlineReturnItem {
   condition?: string;
   /** Defaults to the reason-driven server convention when omitted. */
   restock?: boolean;
+  /** #2695: see `QuoteInlineReturnItem.creditUnitPrice` — the capture must send the SAME
+   *  override its quote priced, or the two price different chunks. */
+  creditUnitPrice?: number;
+  overrideReason?: string;
 }
 
 export interface CaptureInlineReturnRequest {
