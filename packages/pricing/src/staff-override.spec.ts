@@ -1,4 +1,4 @@
-import { decideStaffOverride, needsOverrideReason } from "./index";
+import { decideStaffOverride, needsOverrideReason, withinStaffOverrideTolerance } from "./index";
 
 /**
  * #2696(c) / SA-558 + SA-558a — ONE rule for a staff-typed price on an order line, shared by the
@@ -127,5 +127,70 @@ describe("#2696(c) needsOverrideReason — the one predicate", () => {
         );
       }
     }
+  });
+});
+
+/**
+ * SA-588 — the ±½¢ band is decided in 4-dp units through the one `round4`, never with a raw float
+ * subtraction (`Math.abs(a - b) <= 0.005` put 3,224 of 28,572 exact-½¢ cases OUT of band).
+ */
+describe("SA-588 withinStaffOverrideTolerance — exact ½¢ boundary is deterministic", () => {
+  const cents = (n: number) => n / 100;
+  const bases: number[] = [];
+  for (const mag of [1, 7, 13, 99, 250, 1234, 9999, 55555, 99999]) {
+    for (let c = 1; c <= 99; c += 2) bases.push(mag + cents(c));
+  }
+  bases.push(0.01, 0.02, 0.5, 99999.99);
+
+  it("exactly ±0.005 from every base is IN band (both directions)", () => {
+    const out: string[] = [];
+    for (const base of bases) {
+      for (const sign of [1, -1]) {
+        const p = base + sign * 0.005;
+        if (!withinStaffOverrideTolerance(p, base)) out.push(`${base}${sign > 0 ? "+" : "-"}`);
+        if (!withinStaffOverrideTolerance(base, p)) out.push(`rev ${base}${sign > 0 ? "+" : "-"}`);
+      }
+    }
+    expect(out).toEqual([]);
+  });
+
+  it("one 4-dp unit beyond (±0.0051) is OUT of band", () => {
+    const out: string[] = [];
+    for (const base of bases) {
+      for (const sign of [1, -1]) {
+        if (withinStaffOverrideTolerance(base + sign * 0.0051, base)) out.push(`${base}`);
+      }
+    }
+    expect(out).toEqual([]);
+  });
+
+  it("the 1.00005-style 5-dp literal cases agree with round4 semantics", () => {
+    expect(withinStaffOverrideTolerance(1.0055, 1.0005)).toBe(true);
+    expect(withinStaffOverrideTolerance(1.0056, 1.0005)).toBe(false);
+  });
+
+  it("needsOverrideReason and decideStaffOverride use the same band at the boundary", () => {
+    const out: string[] = [];
+    for (const base of bases) {
+      const p = base + 0.005;
+      if (
+        needsOverrideReason({
+          overridePrice: p,
+          baselinePrice: base,
+          isSpecialTier: true,
+          hasReason: false,
+        })
+      )
+        out.push(`needs ${base}`);
+      const d = decideStaffOverride({
+        overridePrice: p,
+        baselinePrice: base,
+        listPrice: base + 1,
+        isSpecialTier: true,
+        hasReason: false,
+      });
+      if ("refused" in d) out.push(`decide ${base}`);
+    }
+    expect(out).toEqual([]);
   });
 });
