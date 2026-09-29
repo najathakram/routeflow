@@ -22,55 +22,60 @@ const comps = (a: number, o: number) => [
 const qtys = (xs: Array<{ qty: number }>) => xs.map((x) => x.qty);
 const sum = (xs: number[]) => xs.reduce((a, x) => a + x, 0);
 
-describe("allocateComponentPieces", () => {
+describe("allocateComponentPieces (cumulative, so partials telescope from a scalar prior)", () => {
   it("a full bill copies the components verbatim", () => {
-    const out = allocateComponentPieces({ comps: comps(24, 24), billed: [0, 0], bill: 48 });
-    expect(out).toEqual(comps(24, 24));
+    expect(allocateComponentPieces({ comps: comps(24, 24), prior: 0, bill: 48 })).toEqual(
+      comps(24, 24),
+    );
   });
 
   it("a whole-box partial is per-box x boxes: 1 of 2 boxes of 12+12 -> 12 + 12", () => {
-    const out = allocateComponentPieces({ comps: comps(24, 24), billed: [0, 0], bill: 24 });
+    const out = allocateComponentPieces({ comps: comps(24, 24), prior: 0, bill: 24 });
     expect(qtys(out)).toEqual([12, 12]);
   });
 
+  it("uneven recipe: 1 of 2 boxes of 8+4 -> 8 + 4 per box", () => {
+    const out = allocateComponentPieces({ comps: comps(16, 8), prior: 0, bill: 12 });
+    expect(qtys(out)).toEqual([8, 4]);
+  });
+
   it("47 of 48 uses largest remainder and sums to 47 (tie: weight desc, index asc)", () => {
-    const out = allocateComponentPieces({ comps: comps(24, 24), billed: [0, 0], bill: 47 });
+    const out = allocateComponentPieces({ comps: comps(24, 24), prior: 0, bill: 47 });
     expect(qtys(out)).toEqual([24, 23]);
-    expect(sum(qtys(out))).toBe(47);
   });
 
   it("a zero bill is all zeros and keeps every component row", () => {
-    const out = allocateComponentPieces({ comps: comps(24, 24), billed: [0, 0], bill: 0 });
-    expect(out).toEqual(comps(0, 0));
+    expect(allocateComponentPieces({ comps: comps(24, 24), prior: 5, bill: 0 })).toEqual(
+      comps(0, 0),
+    );
   });
 
   it("the telescoped sum over partial bills equals the order components", () => {
     const order = comps(30, 18);
-    const billed = [0, 0];
-    const parts: number[][] = [];
+    let prior = 0;
+    const totals = [0, 0];
     for (const bill of [10, 13, 5, 20]) {
-      const out = allocateComponentPieces({ comps: order, billed, bill });
-      parts.push(qtys(out));
-      out.forEach((c, i) => (billed[i] += c.qty));
+      const out = allocateComponentPieces({ comps: order, prior, bill });
+      out.forEach((c, i) => (totals[i] += c.qty));
+      prior += bill;
     }
-    expect([parts.reduce((a, p) => a + p[0], 0), parts.reduce((a, p) => a + p[1], 0)]).toEqual([
-      30, 18,
-    ]);
+    expect(totals).toEqual([30, 18]);
   });
 
-  it("refuses a bill above what is unbilled, a fractional bill and mismatched billed", () => {
-    expect(() =>
-      allocateComponentPieces({ comps: comps(24, 24), billed: [10, 0], bill: 39 }),
-    ).toThrow(MoneyInvariantError);
-    expect(() =>
-      allocateComponentPieces({ comps: comps(24, 24), billed: [0, 0], bill: 1.5 }),
-    ).toThrow(MoneyInvariantError);
-    expect(() => allocateComponentPieces({ comps: comps(24, 24), billed: [0], bill: 1 })).toThrow(
-      MoneyInvariantError,
-    );
+  it("refuses a bill past the order pieces and fractional or negative pieces", () => {
+    for (const bad of [
+      { prior: 10, bill: 39 },
+      { prior: 0, bill: 1.5 },
+      { prior: -1, bill: 1 },
+      { prior: 0, bill: -1 },
+    ]) {
+      expect(() => allocateComponentPieces({ comps: comps(24, 24), ...bad })).toThrow(
+        MoneyInvariantError,
+      );
+    }
   });
 
-  it("seeded sweep: never negative, never above unbilled, each bill sums exactly, totals telescope", () => {
+  it("seeded sweep: never negative, never above the component, exact sums, totals telescope", () => {
     const rnd = mulberry32(2717);
     for (let run = 0; run < 300; run++) {
       const n = 1 + Math.floor(rnd() * 4);
@@ -79,20 +84,21 @@ describe("allocateComponentPieces", () => {
         qty: 1 + Math.floor(rnd() * 30),
       }));
       const total = sum(order.map((c) => c.qty));
-      const billed = order.map(() => 0);
-      let left = total;
-      while (left > 0) {
+      const billedSoFar = order.map(() => 0);
+      let prior = 0;
+      while (prior < total) {
+        const left = total - prior;
         const bill = rnd() < 0.3 ? left : 1 + Math.floor(rnd() * left);
-        const out = allocateComponentPieces({ comps: order, billed, bill });
+        const out = allocateComponentPieces({ comps: order, prior, bill });
         expect(sum(qtys(out))).toBe(bill);
         out.forEach((c, i) => {
           expect(c.qty).toBeGreaterThanOrEqual(0);
-          expect(c.qty).toBeLessThanOrEqual(order[i].qty - billed[i]);
-          billed[i] += c.qty;
+          billedSoFar[i] += c.qty;
+          expect(billedSoFar[i]).toBeLessThanOrEqual(order[i].qty);
         });
-        left -= bill;
+        prior += bill;
       }
-      expect(billed).toEqual(order.map((c) => c.qty));
+      expect(billedSoFar).toEqual(order.map((c) => c.qty));
     }
   });
 });
