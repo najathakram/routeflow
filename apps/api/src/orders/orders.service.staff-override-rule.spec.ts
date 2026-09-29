@@ -276,7 +276,7 @@ describe("OrdersService — staff price-override rule (#2716c)", () => {
     service.updateOrderItems(
       "ord-1",
       { items: [{ id: "li-1", action: "UPDATE", qty: 3, unitPrice, ...extra }] } as any,
-      operatorPayload,
+      operatorPayload as any,
     );
   const updated = () => (prisma.orderItem.update as jest.Mock).mock.calls[0][0].data;
   const created = () => (prisma.orderItem.create as jest.Mock).mock.calls[0][0].data;
@@ -333,7 +333,7 @@ describe("OrdersService — staff price-override rule (#2716c)", () => {
       service.updateOrderItems(
         "ord-1",
         { items: [{ productId: "prod-1", qty: 2, unitPrice, ...extra }], replaceAll: false } as any,
-        operatorPayload,
+        operatorPayload as any,
       );
 
     it("C1/C2: below list is DISCOUNTED, above list is MANUAL, both originalPrice = list", async () => {
@@ -374,7 +374,7 @@ describe("OrdersService — staff price-override rule (#2716c)", () => {
       service.updateOrderItems(
         "ord-1",
         { items: [{ productId: "prod-1", qty: 3, unitPrice, ...extra }], replaceAll: true } as any,
-        operatorPayload,
+        operatorPayload as any,
       );
 
     it("R1/R2: a re-created line typed below list is DISCOUNTED, above list MANUAL, original = list", async () => {
