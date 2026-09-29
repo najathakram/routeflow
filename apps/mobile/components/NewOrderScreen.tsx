@@ -115,6 +115,7 @@ import { CartModal } from "./new-order/CartModal";
 import { CreateCreditNoteSheet } from "./new-order/CreateCreditNoteSheet";
 import { CustomerPickerView } from "./new-order/CustomerPickerView";
 import { LinePriceModal } from "./new-order/LinePriceModal";
+import { planScanPriceEdit } from "../lib/scan-price-edit";
 import { UnlistedItemModal } from "./new-order/UnlistedItemModal";
 import { styles } from "./new-order/styles";
 import type { UnlistedLine } from "./new-order/types";
@@ -484,6 +485,18 @@ function ProductPickView({
   const [scanOpen, setScanOpen] = useState(false);
   /** Tray line (catalog id or unlisted local id) whose price is being edited. */
   const [priceEditId, setPriceEditId] = useState<string | null>(null);
+  // B901: mirrors of scanOpen / "reopen the scan sheet when the price modal
+  // closes" for the memoized tray callback, plus the pending present timer.
+  const scanOpenRef = useRef(false);
+  scanOpenRef.current = scanOpen;
+  const resumeScanRef = useRef(false);
+  const priceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (priceTimerRef.current) clearTimeout(priceTimerRef.current);
+    },
+    [],
+  );
   // Newest-first ids for the scan tray + which row is flashing. Both are scan-UI
   // only: the order payload never reads them.
   const [scanOrder, setScanOrder] = useState<string[]>([]);
@@ -1344,14 +1357,32 @@ function ProductPickView({
   // this surface lived in CartModal, reachable only by leaving scan mode —
   // while the order EDIT screen has had a one-tap edit under its scanner for
   // two releases.
+  // iOS rule (B901): a Modal cannot be presented over another Modal — it is
+  // queued until the first dismisses. ScanOrderSheet is a Modal, so close it,
+  // present the price modal after the dismissal, and reopen the scanner when
+  // the price modal closes (closePriceEdit).
   const onTrayEditPrice = useCallback((id: string) => {
     const a = actionsRef.current;
     if (!a.isUnlisted(id) && a.isSpecialLine(id)) {
       a.showInline("Contract price — not editable on this order");
       return;
     }
-    setPriceEditId(id);
+    const plan = planScanPriceEdit(scanOpenRef.current);
+    if (plan.closeScan) setScanOpen(false);
+    resumeScanRef.current = plan.resumeScanOnClose;
+    if (priceTimerRef.current) clearTimeout(priceTimerRef.current);
+    priceTimerRef.current = setTimeout(() => {
+      priceTimerRef.current = null;
+      setPriceEditId(id);
+    }, plan.presentDelayMs);
   }, []);
+  const closePriceEdit = () => {
+    setPriceEditId(null);
+    if (resumeScanRef.current) {
+      resumeScanRef.current = false;
+      setScanOpen(true);
+    }
+  };
   // Resolved lazily (two map lookups) rather than memoized: it is null on every
   // render but the handful where the sheet is open.
   const priceEditTarget = ((): {
@@ -2442,10 +2473,10 @@ function ProductPickView({
         open={priceEditTarget != null}
         name={priceEditTarget?.name ?? ""}
         unitPrice={priceEditTarget?.unitPrice ?? null}
-        onClose={() => setPriceEditId(null)}
+        onClose={closePriceEdit}
         onSave={(value) => {
           const target = priceEditTarget;
-          setPriceEditId(null);
+          closePriceEdit();
           if (!target) return;
           // Money discipline: round every monetary write. The line TOTAL is never written
           // here — the tray/footer re-derive it through computeLineSubtotal from this price.
