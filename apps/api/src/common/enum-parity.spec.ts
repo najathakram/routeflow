@@ -226,7 +226,7 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // enums (migration 20260927070000_onboarding_s2_intake) — mirrored immediately in
 // packages/types/api/onboarding.ts + their `ENUM_TABLE` rows above (102 → 104).
 // Triage for HandoffRealm (#2653, 2026-09-28): one brand-new Prisma enum (migration
-// 20260928120000_2653_auth_handoff_code), mirrored immediately as HANDOFF_REALM_VALUES in
+// 20260929190000_2653_auth_handoff_code), mirrored immediately as HANDOFF_REALM_VALUES in
 // packages/types/api/enums.ts + its `ENUM_TABLE` row above (104 → 105).
 const PINNED_PRISMA_ENUM_COUNT = 105;
 
