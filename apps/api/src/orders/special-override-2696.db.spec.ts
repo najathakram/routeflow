@@ -303,7 +303,7 @@ describeDb("#2696(c) staff price override — real Postgres", () => {
     });
   });
 
-  it("add during edit: a typed tier price with NO reason is a 200 (SA-558b(2)); classification unchanged", async () => {
+  it("add during edit: a typed tier price with NO reason is a 200 (SA-558b(2)); stores SPECIAL per SA-558c", async () => {
     const c = await customer();
     const order = await pendingOrder(c.id);
     await tenantCtx.run(tenantId, () =>
@@ -313,9 +313,11 @@ describeDb("#2696(c) staff price override — real Postgres", () => {
         staff(),
       ),
     );
+    // SA-558c (#2716): a typed tier price on an added line is class C -> rule A, so it stores
+    // SPECIAL (it was MANUAL before the one staff override rule); deliberate rule change.
     expect(cols(await lineOf(order.id))).toMatchObject({
       unitPrice: 8,
-      priceType: "MANUAL",
+      priceType: "SPECIAL",
       originalPrice: 10,
       overrideReason: null,
     });
