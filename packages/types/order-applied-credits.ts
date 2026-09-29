@@ -19,6 +19,8 @@ export interface AppliedCreditNoteRef {
   id: string;
   creditNoteNumber: string;
   reason?: string | null;
+  /** The note's own total (server figure); only compared against an intent, never subtracted. */
+  amount?: string | number | null;
   /** Note-level flag the auto-apply sweep has always set (pre-SA-436 sweeps never marked the
    *  payment). Used only to recognise an old sweep's payment; see `sourceOf`. */
   autoApplied?: boolean;
@@ -77,6 +79,8 @@ export type OrderAppliedCreditRow =
       reason: string | null;
       /** The requested cap, or null for "up to remaining". */
       requested: number | null;
+      /** The credit note's own total, or null when the server did not send it. */
+      creditNoteTotal: number | null;
     };
 
 const cents = (v: string | number) => Math.round(Number(v) * 100);
@@ -129,7 +133,25 @@ export function orderAppliedCredits(order: OrderAppliedCreditsInput): OrderAppli
       creditNoteNumber: oc.creditNote?.creditNoteNumber ?? oc.creditNoteId.slice(0, 8),
       reason: oc.creditNote?.reason ?? null,
       requested: oc.amount == null ? null : Number(oc.amount),
+      creditNoteTotal: oc.creditNote?.amount == null ? null : Number(oc.creditNote.amount),
     });
   }
   return rows;
+}
+
+/**
+ * #2600: the pending row's intent label, shared by web and mobile so the wording cannot drift.
+ * Built from the two SERVER figures only, with a comparison, never a subtraction: an intent below
+ * the note's total says what happens to the rest; equal, or a total that is absent, is today's
+ * "Requested $X"; no intent is "Up to remaining". `fmt` is the caller's money formatter.
+ */
+export function requestedLabel(
+  row: Extract<OrderAppliedCreditRow, { kind: "pending" }>,
+  fmt: (n: number) => string,
+): string {
+  if (row.requested == null) return "Up to remaining";
+  if (row.creditNoteTotal != null && row.requested < row.creditNoteTotal) {
+    return `Requested ${fmt(row.requested)} of ${fmt(row.creditNoteTotal)} (the rest stays as store credit)`;
+  }
+  return `Requested ${fmt(row.requested)}`;
 }

@@ -7,6 +7,7 @@
  */
 import {
   orderAppliedCredits,
+  requestedLabel,
   type OrderAppliedCreditRow,
   type OrderAppliedCreditsInput,
 } from "@routeflow/types";
@@ -241,5 +242,39 @@ describe("orderAppliedCredits (#2404)", () => {
   it("an empty order gives an empty panel", () => {
     expect(orderAppliedCredits({ invoices: [], orderCreditNotes: [] })).toEqual([]);
     expect(orderAppliedCredits({})).toEqual([]);
+  });
+});
+
+describe("requestedLabel (#2600): say what happens to the rest of a partly-requested credit", () => {
+  const fmt = (n: number) => `$${n.toFixed(2)}`;
+  const pendingFor = (amount: number | null, total?: number | null) =>
+    orderAppliedCredits({
+      orderCreditNotes: [
+        {
+          id: "oc",
+          creditNoteId: "cn",
+          amount,
+          creditNote: { id: "cn", creditNoteNumber: "CN-1", amount: total },
+        },
+      ],
+    })[0] as Extract<OrderAppliedCreditRow, { kind: "pending" }>;
+
+  it("intent below the note total names the rest", () => {
+    const row = pendingFor(20, 50);
+    expect(row.creditNoteTotal).toBe(50);
+    expect(requestedLabel(row, fmt)).toBe(
+      "Requested $20.00 of $50.00 (the rest stays as store credit)",
+    );
+  });
+  it("intent equal to the total is today's label", () => {
+    expect(requestedLabel(pendingFor(50, "50.00"), fmt)).toBe("Requested $50.00");
+  });
+  it("note total absent is never invented", () => {
+    const row = pendingFor(20, undefined);
+    expect(row.creditNoteTotal).toBeNull();
+    expect(requestedLabel(row, fmt)).toBe("Requested $20.00");
+  });
+  it("no intent stays 'Up to remaining'", () => {
+    expect(requestedLabel(pendingFor(null, 50), fmt)).toBe("Up to remaining");
   });
 });
