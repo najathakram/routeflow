@@ -290,7 +290,9 @@ describe("propagateFamilyPrice (test 18, real ladder)", () => {
     for (const call of tx.product.updateMany.mock.calls) {
       expect(call[0].where.tenantId).toBe("t1");
     }
-    expect(tx.product.updateMany.mock.calls[0][0].where.parentProductId).toBe("fam");
+    // House lock order: the recipe products are written first, the variants (parentProductId) last.
+    const last = tx.product.updateMany.mock.calls.at(-1)!;
+    expect(last[0].where.parentProductId).toBe("fam");
   });
 });
 

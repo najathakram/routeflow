@@ -8,6 +8,7 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
+import { FeatureConfigService } from "../billing/feature-config.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 /**
@@ -53,7 +54,11 @@ const isOpen = (r: Recipe) => r.status === "DRAFT" || r.status === "ACTIVE";
 const inOpenRoles = (r: Recipe, id: string) =>
   isOpen(r) && (r.productId === id || r.familyProductId === id || r.components.includes(id));
 
-async function build(existing: Record<string, unknown>, recipes: Recipe[]) {
+async function build(
+  existing: Record<string, unknown>,
+  recipes: Recipe[],
+  mode: "on" | "off" = "off",
+) {
   const prisma = createMockPrisma();
   const events: string[] = [];
   const recipeApi = (tag: "outer" | "tx") => ({
@@ -75,7 +80,14 @@ async function build(existing: Record<string, unknown>, recipes: Recipe[]) {
   const tx: any = {
     ...prisma,
     recipe: { ...prisma.recipe, ...recipeApi("tx") },
-    product: { ...prisma.product, findFirst: jest.fn().mockResolvedValue(existing) },
+    product: {
+      ...prisma.product,
+      findFirst: jest.fn().mockResolvedValue(existing),
+      update: jest.fn(async (args: any) => {
+        events.push(`write:product:${args.where.id}`);
+        return prisma.product.update(args);
+      }),
+    },
     $queryRaw: jest.fn(async (strings: TemplateStringsArray, ...values: unknown[]) => {
       const kind = /FOR UPDATE/i.test(strings.join("?")) ? "update" : "raw";
       events.push(`lock:${kind}:${String(values[0])}`);
@@ -94,9 +106,13 @@ async function build(existing: Record<string, unknown>, recipes: Recipe[]) {
       { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(true) } },
       { provide: PlanCatalogService, useValue: { upgradeTargetForFlag: jest.fn() } },
       { provide: RouteFlowGateway, useValue: { emitProductUpdated: jest.fn() } },
+      {
+        provide: FeatureConfigService,
+        useValue: { getEffectiveMode: jest.fn().mockResolvedValue(mode) },
+      },
     ],
   }).compile();
-  return { service: mod.get(ProductsService), prisma, events };
+  return { service: mod.get(ProductsService), prisma, events, tx };
 }
 
 const recipeOf = (over: Partial<Recipe> = {}): Recipe => ({
@@ -253,5 +269,57 @@ describe("house lock order and in-tx checks (SA-584 B2 c)", () => {
     const err = await service.update("prod-1", { parentProductId: null } as any).catch((e) => e);
     expect(err).toBeInstanceOf(ConflictException);
     expect(prisma.product.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("family-price.ts paths behind the guard (mode on, lead fold item 4)", () => {
+  const priced = {
+    pricePerUnit: "10.00",
+    priceTier2: "10.00",
+    priceTier3: "10.00",
+    priceTier4: "10.00",
+    priceTier5: "10.00",
+  };
+
+  it("adopting a RECIPE product into a family is refused BEFORE the adoption branch rewrites its price or audits", async () => {
+    const recipeProduct = { ...base, ...priced, id: "rp", parentProductId: null, kind: "RECIPE" };
+    const { service, prisma, tx } = await build(
+      recipeProduct,
+      [recipeOf({ status: "ACTIVE" })],
+      "on",
+    );
+    const err = await service.update("rp", { parentProductId: "fam-x" } as any).catch((e) => e);
+    expect(bodyOf(err)).toMatchObject({
+      code: "RECIPE_INVALID",
+      reason: "RECIPE_PRODUCT_HAS_PARENT",
+    });
+    expect(tx.product.update).not.toHaveBeenCalled();
+    expect(prisma.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("adopting a family that has a recipe is refused before the adoption branch too", async () => {
+    const family = { ...base, ...priced, id: "fam", parentProductId: null };
+    const { service, prisma, tx } = await build(family, [recipeOf({ status: "DRAFT" })], "on");
+    const err = await service.update("fam", { parentProductId: "fam-x" } as any).catch((e) => e);
+    expect(bodyOf(err)).toMatchObject({ code: "RECIPE_INVALID", reason: "FAMILY_IS_VARIANT" });
+    expect(tx.product.update).not.toHaveBeenCalled();
+    expect(prisma.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("a component re-parent is refused by the guard before the family price branch runs", async () => {
+    const component = { ...base, ...priced };
+    const { service, tx } = await build(component, [recipeOf()], "on");
+    const err = await service.update("prod-1", { parentProductId: "fam2" } as any).catch((e) => e);
+    expect(bodyOf(err)).toMatchObject({ code: "RECIPE_FAMILY_LOCKED" });
+    expect(tx.product.update).not.toHaveBeenCalled();
+  });
+
+  it("a price edit of a recipe product takes the family lock BEFORE its own write (family -> recipe product)", async () => {
+    const recipeProduct = { ...base, ...priced, id: "rp", parentProductId: null, kind: "RECIPE" };
+    const { service, events } = await build(recipeProduct, [recipeOf({ status: "ACTIVE" })], "on");
+    await service.update("rp", { pricePerUnit: "10.00" } as any);
+    const family = events.indexOf("lock:update:fam");
+    expect(family).toBeGreaterThanOrEqual(0);
+    expect(family).toBeLessThan(events.indexOf("write:product:rp"));
   });
 });
