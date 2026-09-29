@@ -1,4 +1,4 @@
-import { toLineComponentView, toLineComponentViews } from "./component-view";
+import { toLineComponentView, toLineComponentViews, withComponentViews } from "./component-view";
 
 /**
  * #2717 M3: the read mapper for a frozen component row. Prisma hands a Decimal (or a string over
@@ -54,5 +54,38 @@ describe("toLineComponentView", () => {
     expect(toLineComponentViews(rows as never).map((v) => v.componentProductId)).toEqual(["a", "b"]);
     expect(toLineComponentViews(undefined)).toEqual([]);
     expect(toLineComponentViews(null)).toEqual([]);
+  });
+});
+
+describe("withComponentViews (the findOne wiring)", () => {
+  const row = (position: number, price: unknown) => ({
+    id: `c${position}`,
+    componentProductId: `p${position}`,
+    name: `N${position}`,
+    qty: 12,
+    displayUnitPrice4: price,
+    position,
+    tenantId: "t-1",
+    orderItemId: "li-1",
+  });
+
+  it("maps every line's components to views: a number price, position order, no tenant or parent key", () => {
+    const out = withComponentViews([
+      { id: "li-1", subtotal: 30, components: [row(1, { toString: () => "0.6250" }), row(0, null)] },
+    ]) as Array<{ id: string; subtotal: number; components: Array<Record<string, unknown>> }>;
+    expect(out[0].id).toBe("li-1");
+    expect(out[0].subtotal).toBe(30);
+    expect(out[0].components.map((c) => c.position)).toEqual([0, 1]);
+    expect(out[0].components[0].displayUnitPrice4).toBeNull();
+    expect(out[0].components[1].displayUnitPrice4).toBe(0.625);
+    expect(out[0].components[1]).not.toHaveProperty("tenantId");
+    expect(out[0].components[1]).not.toHaveProperty("orderItemId");
+  });
+
+  it("a line with no components key stays exactly as it was (plain lines, byte-identical)", () => {
+    const plain = { id: "li-2", qty: 1 };
+    const out = withComponentViews([plain]) as Array<object>;
+    expect(out[0]).toBe(plain);
+    expect(withComponentViews(undefined)).toBeUndefined();
   });
 });
