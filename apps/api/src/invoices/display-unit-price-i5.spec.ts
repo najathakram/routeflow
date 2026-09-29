@@ -50,11 +50,38 @@ function listTsFiles(dir: string): string[] {
   return out;
 }
 
+/** Which of these files sit in a money path or a money directory (they must never name it). */
+function moneyViolations(files: string[]): string[] {
+  return files.filter(
+    (f) => MONEY_DIRS.some((d) => f.startsWith(`${d}/`)) || MONEY_PATHS.includes(f),
+  );
+}
+
 describe("displayUnitPrice4 is display-only (I5, case 16)", () => {
-  const namers = listTsFiles(SRC_ROOT)
+  const sourceFiles = listTsFiles(SRC_ROOT);
+  const namers = sourceFiles
     .map((f) => ({ rel: relative(SRC_ROOT, f).split("\\").join("/"), text: readFileSync(f, "utf8") }))
     .filter((f) => readsDisplayUnitPrice4(f.text))
     .map((f) => f.rel);
+
+  it("is not vacuous: it scans the tree and finds every allowlisted file naming the identifier", () => {
+    expect(sourceFiles.length).toBeGreaterThan(300);
+    expect(namers.length).toBeGreaterThanOrEqual(Object.keys(ALLOW).length);
+    expect(namers.length).toBeGreaterThanOrEqual(5);
+    // every money path the guard lists must still exist, else that half of the guard checks nothing
+    const rels = new Set(sourceFiles.map((f) => relative(SRC_ROOT, f).split("\\").join("/")));
+    expect(MONEY_PATHS.filter((f) => !rels.has(f))).toEqual([]);
+  });
+
+  it("negative control: a fixture naming it in a money path, a money directory and a stray file is reported", () => {
+    const fixture = "const price = row.displayUnitPrice4;";
+    const fixtureFiles = ["invoices/invoice-edit-plan.ts", "analytics/report.ts", "orders/stray.ts"];
+    const naming = fixtureFiles.filter(() => readsDisplayUnitPrice4(fixture));
+    expect(naming).toEqual(fixtureFiles);
+    expect(naming.filter((f) => !(f in ALLOW))).toEqual(fixtureFiles); // the allowlist check rejects all three
+    expect(moneyViolations(naming)).toEqual(["invoices/invoice-edit-plan.ts", "analytics/report.ts"]);
+    expect(moneyViolations(["orders/component-view.ts"])).toEqual([]);
+  });
 
   it("only allowlisted files name it", () => {
     expect(namers.filter((f) => !(f in ALLOW))).toEqual([]);
@@ -65,9 +92,7 @@ describe("displayUnitPrice4 is display-only (I5, case 16)", () => {
   });
 
   it("no money path or money directory names it", () => {
-    const inMoneyDir = namers.filter((f) => MONEY_DIRS.some((d) => f.startsWith(`${d}/`)));
-    const inMoneyFile = namers.filter((f) => MONEY_PATHS.includes(f));
-    expect([...inMoneyDir, ...inMoneyFile]).toEqual([]);
+    expect(moneyViolations(namers)).toEqual([]);
   });
 
   it("the invoices service does not read it (it only reaches it through the writer modules)", () => {

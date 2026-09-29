@@ -113,34 +113,71 @@ function listTsFiles(dir: string): string[] {
   return out;
 }
 
+/** Add every writer site of one file's text to `found` as `file::function` -> function source. */
+function scanSites(rel: string, text: string, found: Map<string, string>): Map<string, string> {
+  const lines = text.split("\n");
+  const starts: Array<{ at: number; name: string }> = [];
+  lines.forEach((l, i) => {
+    if (FN_START.test(l)) starts.push({ at: i, name: fnName(l) });
+  });
+  lines.forEach((l, i) => {
+    if (!SITE.test(l) || /^\s*(\/\/|\*)/.test(l)) return;
+    const owner = [...starts].reverse().find((s) => s.at <= i);
+    const key = `${rel}::${owner?.name ?? "?"}`;
+    if (found.has(key)) return;
+    const next = starts.find((s) => owner && s.at > owner.at);
+    found.set(key, lines.slice(owner?.at ?? 0, next ? next.at : lines.length).join("\n"));
+  });
+  return found;
+}
+
 /** `file::function` -> that function's source text, for every function holding a writer site. */
-function collectSites(): Map<string, string> {
+function collectSites(files: string[]): Map<string, string> {
   const found = new Map<string, string>();
-  for (const file of listTsFiles(SRC_ROOT)) {
+  for (const file of files) {
     const rel = relative(SRC_ROOT, file).split("\\").join("/");
-    const lines = readFileSync(file, "utf8").split("\n");
-    const starts: Array<{ at: number; name: string }> = [];
-    lines.forEach((l, i) => {
-      if (FN_START.test(l)) starts.push({ at: i, name: fnName(l) });
-    });
-    lines.forEach((l, i) => {
-      if (!SITE.test(l) || /^\s*(\/\/|\*)/.test(l)) return;
-      const owner = [...starts].reverse().find((s) => s.at <= i);
-      const key = `${rel}::${owner?.name ?? "?"}`;
-      if (found.has(key)) return;
-      const next = starts.find((s) => owner && s.at > owner.at);
-      found.set(key, lines.slice(owner?.at ?? 0, next ? next.at : lines.length).join("\n"));
-    });
+    scanSites(rel, readFileSync(file, "utf8"), found);
   }
   return found;
 }
 
-describe("composition writer tripwire (#2717 M3, case 14)", () => {
-  const sites = collectSites();
+/** Nested `components: { create` sites of one text: how many, and how many name no tenantId. */
+function nestedComponentCreates(text: string): { found: number; withoutTenant: number } {
+  const re = /\bcomponents\s*:\s*\{\s*create\b/g;
+  let found = 0;
+  let withoutTenant = 0;
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    found += 1;
+    const window = text.slice(Math.max(0, m.index - 400), m.index + 400);
+    if (!window.includes("tenantId")) withoutTenant += 1;
+  }
+  return { found, withoutTenant };
+}
 
-  it("is not vacuous: it finds the known order and invoice writers", () => {
+describe("composition writer tripwire (#2717 M3, case 14)", () => {
+  const files = listTsFiles(SRC_ROOT);
+  const sites = collectSites(files);
+
+  it("is not vacuous: it scans the source tree and finds the known order and invoice writers", () => {
+    // Floors, not exact counts: the scan must keep finding the tree and a healthy set of sites.
+    expect(files.length).toBeGreaterThan(300);
+    expect(sites.size).toBeGreaterThanOrEqual(30);
     expect(sites.has("orders/orders.service.ts::updateOrderItems")).toBe(true);
     expect(sites.has("invoices/invoices.service.ts::create")).toBe(true);
+  });
+
+  it("negative control: the scanner reports an unlisted writer in a fixture, so the listing check would fail on it", () => {
+    const fixture = [
+      "export class FixtureService {",
+      "  async sneakyWriter(tx: unknown) {",
+      "    await tx.orderItem.create({ data: { orderId: 'o', qty: 1 } });",
+      "  }",
+      "}",
+    ].join("\n");
+    const fixtureSites = scanSites("fixture/fixture.service.ts", fixture, new Map());
+    const unlisted = [...fixtureSites.keys()].filter((k) => !REGISTRY[k]);
+    expect(unlisted).toEqual(["fixture/fixture.service.ts::sneakyWriter"]);
+    expect(fixtureSites.get(unlisted[0])).not.toMatch(/syncOrderLineCompositions\(|this\.syncCompositions\(/);
   });
 
   it("every order/invoice line writer is listed (an unlisted new site fails here)", () => {
@@ -171,15 +208,24 @@ describe("composition writer tripwire (#2717 M3, case 14)", () => {
   );
 
   it("every nested `components: { create` passes tenantId (nested creates are not tenant-injected)", () => {
+    let found = 0;
     const offenders: string[] = [];
-    for (const file of listTsFiles(SRC_ROOT)) {
-      const text = readFileSync(file, "utf8");
-      const re = /\bcomponents\s*:\s*\{\s*create\b/g;
-      for (let m = re.exec(text); m; m = re.exec(text)) {
-        const window = text.slice(Math.max(0, m.index - 400), m.index + 400);
-        if (!window.includes("tenantId")) offenders.push(relative(SRC_ROOT, file));
-      }
+    for (const file of files) {
+      const r = nestedComponentCreates(readFileSync(file, "utf8"));
+      found += r.found;
+      if (r.withoutTenant > 0) offenders.push(relative(SRC_ROOT, file));
     }
+    expect(found).toBeGreaterThanOrEqual(1); // not vacuous: the invoice carry builder is one
     expect(offenders).toEqual([]);
+  });
+
+  it("negative control: a nested components create with no tenantId in a fixture is reported", () => {
+    expect(nestedComponentCreates("const d = { components: { create: [{ qty: 1 }] } };")).toEqual({
+      found: 1,
+      withoutTenant: 1,
+    });
+    expect(
+      nestedComponentCreates("const d = { components: { create: [{ qty: 1, tenantId: t }] } };"),
+    ).toEqual({ found: 1, withoutTenant: 0 });
   });
 });
