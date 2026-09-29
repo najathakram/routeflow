@@ -5,6 +5,7 @@ import { PlanCatalogService } from "./plan-catalog.service";
 import { FeatureOverrideService } from "./feature-override.service";
 import {
   addonSkuCode,
+  effectivePlanFlags,
   findPlanDefinition,
   isAlwaysEnforcedPlan,
   planKeyFromEnum,
@@ -202,8 +203,15 @@ export class EntitlementsService {
     const skuByCode = new Map(version.addonSkus.map((s) => [s.sku, s]));
 
     // Resolve active add-ons → canonical SKU codes → catalog metadata.
+    // #2700 (SA-559(2)): flags gain forward from the PUBLISHED version's same plan. One extra
+    // query, only when the tenant is pinned to a version that is not itself the published one
+    // (this whole result sits behind the 30 s cache); it also serves the SKU fallback below.
+    const published =
+      tenant.planVersionId && version.status !== "PUBLISHED"
+        ? await this.catalog.getPublishedVersion()
+        : null;
     const activeCodes: string[] = [];
-    const flags = new Set<string>(def.featureFlags);
+    const flags = new Set<string>(effectivePlanFlags(def, version.id, published));
     const capacity: Record<string, number> = {
       SEATS: 0,
       ROUTES: 0,
@@ -219,22 +227,15 @@ export class EntitlementsService {
     // and each gated write 403s. Pinning protects plan PRICING; it must not
     // make newer addons un-grantable. Resolved lazily: the published catalog
     // is only fetched when a pinned catalog actually misses a code.
-    let publishedSkuByCode: Map<string, (typeof version.addonSkus)[number]> | null = null;
+    const publishedSkuByCode: Map<string, (typeof version.addonSkus)[number]> =
+      published && published.id !== version.id
+        ? new Map(published.addonSkus.map((s) => [s.sku, s]))
+        : new Map();
     for (const addon of tenant.addons) {
       const code = addonSkuCode(addon);
       if (!code) continue;
       activeCodes.push(code);
-      let meta = skuByCode.get(code);
-      if (!meta) {
-        if (!publishedSkuByCode) {
-          const published = await this.catalog.getVersionForTenant(null);
-          publishedSkuByCode =
-            published.id === version.id
-              ? new Map()
-              : new Map(published.addonSkus.map((s) => [s.sku, s]));
-        }
-        meta = publishedSkuByCode.get(code);
-      }
+      const meta = skuByCode.get(code) ?? publishedSkuByCode.get(code);
       if (!meta) {
         this.logger.warn(
           `tenant ${tenantId}: active addon '${addon.addonKey}' resolves to SKU '${code}' ` +

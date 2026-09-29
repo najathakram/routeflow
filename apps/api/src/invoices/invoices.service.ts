@@ -24,6 +24,7 @@ import {
   roundMoney,
   normalizeBoxesPieces,
   remainingCapacity,
+  inferredGoodsFlatRate,
 } from "@routeflow/pricing";
 import { computeDepositFields } from "./deposit-fields";
 import { orderLineShape, orderLineUnchanged } from "./order-backsync-lines";
@@ -106,9 +107,9 @@ import {
   buildPriceAdjustmentUpdates,
   commitPriceAdjustment,
   loadPriceAdjustmentReference,
-  inferredGoodsFlatRate,
   lockInvoiceForPriceAdjustment,
 } from "./price-adjustment-ledger";
+import { assertNsfLinesUntaxed } from "./nsf-line-tax-guard";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { assertNoUnspentSourcedCredits } from "../credit-notes/sourced-credit-guard";
@@ -364,6 +365,7 @@ export class InvoicesService {
   async create(dto: Omit<CreateInvoiceDto, "items"> & { items: ManualLineItem[] }) {
     const issueDateInput = dto.issueDate ? issueDateStamp(dto.issueDate) : null; // #2197: 400 first
     const due = dueDateStamps(dto); // #2256: the due dates too, refused before any read or write
+    assertNsfLinesUntaxed(dto.items); // #2656: an NSF-described line is never taxed (400)
     const customer = await this.prisma
       .forTenant()
       .customer.findUnique({ where: { id: dto.customerId } });
@@ -3127,10 +3129,15 @@ export class InvoicesService {
         // productId), keep untouched rows verbatim and in place, re-price only changed lines. Rules
         // and reasoning: invoice-edit-plan.ts.
         const storedRows = await tx.invoiceItem.findMany({ where: { invoiceId: id } });
+        const matches = matchEditLines(items, storedRows);
+        assertNsfLinesUntaxed(
+          items,
+          matches.map((m) => m.row),
+        ); // #2656: 400 before any write
         const editLines = buildEditedLines({
           items: items,
           stored: storedRows,
-          matches: matchEditLines(items, storedRows),
+          matches,
           productMap,
           categoryMap,
           clampFreeUnits: (f, b, q) => this.clampLineFreeUnits(f, b, q),
@@ -4280,7 +4287,7 @@ export class InvoicesService {
       qty: i.qty,
       unitPrice: i.unitPrice,
       discount: i.discount,
-      taxRate: i.taxRate,
+      taxRate: isNsfLine(i) ? 0 : i.taxRate, // #2656: the NSF line is never taxed, even when copied
       boxes: (i as any).boxes ?? null,
       pieces: (i as any).pieces ?? null,
       // The sale-time box size travels with the boxes/pieces: without it the copy depends on the LIVE
@@ -5835,7 +5842,7 @@ export class InvoicesService {
       // B662: item writes, invoice totals and the regulated-ledger sync commit or fail TOGETHER.
       await this.prisma.tenantTransaction(async (tx: any) => {
         const live = await lockInvoiceForPriceAdjustment(tx, inv); // Invoice FIRST, then its rows
-        const inferred = inferredGoodsFlatRate(live); // #2243: goods only, never the NSF fee line
+        const inferred = inferredGoodsFlatRate({ ...live, lines: live.items }); // #2656: goods only
         const { categoriesById, unitsPerBoxByProduct } = await loadPriceAdjustmentReference(
           tx,
           live.items,

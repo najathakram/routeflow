@@ -19,6 +19,11 @@ const API_WRAPPER = "apps/api/src/invoices/nsf-line.ts";
 const PREFIX_DEFINITION = /\bNSF_FEE_DESCRIPTION_PREFIX\s*[:=]\s*["'`]/;
 const PREFIX_LITERAL = /NSF fee — returned check/;
 const PREDICATE_DEFINITION = /\bfunction\s+isNsfLine\s*[<(]|\b(?:const|let|var)\s+isNsfLine\s*[:=]/;
+// #2656 / SA-549: the goods-only inferred rate has one home too. App source calls
+// inferredGoodsFlatRate; a direct inferredFlatRate( call is how the 3 unrounded copies were written.
+const GOODS_RATE_DEFINITION =
+  /\bfunction\s+inferredGoodsFlatRate\s*[<(]|\b(?:const|let|var)\s+inferredGoodsFlatRate\s*[:=]/;
+const DIRECT_INFERENCE = /\binferredFlatRate\s*\(/;
 
 const rel = (f: string) => relative(REPO_ROOT, f).split(sep).join("/");
 function walk(dir: string, out: string[] = []): string[] {
@@ -45,6 +50,8 @@ function offenders(): string[] {
     const text = readFileSync(file, "utf8");
     if (PREFIX_DEFINITION.test(text) || PREFIX_LITERAL.test(text)) out.push(`${r}: NSF prefix`);
     if (PREDICATE_DEFINITION.test(text) && r !== API_WRAPPER) out.push(`${r}: isNsfLine`);
+    if (GOODS_RATE_DEFINITION.test(text)) out.push(`${r}: inferredGoodsFlatRate`);
+    if (DIRECT_INFERENCE.test(text)) out.push(`${r}: direct inferredFlatRate(`);
   }
   return out.sort();
 }
@@ -71,5 +78,11 @@ describe("the NSF predicate and prefix have one home: packages/pricing (#2392, S
     expect(files).toContain("apps/api/scripts/backfill-2169-nsf-system-kind.mjs");
     expect(files).toContain("apps/api/src/sales-agents/commission-math.ts");
     expect(files).toContain("apps/mobile/lib/invoice-edit-tax.ts");
+    // #2656: the goods-rate patterns, and the scan reaches all three former copies.
+    expect(GOODS_RATE_DEFINITION.test("export function inferredGoodsFlatRate(live) {")).toBe(true);
+    expect(DIRECT_INFERENCE.test("const r = inferredFlatRate({ subtotal })")).toBe(true);
+    expect(DIRECT_INFERENCE.test("const r = inferredGoodsFlatRate({ subtotal })")).toBe(false);
+    expect(files).toContain("apps/api/src/invoices/price-adjustment-ledger.ts");
+    expect(files).toContain("apps/api/scripts/backfill-b294-order-line-taxrate.mjs");
   });
 });
