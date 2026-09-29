@@ -32,19 +32,28 @@ describe("resolveScanSellLevel — R1/R2 (the CODE decides the level, never the 
     expect(resolveScanSellLevel({ unitsPerBox: 6 }, [BOX])).toBe(BOX);
   });
 
-  it("R2: a SHARED code (BOX and UNIT) -> BOX, in either order of the set", () => {
+  it("R2 (SA-580b): a SHARED code (BOX and UNIT) on a boxed product -> the default sell unit (BOX), in either order of the set", () => {
     expect(resolveScanSellLevel({ unitsPerBox: 6 }, [BOX, UNIT])).toBe(BOX);
     expect(resolveScanSellLevel({ unitsPerBox: 6 }, [UNIT, BOX])).toBe(BOX);
   });
 
-  it("R2/R3: shared code is BOX today — there is no per-customer default unit, so no proxy", () => {
+  it("R2 (SA-580b): a shared code on upb > 1 -> BOX, on upb <= 1 / null -> UNIT (defaultSellLevel decides, not a fixed BOX)", () => {
     for (const upb of [2, 6, 24]) {
       expect(resolveScanSellLevel({ unitsPerBox: upb }, [BOX, UNIT])).toBe(BOX);
     }
+    for (const upb of [1, 0, null, undefined]) {
+      expect(resolveScanSellLevel({ unitsPerBox: upb }, [BOX, UNIT])).toBe(UNIT);
+      expect(resolveScanSellLevel({ unitsPerBox: upb }, [UNIT, BOX])).toBe(UNIT);
+    }
+  });
+
+  it("R2 (SA-580b): a distinct code still wins over the default — BOX-only on upb 1 -> BOX, UNIT-only on upb 6 -> UNIT", () => {
+    expect(resolveScanSellLevel({ unitsPerBox: 1 }, [BOX])).toBe(BOX);
+    expect(resolveScanSellLevel({ unitsPerBox: 6 }, [UNIT])).toBe(UNIT);
   });
 
   it("supersedes plan cases 7-9: no lineMode input exists, and a smuggled one changes nothing", () => {
-    // Plan case 7 said a shared code on a unit-mode line -> UNIT. SA-580: it is BOX.
+    // Plan case 7 said a shared code on a unit-mode line -> UNIT. The line never matters: at upb 6 the default unit is BOX.
     const smuggled = { unitsPerBox: 6, lineMode: "UNIT", sellBy: "unit" } as unknown as {
       unitsPerBox: number;
     };
@@ -76,6 +85,10 @@ describe("resolveScanSellLevel — R1/R2 (the CODE decides the level, never the 
       if (levels.length && rnd() < 0.3) levels.push(levels[0]);
       const out = resolveScanSellLevel({ unitsPerBox: upb as number | null }, levels);
       expect(SELL_LEVEL_VALUES).toContain(out);
+      // SA-580b: whenever the set holds BOTH levels the answer is the product's default sell unit.
+      if (levels.includes(BOX) && levels.includes(UNIT)) {
+        expect(out).toBe(defaultSellLevel({ unitsPerBox: upb as number | null }));
+      }
     }
   });
 });
@@ -134,14 +147,20 @@ describe("levelsForScannedCode — legacy columns (parity with mobile scanUnitKi
     expect(resolveScanSellLevel(boxed, got)).toBe(level);
   });
 
-  it("unitSku == barcode (shared) at upb 6 -> BOX (R2)", () => {
+  it("unitSku == barcode (shared) at upb 6 -> BOX (R2, default unit)", () => {
     const p = { ...boxed, unitSku: boxed.barcode };
     expect(resolveScanSellLevel(p, levelsForScannedCode(boxed.barcode, p))).toBe(BOX);
   });
 
-  it("unitSku == sku (shared) at upb 6 -> BOX (R2)", () => {
+  it("unitSku == sku (shared) at upb 6 -> BOX (R2, default unit)", () => {
     const p = { ...boxed, unitSku: "COLA-6" };
     expect(resolveScanSellLevel(p, levelsForScannedCode("COLA-6", p))).toBe(BOX);
+  });
+
+  it("SA-580b: unitSku == sku (shared) on an upb-1 product -> UNIT (default unit), not BOX", () => {
+    const p = { barcode: null, sku: "PLAIN-1", unitSku: "PLAIN-1", unitsPerBox: 1 };
+    expect([...levelsForScannedCode("PLAIN-1", p)].sort()).toEqual([BOX, UNIT]);
+    expect(resolveScanSellLevel(p, levelsForScannedCode("PLAIN-1", p))).toBe(UNIT);
   });
 
   it("matches case-insensitively and through the normalizeScanCode candidate set (UPC-A 12 vs EAN-13 zero-padded)", () => {
@@ -176,10 +195,12 @@ describe("levelsForScannedCode — ProductBarcode rows (R1/R2 on rows)", () => {
     expect(resolveScanSellLevel(withRows, levelsForScannedCode("BOXCODE", withRows))).toBe(BOX);
   });
 
-  it("a row code at BOTH levels -> shared -> BOX (R2)", () => {
+  it("a row code at BOTH levels -> shared -> the product default unit (R2, SA-580b): BOX at upb 6, UNIT at upb 1", () => {
     const got = levelsForScannedCode("SHARED", withRows);
     expect([...got].sort()).toEqual([BOX, UNIT]);
     expect(resolveScanSellLevel(withRows, got)).toBe(BOX);
+    const plain = { ...withRows, unitsPerBox: 1 };
+    expect(resolveScanSellLevel(plain, levelsForScannedCode("SHARED", plain))).toBe(UNIT);
   });
 
   it("when barcodes[] is present it is authoritative over the legacy columns (a stale unitSku column does not add UNIT)", () => {

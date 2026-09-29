@@ -53,10 +53,16 @@ describe("useScanCodeHandler — passes the scanned level (R1/R2)", () => {
     expect(d.addLineItem).toHaveBeenCalledWith(p, "BOX");
   });
 
-  it("R2: a shared code (BOX and UNIT) -> 'BOX'", async () => {
+  it("R2 (SA-580b): a shared code (BOX and UNIT) -> the product default unit: 'BOX' at upb>1", async () => {
     const p = boxed({ scanMatch: { code: "SH", levels: ["UNIT", "BOX"] } });
     const d = await scan("SH", p);
     expect(d.addLineItem).toHaveBeenCalledWith(p, "BOX");
+  });
+
+  it("R2 (SA-580b): a shared code on an upb<=1 product -> 'UNIT' (the default unit, not BOX)", async () => {
+    const p = boxed({ unitsPerBox: 1, scanMatch: { code: "SH", levels: ["UNIT", "BOX"] } });
+    const d = await scan("SH", p);
+    expect(d.addLineItem).toHaveBeenCalledWith(p, "UNIT");
   });
 
   it("web unitSku scan -> a piece (named behaviour change, SA-578 Q2): no scanMatch, code equals unitSku, upb>1 -> 'UNIT'", async () => {

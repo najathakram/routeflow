@@ -61,11 +61,27 @@ describe("scan ladder — level from the shared resolver (local fast path)", () 
     expect(b.accepted).toEqual([{ id: "p1", level: "BOX" }]);
   });
 
-  it("a row code held at BOTH levels -> BOX (R2)", async () => {
+  it("a row code held at BOTH levels -> the product default unit, BOX at upb 6 (R2, SA-580b)", async () => {
     const p: P = { ...boxed, barcodes: [{ code: "SH", level: "BOX" }, { code: "SH", level: "UNIT" }] };
     const { scan, accepted } = harness([p]);
     await scan("SH");
     expect(accepted).toEqual([{ id: "p1", level: "BOX" }]);
+  });
+});
+
+describe("scan ladder — a shared code on an upb<=1 product adds a UNIT (SA-580b)", () => {
+  it("local shared row code, upb 1 -> UNIT; upb 6 stays BOX", async () => {
+    const plain: P = { ...boxed, unitsPerBox: 1, barcodes: [{ code: "SH", level: "BOX" }, { code: "SH", level: "UNIT" }] };
+    const { scan, accepted } = harness([plain]);
+    await scan("SH");
+    expect(accepted).toEqual([{ id: "p1", level: "UNIT" }]);
+  });
+
+  it("shared scanMatch from the server rung, upb 1 -> UNIT", async () => {
+    const remote: P = { ...boxed, unitsPerBox: 1, scanMatch: { code: "SH", levels: ["UNIT", "BOX"] } };
+    const { scan, accepted } = harness([], async () => ({ product: remote, source: "barcode" }) as any);
+    await scan("SH");
+    expect(accepted).toEqual([{ id: "p1", level: "UNIT" }]);
   });
 });
 
@@ -77,7 +93,7 @@ describe("scan ladder — level from the server rung", () => {
     expect(accepted).toEqual([{ id: "p1", level: "UNIT" }]);
   });
 
-  it("a shared scanMatch -> BOX", async () => {
+  it("a shared scanMatch -> the default unit, BOX at upb 6 (SA-580b)", async () => {
     const remote: P = { ...boxed, scanMatch: { code: "SH", levels: ["UNIT", "BOX"] } };
     const { scan, accepted } = harness([], async () => ({ product: remote, source: "barcode" }) as any);
     await scan("SH");

@@ -246,6 +246,18 @@ describe("R1/R2: a BOX code, or a shared code, adds one CASE", () => {
   });
 });
 
+describe("R2 (SA-580b): a shared code on upb <= 1 adds the default unit -> today's plain +1 line", () => {
+  it("a SHARED hit on a plain product adds +1 qty, merges, and never shows a case/loose split", async () => {
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await scan(PLAIN, "100200300", ["BOX", "UNIT"]);
+    await waitFor(() => expect(lineFor("Sample Cola")).toBeTruthy());
+    expect(plainQty()).toBe("1");
+    await scan(PLAIN, "100200300", ["UNIT", "BOX"]);
+    await waitFor(() => expect(plainQty()).toBe("2"));
+    expect(screen.queryByTitle("Number of whole cases")).not.toBeInTheDocument();
+  });
+});
+
 describe("R4: upb <= 1 — no box/unit distinction, today's line shape whatever the level", () => {
   it.each([["UNIT"], ["BOX"]] as const)("a %s hit on a plain product adds +1 qty and merges (no loose split)", async (level) => {
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);

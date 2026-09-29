@@ -1,7 +1,7 @@
 /**
  * #2717 M4a-1 (SA-578 test 24 / SA-580): web order-entry wedge scans land the LEVEL of the code.
  *   R1  a UNIT code adds ONE PIECE          R1  a BOX code adds ONE CASE
- *   R2  a SHARED code adds ONE CASE         (both named web behaviour changes: unitSku scan -> a piece)
+ *   R2  a SHARED code adds the default unit (a CASE at upb>1, SA-580b)        (both named web behaviour changes: unitSku scan -> a piece)
  * At 1440 / 768 / 390 px.
  *
  * SKELETON, NOT RUNNABLE HERE (authoring lane has no container runtime, no browser stack): the Mac mini
@@ -40,6 +40,12 @@ const CODES = {
   unit: { code: "E2E-UNIT-CODE", levels: ["UNIT"] },
   box: { code: "E2E-BOX-CODE", levels: ["BOX"] },
   shared: { code: "E2E-SHARED-CODE", levels: ["BOX", "UNIT"] },
+  // SA-580b: a shared code on an upb-1 product adds the default unit -> today's plain +1 line.
+  sharedPlain: {
+    code: "E2E-SHARED-PLAIN",
+    levels: ["BOX", "UNIT"],
+    product: { unitsPerBox: 1, unit: "each" },
+  },
 } as const;
 
 const VIEWPORTS = [
@@ -56,6 +62,7 @@ async function stubBarcodeLookup(page: Page) {
     return route.fulfill({
       json: {
         ...PRODUCT,
+        ...("product" in hit ? hit.product : {}),
         barcodes: hit.levels.map((level) => ({ code: hit.code, level })),
         scanMatch: { code: hit.code, levels: hit.levels },
       },
@@ -96,11 +103,17 @@ for (const vp of VIEWPORTS) {
       await expect(page.getByTestId("order-line-pcs-total")).toContainText("12 pcs total");
     });
 
-    test("R2: a shared code adds one CASE, and a repeat merges into the same line", async ({ page }) => {
+    test("R2 (SA-580b): a shared code adds the default unit (one CASE at upb 12), and a repeat merges into the same line", async ({ page }) => {
       await wedgeScan(page, CODES.shared.code);
       await expect(page.getByTestId("order-line-cases")).toHaveValue("1");
       await wedgeScan(page, CODES.shared.code);
       await expect(page.getByTestId("order-line-cases")).toHaveValue("2");
+      await expect(page.getByTestId("order-line-loose")).toHaveCount(0);
+    });
+
+    test("R2 (SA-580b): a shared code on an upb-1 product adds today's plain line (qty 1, no case/loose split)", async ({ page }) => {
+      await wedgeScan(page, CODES.sharedPlain.code);
+      await expect(page.getByTestId("order-line-cases")).toHaveCount(0);
       await expect(page.getByTestId("order-line-loose")).toHaveCount(0);
     });
 
