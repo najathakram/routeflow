@@ -87,6 +87,7 @@ import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
 import { OrderLineItemCards } from "./_components/OrderLineItemCards";
 import { ActionTier } from "./_components/ActionTier";
 import { DemoteReasonModal } from "./_components/DemoteReasonModal";
+import { EditScanBar } from "./_components/EditScanBar";
 import {
   findLockedUnitLineEdit,
   LockedUnitLineBadge,
@@ -1312,8 +1313,9 @@ export function EditableLineItems({
     scheduleScannerRefocus(addInputRef, [80, 200]);
   }
 
-  async function handleScanEnter() {
-    const code = addSearch.trim();
+  // #2715 PR-1: one resolve path for the field's Enter AND the shared scanner button (camera + wedge).
+  async function handleScanCode(raw: string) {
+    const code = raw.trim();
     if (!code) return;
     setAddLoading(true);
     try {
@@ -1444,16 +1446,21 @@ export function EditableLineItems({
             if (el) rowRefs.current.set(item.id, el);
             else rowRefs.current.delete(item.id);
           }}
+          // #2715 PR-1: the WHOLE line (row + price-edit row + note + substitute picker) is ONE
+          // bordered card — the price row and the note used to be bare ml-11 siblings under it.
+          className={cn(
+            "rounded-lg border px-3 py-2.5 transition-colors",
+            item.cancelled
+              ? "border-surface-border bg-surface-raised opacity-60"
+              : "border-surface-border bg-white",
+          )}
         >
           <div
             className={cn(
               // REG-B521: flex-wrap so Qty/price/actions overflow to a second line under
               // pressure instead of starving the name column to its min-w-0 floor (390px,
               // a long custom item name) — the name column below gets a real minimum instead.
-              "flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border px-3 py-2.5 transition-colors",
-              item.cancelled
-                ? "border-surface-border bg-surface-raised opacity-60"
-                : "border-surface-border bg-white",
+              "flex flex-wrap items-center gap-x-3 gap-y-2",
             )}
           >
             {/* Product icon */}
@@ -1744,50 +1751,27 @@ export function EditableLineItems({
 
       {/* ── Add Item / Scan row ── */}
       <div ref={addRef} className="relative">
-        <div className="flex items-center gap-2 rounded-lg border border-dashed border-brand-300 bg-brand-50 px-3 py-2">
-          {addLoading ? (
-            <Loader2 className="h-4 w-4 shrink-0 animate-spin text-brand-400" />
-          ) : (
-            <Search className="h-4 w-4 shrink-0 text-brand-400" />
-          )}
-          <input
-            ref={addInputRef}
-            type="text"
-            placeholder="Scan barcode or type name…"
-            value={addSearch}
-            disabled={!pricingReady}
-            onChange={(e) => {
-              setAddSearch(e.target.value);
-              if (e.target.value) setAddOpen(true);
-              else setAddOpen(false);
-            }}
-            onFocus={() => {
-              if (addSearch) setAddOpen(true);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                e.stopPropagation();
-                handleScanEnter();
-              } else if (e.key === "Escape") {
-                setAddSearch("");
-                setAddOpen(false);
-              }
-            }}
-            className="flex-1 bg-transparent text-sm text-navy placeholder:text-navy/70 outline-none"
-          />
-          {!pricingReady && (
-            // shrink-0 + whitespace-nowrap keep this row exactly as tall as it is
-            // without the hint (ux-spec: no layout jump); below sm only the spinner
-            // shows, so the label can never wrap the row open on a phone.
-            <span className="flex shrink-0 items-center gap-1 text-xs text-navy/70">
-              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-              <span className="sr-only whitespace-nowrap sm:not-sr-only">
-                Loading customer pricing…
-              </span>
-            </span>
-          )}
-        </div>
+        <EditScanBar
+          inputRef={addInputRef}
+          value={addSearch}
+          loading={addLoading}
+          pricingReady={pricingReady}
+          onChange={(v) => {
+            setAddSearch(v);
+            setAddOpen(Boolean(v));
+          }}
+          onFocus={() => addSearch && setAddOpen(true)}
+          onEnter={() => handleScanCode(addSearch)}
+          onEscape={() => {
+            setAddSearch("");
+            setAddOpen(false);
+          }}
+          onScan={(code) => {
+            setAddSearch(code);
+            void handleScanCode(code);
+          }}
+          onError={(message) => toast({ variant: "error", title: message })}
+        />
         {addOpen && products.length > 0 && (
           <div className="absolute left-0 top-full z-50 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
             <ul className="max-h-52 overflow-y-auto py-1">
