@@ -146,6 +146,7 @@
       "ts"
     ],
     "rootDir": "src",
+    "cacheDirectory": "<rootDir>/../.jest-cache",
     "testRegex": ".*\\.spec\\.ts$",
     "testPathIgnorePatterns": [
       "/node_modules/",
