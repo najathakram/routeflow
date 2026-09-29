@@ -48,7 +48,7 @@
     "local:logs": "docker compose --profile app logs -f api web",
     "local:down": "docker compose --profile app down",
     "local:reset": "docker compose --profile app down -v",
-    "postinstall": "npm run build -w @routeflow/pricing && npm run build -w @routeflow/returns",
+    "postinstall": "npm run build -w @routeflow/pricing && npm run build -w @routeflow/scanning && npm run build -w @routeflow/returns",
     "prepare": "husky",
     "bogo-check": "node scripts/bogo-live-check.mjs",
     "janitor": "node scripts/janitor.mjs",

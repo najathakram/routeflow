@@ -204,7 +204,7 @@ export default function CustomerInvoiceDetailScreen() {
             <Text style={styles.sectionTitle}>Payments</Text>
             <View style={styles.detailCard}>
               {invoice.payments.map((pmt, i) => {
-                const method = pmt.method ?? pmt.paymentMethod;
+                const method = pmt.method; // #2703: the API sends `method` (the old `paymentMethod` never existed)
                 const badge = checkBadgeFor({
                   method,
                   status: pmt.status,

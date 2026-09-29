@@ -45,6 +45,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 
 describe("InvoicesService — every payment write rounds (#2293)", () => {
   let service: InvoicesService;
@@ -73,6 +74,7 @@ describe("InvoicesService — every payment write rounds (#2293)", () => {
         { provide: MessagingService, useValue: { notify: jest.fn(), notifyEvent: jest.fn() } },
         { provide: StorageService, useValue: {} },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
+        entitlementAuthorityFromEntitlements, // #2241
         {
           provide: CommissionEngineService,
           useValue: { syncInvoiceCommissionSafe: jest.fn().mockResolvedValue(undefined) },
