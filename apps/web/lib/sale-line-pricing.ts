@@ -1,4 +1,4 @@
-import { decideStaffOverride, getTierPrice } from "@routeflow/pricing";
+import { isSpecialTier, decideStaffOverride, getTierPrice } from "@routeflow/pricing";
 
 /**
  * #2696(c) SA-558e — a New-sale line (POST /orders/sell → the server's create(), rule A) carries the
@@ -19,7 +19,7 @@ export function saleLinePricing(
   return {
     tierPrice: Number(getTierPrice(product, tier)),
     listPrice: Number(product.pricePerUnit) || 0,
-    isSpecialTier: tier !== 1,
+    isSpecialTier: isSpecialTier(tier),
   };
 }
 

@@ -1244,3 +1244,11 @@ export function effectiveQty(
   }
   return line.qty ?? 0;
 }
+
+/**
+ * B465 / SA-588 — the ONE special-tier rule: a tier other than 1 (list / STANDARD) is the customer's
+ * documented contract price for the product, so the line is SPECIAL. A pure module-level function
+ * (no `this`) so it works detached from any service instance. api, web and mobile import it; no
+ * app carries a local copy (pinned by `no-mirrors-special-tier.spec.ts`).
+ */
+export const isSpecialTier = (tierForProduct: number): boolean => tierForProduct !== 1;

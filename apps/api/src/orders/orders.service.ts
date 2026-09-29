@@ -28,6 +28,7 @@ import {
   AppendOrderRevisionArgs,
 } from "./order-revisions";
 import {
+  isSpecialTier,
   categoryTaxSnapshotOf,
   computeCategoryTax,
   computeLineSubtotal,
@@ -124,7 +125,6 @@ import {
 import { linePieceQty } from "./line-piece-qty";
 import {
   isBuyerPricedLine,
-  isSpecialTier,
   mergeBoxedContributions,
   rescaleBogoFreeUnits,
   resolveBuyerLinePrice,

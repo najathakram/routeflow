@@ -12,6 +12,7 @@
  */
 import { BadRequestException } from "@nestjs/common";
 import {
+  isSpecialTier,
   categoryTaxSnapshotOf,
   computeLineSubtotal,
   normalizeBoxesPieces,
@@ -19,7 +20,7 @@ import {
   type TrackedCategoryRow,
 } from "@routeflow/pricing";
 import { PriceType } from "@prisma/client";
-import { isSpecialTier, rescaleBogoFreeUnits, resolveBuyerLinePrice } from "./buyer-merge-pricing";
+import { rescaleBogoFreeUnits, resolveBuyerLinePrice } from "./buyer-merge-pricing";
 import { decideTierOverride } from "./staff-override";
 import type { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 

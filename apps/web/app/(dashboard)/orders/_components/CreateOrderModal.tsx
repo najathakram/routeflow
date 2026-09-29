@@ -22,7 +22,12 @@ import { draftDeviceLabel, type OrderDraftPayload } from "@/lib/drafts";
 import { apiClient } from "@/lib/api-client";
 import { orderCreatedToast } from "./order-created-toast";
 import { mergeQtyIntoLine, mergedLineMessage, newLineQty } from "./add-line-merge";
-import { getTierPrice, computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
+import {
+  isSpecialTier,
+  getTierPrice,
+  computeLineSubtotal,
+  normalizeBoxesPieces,
+} from "@routeflow/pricing";
 import {
   applyTypedPrice,
   lineNeedsReason,
@@ -459,8 +464,8 @@ export function CreateOrderModal({
         if (li.discountedPrice != null) return li;
         const tier = cpMap.get(li.productId) ?? selectedCustomer?.pricingTier ?? 1;
         const tierPrice = getTierPrice(li.tierPrices, tier);
-        const priceType = tier !== 1 ? ("SPECIAL" as const) : ("STANDARD" as const);
-        const specialPrice = tier !== 1 ? tierPrice : undefined;
+        const priceType = isSpecialTier(tier) ? ("SPECIAL" as const) : ("STANDARD" as const);
+        const specialPrice = isSpecialTier(tier) ? tierPrice : undefined;
         if (
           li.unitPrice === tierPrice &&
           li.priceType === priceType &&
@@ -571,7 +576,7 @@ export function CreateOrderModal({
     const tierOverride = cpMap.get(product.id);
     const effectiveTier = tierOverride ?? customerTier;
     const tierPrice = getTierPrice(product, effectiveTier);
-    const priceType = effectiveTier !== 1 ? ("SPECIAL" as const) : ("STANDARD" as const);
+    const priceType = isSpecialTier(effectiveTier) ? ("SPECIAL" as const) : ("STANDARD" as const);
     // Pre-fill from customer's last-given price for this product (only when below
     // the effective tier price, and only when this isn't already a SPECIAL price
     // — SPECIAL prices are permanent, the discount is already in tierPrice).
@@ -592,7 +597,7 @@ export function CreateOrderModal({
       productName: displayProductName(product),
       unit: product.unit ?? "each",
       listPrice,
-      specialPrice: effectiveTier !== 1 ? tierPrice : undefined,
+      specialPrice: isSpecialTier(effectiveTier) ? tierPrice : undefined,
       discountedPrice: hasHistOverride ? histEntry!.lastPrice : undefined,
       unitPrice: hasHistOverride ? histEntry!.lastPrice : tierPrice,
       priceType: hasHistUpsell

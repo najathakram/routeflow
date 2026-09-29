@@ -145,7 +145,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     return m;
   }, [customerPrices]);
   const effectiveTierFor = (productId: string) => cpMap.get(productId) ?? customerTier ?? 1;
-  /** SPECIAL (tier!==1) lines are the customer's permanent price — never overridable
+  /** SPECIAL (a tier other than 1) lines are the customer's permanent price — never overridable
    *  (the create surface's own rule, components/NewOrderScreen.tsx:627). Mobile's
    *  editor contradicted mobile's builder until this landed; the api-side gate is
    *  still the owner's call, so this is a CLIENT gate only (RULINGS R2/R9). */

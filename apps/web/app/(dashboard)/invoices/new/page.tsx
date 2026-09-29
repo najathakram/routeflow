@@ -53,6 +53,7 @@ import { InlineCreateProductModal } from "@/components/InlineCreateProductModal"
 import { fmt, fmtCalendarDate } from "@/lib/formatting";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
 import {
+  isSpecialTier,
   computeLineSubtotal,
   getTierPrice,
   normalizeBoxesPieces,
@@ -903,7 +904,9 @@ export default function NewInvoicePage() {
     // Per-product tier override first, then the customer's own tier ladder —
     // a Tier-3 customer previously billed at LIST on every catalog add here.
     const customerTier = customer?.pricingTier ?? 1;
-    const tierLadderPrice = customerTier !== 1 ? getTierPrice(product, customerTier) : undefined;
+    const tierLadderPrice = isSpecialTier(customerTier)
+      ? getTierPrice(product, customerTier)
+      : undefined;
     const specialPrice: number | undefined = priceMap[product.id] ?? tierLadderPrice;
     const effectivePrice =
       specialPrice != null && Number.isFinite(specialPrice) && specialPrice !== listPrice
