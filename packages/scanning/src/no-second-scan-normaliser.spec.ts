@@ -29,7 +29,8 @@ function collect(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-const NAMES = ["normalizeScanCode", "upcEToUpcA", "pickBestScanMatch", "inferBarcodeSymbology"];
+// inferBarcodeSymbology joins this list in M4a-1, when M1's apps/api definition moves here.
+const NAMES = ["normalizeScanCode", "upcEToUpcA", "pickBestScanMatch"];
 const DEFINITION = new RegExp(
   String.raw`(?:function\s+(?:${NAMES.join("|")})\b|(?:const|let|var)\s+(?:${NAMES.join("|")})\s*[=:])`,
 );

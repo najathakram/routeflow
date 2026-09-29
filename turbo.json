@@ -92,6 +92,7 @@
         "$TURBO_ROOT$/apps/*/Dockerfile",
         "$TURBO_ROOT$/apps/api/scripts/**",
         "$TURBO_ROOT$/packages/*/src/**",
+        "$TURBO_ROOT$/packages/*/package.json",
         "$TURBO_ROOT$/scripts/**",
         "$TURBO_ROOT$/package.json",
         "$TURBO_ROOT$/turbo.json",
