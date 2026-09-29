@@ -303,7 +303,7 @@ describeDb("#2696(c) staff price override — real Postgres", () => {
     });
   });
 
-  it("add during edit: a typed tier price with NO reason is a 200 (SA-558b(2)); classification unchanged", async () => {
+  it("add during edit: a typed tier price with NO reason is a 200 (SA-558b(2)); stores SPECIAL per SA-558c", async () => {
     const c = await customer();
     const order = await pendingOrder(c.id);
     await tenantCtx.run(tenantId, () =>
