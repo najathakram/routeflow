@@ -9,6 +9,8 @@ import {
 import * as crypto from "crypto";
 import { CostingMethod, MovementType, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
+import { FeatureConfigService } from "../billing/feature-config.service";
+import { familyPricesForNewVariant, readFamilyPriceMode } from "../products/family-price";
 import { normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
 import { fetchInvoicedSaleLines, roundQty } from "../common/invoiced-sales";
 import { poLineFromInput } from "./po-line-input";
@@ -77,6 +79,8 @@ export class InventoryService {
     private readonly stockAlerts: StockAlertService,
     // B562 PR-3: the recompute-costs apply path writes its own audit row (global AuditModule).
     @Optional() private readonly audit?: AuditService,
+    // #2717 M2 (SA-574 Q2): the `mixed_packs` mode read; absent = "off" (today's behavior).
+    @Optional() private readonly featureConfig?: FeatureConfigService,
   ) {}
 
   /**
@@ -456,7 +460,21 @@ export class InventoryService {
       regUomUnit: string | null;
     },
     variantName: string,
+    familyMode: "on" | "off" = "off",
   ) {
+    // #2717 M2: mode on -> the family's five columns, re-read under its row lock (the `parent` this
+    // tx read earlier may predate a family edit); off -> the parent row exactly as before.
+    const tenantId = this.prisma.getTenantId();
+    const priceColumns =
+      familyMode === "on" && tenantId
+        ? await familyPricesForNewVariant(tx, { tenantId, familyId: parent.id, dto: {} })
+        : {
+            pricePerUnit: parent.pricePerUnit,
+            priceTier2: parent.priceTier2,
+            priceTier3: parent.priceTier3,
+            priceTier4: parent.priceTier4,
+            priceTier5: parent.priceTier5,
+          };
     return tx.product.create({
       data: {
         name: `${parent.name} - ${variantName}`,
@@ -464,11 +482,7 @@ export class InventoryService {
         parentProductId: parent.id,
         sku: this.generateVariantSku(variantName),
         unit: parent.unit,
-        pricePerUnit: parent.pricePerUnit,
-        priceTier2: parent.priceTier2,
-        priceTier3: parent.priceTier3,
-        priceTier4: parent.priceTier4,
-        priceTier5: parent.priceTier5,
+        ...priceColumns,
         category: parent.category ?? undefined,
         isTobacco: parent.isTobacco ?? false,
         costingMethod: parent.costingMethod,
@@ -485,6 +499,7 @@ export class InventoryService {
 
   async assignToVariants(dto: VariantAssignDto, performedById: string) {
     const restockedProductIds: string[] = [];
+    const familyMode = await readFamilyPriceMode(this.featureConfig, this.prisma.getTenantId());
 
     const result = await this.prisma.tenantTransaction(
       async (tx) => {
@@ -707,7 +722,7 @@ export class InventoryService {
           const qtyDecimal = new Prisma.Decimal(target.qty);
           const variant = target.existing
             ? target.existing
-            : await this.createVariantRowInTx(tx, parent, target.newVariantName!);
+            : await this.createVariantRowInTx(tx, parent, target.newVariantName!, familyMode);
 
           // Cost: unitCostOverride ?? the parent's EFFECTIVE cost. STANDARD-
           // costed variants are valued from their own operator-set cost, so a

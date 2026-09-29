@@ -143,7 +143,6 @@ describe("family price writer tripwire: apps/api/src (Q2 i, L-223)", () => {
   it("finds the known direct writers (the scan is not vacuous)", () => {
     for (const known of [
       "products/products.service.ts",
-      "inventory/inventory.service.ts",
       "import/import.service.ts",
       "import/variant-resolution.service.ts",
     ]) {
