@@ -11,7 +11,13 @@ import type {
   BuyerAnalytics,
   BuyerAuthorizationRow,
   BuyerCreateChangeRequestInput,
+  BuyerFavoriteProduct,
+  BuyerInvoiceItem,
+  BuyerInvoicePayment,
+  BuyerOrder,
+  BuyerOrderListItem,
   BuyerPayment,
+  BuyerProduct,
   BuyerProductDetailExtras,
   BuyerPromotion,
   BuyerRemittance,
@@ -42,81 +48,18 @@ export type {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export interface BuyerProduct {
-  id: string;
-  name: string;
-  description: string | null;
-  sku: string | null;
-  barcode: string | null;
-  unit: string;
-  category: string | null;
-  buyerPrice: number;
-  unitsPerBox: number | null;
-  thumbnailUrl: string | null;
-  imageKeys: string[];
-  isFeatured: boolean;
-  isNew?: boolean;
-  isDeal?: boolean;
-  /** Presigned URLs (max 4) for the tile dot-pager; first entry == thumbnailUrl. */
-  imageUrls?: string[];
-  inStock?: boolean;
-  stockStatus?: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
-  /** Whole units remaining — present only while stockStatus === "LOW". */
-  stockLeft?: number | null;
-}
+// #2703 (SA-562): catalog row + favorites = ONE declaration in @routeflow/types.
+export type {
+  BuyerFavoriteProduct,
+  BuyerOrder,
+  BuyerOrderLine,
+  BuyerOrderListItem,
+  BuyerProduct,
+} from "@routeflow/types";
 
 /** Detail-only fields are shared with mobile via @routeflow/types (#2345). */
 export interface BuyerProductDetail
   extends Omit<BuyerProduct, "imageUrls">, BuyerProductDetailExtras {}
-
-export interface BuyerOrder {
-  id: string;
-  orderNumber: string;
-  status: string;
-  total: number;
-  subtotal: number;
-  tax: number;
-  discountAmount: number;
-  urgent: boolean;
-  notes: string | null;
-  requestedDeliveryDate: string | null;
-  createdAt: string;
-  /** When the order was delivered (null until then); the tracking card shows it. */
-  deliveredAt?: string | null;
-  customer: { id: string; businessName: string };
-  lineItems: Array<{
-    id: string;
-    /** Null for a staff-added custom (unlisted) line — it has no `product` either. */
-    productId: string | null;
-    /** Free-text label of a custom line (its `product` is null). */
-    name?: string | null;
-    qty: number;
-    unitPrice: number;
-    subtotal: number;
-    priceType: string;
-    originalPrice: number | null;
-    notes: string | null;
-    status: string;
-    deliveredQty: number;
-    boxes: number | null;
-    pieces: number | null;
-    /** BUY_N_GET_M snapshot: whole free selling units on this line (boxes for a
-     *  boxed line). Drives the "{n} free" label and the edit preview's subtotal. */
-    promoFreeUnits?: number | null;
-    product: { id: string; name: string; unit: string; unitsPerBox?: number | null } | null;
-  }>;
-  invoices?: Array<{ id: string; invoiceNumber: string; status: string; total: number }>;
-  /** P5-09: post-dispatch change requests, newest first (absent on older API). */
-  changeRequests?: ChangeRequest[];
-  /** P5-08: server edit window — editing closes when the order's run dispatches. */
-  editWindow?: {
-    editable: boolean;
-    editableUntil: string | null;
-    closedReason: "DISPATCHED" | "STATUS" | null;
-  };
-  /** Run state backing the edit window (null until the order is on a run). */
-  routeRun?: { status: string; startedAt?: string | null } | null;
-}
 
 export interface DashboardData {
   recentOrders: Array<{
@@ -378,16 +321,6 @@ export function useBuyerActiveOrder() {
   });
 }
 
-export interface BuyerOrderListItem {
-  id: string;
-  orderNumber: string;
-  status: string;
-  total: number;
-  totalAmount?: number;
-  createdAt: string;
-  itemCount?: number;
-}
-
 export function useBuyerOrders(params?: { page?: number; limit?: number; status?: string }) {
   return useQuery<Paginated<BuyerOrderListItem>>({
     queryKey: ["buyer", "orders", params],
@@ -537,31 +470,9 @@ export interface BuyerInvoiceDetail {
   creditApplied?: number;
   /** Confirmed advance-payment applications (B421) — same treatment. */
   advanceApplied?: number;
-  items: Array<{
-    id: string;
-    description: string;
-    productId: string | null;
-    qty: number;
-    unitPrice: number;
-    discount: number;
-    subtotal: number;
-    priceType: string;
-    /** BUY_N_GET_M snapshot carried from the order line — drives the "{n} free"
-     *  label so a reduced subtotal doesn't read as a pricing error. */
-    promoFreeUnits?: number | null;
-    /** Per-line note, buyer-visible. */
-    notes?: string | null;
-  }>;
-  payments: Array<{
-    id: string;
-    amount: number;
-    method: string;
-    status?: string;
-    checkStatus?: "RECORDED" | "DEPOSITED" | "CLEARED" | "BOUNCED" | null;
-    nsfFeeAmount?: number | null;
-    paidAt?: string | null;
-    createdAt?: string;
-  }>;
+  /** #2703: one declaration in @routeflow/types, shared with mobile. */
+  items: BuyerInvoiceItem[];
+  payments: BuyerInvoicePayment[];
   customer: { id: string; businessName: string };
 }
 
@@ -610,21 +521,8 @@ export function useBuyerReorder() {
 
 // ─── Favorites ───────────────────────────────────────────────────────────────
 
-export interface BuyerFavoriteItem {
-  id: string;
-  productId: string;
-  name: string;
-  sku: string | null;
-  unit: string;
-  category: string | null;
-  buyerPrice: number;
-  thumbnailUrl: string | null;
-  imageKeys: string[];
-  createdAt: string;
-}
-
 export function useBuyerFavorites() {
-  return useQuery<BuyerFavoriteItem[]>({
+  return useQuery<BuyerFavoriteProduct[]>({
     queryKey: ["buyer", "favorites"],
     queryFn: () => buyerApiClient.get("/buyer/favorites").then((r) => r.data),
   });

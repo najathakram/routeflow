@@ -61,6 +61,7 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { OrdersService } from "../orders/orders.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -203,6 +204,7 @@ describeDb(
             provide: EntitlementsService,
             useValue: { hasFlag: jest.fn().mockResolvedValue(false) },
           },
+          entitlementAuthorityFromEntitlements, // #2241
           {
             provide: CommissionEngineService,
             useValue: {
