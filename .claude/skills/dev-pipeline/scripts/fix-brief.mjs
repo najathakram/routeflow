@@ -9,6 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { scrubbedGitEnv } from "../../../../scripts/lib/check-git-hooks.mjs";
 
 const DEFAULT_CAP = 8192;
 const DEFAULT_CONTEXT = 20;
@@ -267,7 +268,8 @@ export function runSelftest() {
   // Terminal command: scrub git's repo-scoped env (GIT_DIR ...) so the throwaway fixture repo below
   // is never re-pointed at the real repository when run under a git hook
   // (apps/api/src/common/fixture-git-env-scrub.spec.ts).
-  for (const k of Object.keys(process.env)) if (k.startsWith("GIT_")) delete process.env[k];
+  const cleanEnv = scrubbedGitEnv();
+  for (const k of Object.keys(process.env)) if (!(k in cleanEnv)) delete process.env[k];
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "fix-brief-selftest-"));
   try {
     execFileSync("git", ["init"], { cwd: tmp, encoding: "utf8" });

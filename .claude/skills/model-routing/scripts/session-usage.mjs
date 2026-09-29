@@ -62,6 +62,7 @@ import path from "node:path";
 import os from "node:os";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { scrubbedGitEnv } from "../../../../scripts/lib/check-git-hooks.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const SCRIPT_DIR = path.dirname(__filename);
@@ -1207,9 +1208,7 @@ function runSelftest() {
     function runGitCmd(args, cwd) {
       // Scrub git's repo-scoped env (GIT_DIR ...): under a git hook it would re-point this fixture
       // at the real repository (fixture-git-env-scrub.spec.ts).
-      const env = { ...process.env };
-      for (const k of Object.keys(env)) if (k.startsWith("GIT_")) delete env[k];
-      return spawnSync("git", args, { cwd, encoding: "utf8", env });
+      return spawnSync("git", args, { cwd, encoding: "utf8", env: scrubbedGitEnv() });
     }
     const gitMainRepo = path.join(tmpBase, "git-main-repo");
     fs.mkdirSync(gitMainRepo, { recursive: true });

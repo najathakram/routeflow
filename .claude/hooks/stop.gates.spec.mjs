@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { scrubbedGitEnv } from "../../scripts/lib/check-git-hooks.mjs";
 
 const STOP_HOOK = fileURLToPath(new URL("./stop.mjs", import.meta.url));
 
@@ -25,10 +26,8 @@ const STOP_HOOK = fileURLToPath(new URL("./stop.mjs", import.meta.url));
 // REAL repository and rewrite its shared .git/config (core.bare, fixture identity) — the same hazard
 // scripts/campaign/bugs.mjs's self-test scrubs. Every `git` and `node stop.mjs` child gets this env.
 // Pinned by apps/api/src/common/fixture-git-env-scrub.spec.ts.
-function scrubbedEnv() {
-  // Prefix filter, not a hand list: it also drops GIT_CONFIG*, GIT_CONFIG_PARAMETERS/COUNT.
-  return Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("GIT_")));
-}
+// The one shared definition (scripts/lib/check-git-hooks.mjs) does the filtering.
+const scrubbedEnv = () => scrubbedGitEnv();
 
 function git(cwd, args) {
   const res = spawnSync("git", args, { cwd, encoding: "utf8", env: scrubbedEnv() });

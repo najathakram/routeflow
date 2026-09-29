@@ -75,6 +75,7 @@ const tmpdir = () => realpathForTmp(osTmpdir());
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
+import { scrubbedGitEnv } from "../lib/check-git-hooks.mjs";
 import { createServer } from "node:http";
 import { startFakePlane } from "./plane-fake-server.mjs";
 
@@ -760,11 +761,7 @@ console.log(JSON.stringify(loadKnobs()));
   // --abbrev-ref HEAD`, same call shape as plane-*.mjs's own currentBranch().
   {
     const repoDir = makeTmpDir();
-    const gitEnvLocal = () => {
-      const env = { ...process.env };
-      for (const k of Object.keys(env)) if (/^GIT_/.test(k)) delete env[k];
-      return env;
-    };
+    const gitEnvLocal = () => scrubbedGitEnv();
     const runGit = (args) => {
       const res = spawnSync("git", args, { cwd: repoDir, encoding: "utf8", env: gitEnvLocal() });
       if (res.status !== 0) {
@@ -1161,11 +1158,7 @@ appendRun({ tool: "m1-self-test", exit: 0, branch: ${JSON.stringify(actualBranch
     writeFileSync(join(campaignDir, "plane-client.mjs"), readFileSync(fileURLToPath(CLIENT_URL)));
     writeFileSync(join(campaignDir, "plane-sync.mjs"), readFileSync(SYNC_PATH));
 
-    const gitEnvLocal = () => {
-      const env = { ...process.env };
-      for (const k of Object.keys(env)) if (/^GIT_/.test(k)) delete env[k];
-      return env;
-    };
+    const gitEnvLocal = () => scrubbedGitEnv();
     const runGit = (args) => {
       const res = spawnSync("git", args, {
         cwd: fixtureRoot,
