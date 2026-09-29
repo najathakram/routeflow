@@ -13,6 +13,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { randomUUID } from "crypto";
 import { normalizeScanCode } from "@routeflow/scanning";
 import { ProductsService } from "./products.service";
+import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 import { findScanMatches } from "./scan-match";
 import { synthesizeLegacyBarcodes } from "./product-barcode-rules";
 import { PrismaService } from "../prisma/prisma.service";
@@ -62,6 +63,7 @@ describeDb("#2717 M4a-1 scan lookup — real Postgres", () => {
         { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(false) } },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
+        entitlementAuthorityFromEntitlements,
         { provide: PlanCatalogService, useValue: { upgradeTargetForFlag: jest.fn().mockResolvedValue(null) } },
         { provide: RouteFlowGateway, useValue: { emitProductUpdated: jest.fn() } },
       ],
