@@ -51,7 +51,7 @@ describe("componentUnitPrice4 / displayComponentUnitPrice have no consumer befor
   it("only allow-listed files reference either helper", () => {
     const offenders = files
       .filter((f) => NEEDLE.test(fs.readFileSync(f, "utf8")))
-      .map((f) => path.relative(REPO_ROOT, f))
+      .map((f) => path.relative(REPO_ROOT, f).split(path.sep).join("/"))
       .filter((f) => !ALLOWLIST.includes(f));
     expect(offenders).toEqual([]);
   });
