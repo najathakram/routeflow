@@ -133,6 +133,7 @@ import { buildMergeLineWrites, type MergeLine, type MergeWarning } from "./merge
 import { assertReplaceAllPackMatchesLive } from "./replace-all-pack-resolution";
 import { decideAddedLinePrice, decideEditedLinePrice, isOverride } from "./staff-line-price";
 import {
+  buildBogoCounterpart,
   buildExistingLineMaps,
   buildReplaceAllLineData,
   type ReplaceAllLineBuildCtx,
@@ -3495,22 +3496,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 incomingLinesByProduct.get(li.productId) === 1 &&
                 !bogoCounterparts.has(li.productId)
               ) {
-                bogoCounterparts.set(li.productId, {
-                  qty: Number(li.qty),
-                  boxes: li.boxes ?? null,
-                  unitPrice: Number(li.unitPrice),
-                  priceType: li.priceType,
-                  // A counterpart is ANY line carrying a free-unit snapshot — it can
-                  // be SPECIAL (tier strikethrough) or MANUAL (operator override), not
-                  // only PROMO. Its strikethrough base and override attribution are
-                  // captured too: the qty-edit oracle writes originalPrice /
-                  // overrideReason / overriddenBy ONLY under isManualOverride, so at an
-                  // unchanged price they must survive this re-create untouched.
-                  originalPrice: li.originalPrice != null ? Number(li.originalPrice) : null,
-                  overrideReason: (li as any).overrideReason ?? null,
-                  overriddenBy: (li as any).overriddenBy ?? null,
-                  promoFreeUnits: Number((li as any).promoFreeUnits ?? 0),
-                });
+                bogoCounterparts.set(li.productId, buildBogoCounterpart(li));
               }
             }
 
