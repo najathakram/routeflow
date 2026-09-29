@@ -362,10 +362,10 @@ describe("house lock order: recipe writers (SA-584 B1/B2)", () => {
   });
 });
 
-describe("createVersion re-validates the STRUCTURE of the copied set under the locks (lead fold item 1; SA-584b: no inactive refusal)", () => {
+describe("createVersion clones AS-IS under the locks: NO shape validation (SA-584b; activate is the gate)", () => {
   const seedActive = () => ({ ...seedDraft(), recipes: [recipeRow("ACTIVE")] });
 
-  it("locks family, recipe product, then the source's components FOR SHARE in id order; re-reads via tx after them", async () => {
+  it("locks family, recipe product, then the source's components FOR SHARE in id order, and reads no product shape", async () => {
     const { service, events } = await build(seedActive());
     await service.createVersion("r1");
     expect(lockEvents(events)).toEqual([
@@ -374,15 +374,48 @@ describe("createVersion re-validates the STRUCTURE of the copied set under the l
       "tx:lock:share:v1",
       "tx:lock:share:v2",
     ]);
-    expect(firstTxProductRead(events)).toBeGreaterThan(lastLockIndex(events));
+    expect(firstTxProductRead(events)).toBe(-1);
   });
 
-  it("a component re-parented since the source was validated -> 400 COMPONENT_NOT_VARIANT, no version created", async () => {
+  it("a component re-parented since the source was validated is cloned AS-IS too: the DRAFT is created (SA-584b)", async () => {
     const { service, products: rows, recipes } = await build(seedActive());
     rows.find((p) => p.id === "v1")!.parentProductId = null;
-    const err = await service.createVersion("r1").catch((e) => e);
-    expect(bodyOf(err)).toMatchObject({ code: "RECIPE_INVALID", reason: "COMPONENT_NOT_VARIANT" });
-    expect(recipes).toHaveLength(1);
+    await expect(service.createVersion("r1")).resolves.toMatchObject({
+      version: 2,
+      status: "DRAFT",
+    });
+    expect(recipes).toHaveLength(2);
+  });
+
+  it("SA-584b path (re-parent): clone 201 -> activate 400 -> fix the DRAFT -> activate 200, v1 RETIRED", async () => {
+    const { service, products: rows, recipes } = await build(seedActive());
+    rows.find((p) => p.id === "v1")!.parentProductId = null;
+    const draft = await service.createVersion("r1");
+    const refused = await service.activate(draft.id).catch((e) => e);
+    expect(bodyOf(refused)).toMatchObject({
+      code: "RECIPE_INVALID",
+      reason: "COMPONENT_NOT_VARIANT",
+    });
+    expect(recipes.find((r) => r.id === "r1")!.status).toBe("ACTIVE");
+    await service.update(draft.id, {
+      components: [
+        { componentProductId: "v2", qty: 8 },
+        { componentProductId: "v3", qty: 4 },
+      ],
+    } as any);
+    await expect(service.activate(draft.id)).resolves.toMatchObject({ status: "ACTIVE" });
+    expect(recipes.find((r) => r.id === "r1")!.status).toBe("RETIRED");
+  });
+
+  it("SA-584b path (category moved by tracked-categories assign): clone 201 -> activate 400 -> fix -> 200", async () => {
+    const { service, products: rows, recipes } = await build(seedActive());
+    rows.find((p) => p.id === "v1")!.trackedCategoryId = "cat-2";
+    const draft = await service.createVersion("r1");
+    const refused = await service.activate(draft.id).catch((e) => e);
+    expect(bodyOf(refused)).toMatchObject({ code: "RECIPE_INVALID", reason: "CATEGORY_MISMATCH" });
+    rows.find((p) => p.id === "v1")!.trackedCategoryId = "cat-1";
+    await expect(service.activate(draft.id)).resolves.toMatchObject({ status: "ACTIVE" });
+    expect(recipes.find((r) => r.id === "r1")!.status).toBe("RETIRED");
   });
 
   it("a component deactivated since the source was validated is cloned AS-IS: the DRAFT is created (SA-584b)", async () => {
