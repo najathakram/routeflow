@@ -45,7 +45,7 @@ import {
   syncProductImagesFromLegacy,
 } from "./product-catalog-sync";
 import { recipeReferenceGroupers } from "./recipe-references";
-import { openRecipeWhere, recipeCategoryLocked } from "./recipe-rules";
+import { lockAndAssertRecipeGuards } from "./recipe-update-guard";
 import {
   applyFamilyPriceBeforeUpdate,
   familyPricesForNewVariant,
@@ -995,17 +995,7 @@ export class ProductsService {
         : dto.trackedSubcategoryId !== undefined
           ? dto.trackedSubcategoryId
           : existing.trackedSubcategoryId;
-    // #2717 M2 (I6): a product in a non-RETIRED recipe (recipe product, family or component) keeps
-    // its tracked category — a component drifting to another category would break the recipe.
-    if (
-      (effectiveCategoryId ?? null) !== (existing.trackedCategoryId ?? null) ||
-      (effectiveSubcategoryId ?? null) !== (existing.trackedSubcategoryId ?? null)
-    ) {
-      const locked = await this.prisma
-        .forTenant()
-        .recipe.findFirst({ where: openRecipeWhere(id), select: { id: true } });
-      if (locked) throw recipeCategoryLocked();
-    }
+    // #2717 M2 (I6, SA-584 B2): the recipe guards run inside the update tx, after the row locks.
     await this.assertSubcategoryInSection(effectiveCategoryId, effectiveSubcategoryId);
     // Clearing the section clears the regulatory trio with it — gated on the
     // section actually TRANSITIONING to null, so editing a product that already
@@ -1164,6 +1154,17 @@ export class ProductsService {
       if (effectiveBarcode) {
         await assertBarcodeAvailable(tx, { tenantId, productId: id, code: effectiveBarcode });
       }
+      // SA-584 B2: family rows, then this row, then the open-recipe checks (I6/I2/Q1/Q10).
+      await lockAndAssertRecipeGuards(tx, {
+        tenantId,
+        id,
+        existing,
+        dto,
+        effective: {
+          trackedCategoryId: effectiveCategoryId ?? null,
+          trackedSubcategoryId: effectiveSubcategoryId ?? null,
+        },
+      });
       // Family price authority: may refuse (409), rewrite `data`'s price columns, or ask for a
       // propagation to this row's children after the write. Off = nothing runs.
       const family =
