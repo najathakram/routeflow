@@ -3233,3 +3233,14 @@ citations, closed-out with its own post-init assertion guard).
   DB-lane-guarded fix going forward.
   (Archived 2026-09-28 to make room at cap for L-241: one outside citation, a roadmap deferred
   row that still resolves here; guard = #1221's default-lane pin, unchanged by archiving the prose.)
+
+### L-218 · 2026-09-25 · testing · a red-proof that matches message TEXT can be vacuous (B861)
+
+- **Symptom:** the red-proofs AB/AD passed on the OLD code, so they proved nothing about the fix.
+- **Root cause:** they matched `/reload/`, which the pre-existing 409's message also contains, so the
+  wrong error satisfied the assertion.
+- **Lesson:** **Assert by error CLASS or code, never by message text another error can share. Run the
+  proof against the old code and confirm it fails for the intended reason.**
+- **Guard:** `REG-B861-AB`/`AD` assert `BadRequestException`.
+  (Archived 2026-09-28 to make room at cap for L-242: one outside citation, a handoff note that
+  still resolves here; guard = the REG-B861-AB/AD specs asserting BadRequestException, unchanged.)
