@@ -138,4 +138,69 @@ describe("lint-migrations.mjs contract (T1 / R2, R3)", () => {
     expect(res.stdout).toContain("lint:migrations --all:");
     expect(res.status).toBe(0);
   });
+
+  // B896 / SA-582: `SET LOCAL` only lasts to the end of a transaction, and a migration file is not
+  // guaranteed to run inside one, so it must sit inside an explicit BEGIN; ... COMMIT; wrap.
+  describe("B896: SET LOCAL needs an explicit BEGIN; ... COMMIT; wrap", () => {
+    const FIXTURES = path.resolve(REPO_ROOT, "scripts/fixtures/lint-migrations");
+    const unwrapped = path.join(FIXTURES, "set-local-unwrapped.sql.fixture");
+    const wrapped = path.join(FIXTURES, "set-local-wrapped.sql.fixture");
+
+    it("the RED fixture (SET LOCAL, no wrap) exits 1 and names the file, the line and SET LOCAL", () => {
+      const res = run(["--files", unwrapped]);
+      expect(res.stderr).toContain(`${unwrapped}:3:`);
+      expect(res.stderr).toMatch(/SET LOCAL.*BEGIN;.*COMMIT;/);
+      expect(res.status).toBe(1);
+    });
+
+    it("the passing fixture (wrapped in BEGIN; ... COMMIT;) exits 0", () => {
+      const res = run(["--files", wrapped]);
+      expect(res.stderr).not.toContain("SET LOCAL");
+      expect(res.status).toBe(0);
+    });
+
+    it.each([
+      ["a lowercase set local", "set local lock_timeout = '5s';\nSELECT 1;\n"],
+      [
+        "SET LOCAL after the COMMIT",
+        "BEGIN;\nSELECT 1;\nCOMMIT;\nSET LOCAL lock_timeout = '5s';\n",
+      ],
+      ["a BEGIN with no COMMIT", "BEGIN;\nSET LOCAL lock_timeout = '5s';\nSELECT 1;\n"],
+      [
+        "SET LOCAL before the BEGIN",
+        "SET LOCAL lock_timeout = '5s';\nBEGIN;\nSELECT 1;\nCOMMIT;\n",
+      ],
+    ])("refuses %s", (_label, sql) => {
+      const res = run(["--files", writeFixture(`b896-${Math.random()}.sql`, sql as string)]);
+      expect(res.stderr).toMatch(/SET LOCAL|BEGIN/);
+      expect(res.status).toBe(1);
+    });
+
+    it.each([
+      [
+        "a SET LOCAL mentioned only in a -- comment",
+        "-- SET LOCAL lock_timeout is not used here\nSELECT 1;\n",
+      ],
+      ["a SET LOCAL inside a /* block comment */", "/* SET LOCAL x = 1; */\nSELECT 1;\n"],
+      [
+        "SET LOCAL text inside a string literal",
+        'INSERT INTO "T" ("c") VALUES (\'SET LOCAL a = 1;\');\n',
+      ],
+      [
+        "START TRANSACTION ... END as the wrap",
+        "START TRANSACTION;\nSET LOCAL lock_timeout = '5s';\nEND;\n",
+      ],
+      ["no SET LOCAL at all, no wrap", 'ALTER TABLE "T" ADD COLUMN "c" TEXT;\n'],
+    ])("accepts %s", (_label, sql) => {
+      const res = run(["--files", writeFixture(`b896-${Math.random()}.sql`, sql as string)]);
+      expect(res.stderr).not.toMatch(/SET LOCAL/);
+      expect(res.status).toBe(0);
+    });
+
+    it("the repo's own migrations tree is not flagged in diff mode, only files in the range are read (history is immutable)", () => {
+      const res = run(["--base", "HEAD"]);
+      expect(res.stdout).toContain("no migrations in range");
+      expect(res.status).toBe(0);
+    });
+  });
 });

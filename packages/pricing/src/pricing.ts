@@ -1138,11 +1138,18 @@ export function linePack(line: { packSize?: number | null }, livePack: number): 
  * additive — does not alter `roundMoney` or any other existing helper.
  */
 export function roundUnitCost(n: number): number {
+  return round4(n);
+}
+
+/**
+ * The ONE 4-decimal rounding body (#2717, SA-574 H1): half away from zero via the same
+ * decimal-string path as roundMoney (REG-B122) — EPSILON is <= half a ULP for any |n| above
+ * ~2e-4 once scaled by 1e4, so a Math.round(n * 1e4) nudge rounds half-at-the-4th-decimal
+ * values DOWN. Non-finite input is 0. `roundUnitCost` delegates here.
+ */
+export function round4(n: number): number {
   if (!Number.isFinite(n)) return 0;
   const sign = n < 0 ? -1 : 1;
-  // Same decimal-string path as roundMoney (REG-B122): EPSILON is <= half a ULP
-  // for any |n| above ~2e-4 once scaled by 1e4, so the old nudge was a no-op and
-  // half-at-the-4th-decimal values rounded DOWN against the documented intent.
   return (sign * Math.round(Number((Math.abs(n) * 10000).toFixed(4)))) / 10000;
 }
 
