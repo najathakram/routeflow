@@ -54,6 +54,7 @@ import { StockAlertService } from "../stock-alerts/stock-alert.service";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { captureRetriedStates } from "../common/testing/tx-retry-capture";
+import { isFirstWaiterOnEditorRow, pollUntil, LockRow } from "../common/testing/lock-edge";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -132,7 +133,7 @@ describeDb("SA-584 B1 — assignToVariants takes the family row first (no 40P01)
       );
       if (rows[0].n > 0) return true;
       // eslint-disable-next-line no-await-in-loop
-      await new Promise((r) => setTimeout(r, 20));
+      await new Promise((r) => setTimeout(r, 25));
     }
     return false;
   }
@@ -177,10 +178,8 @@ describeDb("SA-584 B1 — assignToVariants takes the family row first (no 40P01)
         currentStock: 0,
       },
     });
-    const familyCtid = (
-      await pool.query('SELECT ctid::text AS c FROM "Product" WHERE id = $1', [family.id])
-    ).rows[0].c as string;
-
+    // No ctid is stored anywhere: the editor's UPDATE moves the tuple and a pre-UPDATE ctid goes
+    // stale (see common/testing/lock-edge.ts). The family edge is matched by pid + editor xid.
     const writer = await pool.connect();
     const probe = await pool.connect();
     let writerError: unknown;
@@ -194,6 +193,7 @@ describeDb("SA-584 B1 — assignToVariants takes the family row first (no 40P01)
       await writer.query("BEGIN");
       await writer.query("SET LOCAL lock_timeout = '4s'");
       const pid = Number((await writer.query("SELECT pg_backend_pid() AS pid")).rows[0].pid);
+      const editorXid = String((await writer.query("SELECT txid_current()::text AS x")).rows[0].x);
       // 1. the family price edit: UPDATE the family tier price. This takes F in FOR NO KEY UPDATE
       //    mode (see the header) and leaves it held until COMMIT.
       await writer.query('UPDATE "Product" SET "priceTier2" = 8.75 WHERE id = $1', [family.id]);
@@ -236,23 +236,26 @@ describeDb("SA-584 B1 — assignToVariants takes the family row first (no 40P01)
             [pid],
           )
         ).rows[0].n;
-        // ... and it waits on the FAMILY row F. Postgres queues a row-lock waiter as: it GRANTS
-        //     itself the row's heavyweight tuple lock, then waits (not granted) on the holder's
-        //     transactionid. So under the fixed order the assign backend shows a GRANTED tuple
-        //     lock on F's ctid (and no tuple lock on V); a NOT-granted tuple lock would mean it is
-        //     the second waiter behind another backend, which is not this interleave.
+        // ... and it waits on the FAMILY row F. The editor has updated ONLY F so far, so a backend
+        //     blocked by it is queued on F. Postgres queues a row-lock waiter as: it GRANTS itself
+        //     the row's heavyweight tuple lock, then waits (not granted) on the holder's
+        //     transactionid. Match that by the assign pid + the editor's xid, never by ctid; poll
+        //     (bounded, 25 ms) so scheduling jitter cannot flake the read.
         blockedOnFamily =
-          (
-            await pool.query(
-              `SELECT count(*)::int AS n
-                 FROM pg_locks l
-                WHERE l.granted AND l.locktype = 'tuple'
-                  AND l.relation = '"Product"'::regclass
-                  AND '(' || l.page || ',' || l.tuple || ')' = $2
-                  AND $1::int = ANY(pg_blocking_pids(l.pid))`,
-              [pid, familyCtid],
-            )
-          ).rows[0].n === 1;
+          (await pollUntil(async () => {
+            const { rows: waiters } = await pool.query(
+              "SELECT pid FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))",
+              [pid],
+            );
+            if (waiters.length !== 1) return undefined;
+            const { rows } = await pool.query(
+              `SELECT locktype, granted, relation::regclass::text AS relation,
+                      transactionid::text AS transactionid
+                 FROM pg_locks WHERE pid = $1`,
+              [waiters[0].pid],
+            );
+            return isFirstWaiterOnEditorRow(rows as LockRow[], editorXid) ? true : undefined;
+          })) === true;
         // ... while holding NO lock on the variant row V. Row locks are not in pg_locks, so probe
         // it: FOR UPDATE NOWAIT succeeds iff nobody (in particular the assign backend) holds V.
         await probe.query("BEGIN");
