@@ -6,6 +6,7 @@ import type {
   CancelImpact,
   CustomerPriceHistory,
   InlineReturnLinesRequest,
+  LineComponentView,
   PriceType,
 } from "@routeflow/types";
 
@@ -172,6 +173,8 @@ export interface OrderItem {
   notes?: string;
   /** Cumulative qty already covered by issued invoices for this item. */
   invoicedQty?: number;
+  /** #2717 M3: frozen components of a composed (mixed-pack) line; absent on a plain line. */
+  components?: LineComponentView[];
   /** Cumulative qty actually delivered — advanced by the route completeStop flow. */
   deliveredQty?: number;
 }
