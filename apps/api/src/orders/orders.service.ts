@@ -426,6 +426,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // (pos-cost-roles-spec §1).
         lineItems: {
           include: {
+            components: { orderBy: { position: "asc" } }, // #2717 M3: frozen FIXED-line components
             product: {
               select: {
                 id: true,

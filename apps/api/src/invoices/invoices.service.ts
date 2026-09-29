@@ -2998,6 +2998,7 @@ export class InvoicesService {
         },
         items: {
           include: {
+            components: { orderBy: { position: "asc" } }, // #2717 M3: frozen sub-lines
             product: { select: { id: true, name: true, unit: true, unitsPerBox: true } },
             // RF-2-lite: surface the regulated category/subcategory NAME so clients can
             // label regulated lines (previously only the trackedCategoryId was returned).
