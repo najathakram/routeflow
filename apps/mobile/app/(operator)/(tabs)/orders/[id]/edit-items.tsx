@@ -16,6 +16,7 @@ import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
 import { useAdminOrder } from "../../../../../lib/api/admin";
 import { UnitPickerRow } from "../../../../../components/UnitPickerRow";
+import { OrderAppliedCredits } from "../../../../../components/OrderAppliedCredits";
 import type { UnitOption } from "../../../../../lib/unit-options";
 import { useCreditNotes, type CreditNote } from "../../../../../lib/api/credit-notes";
 import { useCustomerPriceHistory, useUpdateOrderItems } from "../../../../../lib/api/orders";
@@ -1203,6 +1204,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
             </View>
           ) : null}
           <ScrollView showsVerticalScrollIndicator={false}>
+            {!isDriver && order ? <OrderAppliedCredits order={order as any} /> /* #2404 */ : null}
             {/* Apply credit — mirrors NewOrderScreen. Driver-gated off: drivers
                 don't manage credits. Gated on the customer alone (not credit
                 COUNT) so the operator can create one right here when none
