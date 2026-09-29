@@ -491,6 +491,8 @@ function ProductPickView({
   scanOpenRef.current = scanOpen;
   const resumeScanRef = useRef(false);
   const priceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Line whose price modal waits for the scan sheet to finish dismissing.
+  const pendingPriceEditIdRef = useRef<string | null>(null);
   useEffect(
     () => () => {
       if (priceTimerRef.current) clearTimeout(priceTimerRef.current);
@@ -1367,14 +1369,28 @@ function ProductPickView({
       a.showInline("Contract price — not editable on this order");
       return;
     }
-    const plan = planScanPriceEdit(scanOpenRef.current);
+    const plan = planScanPriceEdit(scanOpenRef.current, Platform.OS);
     if (plan.closeScan) setScanOpen(false);
     resumeScanRef.current = plan.resumeScanOnClose;
     if (priceTimerRef.current) clearTimeout(priceTimerRef.current);
-    priceTimerRef.current = setTimeout(() => {
-      priceTimerRef.current = null;
+    pendingPriceEditIdRef.current = id;
+    if (plan.present === "now") {
+      pendingPriceEditIdRef.current = null;
       setPriceEditId(id);
-    }, plan.presentDelayMs);
+    } else if (plan.present === "timer") {
+      priceTimerRef.current = setTimeout(() => {
+        priceTimerRef.current = null;
+        pendingPriceEditIdRef.current = null;
+        setPriceEditId(id);
+      }, plan.fallbackDelayMs);
+    }
+    // "onDismiss": handleScanSheetDismiss presents it once the sheet is gone.
+  }, []);
+  const handleScanSheetDismiss = useCallback(() => {
+    const id = pendingPriceEditIdRef.current;
+    if (id == null) return;
+    pendingPriceEditIdRef.current = null;
+    setPriceEditId(id);
   }, []);
   const closePriceEdit = () => {
     setPriceEditId(null);
@@ -2403,6 +2419,7 @@ function ProductPickView({
         onDecrement={onTrayDecrement}
         onRemove={onTrayRemove}
         onEditPrice={onTrayEditPrice}
+        onDismiss={handleScanSheetDismiss}
         onReview={() => {
           setScanOpen(false);
           setCartOpen(true);

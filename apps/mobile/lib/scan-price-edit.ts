@@ -3,19 +3,33 @@
  * until the first dismisses). The scan sheet is itself a Modal, so the
  * price-edit modal must be presented only after the scan sheet has closed, and
  * the scan sheet reopened when the price modal closes.
+ *
+ * iOS: present from the scan Modal's `onDismiss` (fires once the sheet has
+ * fully closed — no timing guess). Other platforms: Modal `onDismiss` does not
+ * fire, so a timer is used instead.
  */
 
-/** Time for the scan sheet's dismissal animation to finish before presenting the next Modal. */
-export const PRICE_MODAL_AFTER_SCAN_CLOSE_MS = 450;
+/** Android has no Modal onDismiss, so this timer is the fallback only (never used on iOS). */
+export const SCAN_CLOSE_FALLBACK_MS = 450;
 
 export interface ScanPriceEditPlan {
   closeScan: boolean;
-  presentDelayMs: number;
+  present: "now" | "onDismiss" | "timer";
+  fallbackDelayMs: number;
   resumeScanOnClose: boolean;
 }
 
-export function planScanPriceEdit(scanOpen: boolean): ScanPriceEditPlan {
-  return scanOpen
-    ? { closeScan: true, presentDelayMs: PRICE_MODAL_AFTER_SCAN_CLOSE_MS, resumeScanOnClose: true }
-    : { closeScan: false, presentDelayMs: 0, resumeScanOnClose: false };
+export function planScanPriceEdit(scanOpen: boolean, platform: string): ScanPriceEditPlan {
+  if (!scanOpen) {
+    return { closeScan: false, present: "now", fallbackDelayMs: 0, resumeScanOnClose: false };
+  }
+  if (platform === "ios") {
+    return { closeScan: true, present: "onDismiss", fallbackDelayMs: 0, resumeScanOnClose: true };
+  }
+  return {
+    closeScan: true,
+    present: "timer",
+    fallbackDelayMs: SCAN_CLOSE_FALLBACK_MS,
+    resumeScanOnClose: true,
+  };
 }
