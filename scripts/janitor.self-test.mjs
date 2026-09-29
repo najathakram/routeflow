@@ -63,6 +63,12 @@ const emptyGitConfig = join(mkdtempSync(join(tmpdir(), "janitor-gitcfg-")), "con
 writeFileSync(emptyGitConfig, "");
 process.env.GIT_CONFIG_GLOBAL = emptyGitConfig;
 process.env.GIT_CONFIG_NOSYSTEM = "1";
+// Every fixture git spawn passes this explicitly: the shared scrub, then the empty-config pins.
+const fixtureGitEnv = () => ({
+  ...scrubbedGitEnv(),
+  GIT_CONFIG_GLOBAL: emptyGitConfig,
+  GIT_CONFIG_NOSYSTEM: "1",
+});
 
 let pass = 0;
 const failures = [];
@@ -221,6 +227,7 @@ t("isMergedEvidence (B800): ancestry alone is not proof; a mainline tip is a fre
     execFileSync("git", ["-C", dir, ...args], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      env: fixtureGitEnv(),
     }).trim();
   const commit = (file, msg) => {
     writeFileSync(join(dir, file), msg);
@@ -382,6 +389,7 @@ t(
     execFileSync("git", ["-C", dir, ...args], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      env: fixtureGitEnv(),
     }).trim();
   const commit = (file, body, msg) => {
     writeFileSync(join(dir, file), body);
@@ -611,6 +619,7 @@ t(
     execFileSync("git", ["-C", dir, ...args], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      env: fixtureGitEnv(),
     }).trim();
   const commit = (file, body, msg) => {
     writeFileSync(join(dir, file), body);
@@ -826,6 +835,7 @@ if (process.platform !== "win32") {
     execFileSync("git", ["-C", cwd, ...args], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      env: fixtureGitEnv(),
     }).trim();
   try {
     g(main, "init", "-q", "-b", "master");
@@ -985,6 +995,7 @@ t("REG-B820: an orphan dir touched in the last 24h (or unreadable) is never dele
     execFileSync("git", ["-C", dir, ...args], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      env: fixtureGitEnv(),
     }).trim();
   try {
     g("init", "-q", "-b", "master");
@@ -1173,6 +1184,7 @@ t(
     execFileSync("git", ["-C", dir, ...args], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      env: fixtureGitEnv(),
     }).trim();
   try {
     g("init", "-q", "-b", "master");
@@ -1501,11 +1513,12 @@ if (process.platform === "win32" && CMD_UNSAFE.test(winBase)) {
     execFileSync("git", ["-C", cwd, ...args], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      env: fixtureGitEnv(),
     }).trim();
   const id = ["-c", "user.name=t", "-c", "user.email=t@example.com"];
   try {
-    execFileSync("git", ["init", "-q", "--bare", origin]);
-    execFileSync("git", ["init", "-q", "-b", "master", main]);
+    execFileSync("git", ["init", "-q", "--bare", origin], { env: fixtureGitEnv() });
+    execFileSync("git", ["init", "-q", "-b", "master", main], { env: fixtureGitEnv() });
     writeFileSync(join(main, "a.txt"), "a");
     git(main, "add", "a.txt");
     git(main, ...id, "commit", "-q", "-m", "base");

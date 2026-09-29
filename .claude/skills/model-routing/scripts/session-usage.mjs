@@ -173,7 +173,10 @@ function claudeHomeDir(flags) {
 function resolveProjectViaGit(cwd) {
   let res;
   try {
-    res = spawnSync("git", ["-C", cwd, "rev-parse", "--git-common-dir"], { encoding: "utf8" });
+    res = spawnSync("git", ["-C", cwd, "rev-parse", "--git-common-dir"], {
+      encoding: "utf8",
+      env: scrubbedGitEnv(),
+    });
   } catch {
     return null;
   }

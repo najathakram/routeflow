@@ -228,7 +228,10 @@ function firstLine(s) {
 function resolveProjectViaGit(cwd) {
   let res;
   try {
-    res = spawnSync("git", ["-C", cwd, "rev-parse", "--git-common-dir"], { encoding: "utf8" });
+    res = spawnSync("git", ["-C", cwd, "rev-parse", "--git-common-dir"], {
+      encoding: "utf8",
+      env: scrubbedGitEnv(),
+    });
   } catch {
     return null;
   }
@@ -1161,7 +1164,7 @@ function stepCodeMap({ project, result }) {
 
 function gitInfo(project) {
   const run = (args) => {
-    const r = spawnSync("git", args, { cwd: project, encoding: "utf8" });
+    const r = spawnSync("git", args, { cwd: project, encoding: "utf8", env: scrubbedGitEnv() });
     return r.status === 0 ? r.stdout.trim() : null;
   };
   const branch = run(["branch", "--show-current"]);

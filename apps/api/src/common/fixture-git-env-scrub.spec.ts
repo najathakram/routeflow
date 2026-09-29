@@ -45,12 +45,160 @@ const SKIP_DIRS = new Set([
   "coverage",
 ]);
 
-// A fixture repo is created: `["init", ...]`, `git("init", "-q", ...)`, or the string form
-// `execSync("git init ...")` / `exec("git init`.
+// ---------------------------------------------------------------------------------------------
+// The scanner. Exported-in-spirit: the mutant pins below run in-memory source through the SAME
+// function the repo walk uses.
+// ---------------------------------------------------------------------------------------------
+
+/** Blank out `//` and block comments (keeping strings, templates and regex literals intact). */
+function stripComments(src: string): string {
+  let out = "";
+  let i = 0;
+  let lastSig = "";
+  while (i < src.length) {
+    const c = src[i];
+    const n = src[i + 1];
+    if (c === "/" && n === "/") {
+      while (i < src.length && src[i] !== "\n") i++;
+      continue;
+    }
+    if (c === "/" && n === "*") {
+      const end = src.indexOf("*/", i + 2);
+      i = end < 0 ? src.length : end + 2;
+      out += " ";
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") {
+      let j = i + 1;
+      while (j < src.length && src[j] !== c) {
+        if (src[j] === "\\") j++;
+        j++;
+      }
+      out += src.slice(i, j + 1);
+      i = j + 1;
+      lastSig = c;
+      continue;
+    }
+    if (c === "/" && (lastSig === "" || "(,=:[!&|?{};".includes(lastSig))) {
+      let j = i + 1;
+      let inClass = false;
+      while (j < src.length && src[j] !== "\n") {
+        if (src[j] === "\\") j++;
+        else if (src[j] === "[") inClass = true;
+        else if (src[j] === "]") inClass = false;
+        else if (src[j] === "/" && !inClass) break;
+        j++;
+      }
+      out += src.slice(i, j + 1);
+      i = j + 1;
+      lastSig = "/";
+      continue;
+    }
+    out += c;
+    if (!/\s/.test(c)) lastSig = c;
+    i++;
+  }
+  return out;
+}
+
+/** Text between the paren at `open` and its match (strings/templates/regex skipped). */
+function balanced(src: string, open: number): string {
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    const c = src[i];
+    if (c === '"' || c === "'" || c === "`") {
+      i++;
+      while (i < src.length && src[i] !== c) {
+        if (src[i] === "\\") i++;
+        i++;
+      }
+    } else if (c === "(") depth++;
+    else if (c === ")" && --depth === 0) return src.slice(open + 1, i);
+  }
+  return src.slice(open + 1);
+}
+
+// A fixture repo is created: `["init", ...]`, `git("init", ...)` / `git(repo, "init", ...)` /
+// `g(main, "init", ...)`, or the string form `execSync("git init ...")`.
 const FIXTURE_INIT_RE =
-  /\[\s*["']init["']\s*[,\]]|\(\s*["']init["']\s*,\s*["']-|exec(?:Sync)?\(\s*["'`]git\s+init\b/;
-// The ONLY accepted scrub: a CALL to the shared helper (or plane-client's gitEnv()).
-const SCRUB_RE = /\b(scrubbedGitEnv|gitEnv)\(/;
+  /\[\s*["']init["']\s*[,\]]|\b(?:\w*git\w*|g)\(\s*(?:[\w.]+\s*,\s*)?["']init["']|exec(?:Sync)?\(\s*["'`]git\s+init\b/i;
+const SPAWNERS = /\b(spawnSync|execFileSync|execSync|spawn|execFile|exec)\s*\(/g;
+const SCRUB_ROOT = "scrubbedGitEnv";
+
+/** Names in this file provably derived from the shared helper (assignments, functions, imports). */
+function derivedNames(code: string): Set<string> {
+  const names = new Set<string>([SCRUB_ROOT]);
+  const mention = (text: string) =>
+    [...names].some((n) => new RegExp(String.raw`\b${n}\b`).test(text));
+  for (let changed = true; changed;) {
+    changed = false;
+    const add = (n: string, text: string) => {
+      if (!names.has(n) && mention(text)) {
+        names.add(n);
+        changed = true;
+      }
+    };
+    for (const m of code.matchAll(/\b(?:const|let|var)\s+(\w+)\s*=\s*([^;]*)/g)) add(m[1], m[2]);
+    for (const m of code.matchAll(/\bfunction\s+(\w+)\s*\([^)]*\)\s*(?::\s*[^{]+)?\{/g)) {
+      const open = m.index! + m[0].length - 1;
+      let depth = 0;
+      let k = open;
+      for (; k < code.length; k++) {
+        if (code[k] === "{") depth++;
+        else if (code[k] === "}" && --depth === 0) break;
+      }
+      add(m[1], code.slice(open, k));
+    }
+    for (const m of code.matchAll(/\b(\w+)\s+as\s+(\w+)\b/g)) {
+      if (names.has(m[1]) && !names.has(m[2])) {
+        names.add(m[2]);
+        changed = true;
+      }
+    }
+  }
+  return names;
+}
+
+/** Every git spawn site in `src` whose options do not pass a scrub derived from the helper. */
+function unscrubbedGitSpawns(src: string): { sites: number; bad: string[] } {
+  const code = stripComments(src);
+  const derived = derivedNames(code);
+  const gitAliases = new Set<string>();
+  for (const m of code.matchAll(/\b(?:const|let|var)\s+(\w+)\s*=\s*["']git["']/g))
+    gitAliases.add(m[1]);
+  let sites = 0;
+  const bad: string[] = [];
+  for (const m of code.matchAll(SPAWNERS)) {
+    const args = balanced(code, m.index! + m[0].length - 1);
+    const first = args.trimStart();
+    const isGit =
+      /^["'`]git["'`]\s*[,)]/.test(first) ||
+      /^["'`]git\s/.test(first) ||
+      [...gitAliases].some((a) => new RegExp(String.raw`^${a}\s*[,)]`).test(first));
+    if (!isGit) continue;
+    sites++;
+    const passes = [...derived].some((n) =>
+      new RegExp(String.raw`\benv\s*:[^;]*?\b${n}\b`).test(args),
+    );
+    // `{ ..., env }` shorthand: accepted only when a derived name is assigned to `env` in the file.
+    const shorthand =
+      /\benv\s*[,}]/.test(args) &&
+      [...code.matchAll(/\b(?:const|let|var)\s+env\s*=\s*([^;]*)/g)].some((e) =>
+        [...derived].some((n) => new RegExp(String.raw`\b${n}\b`).test(e[1])),
+      );
+    if (!passes && !shorthand) bad.push(args.replace(/\s+/g, " ").slice(0, 70));
+  }
+  return { sites, bad };
+}
+
+/** null = not a fixture file, or clean; otherwise the reasons it is flagged. */
+function fixtureOffences(src: string): string[] | null {
+  if (!FIXTURE_INIT_RE.test(stripComments(src))) return null;
+  const { sites, bad } = unscrubbedGitSpawns(src);
+  const out = bad.map((b) => `unscrubbed git spawn: ${b}`);
+  if (sites === 0) out.push("fixture init but no scannable git spawn site");
+  return out.length ? out : null;
+}
 
 // Same single definition the .mjs scripts get through check-git-hooks.mjs.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -71,17 +219,68 @@ function walk(dir: string, out: string[] = []): string[] {
 }
 
 describe("fixture git repos scrub git's repo-scoped env", () => {
-  it("every file that runs a fixture `git init` calls the shared GIT_* scrub", () => {
+  it("every git spawn in every fixture-repo file passes the shared GIT_* scrub", () => {
     const files = SCAN_DIRS.flatMap((d) => walk(path.join(REPO_ROOT, d)));
-    const fixtureFiles = files.filter((f) => FIXTURE_INIT_RE.test(fs.readFileSync(f, "utf8")));
+    const offenders: string[] = [];
+    let fixtureFiles = 0;
+    for (const f of files) {
+      const found = fixtureOffences(fs.readFileSync(f, "utf8"));
+      if (found === null && !FIXTURE_INIT_RE.test(stripComments(fs.readFileSync(f, "utf8"))))
+        continue;
+      fixtureFiles++;
+      if (found) {
+        const rel = path.relative(REPO_ROOT, f).split(path.sep).join("/");
+        offenders.push(...found.map((o) => `${rel}: ${o}`));
+      }
+    }
     // The scan must be looking at something, or an empty walk would pass vacuously.
     expect(files.length).toBeGreaterThan(0);
-    expect(fixtureFiles.length).toBeGreaterThan(0);
-    const offenders = fixtureFiles
-      .filter((f) => !SCRUB_RE.test(fs.readFileSync(f, "utf8")))
-      .map((f) => path.relative(REPO_ROOT, f).split(path.sep).join("/"))
-      .sort();
-    expect(offenders).toEqual([]);
+    expect(fixtureFiles).toBeGreaterThan(0);
+    expect(offenders.sort()).toEqual([]);
+  });
+
+  describe("scanner mutant pins", () => {
+    it("(a) a bare execFileSync git init is flagged even when the helper is used elsewhere", () => {
+      const src = `
+        const { scrubbedGitEnv } = require("./scrubbed-git-env.cjs");
+        spawnSync("git", ["status"], { env: scrubbedGitEnv() });
+        execFileSync("git", ["init"]);
+      `;
+      const found = fixtureOffences(src);
+      expect(found).not.toBeNull();
+      expect(found).toHaveLength(1);
+    });
+    it("(b) a comment-only mention of scrubbedGitEnv is flagged", () => {
+      const src = `
+        // TODO: use scrubbedGitEnv() here
+        /* env: scrubbedGitEnv() */
+        spawnSync("git", ["init"], { cwd: dir });
+      `;
+      expect(fixtureOffences(src)).not.toBeNull();
+    });
+    it("(c) a correctly scrubbed file is clean, incl. wrappers and derived helpers", () => {
+      const direct = `spawnSync("git", ["init"], { cwd: d, env: scrubbedGitEnv() });`;
+      expect(fixtureOffences(direct)).toBeNull();
+      const wrapper = `
+        const gitEnv = () => scrubbedGitEnv();
+        function git(repo, ...args) { return execFileSync("git", args, { cwd: repo, env: gitEnv() }); }
+        git(dir, "init", "-q");
+      `;
+      expect(fixtureOffences(wrapper)).toBeNull();
+    });
+    it("(d) helper-call form: a wrapper body that does not scrub is flagged", () => {
+      const src = `
+        function git(repo, ...args) { return execFileSync("git", args, { cwd: repo }); }
+        git(dir, "init", "-q");
+      `;
+      expect(fixtureOffences(src)).not.toBeNull();
+    });
+    it("(e) execSync string form is checked per spawn", () => {
+      expect(fixtureOffences('execSync("git init -q", { cwd: d });')).not.toBeNull();
+      expect(
+        fixtureOffences('execSync("git init -q", { cwd: d, env: scrubbedGitEnv() });'),
+      ).toBeNull();
+    });
   });
 
   it("stop.gates.spec.mjs never touches the repo GIT_DIR points at", () => {

@@ -43,7 +43,12 @@ export function findEnclosingSymbol(lines, idx) {
 function git(args, cwd, opts) {
   const o = opts || {};
   try {
-    return execFileSync("git", args, { cwd, encoding: "utf8", maxBuffer: 1024 * 1024 * 64 });
+    return execFileSync("git", args, {
+      cwd,
+      encoding: "utf8",
+      maxBuffer: 1024 * 1024 * 64,
+      env: scrubbedGitEnv(),
+    });
   } catch (e) {
     if (o.allowExit1 && e.status === 1) return e.stdout || "";
     throw new ContentError(
@@ -272,7 +277,7 @@ export function runSelftest() {
   for (const k of Object.keys(process.env)) if (!(k in cleanEnv)) delete process.env[k];
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "fix-brief-selftest-"));
   try {
-    execFileSync("git", ["init"], { cwd: tmp, encoding: "utf8" });
+    execFileSync("git", ["init"], { cwd: tmp, encoding: "utf8", env: scrubbedGitEnv() });
     const srcLines = [];
     for (let i = 1; i <= 10; i++) srcLines.push("// pad line " + i);
     srcLines.push("function target(x) {");
@@ -285,10 +290,11 @@ export function runSelftest() {
       path.join(tmp, "src", "b.ts"),
       'import { target } from "./a";\nexport function caller() { return target(1); }\n',
     );
-    execFileSync("git", ["add", "-A"], { cwd: tmp, encoding: "utf8" });
+    execFileSync("git", ["add", "-A"], { cwd: tmp, encoding: "utf8", env: scrubbedGitEnv() });
     execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "init"], {
       cwd: tmp,
       encoding: "utf8",
+      env: scrubbedGitEnv(),
     });
 
     const bugLineNum = 11; // 1-based: 10 pad lines then "function target(x) {"
