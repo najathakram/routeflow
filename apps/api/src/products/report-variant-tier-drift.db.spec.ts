@@ -83,8 +83,16 @@ describeDb("report-variant-tier-drift loadCounts() (db)", () => {
       isActive: false,
       unitsPerBox: 24,
     });
+    const user = await prisma.user.create({
+      data: {
+        email: `drift-${randomUUID().slice(0, 8)}@example.invalid`,
+        username: `drift-${randomUUID().slice(0, 8)}`,
+        role: "CUSTOMER",
+        tenantId,
+      },
+    });
     const customer = await prisma.customer.create({
-      data: { tenantId, name: `Drift customer ${randomUUID().slice(0, 6)}` },
+      data: { userId: user.id, businessName: "Drift customer", contactName: "Drift", tenantId },
     });
     customerId = customer.id;
     await prisma.customerPrice.createMany({
@@ -98,6 +106,7 @@ describeDb("report-variant-tier-drift loadCounts() (db)", () => {
   afterAll(async () => {
     await prisma.customerPrice.deleteMany({ where: { tenantId } }).catch(() => undefined);
     await prisma.customer.deleteMany({ where: { tenantId } }).catch(() => undefined);
+    await prisma.user.deleteMany({ where: { tenantId } }).catch(() => undefined);
     await prisma.product
       .deleteMany({ where: { tenantId, parentProductId: { not: null } } })
       .catch(() => undefined);
