@@ -35,6 +35,26 @@ interface ExistingLineForReplaceAll {
 }
 
 /**
+ * The pre-edit snapshot of a BOGO counterpart line (any line carrying a free-unit snapshot: it
+ * can be SPECIAL, DISCOUNTED or MANUAL, not only PROMO). `priceType`, its strikethrough base
+ * `originalPrice` and the override attribution are copied VERBATIM: the qty-edit oracle writes
+ * originalPrice / overrideReason / overriddenBy ONLY under isManualOverride, so at an unchanged
+ * price they must survive the replaceAll re-create untouched. Moved out of orders.service.ts.
+ */
+export function buildBogoCounterpart(li: any) {
+  return {
+    qty: Number(li.qty),
+    boxes: li.boxes ?? null,
+    unitPrice: Number(li.unitPrice),
+    priceType: li.priceType,
+    originalPrice: li.originalPrice != null ? Number(li.originalPrice) : null,
+    overrideReason: li.overrideReason ?? null,
+    overriddenBy: li.overriddenBy ?? null,
+    promoFreeUnits: Number(li.promoFreeUnits ?? 0),
+  };
+}
+
+/**
  * Both existingLine* maps updateOrderItems' replaceAll rebuild needs, built in one pass —
  * moved out of orders.service.ts (round 5) to keep the size ratchet's ceiling. `existingLineById`
  * covers every non-cancelled pre-edit line unconditionally (an id is never ambiguous);
