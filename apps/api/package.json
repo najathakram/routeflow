@@ -56,6 +56,7 @@
     "@prisma/client": "^7.10.0",
     "@react-pdf/renderer": "^4.9.0",
     "@routeflow/pricing": "*",
+    "@routeflow/scanning": "*",
     "@routeflow/types": "*",
     "@sentry/node": "^10.75.0",
     "@socket.io/redis-adapter": "^8.3.0",
@@ -169,6 +170,7 @@
     },
     "moduleNameMapper": {
       "^@routeflow/pricing$": "<rootDir>/../../../packages/pricing/src/index.ts",
+      "^@routeflow/scanning$": "<rootDir>/../../../packages/scanning/src/index.ts",
       "^ioredis$": "<rootDir>/../test/__mocks__/ioredis.js",
       "^expo-server-sdk$": "<rootDir>/../test/__mocks__/expo-server-sdk.js",
       "^@react-pdf/renderer$": "<rootDir>/../test/__mocks__/react-pdf-renderer.js",
