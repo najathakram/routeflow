@@ -10,7 +10,7 @@
  */
 import { BadRequestException } from "@nestjs/common";
 import { PriceType } from "@prisma/client";
-import { decideStaffOverride, roundMoney } from "@routeflow/pricing";
+import { decideStaffOverride, roundMoney, withinStaffOverrideTolerance } from "@routeflow/pricing";
 
 export interface StaffPricedLine {
   priceType: PriceType;
@@ -51,7 +51,8 @@ export function decideEditedLinePrice(input: {
   productName?: string | null;
 }): StaffPricedLine | null {
   const { overridePrice, storedPrice } = input;
-  if (overridePrice === null || Math.abs(overridePrice - storedPrice) <= 0.005) return null;
+  if (overridePrice === null || withinStaffOverrideTolerance(overridePrice, storedPrice))
+    return null;
   if (input.isUnlisted) {
     return {
       priceType: PriceType.MANUAL,
@@ -91,7 +92,7 @@ export function decideReplaceAllLinePrice(input: {
   productName?: string | null;
 }): StaffPricedLine & { repriced: boolean } {
   const { existing, overridePrice } = input;
-  if (existing && Math.abs(overridePrice - existing.unitPrice) <= 0.005) {
+  if (existing && withinStaffOverrideTolerance(overridePrice, existing.unitPrice)) {
     return {
       priceType: existing.priceType as PriceType,
       unitPrice: existing.unitPrice,

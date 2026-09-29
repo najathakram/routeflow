@@ -16,6 +16,7 @@ import {
   computeLineSubtotal,
   getTierPrice,
   normalizeBoxesPieces,
+  withinStaffOverrideTolerance,
   type PromotionRule,
   type TrackedCategoryRow,
 } from "@routeflow/pricing";
@@ -157,7 +158,8 @@ export function buildReplaceAllLineData(
   const bogoCounterpart = ctx.bogoCounterparts.get(productId);
   const bogoPriceUnchanged =
     bogoCounterpart != null &&
-    (overridePrice === null || Math.abs(overridePrice - bogoCounterpart.unitPrice) <= 0.005);
+    (overridePrice === null ||
+      withinStaffOverrideTolerance(overridePrice, bogoCounterpart.unitPrice));
   // Not a repricing decision ⇒ the line's override attribution survives
   // the re-create, exactly as the qty-edit oracle leaves it untouched.
   const preservedOverride = bogoPriceUnchanged ? bogoCounterpart : null;
