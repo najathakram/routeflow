@@ -217,6 +217,89 @@ describeDb("#2728 M1 catalog dual write — real Postgres", () => {
     void a;
   });
 
+  // SA-572h (a): with the Prisma pg driver adapter the P2002 carries NO `meta.target`; the constraint
+  // rides in `meta.driverAdapterError.cause.constraint` ({ index } or { fields }). These two cases
+  // provoke a GENUINE unique violation from real Postgres through the real client with NO advisory
+  // lock (raw model writes, no service), then ask the mapper to translate it. They are red on the
+  // old `meta.target` predicate (it never matched an adapter error) and green on the widened one.
+  // One per barcode constraint: Product (tenantId, barcode) and ProductBarcode (tenantId, code, level).
+  it("SA-572h (a): a genuine P2002 on Product(tenantId, barcode), no lock, maps to 409 BARCODE_TAKEN", async () => {
+    const tenantId = await seedTenant("p2002-legacy");
+    const base = { tenantId, unit: "each", pricePerUnit: 1 };
+    await prisma.product.create({ data: { ...base, name: "P2002 A", barcode: "DUP-LEGACY-1" } });
+    let raised: unknown;
+    try {
+      await prisma.product.create({ data: { ...base, name: "P2002 B", barcode: "DUP-LEGACY-1" } });
+    } catch (e) {
+      raised = e;
+    }
+    expect(raised).toBeDefined();
+    let mapped: unknown;
+    try {
+      productCatalogSync.mapBarcodeUniqueViolation(raised, "DUP-LEGACY-1");
+    } catch (e) {
+      mapped = e;
+    }
+    expect(mapped).toMatchObject({ getResponse: expect.any(Function) });
+    expect((mapped as { getResponse(): unknown }).getResponse()).toMatchObject({
+      code: "BARCODE_TAKEN",
+      barcode: "DUP-LEGACY-1",
+    });
+  });
+
+  it("SA-572h (a): a genuine P2002 on ProductBarcode(tenantId, code, level), no lock, maps to 409 BARCODE_TAKEN", async () => {
+    const tenantId = await seedTenant("p2002-rows");
+    const base = { tenantId, unit: "each", pricePerUnit: 1 };
+    const a = await prisma.product.create({ data: { ...base, name: "P2002 rows A" } });
+    const b = await prisma.product.create({ data: { ...base, name: "P2002 rows B" } });
+    const row = (productId: string) => ({
+      tenantId,
+      productId,
+      code: "DUP-ROWS-1",
+      symbology: "CODE128" as const,
+      level: "UNIT" as const,
+      origin: "ENTERED" as const,
+    });
+    await prisma.productBarcode.create({ data: row(a.id) });
+    let raised: unknown;
+    try {
+      await prisma.productBarcode.create({ data: row(b.id) });
+    } catch (e) {
+      raised = e;
+    }
+    expect(raised).toBeDefined();
+    let mapped: unknown;
+    try {
+      productCatalogSync.mapBarcodeUniqueViolation(raised, "DUP-ROWS-1");
+    } catch (e) {
+      mapped = e;
+    }
+    expect(mapped).toMatchObject({ getResponse: expect.any(Function) });
+    expect((mapped as { getResponse(): unknown }).getResponse()).toMatchObject({
+      code: "BARCODE_TAKEN",
+      barcode: "DUP-ROWS-1",
+    });
+  });
+
+  it("SA-572h (a): a genuine P2002 on ANOTHER table (ProductImage) is rethrown, never a barcode 409", async () => {
+    const tenantId = await seedTenant("p2002-other");
+    const base = { tenantId, unit: "each", pricePerUnit: 1 };
+    const a = await prisma.product.create({ data: { ...base, name: "P2002 img A" } });
+    const b = await prisma.product.create({ data: { ...base, name: "P2002 img B" } });
+    const key = `products/${a.id}/dup.jpg`;
+    await prisma.productImage.create({ data: { tenantId, productId: a.id, storageKey: key } });
+    let raised: unknown;
+    try {
+      await prisma.productImage.create({ data: { tenantId, productId: b.id, storageKey: key } });
+    } catch (e) {
+      raised = e;
+    }
+    expect(raised).toBeDefined();
+    expect(() => productCatalogSync.mapBarcodeUniqueViolation(raised, "x")).toThrow(
+      raised as Error,
+    );
+  });
+
   it("image upload -> a ProductImage row with sortOrder/focal; delete -> the row gone", async () => {
     const tenantId = await seedTenant("images");
     const product = await inTenant(tenantId, () =>

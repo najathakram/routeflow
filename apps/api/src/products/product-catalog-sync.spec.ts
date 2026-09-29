@@ -1,8 +1,12 @@
 import * as fs from "fs";
 import * as path from "path";
+import { ConflictException } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import {
   assertBarcodeAvailable,
+  isBarcodeUniqueViolation,
   lockBarcodeCodes,
+  mapBarcodeUniqueViolation,
   syncProductBarcodesFromLegacy,
   syncProductImagesFromLegacy,
 } from "./product-catalog-sync";
@@ -579,5 +583,122 @@ describe("source pin: lockBarcodeCodes precedes assertBarcodeAvailable in every 
     }
     // Non-vacuous: both files together must have found real pairs to check.
     expect(totalPairs).toBeGreaterThanOrEqual(4);
+  });
+});
+
+/**
+ * SA-572h (a): the P2002 belt must recognise the error the Prisma pg DRIVER ADAPTER actually raises.
+ * With the adapter there is no `meta.target`: the constraint rides in
+ * `meta.driverAdapterError.cause.constraint` as `{ index: <name> }` or `{ fields: [...] }` (read from
+ * @prisma/adapter-pg's 23505 mapping and @prisma/client's error construction). The predicate is scoped
+ * to exactly two constraints, Product(tenantId, barcode) and ProductBarcode(tenantId, code, level);
+ * every other unique violation, including the other constraints of the same tables, is rethrown.
+ */
+function p2002(meta: Record<string, unknown>): Prisma.PrismaClientKnownRequestError {
+  return new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+    code: "P2002",
+    clientVersion: "test",
+    meta,
+  });
+}
+const adapterMeta = (
+  constraint: { index?: string; fields?: string[] } | undefined,
+  table?: string,
+): Record<string, unknown> => ({
+  driverAdapterError: {
+    name: "DriverAdapterError",
+    cause: { kind: "UniqueConstraintViolation", constraint, table },
+  },
+});
+
+describe("isBarcodeUniqueViolation / mapBarcodeUniqueViolation (SA-572h a)", () => {
+  it("adapter shape, constraint NAME: Product(tenantId, barcode) is a barcode conflict", () => {
+    const e = p2002(adapterMeta({ index: "Product_tenantId_barcode_key" }, "Product"));
+    expect(isBarcodeUniqueViolation(e)).toBe(true);
+  });
+
+  it("adapter shape, constraint NAME: ProductBarcode(tenantId, code, level) is a barcode conflict", () => {
+    const e = p2002(
+      adapterMeta({ index: "ProductBarcode_tenantId_code_level_key" }, "ProductBarcode"),
+    );
+    expect(isBarcodeUniqueViolation(e)).toBe(true);
+  });
+
+  it("adapter shape, constraint FIELDS (no index name): the two barcode field sets match, order-insensitive", () => {
+    expect(isBarcodeUniqueViolation(p2002(adapterMeta({ fields: ["tenantId", "barcode"] })))).toBe(
+      true,
+    );
+    expect(isBarcodeUniqueViolation(p2002(adapterMeta({ fields: ["barcode", "tenantId"] })))).toBe(
+      true,
+    );
+    expect(
+      isBarcodeUniqueViolation(p2002(adapterMeta({ fields: ["tenantId", "code", "level"] }))),
+    ).toBe(true);
+  });
+
+  it("native-engine shape (meta.target): a field array and a constraint-name string both still match", () => {
+    expect(isBarcodeUniqueViolation(p2002({ target: ["tenantId", "barcode"] }))).toBe(true);
+    expect(isBarcodeUniqueViolation(p2002({ target: "Product_tenantId_barcode_key" }))).toBe(true);
+    expect(isBarcodeUniqueViolation(p2002({ target: ["tenantId", "code", "level"] }))).toBe(true);
+  });
+
+  it("NEGATIVE: another table's / another constraint's P2002 is NOT a barcode conflict", () => {
+    const others: Array<Record<string, unknown>> = [
+      adapterMeta({ index: "ProductImage_tenantId_storageKey_key" }, "ProductImage"),
+      adapterMeta({ fields: ["tenantId", "storageKey"] }, "ProductImage"),
+      adapterMeta({ index: "Product_tenantId_sku_key" }, "Product"),
+      adapterMeta({ fields: ["tenantId", "sku"] }, "Product"),
+      adapterMeta({ index: "Product_tenantId_unitSku_key" }, "Product"),
+      // The SAME table, but the one-primary-per-level constraint: a bug signal, not a code conflict.
+      adapterMeta({ index: "ProductBarcode_productId_primaryFor_key" }, "ProductBarcode"),
+      adapterMeta({ fields: ["productId", "primaryFor"] }, "ProductBarcode"),
+      // A name that merely CONTAINS the substrings the old predicate matched on.
+      adapterMeta({ index: "Customer_tenantId_barcodeReaderId_key" }, "Customer"),
+      adapterMeta({ index: "PromoCode_tenantId_code_key" }, "PromoCode"),
+      adapterMeta({ fields: ["tenantId", "code"] }, "PromoCode"),
+      { target: ["tenantId", "code"] },
+      {},
+      adapterMeta(undefined),
+    ];
+    for (const meta of others) expect(isBarcodeUniqueViolation(p2002(meta))).toBe(false);
+  });
+
+  it("NEGATIVE: a non-P2002 Prisma error, a plain Error and a non-error are not barcode conflicts", () => {
+    const notUnique = new Prisma.PrismaClientKnownRequestError("nope", {
+      code: "P2025",
+      clientVersion: "test",
+      meta: adapterMeta({ index: "Product_tenantId_barcode_key" }),
+    });
+    expect(isBarcodeUniqueViolation(notUnique)).toBe(false);
+    expect(isBarcodeUniqueViolation(new Error("Product_tenantId_barcode_key"))).toBe(false);
+    expect(isBarcodeUniqueViolation("P2002")).toBe(false);
+    expect(isBarcodeUniqueViolation(null)).toBe(false);
+  });
+
+  it("mapBarcodeUniqueViolation: an adapter-shaped barcode P2002 becomes the 409 BARCODE_TAKEN body", () => {
+    const e = p2002(adapterMeta({ index: "Product_tenantId_barcode_key" }, "Product"));
+    let thrown: unknown;
+    try {
+      mapBarcodeUniqueViolation(e, "036000291452");
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(ConflictException);
+    expect((thrown as ConflictException).getResponse()).toMatchObject({
+      code: "BARCODE_TAKEN",
+      barcode: "036000291452",
+      productId: null,
+    });
+  });
+
+  it("mapBarcodeUniqueViolation: another table's P2002 is rethrown UNCHANGED (same object)", () => {
+    const e = p2002(adapterMeta({ index: "ProductImage_tenantId_storageKey_key" }, "ProductImage"));
+    let thrown: unknown;
+    try {
+      mapBarcodeUniqueViolation(e, "x");
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBe(e);
   });
 });
