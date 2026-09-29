@@ -1219,3 +1219,10 @@ Format: `## <date> <anchor>` then `- what:` `- cause:` `- guard:` `- rule:` (opt
 - cause: An 'owner action needed' claim was relayed second-hand (Mac Lead about F2) and put to the owner without confirming with the acting session
 - guard: Before any owner action is requested on another session's behalf, the lead messages that session directly and gets its own statement of the exact blocking UI element; the owner request quotes the acting session, not a relay
 - rule: A fact restated in a second place is the copy that goes wrong; resolve against the primary source
+
+## 2026-09-29 #2678
+
+- what: #2678 landed at f2745d75 on a PASS that predated the binding fold ruling SA-551a (#2554 5867986094); the fold (U-po 6d3c202d) never shipped
+- cause: The merge decision read the PR's last PASS, not the #2554 comments posted after it that named the PR
+- guard: Before merging, the coordinator lists every #2554 comment that names the PR and was posted after its last PASS; any open fold, HOLD or FAIL blocks the merge
+- rule: A verdict is only current until the next comment that names the PR; re-read the thread after it, not the last PASS
