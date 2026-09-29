@@ -31,6 +31,13 @@ export interface QuoteInlineReturnItem {
   qty?: number;
   boxes: number;
   pieces: number;
+  /** #2695 (SA-557): OPERATOR/TENANT_ADMIN only — a lower-only per-SELLING-unit credit price
+   *  (one box when boxed), capped at the engine's default (400 `RETURN_CREDIT_OVER_CAP` above it).
+   *  Always sent WITH `overrideReason`, on the quote and the capture alike; a driver or buyer
+   *  request carrying either field is a 400. */
+  creditUnitPrice?: number;
+  /** #2695: why — required with `creditUnitPrice`, trimmed, ≤ 200 characters. */
+  overrideReason?: string;
 }
 
 export interface QuoteInlineReturnRequest {
@@ -56,6 +63,10 @@ export interface CaptureInlineReturnItem {
   condition?: string;
   /** Defaults to the reason-driven server convention when omitted. */
   restock?: boolean;
+  /** #2695: see `QuoteInlineReturnItem.creditUnitPrice` — the capture must send the SAME
+   *  override its quote priced, or the two price different chunks. */
+  creditUnitPrice?: number;
+  overrideReason?: string;
 }
 
 export interface CaptureInlineReturnRequest {
@@ -80,6 +91,16 @@ export interface CaptureInlineReturnRequest {
   notes?: string;
   photoUrls?: string[];
 }
+
+// ─── Request: inlineReturn embedded on order create/edit (#2406) ───────────────
+//
+// The shape carried on `POST /orders`'s `inlineReturn` and `PATCH /orders/:id/items`'s
+// `inlineReturn` — a `CaptureInlineReturnRequest` minus `customerId`/`orderId`, both DERIVED
+// server-side from the order being created/edited (never sent by the client). Mirrors
+// `InlineReturnLinesDto` (apps/api/src/returns/dto/capture-inline-return.dto.ts) field-for-
+// field. Web's create/update order payload types (`useCreateOrder`/`useUpdateOrderItems` in
+// apps/web/lib/api/orders.ts) reference this rather than redeclaring it.
+export type InlineReturnLinesRequest = Omit<CaptureInlineReturnRequest, "customerId" | "orderId">;
 
 // ─── Request: POST /returns/inline/:id/approve (PR 2 — typed here for completeness) ────
 
@@ -166,6 +187,14 @@ export interface InlineReturnRecordItem {
 
 export type InlineReturnStatus = "RECEIVED" | "REFUNDED" | "REJECTED" | "CANCELLED";
 
+/** B735: unresolved `RegulatedLedgerParkedReversal` rows for this return, read fresh right
+ *  before the response is built (`InlineReturnsService.withParkedReversals`) — never a value
+ *  threaded from the reversal call itself, so it's correct on every exit including a replay. */
+export interface InlineReturnParkedReversals {
+  count: number;
+  pieces: number;
+}
+
 export interface InlineReturnRecord {
   id: string;
   returnNumber: string | null;
@@ -177,7 +206,8 @@ export interface InlineReturnRecord {
   photoUrls: string[];
   creditNoteId?: string | null;
   refundMethod?: string | null;
-  refundAmount?: number | null;
+  /** A Prisma Decimal: JSON carries it as a STRING ("22.5000"); consumers parse it (refundAmountOf). */
+  refundAmount?: number | string | null;
   refundedAt?: string | null;
   kind: "INLINE";
   returnKey?: string | null;
@@ -185,6 +215,10 @@ export interface InlineReturnRecord {
    *  an OFFICE capture never sets this (PR 1 asserts it stays null/absent). */
   holdReason?: string | null;
   heldAmount?: number | null;
+  /** B735: non-null iff this return has an unresolved regulated-ledger park (the B681 park
+   *  guard could not safely reverse a legacy/unknown box-axis SALE row). `null` = checked and clean; ABSENT =
+   *  not checked (the post-commit read failed, or no tenant context) — never assume clean. */
+  parkedReversals?: InlineReturnParkedReversals | null;
   creditSubtotal?: number | null;
   creditTax?: number | null;
   creditCategoryTax?: number | null;

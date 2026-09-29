@@ -21,6 +21,7 @@ import {
 } from "../../../../../lib/api/admin";
 import { archivedMessage, resolveProductByCode } from "../../../../../lib/barcode-resolve";
 import type { ScanOutcome } from "../../../../../lib/scan-loop";
+import { canRemoveLooseUnits, looseUnitsVisible } from "../../../../../lib/loose-units";
 import { useUpdateInvoice } from "../../../../../lib/api/invoices";
 import { alertInfo } from "../../../../../lib/confirm";
 import { ISO_DATE } from "../../../../../lib/invoice-terms";
@@ -32,7 +33,7 @@ import {
 } from "../../../../../lib/invoice-totals";
 import { isPendingOrderMirror } from "../../../../../lib/invoices-logic";
 import { hasUnitLine, unitLabelsOf } from "../../../../../lib/invoice-line-unit";
-import { computeLineSubtotal, packFromOwnSplit } from "@routeflow/pricing";
+import { computeLineSubtotal, isNsfLine, packFromOwnSplit } from "@routeflow/pricing";
 import { showToast } from "../../../../../lib/toast";
 import {
   hasUnsavedInvoiceLineEdits,
@@ -65,6 +66,8 @@ type EditLine = {
   attestedPack?: number;
   productId: string | null;
   description: string;
+  /** #2656: carried so the NSF fee line's Taxable toggle stays locked off (the API refuses > 0). */
+  systemKind?: string | null;
   /** Total pieces (boxes × unitsPerBox + pieces when split). */
   qty: number;
   boxes: number | null;
@@ -141,6 +144,7 @@ export default function EditInvoiceScreen() {
         : {}),
       productId: it.productId ?? null,
       description: it.description,
+      systemKind: it.systemKind ?? null,
       qty: Number(it.qty),
       boxes: it.boxes ?? null,
       pieces: it.boxes != null ? (it.pieces ?? 0) : null,
@@ -396,7 +400,7 @@ export default function EditInvoiceScreen() {
               pieces: l.pieces,
               unitsPerBox: l.unitsPerBox,
               discount: l.discount ?? undefined,
-              taxable: l.taxable,
+              taxable: l.taxable && !isNsfLine(l), // #2656: the NSF fee line is never taxed
               notes: l.note,
               promoFreeUnits: editedLineFreeUnits(l),
             },
@@ -640,6 +644,9 @@ function LineCard({
 }) {
   const upb = Number(line.unitsPerBox ?? 0);
   const isSplit = line.boxes != null && upb > 1;
+  // #2698 (SA-564a): one unit sold — loose units are opt-in, the same rule as CartRow.
+  const [looseUnitsOpen, setLooseUnitsOpen] = useState(false);
+  const showLoose = looseUnitsVisible(looseUnitsOpen, line.pieces);
   const freeUnits = editedLineFreeUnits(line);
   const lineTotal = Math.max(
     0,
@@ -732,13 +739,39 @@ function LineCard({
                 <Text style={styles.fieldLabel}>Cases</Text>
                 <QtyStepper value={line.boxes ?? 0} onChangeQty={onSetBoxes} />
               </View>
-              <View style={styles.fieldRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.fieldLabel}>Loose units</Text>
-                  <Text style={styles.fieldHint}>{upb} per case</Text>
+              {showLoose ? (
+                <View style={styles.fieldRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.fieldLabel}>Extra loose units</Text>
+                    <Text style={styles.fieldHint}>{upb} per case</Text>
+                  </View>
+                  <QtyStepper value={line.pieces ?? 0} onChangeQty={onSetPieces} max={upb - 1} />
+                  {canRemoveLooseUnits(line.boxes) ? (
+                    <Pressable
+                      onPress={() => {
+                        onSetPieces(0);
+                        setLooseUnitsOpen(false);
+                      }}
+                      hitSlop={8}
+                      style={styles.looseRemove}
+                      accessibilityRole="button"
+                      accessibilityLabel="Remove extra units"
+                    >
+                      <Ionicons name="close" size={16} color={ios.label2} />
+                    </Pressable>
+                  ) : null}
                 </View>
-                <QtyStepper value={line.pieces ?? 0} onChangeQty={onSetPieces} max={upb - 1} />
-              </View>
+              ) : (
+                <Pressable
+                  onPress={() => setLooseUnitsOpen(true)}
+                  hitSlop={8}
+                  style={styles.looseAdd}
+                  accessibilityRole="button"
+                  accessibilityLabel="Add extra loose units"
+                >
+                  <Text style={styles.looseAddText}>+ units</Text>
+                </Pressable>
+              )}
             </>
           ) : (
             <View style={styles.fieldRow}>
@@ -766,7 +799,19 @@ function LineCard({
         </>
       )}
 
-      {showTax && rate > 0 ? (
+      {showTax && rate > 0 && isNsfLine(line) ? (
+        // #2656 / SA-549: the NSF fee line is never taxed — the toggle is locked off (API refuses > 0).
+        <Pressable
+          style={[styles.taxRow, { opacity: 0.5 }]}
+          disabled
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: false, disabled: true }}
+          accessibilityLabel="Not taxed: the NSF fee is never taxed"
+        >
+          <View style={styles.checkbox} />
+          <Text style={styles.taxLabel}>Not taxed (NSF fee)</Text>
+        </Pressable>
+      ) : showTax && rate > 0 ? (
         <Pressable
           style={styles.taxRow}
           onPress={() => onPatch({ taxable: !line.taxable })}
@@ -808,6 +853,27 @@ function LineCard({
 }
 
 const styles = StyleSheet.create({
+  // #2698: the opt-in loose-units control (dashed, small) and its remove button — as CartRow.
+  looseRemove: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: ios.fill,
+    marginLeft: 6,
+  },
+  looseAdd: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 12,
+    minHeight: 32,
+    justifyContent: "center",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderColor: ios.separator,
+  },
+  looseAddText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.brand },
   guardCard: {
     backgroundColor: ios.bgElev,
     borderRadius: 14,

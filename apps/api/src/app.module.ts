@@ -5,6 +5,7 @@ import { BullModule } from "@nestjs/bull";
 import { ScheduleModule } from "@nestjs/schedule";
 import { ThrottlerModule, ThrottlerGuard } from "@nestjs/throttler";
 import { RedisThrottlerStorage } from "./common/redis-throttler.storage";
+import { buildThrottlers } from "./common/throttlers";
 
 import { configuration } from "./config/configuration";
 import { PrismaModule } from "./prisma/prisma.module";
@@ -63,6 +64,7 @@ import { SellingRestrictionsModule } from "./selling-restrictions/selling-restri
 import { CommissionsModule } from "./sales-agents/commissions.module";
 import { CrmModule } from "./crm/crm.module";
 import { DemoBookingModule } from "./demo-booking/demo-booking.module";
+import { OnboardingModule } from "./onboarding/onboarding.module";
 
 import { TenantStatusGuard } from "./tenant/tenant-status.guard";
 import { ImpersonationGuard } from "./auth/guards/impersonation.guard";
@@ -95,7 +97,7 @@ import { AppService } from "./app.service";
     ThrottlerModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
-        throttlers: [{ ttl: 60_000, limit: 100 }],
+        throttlers: buildThrottlers(config),
         storage: new RedisThrottlerStorage(config),
       }),
     }),
@@ -185,6 +187,7 @@ import { AppService } from "./app.service";
     CommissionsModule,
     CrmModule,
     DemoBookingModule,
+    OnboardingModule,
   ],
   controllers: [AppController],
   providers: [

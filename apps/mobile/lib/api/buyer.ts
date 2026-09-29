@@ -17,6 +17,7 @@ import type {
   BuyerAuthorizationRow,
   BuyerCreateChangeRequestInput,
   BuyerPayment,
+  BuyerProductDetailExtras,
   BuyerPromotion,
   BuyerRemittance,
   BuyerStatement,
@@ -164,6 +165,11 @@ export interface BuyerInvoiceItem {
   unitPrice: number;
   discount?: number;
   subtotal: number;
+  boxes?: number | null;
+  pieces?: number | null;
+  /** units_v1: set when this line sells by a named unit (Case, Pallet, Piece…) — `boxes` is
+   *  then the COUNT of that unit (never a physical box). Null = the pack (B758). */
+  unitLabel?: string | null;
   /** BUY_N_GET_M: whole free SELLING units on this line — names the reduced
    *  `subtotal` so it doesn't read as a pricing error. */
   promoFreeUnits?: number | null;
@@ -438,6 +444,31 @@ export function useToggleFavorite() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["buyer-favorites"] });
       qc.invalidateQueries({ queryKey: ["buyer-products"] });
+    },
+  });
+}
+
+// ─── Product detail (#2345, W>M: web portal/[seller]/shop/[productId]) ─────────
+
+/** GET /buyer/products/:id — the catalog row plus images, variants, alert state. */
+export interface BuyerProductDetail
+  extends Omit<BuyerProduct, "imageUrls">, BuyerProductDetailExtras {}
+
+/**
+ * Keyed under "buyer-products" so the favorite toggle's existing invalidation
+ * refreshes an open detail too. A 404/403 is "not available" to the screen
+ * (see product-detail-logic `productDetailState`) — never retried.
+ */
+export function useBuyerProduct(productId: string) {
+  return useQuery<BuyerProductDetail>({
+    queryKey: ["buyer-products", "detail", productId],
+    queryFn: () =>
+      buyerApiClient.get(`/buyer/products/${encodeURIComponent(productId)}`).then((r) => r.data),
+    enabled: !!productId,
+    retry: (failureCount, err: any) => {
+      const status = err?.response?.status;
+      if (status === 404 || status === 403) return false;
+      return failureCount < 2;
     },
   });
 }

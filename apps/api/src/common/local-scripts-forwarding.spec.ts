@@ -15,8 +15,12 @@ describe("root package.json local:* script contract (p5)", () => {
     expect(scripts["local:drift"]).toContain("-- --local");
   });
 
-  it("local:test:db forwards --db --db-specs", () => {
-    expect(scripts["local:test:db"]).toContain("--db --db-specs");
+  // #2183: the DB spec lane gets its own fresh database (created, migrated, dropped) instead of
+  // the shared compose `routeflow_dev` the live api container serves.
+  it("local:test:db runs the DB lane through scripts/local-db-specs.mjs (its own fresh database)", () => {
+    expect(scripts["local:test:db"]).toBe(
+      'node scripts/local-db-specs.mjs -- "npm run test:db -w apps/api"',
+    );
   });
 
   it("local:validate ends with npm run local:drift", () => {

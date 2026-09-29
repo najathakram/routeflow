@@ -19,7 +19,11 @@ const IN_PLAN = planFlagKeys[0];
 const NOT_IN_PLAN = planFlagKeys[1];
 const SKU_GRANTED = planFlagKeys[2];
 const ADDON_KEYED = FEATURE_REGISTRY.find((f) => f.gate.via === "RequireAddon")!.key;
-const DEFAULT_GRANTED = FEATURE_REGISTRY.find((f) => f.defaultGranted)!.key;
+// A flag-keyed default (not an add-on): an add-on-keyed default (orders_inline_returns, owner
+// ruling 2026-09-28) takes the addonKeyed branch and would leave the defaultGranted branch untested.
+const DEFAULT_GRANTED = FEATURE_REGISTRY.find(
+  (f) => f.defaultGranted && f.gate.via !== "RequireAddon" && f.gate.via !== "guard",
+)!.key;
 
 const auditCreate = jest.fn().mockResolvedValue({});
 const raw = jest.fn().mockResolvedValue(1);
@@ -195,6 +199,21 @@ describe("PlanTransitionConfigService (A2 step b)", () => {
         supersededSnapshots: 2,
       },
     });
+  });
+
+  // #2226 / SA-386: the admin list reads the audit trail with `take = restoredIds.length`, exact only
+  // while each restored snapshot has ONE audit row. The automatic writer's side of that invariant:
+  // a second re-upgrade finds the snapshot already restored (restoreLatest → null) and writes nothing.
+  it("#2226: a second upgrade after an automatic restore writes NO second audit row for that snapshot", async () => {
+    const { svc, snapshots } = build(true);
+    const up = { tenantId: "t1", fromPlanKey: LOW, toPlanKey: HIGH, toPlanVersionId: null };
+    await runTransition(svc, up); // restores s1 → one audit row
+    snapshots.restoreLatest.mockResolvedValueOnce(null); // s1 is stamped: nothing left to restore
+    await runTransition(svc, up);
+    const restored = auditCreate.mock.calls.filter(
+      (c: any[]) => c[0].data.action === "CONFIG_SNAPSHOT_RESTORED",
+    );
+    expect(restored).toHaveLength(1);
   });
 
   it("no audit row when nothing was restored, and none for a downgrade", async () => {

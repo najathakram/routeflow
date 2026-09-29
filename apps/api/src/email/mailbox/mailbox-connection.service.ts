@@ -15,6 +15,7 @@ import { PrismaService } from "../../prisma/prisma.service";
 import { EncryptionService } from "../../common/encryption.service";
 import { AuditService } from "../../audit/audit.service";
 import { withAdvisoryLock } from "../../common/db-locks";
+import { API_ERROR_CODES } from "../../common/api-error-codes";
 
 /** Scope granted to the mailbox client — send-only, never a read scope (design D1/§3). */
 const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
@@ -622,10 +623,10 @@ export class MailboxConnectionService {
     jwtTenantId: string,
   ): void {
     if (pending.userId !== jwtUserId || pending.tenantId !== jwtTenantId) {
-      throw new ForbiddenException("mailbox_confirm_identity_mismatch");
+      throw new ForbiddenException(API_ERROR_CODES.MAILBOX_CONFIRM_IDENTITY_MISMATCH);
     }
     if (!connectSecretMatches(connectSecret, pending.secretHash)) {
-      throw new ForbiddenException("mailbox_connect_secret_mismatch");
+      throw new ForbiddenException(API_ERROR_CODES.MAILBOX_CONNECT_SECRET_MISMATCH);
     }
   }
 
@@ -711,6 +712,8 @@ export class MailboxConnectionService {
           throttledUntil: null,
           lastError: null,
           lastErrorAt: null,
+          // #2113: an alert still owed about the OLD grant says nothing true about the new one.
+          alertPendingAt: null,
           connectedByUserId: pending.userId,
           // Every field above belongs to the GRANT and is rewritten on every confirm.
           // `lastSentAt` belongs to the MAILBOX: re-granting the same mailbox keeps its history,

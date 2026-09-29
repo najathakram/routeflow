@@ -39,6 +39,7 @@ import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { CustomersService } from "../customers/customers.service";
 import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -89,6 +90,12 @@ describeDb("B268 import-fallback numbering — real Postgres (T3: live-invoice s
         { provide: PrismaService, useValue: prisma },
         { provide: VendorBillsService, useValue: mockVendorBills },
         { provide: CustomersService, useValue: mockCustomers },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
       ],
     }).compile();
 

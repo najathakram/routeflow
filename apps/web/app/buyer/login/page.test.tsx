@@ -23,6 +23,15 @@ describe("BuyerLoginPage", () => {
     window.localStorage.clear();
   });
 
+  // B891: the Enter-in-email handler focuses getElementById("buyer-password"); the field's id is
+  // explicit, so the useId default can never break it.
+  it("the password field is findable by its explicit id, and its label targets it", () => {
+    renderWithProviders(<BuyerLoginPage />);
+    const byId = document.getElementById("buyer-password");
+    expect(byId).toBeInstanceOf(HTMLInputElement);
+    expect(screen.getByLabelText("Password")).toBe(byId);
+  });
+
   it("shows the zod validation message and never calls the API on an invalid submit", async () => {
     const user = userEvent.setup();
     renderWithProviders(<BuyerLoginPage />);

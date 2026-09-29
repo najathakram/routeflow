@@ -58,6 +58,19 @@ unchanged) or when a human sets `E2E_ALLOW_REMOTE_AUTH=1` for that run. **An age
 variable and never targets a non-local host** — a refusal is the guard working, not a bug to route
 around.
 
+### The proof-stack guard (stale image, #2491)
+
+A proof is only as current as the images it hits. `npm run local:up` / `local:build` stamp both
+images with the commit they were built from (`org.routeflow.sha`, plus `org.routeflow.dirty`). Every
+stack-backed lane (`local:validate`, `local:validate:features`, `local:e2e`, `local:e2e:all`) first
+prints a `proof-stack:` line with both shas. It then refuses with **stale image** unless each image
+was built from a descendant of the commit under proof: `PROOF_STACK_REQUIRE=<PR merge or head sha>`,
+or this checkout's HEAD when that is unset. An unlabelled image (built outside `local:up`) is
+refused too, and so is an image built from a dirty tree when `PROOF_STACK_REQUIRE` is set (a PR
+proof needs committed code; the HEAD dev loop only warns). The fix is always `npm run local:up`; never prove on the old image. A lane that drives
+Playwright or curl by hand runs `npm run local:proof-stack` first and quotes its line in the proof.
+Every check is appended to `local-assets/proof-stack.jsonl`.
+
 ## The allow-list (`local:e2e`)
 
 `setup` plus the money/guard projects, trimmed to stay ≤ 10 min wall clock on this machine:

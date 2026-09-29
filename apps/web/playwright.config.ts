@@ -402,6 +402,25 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
 
+    // ── units_v1 deploy gate: order → edit → invoice lane (#2233, spec 53) ────
+    // SA-390: a Case line survives create (server truth in base pieces, SA-388),
+    // order-detail display ("3 Cases"), a price-only edit through the web UI
+    // (qty/boxes unchanged), and invoice-from-order (the invoice shows the unit
+    // too). Self-provisions via the API against the standing units_v1 fixture
+    // (`e2e-seed.js`'s `ensureUnitsFixture`, #2195) and the shared
+    // "E2E Fixture Deli Three" customer; a missing fixture is a hard failure,
+    // never a skip. Mutating but self-contained: leaves one PENDING order + one
+    // invoice on e2e-routeflow (same no-cleanup tolerance 21/22/24's own
+    // throwaway fixtures take — neither resource has an API delete).
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
+    // header for the precedent where exactly that happened and a spec sat dead.
+    {
+      name: "units-order-lane",
+      testMatch: /53-units-order-lane\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
     // ── B465 fix round 2: SPECIAL-tier reason required (spec 48) ─────────────
     // Same posture as order-edit-pricing above — a client-side requirement
     // with no web unit runner behind it, so this runs only against a live app
@@ -830,6 +849,53 @@ export default defineConfig({
         // box needs more headroom than the config default or a real overflow
         // failure gets masked by a navigation timeout instead.
         navigationTimeout: 60_000,
+      },
+    },
+
+    // Create-order dialog mobile pan (#2080, P0): the dialog body's own
+    // scrollWidth/clientWidth stays 0 at 320/375/390/430 under a model of iOS
+    // WebKit's post-cascade date-input sizing (helpers/ios-date-input.ts), and
+    // the boxed line's cases/units content fits its grid track; and at
+    // 1440/768/390, on create AND a resumed draft with a long product name,
+    // typing a focused date never scrolls the document sideways, moves the
+    // dialog's left edge off screen, or pans the dialog body. Same
+    // setup/operator shape as "create-order-escape" (08). WITHOUT THIS ENTRY
+    // THE SPEC NEVER RUNS - see 08-create-order-escape's header.
+    {
+      name: "create-order-dialog-mobile-pan",
+      testMatch: /56-create-order-dialog-mobile-pan\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // #2080 follow-up: date inputs in narrow grid-cols-2/3 tracks (vendor-bills
+    // and estimates modals, invoices/new, invoices/[id]/edit) fit their cells
+    // at 320/375/390 under the same iOS model. Read-only (one API read).
+    {
+      name: "date-input-grid-overflow",
+      testMatch: /57-date-input-grid-overflow\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // PageHeader action-slot wrap (B749/B770 shared root cause) — proves no
+    // page-level header action overflows the viewport at 390px across every
+    // affected list page. Operator auth, same shape as "orders" et al.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
+    // header for the precedent.
+    {
+      name: "pageheader-action-wrap",
+      testMatch: /57-pageheader-action-wrap\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
       },
     },
   ],

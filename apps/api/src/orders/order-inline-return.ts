@@ -1,4 +1,8 @@
 import { ConflictException, ForbiddenException, ServiceUnavailableException } from "@nestjs/common";
+import {
+  assertReplayItems,
+  type InlineReturnReplayLines,
+} from "../returns/inline-return-fingerprint";
 import { retryOnTxConflict, TX_CONFLICT_BACKOFF_MS } from "../common/tx-retry";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import type { InlineReturnLinesDto } from "../returns/dto/capture-inline-return.dto";
@@ -104,7 +108,7 @@ export async function assertReplayCarriesReturn(
   p: PreparedInlineReturn | null,
   replayedOrderId: string,
 ): Promise<void> {
-  if (p) return assertReplayCarriesReturnKey(db, p.lines.returnKey, replayedOrderId);
+  if (p) return assertReplayCarriesReturnKey(db, p.lines, replayedOrderId);
   // Both directions (Opus W): a replay WITHOUT a return of an order created WITH one is refused too,
   // or an operator who removes the return after a timeout and re-enters it on another order credits
   // the customer twice, and gets a silent 201 for it.
@@ -136,19 +140,22 @@ export async function replayAfterCheck<T extends { id: string }>(
  */
 export async function assertReplayCarriesReturnKey(
   db: any,
-  returnKey: string | undefined,
+  lines: InlineReturnReplayLines | undefined,
   replayedOrderId: string,
 ): Promise<void> {
+  const returnKey = lines?.returnKey;
   if (!returnKey) return;
   const row = await db.return.findFirst({
     where: { returnKey, orderId: replayedOrderId, kind: "INLINE" },
-    select: { id: true },
+    select: { id: true, returnNumber: true, capturePayload: true },
   });
   if (!row) {
     throw new ConflictException(
       "Idempotency-Key reused with a different return: submit the edited return as a new order (new key), or retry the original unchanged",
     );
   }
+  // #2424: the SAME returnKey must also carry the SAME items, or the edited lines are silently lost.
+  assertReplayItems(row, lines);
 }
 
 /** The tx's FIRST statement (before any row lock). No-op without an inline return. */
@@ -204,12 +211,16 @@ export async function preflightInlineReturn(
   p: PreparedInlineReturn | null,
   order: { id: string; customerId: string; routeRunId: string | null },
   user: JwtPayload | undefined,
+  // #2178: true when this edit's linked-invoice revert runs next (an undelivered order): the dry run
+  // then prices against the post-revert matching set, so it refuses before that revert commits.
+  willRevert = false,
 ): Promise<void> {
   if (!p) return;
   p.preflightTotal = await p.svc.preflightCapture(
     { ...p.lines, customerId: order.customerId, orderId: order.id },
     user as JwtPayload,
     { routeRunId: order.routeRunId },
+    willRevert ? { revertOrderId: order.id } : {},
   );
 }
 

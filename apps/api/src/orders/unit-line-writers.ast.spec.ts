@@ -229,7 +229,7 @@ const INVENTORY: Record<string, Row> = {
     kind: "DELETE_ONLY",
     why: "customer purge",
   },
-  "customers/customers.service.ts::CustomersService.deleteImportedCustomers": {
+  "customers/customers.service.ts::CustomersService.runImportedCustomersCleanup": {
     kind: "DELETE_ONLY",
     why: "customer purge",
   },

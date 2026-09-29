@@ -1,4 +1,4 @@
-import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
+import { notNsfLineWhere } from "../invoices/nsf-line";
 import { uncategorisedLineWarnings } from "./uncategorised-lines";
 
 /**
@@ -58,13 +58,17 @@ describe("uncategorisedLineWarnings", () => {
     expect(w[0].message).toContain("Add the item to the catalog");
   });
 
-  it("queries ONE row per invoice (items: some productless), issued and in range; rules overlapping the range", async () => {
+  it("queries ONE row per invoice (items: some productless AND not-NSF via the shared predicate), issued and in range; rules overlapping the range", async () => {
     const { db } = await run([rule()], []);
+    // #2169 (SA-395): the "not NSF" leg is the shared `notNsfLineWhere` fragment (nsf-line.ts),
+    // not a re-typed literal — asserting object identity to the import is what pins the actual
+    // filter BEHAVIOUR (the Prisma where fragment IS the query it runs), not just its source text
+    // (L-205).
     expect(db.invoice.findMany.mock.calls[0][0].where).toEqual({
       status: { notIn: ["DRAFT", "VOID"] },
       issueDate: { gte: range.from, lt: range.toExclusive },
       items: {
-        some: { productId: null, NOT: { description: { startsWith: NSF_FEE_DESCRIPTION_PREFIX } } },
+        some: { productId: null, ...notNsfLineWhere },
       },
     });
     const where = db.sellingRestriction.findMany.mock.calls[0][0].where;

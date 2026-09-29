@@ -15,6 +15,7 @@ import { InvoiceStatus } from "@prisma/client";
 import { InvoicesService } from "./invoices.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 const autoMock = () =>
@@ -68,8 +69,10 @@ describe("InvoicesService.duplicate — what the Duplicate button now depends on
   let service: InvoicesService;
   let prisma: ReturnType<typeof createMockPrisma>;
   const created = () => prisma.invoice.create.mock.calls[0][0].data;
+  const ledger = { writeSaleEntries: jest.fn().mockResolvedValue(undefined) };
 
   beforeEach(async () => {
+    ledger.writeSaleEntries.mockClear();
     jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] });
     jest.setSystemTime(new Date("2026-09-21T15:00:00.000Z"));
     prisma = createMockPrisma();
@@ -77,6 +80,7 @@ describe("InvoicesService.duplicate — what the Duplicate button now depends on
       .useMocker((token) => {
         if (token === PrismaService) return prisma;
         if (token === EntitlementsService) return { hasFlag: jest.fn().mockResolvedValue(false) };
+        if (token === RegulatedLedgerService) return ledger;
         return autoMock();
       })
       .compile();
@@ -136,6 +140,20 @@ describe("InvoicesService.duplicate — what the Duplicate button now depends on
     );
     await service.duplicate("inv-1");
     expect(created().items.create[0].unitsPerBox).toBeNull();
+  });
+
+  it("#2169 (SA-395, C2 copier contract): a duplicated NSF fee line carries systemKind verbatim", async () => {
+    prisma.invoice.findUnique.mockResolvedValue(
+      source({ items: [{ ...boxedLine, systemKind: "NSF_FEE" }] }),
+    );
+    await service.duplicate("inv-1");
+    expect(created().items.create[0].systemKind).toBe("NSF_FEE");
+  });
+
+  it("#2169: a plain line (no systemKind) copies null, not undefined", async () => {
+    prisma.invoice.findUnique.mockResolvedValue(source());
+    await service.duplicate("inv-1");
+    expect(created().items.create[0].systemKind).toBeNull();
   });
 
   describe("regulated LEVY - a subtotal-only assertion would pass while the levy is 12x wrong", () => {
@@ -232,6 +250,83 @@ describe("InvoicesService.duplicate — what the Duplicate button now depends on
       await service.duplicate("inv-1");
       expect(created().dueDate).toBeNull();
       expect(created().paymentTermsLabel).toBeNull();
+    });
+  });
+
+  describe("B680 - a duplicated regulated invoice gets its own ledger SALE footprint", () => {
+    const regulatedLine = { ...boxedLine, trackedCategoryId: "cat-excise", categoryTaxAmount: 7.2 };
+    const copyItems = [
+      {
+        id: "new-li",
+        productId: "p1",
+        qty: 72,
+        boxes: 6,
+        pieces: 0,
+        unitsPerBox: 12,
+        subtotal: 240,
+        categoryTaxAmount: 7.2,
+        trackedCategoryId: "cat-excise",
+        trackedSubcategoryId: null,
+        orderItemId: null,
+      },
+    ];
+    beforeEach(() => {
+      prisma.product.findMany.mockResolvedValue([{ id: "p1", unitsPerBox: 12 }]);
+    });
+
+    it("writes SALE rows for the COPY (its own invoice id and item ids), like create() does", async () => {
+      prisma.invoice.findUnique.mockResolvedValue(source({ items: [regulatedLine] }));
+      prisma.invoice.create.mockResolvedValue({
+        id: "inv-2",
+        items: copyItems,
+        customer: {},
+        payments: [],
+      });
+      await service.duplicate("inv-1");
+      expect(ledger.writeSaleEntries).toHaveBeenCalledTimes(1);
+      const arg = ledger.writeSaleEntries.mock.calls[0][0];
+      expect(arg).toMatchObject({ invoiceId: "inv-2", orderId: null });
+      expect(arg.lines).toHaveLength(1);
+      expect(arg.lines[0]).toMatchObject({
+        invoiceItemId: "new-li",
+        trackedCategoryId: "cat-excise",
+        packAtSale: 12,
+      });
+    });
+
+    it("writes nothing for a copy with no regulated line", async () => {
+      prisma.invoice.findUnique.mockResolvedValue(source());
+      prisma.invoice.create.mockResolvedValue({
+        id: "inv-2",
+        items: [{ ...copyItems[0], trackedCategoryId: null }],
+        customer: {},
+        payments: [],
+      });
+      await service.duplicate("inv-1");
+      expect(ledger.writeSaleEntries).not.toHaveBeenCalled();
+    });
+
+    it("the ledger write runs INSIDE the create transaction (a failed write leaves no copy)", async () => {
+      prisma.invoice.findUnique.mockResolvedValue(source({ items: [regulatedLine] }));
+      prisma.invoice.create.mockResolvedValue({
+        id: "inv-2",
+        items: copyItems,
+        customer: {},
+        payments: [],
+      });
+      // Capture the exact tx object the tenantTransaction callback receives.
+      let seenTx: unknown;
+      const passThrough = prisma.tenantTransaction.getMockImplementation()!;
+      prisma.tenantTransaction.mockImplementationOnce((fn: any) =>
+        passThrough((tx: unknown) => {
+          seenTx = tx;
+          return fn(tx);
+        }),
+      );
+      await service.duplicate("inv-1");
+      expect(seenTx).toBeDefined();
+      expect(ledger.writeSaleEntries.mock.calls[0][0].db).toBe(seenTx);
+      expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
     });
   });
 

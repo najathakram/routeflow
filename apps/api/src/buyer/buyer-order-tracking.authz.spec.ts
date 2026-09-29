@@ -12,7 +12,7 @@
  *
  * Fixtures are placeholders (acme / globex); no live-client data.
  */
-import { INestApplication } from "@nestjs/common";
+import { INestApplication, InjectionToken } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
 import { PassportModule } from "@nestjs/passport";
@@ -42,6 +42,7 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { getOrderTracking } from "../orders/order-tracking";
+import { listenOnLoopback } from "../common/testing/listen-loopback";
 
 const SECRET = "tracking-authz-spec-secret";
 const jwt = new JwtService({ secret: SECRET });
@@ -254,7 +255,7 @@ beforeEach(async () => {
   orderFindUnique = standIn.orderFindUnique;
   const prisma = standIn.prisma as unknown as PrismaService;
 
-  const stub = (token: unknown) => ({ provide: token, useValue: {} });
+  const stub = (token: InjectionToken) => ({ provide: token, useValue: {} });
   const moduleRef = await Test.createTestingModule({
     imports: [PassportModule],
     controllers: [BuyerController],
@@ -294,7 +295,7 @@ beforeEach(async () => {
     ],
   }).compile();
   app = moduleRef.createNestApplication({ logger: false });
-  await app.init();
+  await listenOnLoopback(app);
 });
 
 afterEach(async () => {
