@@ -9,7 +9,7 @@ import { join, relative } from "path";
  *   - "order": the function calls `syncOrderLineCompositions(`, so a FIXED line's frozen components
  *     are re-planned or rescaled in the SAME tx as the line write (I12);
  *   - "invoice": the function builds its lines through `buildInvoiceItemData(` (which carries the
- *     line columns and the component rows) or through `invoiceComponentsCreate(`;
+ *     line columns and the component rows) or, on a DRAFT edit, through `applyComposedLineEdits(`;
  *   - "exempt": a written reason the write cannot change a composed line.
  * A NEW writer that is not listed, a stale entry, a listed function that lost its call, and a
  * nested `components: { create` without a `tenantId` (nested creates are not tenant-injected, S4)
@@ -26,12 +26,18 @@ const REGISTRY: Record<string, Entry> = {
   "orders/orders.service.ts::approveChangeRequestAtStop": { kind: "order" },
   "order-templates/order-templates.service.ts::createOrderFromTemplate": { kind: "order" },
   "invoices/invoices.service.ts::recomputeOrderFromInvoices": { kind: "order" },
-  "invoices/invoices.service.ts::create": { kind: "invoice" },
+  "invoices/invoices.service.ts::create": {
+    kind: "exempt",
+    reason: "manual invoice lines carry no order provenance and are never composed",
+  },
   "invoices/invoices.service.ts::createSplitInvoices": { kind: "invoice" },
   "invoices/invoices.service.ts::reconcileOrderDraftInvoice": { kind: "invoice" },
   "invoices/invoices.service.ts::rebuildSiblingDrafts": { kind: "invoice" },
   "invoices/invoices.service.ts::createPartialFromOrder": { kind: "invoice" },
-  "invoices/invoices.service.ts::duplicate": { kind: "invoice" },
+  "invoices/invoices.service.ts::duplicate": {
+    kind: "exempt",
+    reason: "an order-linked invoice cannot be duplicated (RF-011); composed lines exist only on those",
+  },
   "invoices/invoices.service.ts::update": { kind: "invoice" },
   "orders/line-composition.ts::syncLineCompositions": {
     kind: "exempt",
@@ -156,7 +162,7 @@ describe("composition writer tripwire (#2717 M3, case 14)", () => {
   it.each(Object.entries(REGISTRY).filter(([, e]) => e.kind === "invoice"))(
     "%s builds its lines through the component-carrying builder",
     (key) => {
-      expect(sites.get(key)).toMatch(/buildInvoiceItemData\(|invoiceComponentsCreate\(/);
+      expect(sites.get(key)).toMatch(/buildInvoiceItemData\(|applyComposedLineEdits\(/);
     },
   );
 
