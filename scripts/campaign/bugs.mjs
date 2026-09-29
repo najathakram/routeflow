@@ -1524,7 +1524,8 @@ const SYNC_STATE = () =>
   (process.env.BUGS_ROOT ? join(rootDir(), "sync-state.json") : ".campaign/bugs-sync-state.json");
 const FIRST_RUN_WINDOW = 400;
 
-const git = (cmd) => execSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+const git = (cmd) =>
+  execSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: scrubbedGitEnv() });
 
 function readSyncState() {
   const p = SYNC_STATE();
@@ -4634,12 +4635,15 @@ cmds["self-test"] = () => {
     const prevRoot = process.env.BUGS_ROOT;
     process.env.BUGS_ROOT = campaignRoot;
     try {
-      execSync("git init -q", { cwd: tmp });
-      execSync('git config user.email "self-test@routeflow.local"', { cwd: tmp });
-      execSync('git config user.name "Self Test"', { cwd: tmp });
+      execSync("git init -q", { cwd: tmp, env: scrubbedGitEnv() });
+      execSync('git config user.email "self-test@routeflow.local"', {
+        cwd: tmp,
+        env: scrubbedGitEnv(),
+      });
+      execSync('git config user.name "Self Test"', { cwd: tmp, env: scrubbedGitEnv() });
       writeFileSync(join(tmp, "seed.txt"), "seed\n");
-      execSync("git add seed.txt", { cwd: tmp });
-      execSync('git commit -q -m "initial"', { cwd: tmp });
+      execSync("git add seed.txt", { cwd: tmp, env: scrubbedGitEnv() });
+      execSync('git commit -q -m "initial"', { cwd: tmp, env: scrubbedGitEnv() });
 
       writeCatalogue([
         {
@@ -4683,9 +4687,10 @@ cmds["self-test"] = () => {
       // A new commit lands mentioning B2 — the event that must survive a
       // crash later in the SAME sync run.
       writeFileSync(join(tmp, "seed.txt"), "seed 2\n");
-      execSync("git add seed.txt", { cwd: tmp });
+      execSync("git add seed.txt", { cwd: tmp, env: scrubbedGitEnv() });
       execSync('git commit -q -m "fix(routes): B2 gamma event that must not be lost"', {
         cwd: tmp,
+        env: scrubbedGitEnv(),
       });
 
       // Corrupt B1's record so the per-bug loop dies while processing it —
@@ -6590,7 +6595,11 @@ cmds["self-test"] = () => {
   {
     const checkIgnore = (relPath) => {
       try {
-        execFileSync("git", ["check-ignore", relPath], { cwd: REPO_ROOT, encoding: "utf8" });
+        execFileSync("git", ["check-ignore", relPath], {
+          cwd: REPO_ROOT,
+          encoding: "utf8",
+          env: scrubbedGitEnv(),
+        });
         return true;
       } catch (e) {
         return e.status === 1 ? false : null; // 1 = genuinely not ignored; anything else is a real error

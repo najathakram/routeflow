@@ -18,6 +18,7 @@
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
+import { scrubbedGitEnv } from "./check-git-hooks.mjs";
 
 // Files whose change can move every workspace's result — a scoped run would be a false green.
 const FULL_PATTERNS = [
@@ -117,14 +118,10 @@ export function computeScope(changedFiles, workspaces) {
 export const shortName = (pkgName) => pkgName.replace(/^@routeflow\//, "");
 
 /**
- * process.env minus every GIT_* variable. Inside a git hook the parent exports GIT_DIR /
- * GIT_INDEX_FILE / GIT_WORK_TREE, and those override `cwd` — a git spawned for a DIFFERENT
- * directory (a fixture repo) would silently act on the real repo (the B420 hijack). Every git
- * this module spawns is repo-discovery-by-cwd only.
+ * process.env minus every GIT_* variable (the B420 hijack guard). Not a copy: the ONE definition is
+ * scripts/lib/scrubbed-git-env.cjs, reached here through check-git-hooks.mjs.
  */
-export function cleanGitEnv(env = process.env) {
-  return Object.fromEntries(Object.entries(env).filter(([k]) => !/^GIT_/.test(k)));
-}
+export const cleanGitEnv = scrubbedGitEnv;
 
 function git(root, args) {
   const r = spawnSync("git", args, { cwd: root, encoding: "utf8", env: cleanGitEnv() });

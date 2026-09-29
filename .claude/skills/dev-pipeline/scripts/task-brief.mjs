@@ -155,7 +155,7 @@ export function runSelftest() {
   for (const k of Object.keys(process.env)) if (!(k in cleanEnv)) delete process.env[k];
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "task-brief-selftest-"));
   try {
-    execFileSync("git", ["init"], { cwd: tmp, encoding: "utf8" });
+    execFileSync("git", ["init"], { cwd: tmp, encoding: "utf8", env: scrubbedGitEnv() });
     const planMd = [
       "# Build plan",
       "",
@@ -176,10 +176,11 @@ export function runSelftest() {
     ].join("\n");
     const planPath = path.join(tmp, "build-plan.md");
     fs.writeFileSync(planPath, planMd);
-    execFileSync("git", ["add", "-A"], { cwd: tmp, encoding: "utf8" });
+    execFileSync("git", ["add", "-A"], { cwd: tmp, encoding: "utf8", env: scrubbedGitEnv() });
     execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "init"], {
       cwd: tmp,
       encoding: "utf8",
+      env: scrubbedGitEnv(),
     });
 
     try {
