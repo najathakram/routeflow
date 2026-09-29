@@ -1014,11 +1014,21 @@ export function isUpsellLine(line: PriceOverrideLine): boolean {
 export const STAFF_OVERRIDE_TOLERANCE = 0.005;
 
 /**
+ * SA-588 — is `a` within ±½¢ ({@link STAFF_OVERRIDE_TOLERANCE}) of `b`? Decided in 4-dp units via
+ * the one {@link round4}: both prices and their difference are snapped to 4 dp, so a boundary
+ * like 8.005 vs 8 is deterministically IN band (a raw `Math.abs(a - b) <= 0.005` is float noise
+ * there). One 4-dp unit beyond the boundary is out of band.
+ */
+export function withinStaffOverrideTolerance(a: number, b: number): boolean {
+  return Math.abs(round4(round4(a) - round4(b))) <= STAFF_OVERRIDE_TOLERANCE;
+}
+
+/**
  * SA-558b (3) — THE predicate for "this staff-typed price needs a reason": a special-tier line whose
  * price moves more than ½¢ from the action's baseline, with no reason sent or on file. Each caller
  * passes its own baseline: the customer's TIER price for create / substitute / add-during-edit, the
  * line's STORED price (and `hasReason` = sent-or-stored) for an existing-line edit. The band test is
- * the api's `Math.abs(p - base) <= 0.005` verbatim.
+ * {@link withinStaffOverrideTolerance}.
  */
 export function needsOverrideReason(input: {
   overridePrice: number;
@@ -1028,7 +1038,7 @@ export function needsOverrideReason(input: {
 }): boolean {
   const { overridePrice, baselinePrice, isSpecialTier, hasReason } = input;
   if (!isSpecialTier || hasReason) return false;
-  return Math.abs(overridePrice - baselinePrice) > STAFF_OVERRIDE_TOLERANCE;
+  return !withinStaffOverrideTolerance(overridePrice, baselinePrice);
 }
 
 export type StaffOverrideDecision =
@@ -1059,7 +1069,7 @@ export function decideStaffOverride(input: {
   hasReason: boolean;
 }): StaffOverrideDecision {
   const { overridePrice, baselinePrice, listPrice, isSpecialTier, hasReason } = input;
-  if (Math.abs(overridePrice - baselinePrice) <= STAFF_OVERRIDE_TOLERANCE) {
+  if (withinStaffOverrideTolerance(overridePrice, baselinePrice)) {
     return isSpecialTier
       ? { priceType: "SPECIAL", unitPrice: baselinePrice, originalPrice: listPrice }
       : { priceType: "STANDARD", unitPrice: baselinePrice, originalPrice: null };
