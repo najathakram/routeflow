@@ -197,10 +197,154 @@ describe("lint-migrations.mjs contract (T1 / R2, R3)", () => {
       expect(res.status).toBe(0);
     });
 
+    // Follow-up to the #2746 review: transaction-control spellings and masking.
+    it.each([
+      ["BEGIN WORK ... COMMIT WORK", "BEGIN WORK;\nSET LOCAL lock_timeout = '5s';\nCOMMIT WORK;\n"],
+      [
+        "BEGIN TRANSACTION ... COMMIT TRANSACTION",
+        "BEGIN TRANSACTION;\nSET LOCAL lock_timeout = '5s';\nCOMMIT TRANSACTION;\n",
+      ],
+      ["BEGIN ... END TRANSACTION", "BEGIN;\nSET LOCAL lock_timeout = '5s';\nEND TRANSACTION;\n"],
+      [
+        "START TRANSACTION ISOLATION LEVEL ... COMMIT WORK",
+        "START TRANSACTION ISOLATION LEVEL SERIALIZABLE;\nSET LOCAL lock_timeout = '5s';\nCOMMIT WORK;\n",
+      ],
+      ["BEGIN ... ROLLBACK WORK", "BEGIN;\nSET LOCAL lock_timeout = '5s';\nROLLBACK WORK;\n"],
+      [
+        "a digit in a dollar-quote tag ($fn1$ body with its own SET LOCAL)",
+        "DO $fn1$ BEGIN PERFORM 1; SET LOCAL x = 1; END $fn1$;\n",
+      ],
+      [
+        "an E'..' string with an escaped quote hiding a SET LOCAL",
+        'INSERT INTO "T" ("c") VALUES (E\'it\\\'s; SET LOCAL a = 1;\');\n',
+      ],
+    ])("accepts %s", (_label, sql) => {
+      const res = run(["--files", writeFixture(`b896f-${Math.random()}.sql`, sql as string)]);
+      expect(res.stderr).not.toMatch(/SET LOCAL|BEGIN;/);
+      expect(res.status).toBe(0);
+    });
+
+    it("an E'..' string ending in an escaped BACKSLASH (E'a\\\\') closes at that quote, so a SET LOCAL after it is still refused", () => {
+      const sql = "SELECT E'a\\\\';\nSET LOCAL lock_timeout = '5s';\n";
+      const res = run(["--files", writeFixture(`b896f-${Math.random()}.sql`, sql)]);
+      expect(res.stderr).toMatch(/SET LOCAL outside an explicit BEGIN/);
+      expect(res.status).toBe(1);
+    });
+
+    it("ROLLBACK TO SAVEPOINT does not close the transaction (a SET LOCAL after it stays inside the wrap)", () => {
+      const sql =
+        "BEGIN;\nSAVEPOINT a;\nROLLBACK TO SAVEPOINT a;\nSET LOCAL lock_timeout = '5s';\nCOMMIT;\n";
+      const res = run(["--files", writeFixture(`b896f-${Math.random()}.sql`, sql)]);
+      expect(res.stderr).not.toMatch(/SET LOCAL|BEGIN;/);
+      expect(res.status).toBe(0);
+    });
+
     it("the repo's own migrations tree is not flagged in diff mode, only files in the range are read (history is immutable)", () => {
       const res = run(["--base", "HEAD"]);
       expect(res.stdout).toContain("no migrations in range");
       expect(res.status).toBe(0);
+    });
+  });
+
+  // SA-582a / B896: applied-on-prod migrations cannot be edited (their checksum is recorded), so an
+  // exact folder-name + file-sha256 exemption table lets ONLY the SET LOCAL wrap rule pass them.
+  describe("SA-582a: applied-migration SET LOCAL exemption table", () => {
+    const TABLE = path.resolve(REPO_ROOT, "scripts/lib/set-local-exempt-migrations.json");
+    const MIGRATIONS = path.resolve(REPO_ROOT, "apps/api/prisma/migrations");
+    const EXPECTED_EXEMPT = [
+      "20260921180000_ledger_correction_and_parked_reversals",
+      "20260923034344_b297_excise_snapshot_and_locked_filing",
+      "20260924000000_parked_reversal_resolved_reason",
+      "20260924060000_b562_stock_movement_effective_at",
+      "20260925060000_f05_standing_order_line_suspension",
+      "20260925160000_sales_facts_read_indexes",
+      "20260927043000_sa436_credit_auto_apply_off",
+      "20260927060000_onboarding_s1_cases",
+      "20260928230000_2717_m1_catalog_barcodes_images",
+    ];
+    const PRESENT = EXPECTED_EXEMPT.filter((n) => fs.existsSync(path.join(MIGRATIONS, n)));
+    const UNWRAPPED = "SET LOCAL lock_timeout = '5s';\nSELECT 1;\n";
+
+    function inFolder(folder: string, sql: string): string {
+      const d = path.join(dir, folder);
+      fs.mkdirSync(d, { recursive: true });
+      const file = path.join(d, "migration.sql");
+      fs.writeFileSync(file, sql);
+      return file;
+    }
+
+    it("pins the exact exempt folder names (any addition is a deliberate spec edit)", () => {
+      const table = JSON.parse(fs.readFileSync(TABLE, "utf8")) as { folder: string }[];
+      expect(table.map((e) => e.folder)).toEqual(EXPECTED_EXEMPT);
+    });
+
+    it("every entry carries a sha256 and a one-line reason", () => {
+      const table = JSON.parse(fs.readFileSync(TABLE, "utf8")) as {
+        sha256: string;
+        reason: string;
+      }[];
+      for (const e of table) {
+        expect(e.sha256).toMatch(/^[0-9a-f]{64}$/);
+        expect(e.reason).toMatch(/SA-582a/);
+        expect(e.reason).not.toContain("\n");
+      }
+    });
+
+    it("--all on the real tree reports no SET LOCAL finding (present exempt files pass through)", () => {
+      expect(PRESENT.length).toBeGreaterThanOrEqual(8);
+      const res = run(["--all", "--strict"]);
+      expect(res.stderr).not.toContain("SET LOCAL");
+      expect(res.stdout).not.toContain("SET LOCAL wrap finding");
+    });
+
+    it("each present exempt migration passes --files by its exemption", () => {
+      for (const n of PRESENT) {
+        const res = run(["--files", path.join(MIGRATIONS, n, "migration.sql")]);
+        expect(res.stderr).not.toContain("SET LOCAL");
+      }
+    });
+
+    it("a NEW migration with an unwrapped SET LOCAL still fails", () => {
+      const res = run(["--files", inFolder("20260929000000_brand_new", UNWRAPPED)]);
+      expect(res.stderr).toContain("SET LOCAL");
+      expect(res.status).toBe(1);
+    });
+
+    it("an exempt folder name whose content differs (sha mismatch) fails", () => {
+      const res = run(["--files", inFolder(EXPECTED_EXEMPT[0], UNWRAPPED)]);
+      expect(res.stderr).toContain("SET LOCAL");
+      expect(res.status).toBe(1);
+    });
+
+    it("an exempt folder with an unwrapped-M1-name but different content fails too", () => {
+      const res = run(["--files", inFolder(EXPECTED_EXEMPT[8], UNWRAPPED)]);
+      expect(res.stderr).toContain("SET LOCAL");
+      expect(res.status).toBe(1);
+    });
+
+    it("matching is name-exact: prefix, suffix, containing and different-case names fail", () => {
+      const real = fs.readFileSync(
+        path.join(MIGRATIONS, EXPECTED_EXEMPT[0], "migration.sql"),
+        "utf8",
+      );
+      for (const name of [
+        `${EXPECTED_EXEMPT[0]}_x`,
+        `x_${EXPECTED_EXEMPT[0]}`,
+        EXPECTED_EXEMPT[0].toUpperCase(),
+      ]) {
+        const res = run(["--files", inFolder(name, real)]);
+        expect(res.stderr).toContain("SET LOCAL");
+        expect(res.status).toBe(1);
+      }
+    });
+
+    it("the exemption does not suppress the reason rule", () => {
+      const res = run([
+        "--files",
+        inFolder(EXPECTED_EXEMPT[0], "-- squawk-ignore ban-drop-column\nSELECT 1;\n"),
+      ]);
+      expect(res.stderr).toContain('squawk-ignore without a "-- reason:" line');
+      expect(res.status).toBe(1);
     });
   });
 });
