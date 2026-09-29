@@ -5,7 +5,11 @@ import { useParams, useRouter } from "next/navigation";
 import { Heart, Plus, Minus, Package, Loader2, Trash2, Store, AlertTriangle } from "lucide-react";
 import { Button } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
-import { useBuyerFavorites, useBuyerRemoveFavorite, type BuyerFavoriteItem } from "@/lib/api/buyer";
+import {
+  useBuyerFavorites,
+  useBuyerRemoveFavorite,
+  type BuyerFavoriteProduct,
+} from "@/lib/api/buyer";
 import { useBuyerCart } from "@/lib/buyer-cart";
 import { objectPositionForUrl } from "@/lib/image-focal";
 
@@ -21,7 +25,7 @@ function FavoriteCard({
   onRemoveFavorite,
   isRemoving,
 }: {
-  item: BuyerFavoriteItem;
+  item: BuyerFavoriteProduct;
   cartQty: number;
   onAdd: () => void;
   onUpdateQty: (qty: number) => void;

@@ -70,7 +70,6 @@ import {
   RETURN_SAVE_BLOCKED,
   useOrderInlineReturnSave,
 } from "../_components/use-order-inline-return-save";
-import { AppliedCreditsSection } from "./_components/AppliedCreditsSection";
 import { OrderReturnsPanel } from "./_components/OrderReturnsPanel";
 import { describeCancelImpact } from "@/lib/cancel-impact";
 import { fmtCalendarDate, isInternalEmail } from "@/lib/formatting";
@@ -116,6 +115,7 @@ import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MarginHint } from "@/components/MarginHint";
 import { MoneyInput, DecimalInput } from "@/components/MoneyInput";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { AppliedCreditsPanel, appliedOnOrderRows } from "./AppliedCreditsPanel";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { resolveProductByCode } from "@/lib/barcode-resolve";
 import { ShipmentCard } from "@/components/ShipmentCard";
@@ -3077,6 +3077,7 @@ export default function OrderDetailPage() {
                     setCreditsTouched(true);
                   }}
                   estimatedOrderTotal={editTotal}
+                  appliedOnOrder={appliedOnOrderRows(order)}
                 />
 
                 {/* Returns Inside Order Creation, edit mode (#2406) — quoted here, captured
@@ -3495,7 +3496,7 @@ export default function OrderDetailPage() {
               </div>
             </dl>
 
-            <AppliedCreditsSection order={order} />
+            <AppliedCreditsPanel order={order} role={user?.role} />
           </Card>
 
           {/* Returns on this order (#2406) — server figures only, never the quote's. */}

@@ -55,9 +55,21 @@ export interface Order {
     invoiceNumber: string;
     status: string;
     total: number;
-    /** CREDIT_NOTE payments only (server-scoped include) — sums to the "applied
-     *  $ so far" shown per credit-note intent on the order detail page. */
-    payments?: Array<{ id: string; amount: number | string; creditNoteId?: string | null }>;
+    /** CREDIT_NOTE payments only (server-scoped include), listed by the order's
+     *  "Applied credits" panel (#2404). `creditNote` is attached by the order read
+     *  (InvoicePayment has no relation); `autoApplied` is SA-436 PR-1's column. */
+    payments?: Array<{
+      id: string;
+      amount: number | string;
+      creditNoteId?: string | null;
+      autoApplied: boolean;
+      creditNote?: {
+        id: string;
+        creditNoteNumber: string;
+        reason?: string | null;
+        autoApplied?: boolean;
+      } | null;
+    }>;
   }>;
   /**
    * Credit-note intents applied to this order (join table — survives invoice
