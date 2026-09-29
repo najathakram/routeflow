@@ -164,7 +164,15 @@ describe("rescaleComposition (I11, L-222)", () => {
 });
 
 describe("syncLineCompositions (order side)", () => {
-  function fixture(opts: { mode?: "on" | "off"; existing?: boolean; boxes?: number } = {}) {
+  function fixture(
+    opts: {
+      mode?: "on" | "off";
+      existing?: boolean;
+      boxes?: number;
+      stamped?: boolean;
+      cancelled?: boolean;
+    } = {},
+  ) {
     const boxes = opts.boxes ?? 2;
     const lineRow = {
       id: "li-1",
@@ -174,9 +182,9 @@ describe("syncLineCompositions (order side)", () => {
       unitsPerBox: 24,
       unitLabel: null,
       subtotal: 30,
-      compositionMode: opts.existing ? "FIXED" : null,
-      recipeId: opts.existing ? "rec-1" : null,
-      recipeVersion: opts.existing ? 1 : null,
+      compositionMode: opts.existing || opts.stamped ? "FIXED" : null,
+      recipeId: opts.existing || opts.stamped ? "rec-1" : null,
+      recipeVersion: opts.existing || opts.stamped ? 1 : null,
       product: { id: "recipe-p", kind: "RECIPE" },
       components: opts.existing
         ? [
@@ -196,6 +204,12 @@ describe("syncLineCompositions (order side)", () => {
       },
     };
     const port: RecipeSnapshotPort = {
+      recipeById: jest.fn().mockResolvedValue({
+        recipeId: "rec-1",
+        version: 1,
+        unitsPerPack: 24,
+        comps: recipe.comps,
+      }),
       activeRecipeFor: jest.fn().mockResolvedValue({
         recipeId: "rec-2",
         version: 2,
@@ -254,6 +268,24 @@ describe("syncLineCompositions (order side)", () => {
     });
     await expect(syncLineCompositions(tx as never, ["li-1"], ctx)).rejects.toMatchObject({
       response: { code: API_ERROR_CODES.COMPONENT_SUM_MISMATCH },
+    });
+    expect(tx.orderItemComponent.createMany).not.toHaveBeenCalled();
+  });
+
+  it("a line stamped v1 with no rows yet (a merge-moved line) is planned from v1, never the ACTIVE v2", async () => {
+    const { tx, port, ctx } = fixture({ stamped: true });
+    await syncLineCompositions(tx as never, ["li-1"], ctx);
+    expect(port.recipeById).toHaveBeenCalledWith("rec-1");
+    expect(port.activeRecipeFor).not.toHaveBeenCalled();
+    expect(tx.orderItem.update).not.toHaveBeenCalled();
+    expect(tx.orderItemComponent.createMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("a line struck to 0 boxes (cancelled) drops its components instead of failing", async () => {
+    const { tx, ctx } = fixture({ existing: true, boxes: 0 });
+    await syncLineCompositions(tx as never, ["li-1"], ctx);
+    expect(tx.orderItemComponent.deleteMany).toHaveBeenCalledWith({
+      where: { orderItemId: "li-1", tenantId: "t-1" },
     });
     expect(tx.orderItemComponent.createMany).not.toHaveBeenCalled();
   });
