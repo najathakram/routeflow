@@ -53,6 +53,8 @@ export interface ShapeInput {
   recipeProductVariantCount: number;
   /** The caller's request, in order. `product` is what the tenant-scoped lookup found (or nothing). */
   components: Array<{ componentProductId: string; qty: number; product: RuleProduct | undefined }>;
+  /** Clone-as-is (SA-584b): skip ONLY the inactive-component refusal; `activate` keeps it. */
+  allowInactiveComponents?: boolean;
 }
 
 /** Rules that depend only on the recipe product and the family (checked before the components). */
@@ -114,7 +116,7 @@ export function assertRecipeShape(input: ShapeInput): void {
     if (!c.product) {
       throw recipeInvalid("COMPONENT_NOT_FOUND", "A component product was not found.");
     }
-    if (!c.product.isActive) {
+    if (!c.product.isActive && !input.allowInactiveComponents) {
       throw recipeInvalid("COMPONENT_INACTIVE", "A component product is inactive.");
     }
     if (c.product.kind === "RECIPE") {
