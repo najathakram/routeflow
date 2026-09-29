@@ -33,6 +33,7 @@ import {
   ALWAYS_ENFORCED_PLAN_KEYS,
   isAlwaysEnforcedPlan,
   PLAN_KEYS,
+  effectivePlanFlags,
 } from "./plan-catalog.constants";
 import { V11_PIN_FIXTURE, LITE_FIXTURE, ALL_FIXTURES } from "./feature-fixtures";
 
@@ -60,6 +61,11 @@ const mirror = require("../../scripts/lib/feature-registry-mirror.cjs") as {
   allowsFlag: (planKey: string, entFlags: string[], key: string, env: NodeJS.ProcessEnv) => boolean;
   isAlwaysEnforcedPlan: (planKey: string | null) => boolean;
   lossMechanism: (feature: { key: string; via: string }) => string;
+  effectivePlanFlagsMirror: (
+    pinnedDef: { planKey: string; featureFlags: string[] },
+    pinnedVersionId: string,
+    published: { id: string; definitions: { planKey: string; featureFlags: string[] }[] } | null,
+  ) => string[];
   computeOldPathEffective: (
     feature: { key: string; via: string; state: string },
     ctx: {
@@ -422,4 +428,120 @@ describe("publish-and-repin report logic against the shared feature-grants-v2 fi
       }
     }
   });
+});
+
+describe("#2700 (SA-559(2)/559b): flags gain forward — effectivePlanFlagsMirror === effectivePlanFlags", () => {
+  const PINNED = { planKey: "SCALE", featureFlags: ["flag.msrp", "flag.reports"] };
+  const published = (definitions: { planKey: string; featureFlags: string[] }[], id = "v13") => ({
+    id,
+    definitions,
+  });
+  const CASES: Array<[string, Parameters<typeof effectivePlanFlags>]> = [
+    [
+      "same planKey gains a new flag",
+      [
+        PINNED,
+        "v11",
+        published([{ planKey: "SCALE", featureFlags: ["flag.reports", "flag.estimates"] }]),
+      ],
+    ],
+    [
+      "renamed key (SCALE pinned, BUSINESS published)",
+      [PINNED, "v11", published([{ planKey: "BUSINESS", featureFlags: ["flag.estimates"] }])],
+    ],
+    [
+      "pinned version IS the published one: no union",
+      [PINNED, "v13", published([{ planKey: "SCALE", featureFlags: ["flag.estimates"] }])],
+    ],
+    ["nothing published: no union", [PINNED, "v11", null]],
+    [
+      "published lacks the plan: no union",
+      [PINNED, "v11", published([{ planKey: "STARTER", featureFlags: ["flag.estimates"] }])],
+    ],
+    [
+      "a flag dropped later is KEPT (union, never removal)",
+      [PINNED, "v11", published([{ planKey: "SCALE", featureFlags: [] }])],
+    ],
+    [
+      "LITE gains flag.returns (the v13 case)",
+      [
+        { planKey: "LITE", featureFlags: [] },
+        "v12",
+        published([{ planKey: "LITE", featureFlags: ["flag.returns"] }]),
+      ],
+    ],
+  ];
+
+  it.each(CASES)("%s", (_name, args) => {
+    expect(mirror.effectivePlanFlagsMirror(...(args as [any, any, any]))).toEqual(
+      effectivePlanFlags(...args),
+    );
+  });
+
+  it("the expected values themselves (so the pair can't agree on a wrong answer)", () => {
+    expect(CASES.map(([, args]) => effectivePlanFlags(...args))).toEqual([
+      ["flag.msrp", "flag.reports", "flag.estimates"],
+      ["flag.msrp", "flag.reports", "flag.estimates"],
+      ["flag.msrp", "flag.reports"],
+      ["flag.msrp", "flag.reports"],
+      ["flag.msrp", "flag.reports"],
+      ["flag.msrp", "flag.reports"],
+      ["flag.returns"],
+    ]);
+  });
+
+  it("SA-559b: a v11-pinned tenant whose PUBLISHED plan carries a flag is NOT a publish-and-repin loss (no false GRANT on --apply)", () => {
+    const OFF_ENV = { PLAN_FLAG_ENFORCEMENT: "off" } as NodeJS.ProcessEnv;
+    const pinnedDef = V11_PIN_FIXTURE.definitions.find(
+      (d) => d.planKey === V11_PIN_FIXTURE.planKey,
+    )!;
+    const publishedV12 = published(
+      [{ ...pinnedDef, featureFlags: [...pinnedDef.featureFlags, "flag.estimates"] }],
+      "fixture-v12",
+    );
+    const lossesWith = (entFlags: string[]) => {
+      const ctx = { ...ctxFor(V11_PIN_FIXTURE), entFlags };
+      return mirror.FEATURE_REGISTRY_MIRROR.filter(
+        (f) =>
+          mirror.computeOldPathEffective(f, ctx, OFF_ENV) &&
+          !mirror.computeNewPathEffective(f, ctx),
+      ).map((f) => f.key);
+    };
+    // Control: the pinned flags alone read flag.estimates as a loss (it is in the 15 above).
+    expect(lossesWith(pinnedDef.featureFlags)).toContain("flag.estimates");
+    // With the union every script now applies, it is not.
+    const unioned = mirror.effectivePlanFlagsMirror(
+      pinnedDef,
+      V11_PIN_FIXTURE.planVersionId,
+      publishedV12,
+    );
+    expect(lossesWith(unioned)).not.toContain("flag.estimates");
+  });
+
+  it.each([
+    [
+      "scripts/audit-tenant-entitlements.mjs",
+      "effectivePlanFlagsMirror(def, version.id, publishedVersion)",
+    ],
+    [
+      "scripts/report-addon-default-grant-flip.mjs",
+      "effectivePlanFlagsMirror(def, version.id, publishedVersion)",
+    ],
+    [
+      "scripts/publish-and-repin.mjs",
+      "effectivePlanFlagsMirror(def, version.id, catalog.getPublished())",
+    ],
+  ])(
+    "%s resolves plan flags through the ONE mirror, never the pinned definition alone",
+    (file, call) => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const src: string = require("fs").readFileSync(
+        require("path").resolve(__dirname, "../..", file),
+        "utf8",
+      );
+      expect(src).toContain(call);
+      expect(src).not.toMatch(/new Set\(def\.featureFlags\)/);
+      expect(src).not.toMatch(/def \? def\.featureFlags : \[\]/);
+    },
+  );
 });
