@@ -11,8 +11,19 @@
  * after a collection). Pure — no RN import — Jest-testable.
  */
 import { roundMoney } from "@routeflow/pricing";
+import type { PaymentMethod } from "@routeflow/types";
 
-export type CollectedMethod = "CASH" | "CHECK" | "ZELLE" | "CREDIT_CARD" | "ADVANCE" | "OTHER";
+// #2722: the methods a driver can collect on a run, in display order — a subset of the shared
+// PaymentMethod (a typo is a compile error).
+export const COLLECTED_METHODS = [
+  "CASH",
+  "CHECK",
+  "ZELLE",
+  "CREDIT_CARD",
+  "ADVANCE",
+  "OTHER",
+] as const satisfies readonly PaymentMethod[];
+export type CollectedMethod = (typeof COLLECTED_METHODS)[number];
 
 export interface CollectionEntry {
   stopId: string;
