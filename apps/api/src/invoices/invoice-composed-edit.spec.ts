@@ -31,15 +31,20 @@ function tx() {
     },
   };
 }
-const run = (t: ReturnType<typeof tx>, over: Record<string, unknown>) =>
-  applyComposedLineEdits(t as never, {
+const run = (t: ReturnType<typeof tx>, over: Record<string, unknown>) => {
+  const o = {
     invoiceStatus: "DRAFT",
-    invoiceId: "inv-1",
-    tenantId: "t-1",
     storedRows: [stored()],
     editLines: [edited({ qty: 48, subtotal: 60, unitsPerBox: 24 })],
     ...over,
-  } as never);
+  } as { invoiceStatus: string; storedRows: unknown[]; editLines: unknown[] };
+  return applyComposedLineEdits(
+    t as never,
+    { id: "inv-1", status: o.invoiceStatus, tenantId: "t-1" },
+    o.editLines as never,
+    o.storedRows as never,
+  );
+};
 const noWrites = (t: ReturnType<typeof tx>) => {
   expect(t.invoiceItemComponent.updateMany).not.toHaveBeenCalled();
   expect(t.invoiceItemComponent.deleteMany).not.toHaveBeenCalled();
