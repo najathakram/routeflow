@@ -471,14 +471,17 @@ describeDb("#2717 M2 fold: recipe invariants are kept — real Postgres", () => 
     expect(res).toMatchObject({ assigned: 2 });
   }, 60_000);
 
-  /** Polls until at least `n` backends are blocked by `blockerPid` (< 5 s: Prisma's tx timeout). */
-  async function waitUntilNBlockedBy(blockerPid: number, n: number): Promise<boolean> {
+  /**
+   * Polls until at least `n` backends of this database are blocked by ANYONE (< 5 s: Prisma's tx
+   * timeout). The second waiter queues behind the FIRST waiter (tuple lock), not behind the
+   * writer, so counting only the writer's direct victims never reaches 2.
+   */
+  async function waitUntilNBlocked(n: number): Promise<boolean> {
     const deadline = Date.now() + 4_000;
     while (Date.now() < deadline) {
       // eslint-disable-next-line no-await-in-loop
       const { rows } = await pool.query(
-        "SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))",
-        [blockerPid],
+        "SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND cardinality(pg_blocking_pids(pid)) > 0",
       );
       if (rows[0].n >= n) return true;
       // eslint-disable-next-line no-await-in-loop
@@ -515,8 +518,6 @@ describeDb("#2717 M2 fold: recipe invariants are kept — real Postgres", () => 
         // eslint-disable-next-line no-await-in-loop
         await writer.query("BEGIN");
         // eslint-disable-next-line no-await-in-loop
-        const pid = Number((await writer.query("SELECT pg_backend_pid() AS pid")).rows[0].pid);
-        // eslint-disable-next-line no-await-in-loop
         await writer.query('SELECT id FROM "Product" WHERE id = $1 FOR UPDATE', [c.family.id]);
         // both start while the family is held; the barrier waits until BOTH queue behind it
         const both = Promise.allSettled([
@@ -524,7 +525,7 @@ describeDb("#2717 M2 fold: recipe invariants are kept — real Postgres", () => 
           inTenant(tenantId, () => recipes.activate(c.draft.id)),
         ]);
         // eslint-disable-next-line no-await-in-loop
-        bothBlocked = await waitUntilNBlockedBy(pid, 2);
+        bothBlocked = await waitUntilNBlocked(2);
         // eslint-disable-next-line no-await-in-loop
         await writer.query("COMMIT");
         // eslint-disable-next-line no-await-in-loop
@@ -649,7 +650,11 @@ describeDb("#2717 M2 fold: recipe invariants are kept — real Postgres", () => 
       expect(txSpy).toHaveBeenCalledTimes(2);
       expect(outer).toEqual([]);
       for (const s of baseSpies) expect(s).not.toHaveBeenCalled();
-      expect(rawSpy).not.toHaveBeenCalled();
+      // the tenant transaction's own `SELECT set_config(...)` is raw by design; any other raw call is a leak
+      const strayRaw = rawSpy.mock.calls.filter(
+        (call) => !/set_config/.test(Array.isArray(call[0]) ? call[0].join("?") : String(call[0])),
+      );
+      expect(strayRaw).toEqual([]);
     } finally {
       txSpy.mockRestore();
       forTenantSpy.mockRestore();
