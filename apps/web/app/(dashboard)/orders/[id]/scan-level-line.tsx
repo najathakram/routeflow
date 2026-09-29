@@ -1,4 +1,5 @@
 import type { SellLevel } from "@routeflow/pricing";
+import type { PriceType } from "@/lib/api/orders";
 
 export type { SellLevel };
 export { scanLevelForHit } from "../_components/scan/useScanCodeHandler";
@@ -52,6 +53,7 @@ export function buildNewLine(
   o: { newId: string; startPrice: number; base: number; unitScan: boolean; special: boolean },
 ) {
   const { newId, startPrice, base, unitScan } = o;
+  const priceType: PriceType = o.special ? "SPECIAL" : "STANDARD";
   return {
     id: newId,
     isNew: true,
@@ -75,6 +77,6 @@ export function buildNewLine(
     cancelled: false,
     // units_v1: OrderLineUnitPicker's required fields (pack unit label + price type).
     unit: p.unit ?? "",
-    priceType: o.special ? "SPECIAL" : "STANDARD",
+    priceType,
   };
 }
