@@ -172,6 +172,28 @@ describe("adopting a recipe product or a family with a recipe into a family (Q1)
     expect(prisma.product.update).not.toHaveBeenCalled();
   });
 
+  it("SA-587: the recipe-product decision is made from a POST-lock read (the pre-lock read said none, a recipe.create committed while we waited) -> 409", async () => {
+    const recipeProduct = { ...base, id: "rp", parentProductId: null, kind: "STANDARD" };
+    const recipes: Recipe[] = [];
+    const { service, prisma, tx, events } = await build(recipeProduct, recipes);
+    const lock = tx.$queryRaw;
+    tx.$queryRaw = jest.fn(async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      const out = await lock(strings, ...values);
+      // the concurrent recipes.create(rp) commits once its row lock is released to us
+      if (values[0] === "rp" && recipes.length === 0) recipes.push(recipeOf({ status: "ACTIVE" }));
+      return out;
+    });
+    const err = await service.update("rp", { parentProductId: "fam-x" } as any).catch((e) => e);
+    expect(bodyOf(err)).toMatchObject({
+      code: "RECIPE_INVALID",
+      reason: "RECIPE_PRODUCT_HAS_PARENT",
+    });
+    expect(prisma.product.update).not.toHaveBeenCalled();
+    expect(events.lastIndexOf("tx:recipe.findFirst")).toBeGreaterThan(
+      events.indexOf("lock:update:rp"),
+    );
+  });
+
   it("a family with an open recipe cannot become a variant -> 409 RECIPE_INVALID FAMILY_IS_VARIANT", async () => {
     const { service, prisma } = await build(family, [recipeOf({ status: "ACTIVE" })]);
     const err = await service.update("fam", { parentProductId: "fam-x" } as any).catch((e) => e);
