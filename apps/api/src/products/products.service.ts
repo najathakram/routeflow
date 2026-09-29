@@ -44,6 +44,8 @@ import {
   syncProductBarcodesFromLegacy,
   syncProductImagesFromLegacy,
 } from "./product-catalog-sync";
+import { recipeReferenceGroupers } from "./recipe-references";
+import { openRecipeWhere, recipeCategoryLocked } from "./recipe-rules";
 import {
   applyFamilyPriceBeforeUpdate,
   familyPricesForNewVariant,
@@ -993,6 +995,17 @@ export class ProductsService {
         : dto.trackedSubcategoryId !== undefined
           ? dto.trackedSubcategoryId
           : existing.trackedSubcategoryId;
+    // #2717 M2 (I6): a product in a non-RETIRED recipe (recipe product, family or component) keeps
+    // its tracked category — a component drifting to another category would break the recipe.
+    if (
+      (effectiveCategoryId ?? null) !== (existing.trackedCategoryId ?? null) ||
+      (effectiveSubcategoryId ?? null) !== (existing.trackedSubcategoryId ?? null)
+    ) {
+      const locked = await this.prisma
+        .forTenant()
+        .recipe.findFirst({ where: openRecipeWhere(id), select: { id: true } });
+      if (locked) throw recipeCategoryLocked();
+    }
     await this.assertSubcategoryInSection(effectiveCategoryId, effectiveSubcategoryId);
     // Clearing the section clears the regulatory trio with it — gated on the
     // section actually TRANSITIONING to null, so editing a product that already
@@ -1492,6 +1505,8 @@ export class ProductsService {
       this.prisma.forTenant().orderTemplateItem,
       this.prisma.forTenant().deliveryMutation,
       this.prisma.forTenant().stockLot,
+      // #2717 M2: a product a recipe names (RESTRICT FKs) is referenced — soft-delete, never P2003.
+      ...recipeReferenceGroupers(this.prisma.forTenant()),
     ];
     for (const model of dependentModels) {
       const groups = await model.groupBy({
