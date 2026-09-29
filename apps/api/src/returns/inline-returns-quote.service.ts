@@ -26,7 +26,7 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { REAL_INVOICE_STATUSES } from "../common/invoiced-sales";
 import { currentTaxRate } from "../common/tax-rate";
-import { getTierPrice, isSpecialTier, isWholeCents, packFromOwnSplit } from "@routeflow/pricing";
+import { getTierPrice, isWholeCents, packFromOwnSplit } from "@routeflow/pricing";
 import { returnedPiecesByProduct } from "./returns-pieces.util";
 import {
   allocateReturnedPieces,
@@ -372,7 +372,7 @@ export class InlineReturnsQuoteService {
       const unreferencedPrice = product ? Number(getTierPrice(product, tierForProduct)) : 0;
       const unreferencedSource = tierByProduct.has(item.productId)
         ? ("CUSTOMER_PRICE" as const)
-        : isSpecialTier(tierForProduct)
+        : tierForProduct > 1
           ? ("TIER" as const)
           : ("BASE" as const);
       // The candidate lines are ALL the same product's own tax rate lineage; for the
