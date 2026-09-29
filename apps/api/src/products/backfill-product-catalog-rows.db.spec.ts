@@ -29,6 +29,7 @@ import {
   backfillProductCatalogRows,
   BackfillRefused,
 } from "../../prisma/backfill-product-catalog-rows";
+import { PACKAGING_LEVEL_VALUES } from "@routeflow/types";
 import { planBarcodeRows } from "../products/product-barcode-rules";
 import { syncProductBarcodesFromLegacy } from "../products/product-catalog-sync";
 import { ProductsService } from "../products/products.service";
@@ -142,13 +143,17 @@ describeDb("backfill-product-catalog-rows backfillProductCatalogRows() (db)", ()
       },
     });
 
+    // The mirror set is the product's OWN keys (`products/<its id>/<one segment>`, #2533), so F's keys
+    // must carry F's id: the id is minted here, before the create.
+    const fId = randomUUID();
     const f = await prisma.product.create({
       data: {
         ...base,
+        id: fId,
         name: `F ${run}`,
         barcode: null,
         unitsPerBox: null,
-        imageKeys: [`products/${run}-F/k1.jpg`, `products/${run}-F/k2-fp30x70.jpg`],
+        imageKeys: [`products/${fId}/k1.jpg`, `products/${fId}/k2-fp30x70.jpg`],
       },
     });
     productIds.F = f.id;
@@ -419,7 +424,11 @@ describeDb("backfill-product-catalog-rows backfillProductCatalogRows() (db)", ()
             copiedFromLevel: r.copiedFromLevel,
             primaryFor: r.primaryFor,
           }))
-          .sort((a, b) => a.level.localeCompare(b.level));
+          // The query orders by the PackagingLevel ENUM order (UNIT < … < BOX), not alphabetically.
+          .sort(
+            (a, b) =>
+              PACKAGING_LEVEL_VALUES.indexOf(a.level) - PACKAGING_LEVEL_VALUES.indexOf(b.level),
+          );
         expect(rows).toEqual(expected);
       }
     } finally {

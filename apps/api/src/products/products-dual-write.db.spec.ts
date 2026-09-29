@@ -22,6 +22,9 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+// Real sharp, the same way src/storage/compress.util.spec.ts builds in-memory fixtures.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const sharp: any = require("sharp");
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -219,8 +222,14 @@ describeDb("#2728 M1 catalog dual write — real Postgres", () => {
     const product = await inTenant(tenantId, () =>
       service.create({ name: "Photo Widget", unit: "each", pricePerUnit: "1.00" } as any),
     );
+    // A REAL image: uploadImage runs it through sharp (compressImage), which rejects arbitrary bytes.
+    const png = await sharp({
+      create: { width: 1, height: 1, channels: 3, background: { r: 255, g: 255, b: 255 } },
+    })
+      .png()
+      .toBuffer();
     const { key } = await inTenant(tenantId, () =>
-      service.uploadImage(product.id, Buffer.from("fake"), "a.jpg", "image/jpeg", { x: 30, y: 70 }),
+      service.uploadImage(product.id, png, "a.png", "image/png", { x: 30, y: 70 }),
     );
     const rowsAfterUpload = await prisma.productImage.findMany({
       where: { tenantId, productId: product.id },
