@@ -7,10 +7,7 @@ import {
 import type { Prisma } from "@prisma/client";
 import { componentUnitPrice4, roundMoney } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import {
-  printableUnitBarcode,
-  synthesizeLegacyBarcodes,
-} from "../products/product-barcode-rules";
+import { printableUnitBarcode, synthesizeLegacyBarcodes } from "../products/product-barcode-rules";
 
 /**
  * #2717 M3 (SA-572 I9/I10/I11/I12, SA-579, SA-589): FIXED line composition. A FIXED line is a
@@ -45,6 +42,24 @@ function assertWholeBoxes(line: { boxes: number; pieces: number }): void {
   if (Number(line.pieces ?? 0) !== 0 || !Number.isInteger(line.boxes) || line.boxes < 1) {
     throw bad(API_ERROR_CODES.FIXED_WHOLE_BOXES, "A mixed pack is sold in whole boxes only.");
   }
+}
+
+/**
+ * The whole-pack count a line composes as. A boxed line uses its `boxes`; a QTY-ONLY (selling
+ * unit) line has boxes and pieces both null/0, and its `qty` IS the pack count. A loose-pieces
+ * line (pieces > 0, no boxes) stays 0 so assertWholeBoxes still refuses it. LOCAL value only:
+ * never written back to any OrderItem column.
+ */
+export function effectiveBoxes(l: {
+  boxes?: number | null;
+  pieces?: number | null;
+  qty?: number | null;
+}): number {
+  const boxes = Number(l.boxes ?? 0);
+  if (boxes > 0) return boxes;
+  if (Number(l.pieces ?? 0) > 0) return boxes;
+  const qty = Number(l.qty ?? 0);
+  return qty > 0 ? qty : 0;
 }
 
 /** I12: whole non-negative component pieces summing EXACTLY to the line's pieces, else 400. */
@@ -235,6 +250,7 @@ export async function syncLineCompositions(
     select: {
       id: true,
       productId: true,
+      qty: true,
       boxes: true,
       pieces: true,
       unitsPerBox: true,
@@ -243,7 +259,7 @@ export async function syncLineCompositions(
       compositionMode: true,
       recipeId: true,
       recipeVersion: true,
-      product: { select: { id: true, kind: true } },
+      product: { select: { id: true, kind: true, unitsPerBox: true } },
       components: {
         select: { componentProductId: true, qty: true },
         orderBy: { position: "asc" },
@@ -252,8 +268,21 @@ export async function syncLineCompositions(
   });
   for (const l of lines) {
     if (l.product?.kind !== "RECIPE") continue;
-    const boxes = Number(l.boxes ?? 0);
-    const unitsPerBox = l.unitsPerBox == null ? null : Number(l.unitsPerBox);
+    // A qty-only line composes as `qty` whole packs (local value; no column is rewritten).
+    const boxes = effectiveBoxes({ boxes: l.boxes, pieces: l.pieces, qty: l.qty });
+    const ownUpb = l.unitsPerBox == null ? null : Number(l.unitsPerBox);
+    const productUpb = l.product.unitsPerBox == null ? null : Number(l.product.unitsPerBox);
+    const unitsPerBox = ownUpb ?? (l.boxes == null ? productUpb : null);
+    // A qty-only UNIT-AWARE line (unitLabel set, no box split) counts units of that label, not
+    // packs: it stays plain, exactly as before (only boxed lines refuse a unit label).
+    if (
+      l.unitLabel &&
+      l.boxes == null &&
+      Number(l.pieces ?? 0) === 0 &&
+      l.compositionMode !== "FIXED"
+    ) {
+      continue;
+    }
     if (boxes === 0 && Number(l.pieces ?? 0) === 0) {
       // A struck (cancelled, zeroed) line has no pieces: its component rows go with them.
       await tx.orderItemComponent.deleteMany({
@@ -265,7 +294,10 @@ export async function syncLineCompositions(
     let stamp: { recipeId: string; version: number } | null = null;
     if (l.compositionMode === "FIXED" && l.components.length > 0) {
       if (l.unitLabel) {
-        throw bad(API_ERROR_CODES.COMPOSED_UNIT_LINE, "A mixed pack cannot be sold on a unit-aware line.");
+        throw bad(
+          API_ERROR_CODES.COMPOSED_UNIT_LINE,
+          "A mixed pack cannot be sold on a unit-aware line.",
+        );
       }
       assertWholeBoxes({ boxes, pieces: Number(l.pieces ?? 0) });
       planned = rescaleComposition({
@@ -299,7 +331,9 @@ export async function syncLineCompositions(
       netSubtotal: Number(l.subtotal),
       pieces: boxes * (unitsPerBox as number),
     });
-    await tx.orderItemComponent.deleteMany({ where: { orderItemId: l.id, tenantId: ctx.tenantId } });
+    await tx.orderItemComponent.deleteMany({
+      where: { orderItemId: l.id, tenantId: ctx.tenantId },
+    });
     await tx.orderItemComponent.createMany({
       data: rows.map((r) => ({
         ...r,
