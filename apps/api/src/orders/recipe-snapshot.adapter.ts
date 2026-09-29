@@ -14,27 +14,34 @@ export function recipeSnapshotPort(
   tx: Prisma.TransactionClient,
   tenantId: string,
 ): RecipeSnapshotPort {
+  const select = {
+    id: true,
+    version: true,
+    unitsPerPack: true,
+    components: {
+      select: { componentProductId: true, qty: true },
+      orderBy: { position: "asc" as const },
+    },
+  };
+  const snap = (r: {
+    id: string;
+    version: number;
+    unitsPerPack: number;
+    components: Array<{ componentProductId: string; qty: number }>;
+  }) => ({
+    recipeId: r.id,
+    version: r.version,
+    unitsPerPack: r.unitsPerPack,
+    comps: r.components.map((c) => ({ componentProductId: c.componentProductId, qty: c.qty })),
+  });
   return {
     async activeRecipeFor(productId) {
-      const r = await tx.recipe.findFirst({
-        where: { tenantId, activeFor: productId },
-        select: {
-          id: true,
-          version: true,
-          unitsPerPack: true,
-          components: {
-            select: { componentProductId: true, qty: true },
-            orderBy: { position: "asc" },
-          },
-        },
-      });
-      if (!r) return null;
-      return {
-        recipeId: r.id,
-        version: r.version,
-        unitsPerPack: r.unitsPerPack,
-        comps: r.components.map((c) => ({ componentProductId: c.componentProductId, qty: c.qty })),
-      };
+      const r = await tx.recipe.findFirst({ where: { tenantId, activeFor: productId }, select });
+      return r ? snap(r) : null;
+    },
+    async recipeById(recipeId) {
+      const r = await tx.recipe.findFirst({ where: { tenantId, id: recipeId }, select });
+      return r ? snap(r) : null;
     },
     async productFacts(ids) {
       const rows = await tx.product.findMany({

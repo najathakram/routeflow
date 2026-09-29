@@ -194,13 +194,17 @@ export function buildComponentSnapshots(input: {
 }
 
 /** The one place documents read Recipe rows (I11): a port, adapted in recipe-snapshot.adapter.ts. */
+export interface RecipeSnapshot {
+  recipeId: string;
+  version: number;
+  unitsPerPack: number;
+  comps: PlannedComponent[];
+}
+
 export interface RecipeSnapshotPort {
-  activeRecipeFor(productId: string): Promise<{
-    recipeId: string;
-    version: number;
-    unitsPerPack: number;
-    comps: PlannedComponent[];
-  } | null>;
+  activeRecipeFor(productId: string): Promise<RecipeSnapshot | null>;
+  /** A specific version, for a line already stamped with it (a merge-moved line keeps v1). */
+  recipeById(recipeId: string): Promise<RecipeSnapshot | null>;
   productFacts(ids: string[]): Promise<Map<string, ComponentProductFacts>>;
 }
 
@@ -250,6 +254,13 @@ export async function syncLineCompositions(
     if (l.product?.kind !== "RECIPE") continue;
     const boxes = Number(l.boxes ?? 0);
     const unitsPerBox = l.unitsPerBox == null ? null : Number(l.unitsPerBox);
+    if (boxes === 0 && Number(l.pieces ?? 0) === 0) {
+      // A struck (cancelled, zeroed) line has no pieces: its component rows go with them.
+      await tx.orderItemComponent.deleteMany({
+        where: { orderItemId: l.id, tenantId: ctx.tenantId },
+      });
+      continue;
+    }
     let planned: PlannedComponent[];
     let stamp: { recipeId: string; version: number } | null = null;
     if (l.compositionMode === "FIXED" && l.components.length > 0) {
@@ -266,13 +277,16 @@ export async function syncLineCompositions(
         boxes,
       });
     } else {
-      const recipe = await ctx.port.activeRecipeFor(l.product.id);
+      // A line already stamped (a merge-moved line) keeps its own version; a new one takes ACTIVE.
+      const recipe = l.recipeId
+        ? await ctx.port.recipeById(l.recipeId)
+        : await ctx.port.activeRecipeFor(l.product.id);
       if (!recipe) continue;
       planned = planFixedComposition({
         recipe,
         line: { boxes, pieces: Number(l.pieces ?? 0), unitsPerBox, unitLabel: l.unitLabel },
       });
-      stamp = { recipeId: recipe.recipeId, version: recipe.version };
+      stamp = l.recipeId ? null : { recipeId: recipe.recipeId, version: recipe.version };
     }
     assertComponentSum(
       boxes * (unitsPerBox as number),
