@@ -1,48 +1,35 @@
 /**
- * SA-584 B1 (#2717 M2 fold) — real-Postgres proof that `assignToVariants` (mode `on`) takes the
- * FAMILY row before any variant row, so it cannot deadlock against a family price edit
- * (house order: family -> recipe product -> variant/component rows).
+ * SA-584 B1 (#2717 M2 fold) - real-Postgres proof that `assignToVariants` (mode `on`) takes the
+ * FAMILY row F `FOR UPDATE` before it inserts the parent StockMovement (whose FK takes FOR KEY
+ * SHARE on F), so a family price edit cannot deadlock against it (house order: family -> recipe
+ * product -> variant rows).
  *
- * One deterministic interleaving on two connections, repeated for 3 rounds on fresh fixtures:
- *   1. the EDITOR (a raw `pg` connection) plays the family price edit: it UPDATEs the family tier
- *      price, holding the FAMILY row F until COMMIT;
- *   2. the SERVICE starts assignToVariants [existing V, new W]; a barrier waits until Postgres
- *      reports it BLOCKED by the editor (`pg_blocking_pids`), so the interleaving is real, then
- *      asserts the lock edges: exactly one blocked backend, waiting on F's tuple lock (pg_locks),
- *      while V can still be locked NOWAIT by a third connection (the service holds no V lock);
- *   3. only then does the editor propagate to V (what `propagateFamilyPrice` does next) and commit.
- * Before the fix the service had already written V (holding its row lock) and blocked later on the
- * family (new W -> `familyPricesForNewVariant`): step 3 closes V -> F against F -> V and Postgres
- * aborts one side with 40P01. Fixed: the service blocks on the family while holding nothing, the
- * editor takes V at once, and both finish; V and W both end with the edited tier price. If the
- * Serializable service tx gets a plain 40001 (it snapshotted before the editor committed), the
- * service's own retryOnTxConflict (SA-587e) re-runs it; that is the SSI case, never a deadlock.
+ * FORCED INTERLEAVE (the lead's B1 review, #2554 5885920100, and F2's finding that the old pin was
+ * non-discriminating: the parent StockMovement insert's FK KEY SHARE on F conflicts with a FOR
+ * UPDATE writer, so the old order blocked on F before ever touching V and the spec stayed green
+ * against the bug). Per round, on fresh fixtures:
+ *   1. the SERVICE goes FIRST: assignToVariants [existing V, new W] runs until it reaches the
+ *      new-variant step, where a jest spy on `createVariantRowInTx` PAUSES it on a gate. That is
+ *      AFTER the parent StockMovement insert (so it holds KEY SHARE on F, or with the fix the F FOR
+ *      UPDATE lock) and AFTER the existing-V write, and BEFORE `familyPricesForNewVariant`'s
+ *      F FOR UPDATE;
+ *   2. the WRITER (raw pg) then issues `SELECT ... FOR UPDATE` on F and blocks behind the service;
+ *      a BARRIER polls `pg_blocking_pids(writerPid)` until it names a backend, so the queue is real;
+ *   3. RELEASE the gate; the service continues into its F FOR UPDATE.
+ * Hazard without the lock (the revert): the service holds only KEY SHARE on F while the writer is
+ * queued for FOR UPDATE, then the service wants FOR UPDATE on F itself: a KEY SHARE -> FOR UPDATE
+ * upgrade behind a queued conflicting waiter = a 40P01 (F2 saw the SERVICE as the victim every
+ * round). Fixed: the service already holds F FOR UPDATE from the start, so the writer simply waits,
+ * the service commits, then the writer takes F, propagates the price to V and W, and commits; no
+ * deadlock and both rows end with the edited tier price.
  *
- * WHY THE WRITER TAKES F `FOR NO KEY UPDATE` (not FOR UPDATE): a real family price edit is an
- * UPDATE of non-key columns, which takes exactly that mode. It matters here: assignToVariants
- * inserts a StockMovement whose FK takes FOR KEY SHARE on the family row, and FOR UPDATE conflicts
- * with KEY SHARE. With a FOR UPDATE writer the OLD (variant-first) order therefore blocked on that
- * FK insert BEFORE it wrote any variant, never held V, and the spec stayed green against the bug
- * (F2's finding, #2554). NO KEY UPDATE lets the old order get past the FK insert, write V, and only
- * then block on the family read (FOR UPDATE), which is the real V -> F edge.
+ * RETRY INSTRUMENTATION (SA-587e): retryOnTxConflict absorbs a 40P01 (it retries it like a 40001),
+ * so the revert does not always surface as a service error. The spec records the SQLSTATE of every
+ * retried attempt (common/testing/tx-retry-capture.ts spies Logger.prototype.warn) and asserts ZERO
+ * 40P01 each of 3 rounds; the reverted order forces the cycle every round.
  *
- * REVERT-RED MECHANISM (old order, family lock moved after the target loop): the service holds V
- * (row update) and waits on F (new W -> familyPricesForNewVariant FOR UPDATE) while the writer holds
- * F and, once released by the barrier, wants V: a V <-> F cycle. Postgres aborts one side (40P01),
- * so either `writer` or `service` reports 40P01 and this spec fails. Fixed order: the service
- * takes F first, blocks holding nothing, the writer takes V and commits, then the service runs.
- *
- * RETRY INSTRUMENTATION (SA-587e): retryOnTxConflict absorbs the revert's 40P01 (it retries a
- * deadlock like a 40001), so with the retry in place the revert does not surface as a service
- * error. The spec records the SQLSTATE of every retried attempt by spying on Nest's
- * Logger.prototype.warn (common/testing/tx-retry-capture.ts; the retry logs one line per retried
- * attempt) and asserts ZERO 40P01 each of 3 rounds; the reverted order forces the cycle every
- * round, so it records at least one 40P01 per round and fails all three.
- *
- * The lock-edge assert: `blocked` must be true (the service really waited on the writer's family
- * lock) and no 40P01 may be retried or reported by either side. The tuple lock the assign backend holds on F is
- * GRANTED (it is the first waiter; it waits on the writer's transactionid). WRITTEN, NOT RUN by the fold implementer: F2 owns the
- * DB lane (`npm run local:test:db`). Throwaway `qa-2717-b1-<run>` tenant (assertTestTenant).
+ * WRITTEN, NOT RUN by the fold implementer: F2 owns the DB lane (`npm run local:test:db`).
+ * Throwaway `qa-2717-b1-<run>` tenant (assertTestTenant).
  */
 import { randomUUID } from "crypto";
 import { Test, TestingModule } from "@nestjs/testing";
@@ -120,16 +107,15 @@ describeDb("SA-584 B1 — assignToVariants takes the family row first (no 40P01)
     await pool?.end();
   }, 120_000);
 
-  /** Polls until some backend is blocked by `blockerPid`; false if `done()` or the deadline comes first. */
-  async function waitUntilBlockedBy(blockerPid: number, done: () => boolean): Promise<boolean> {
+  /** Polls until the writer backend is blocked by someone; false if `done()` or the deadline comes first. */
+  async function waitUntilWriterBlocked(writerPid: number, done: () => boolean): Promise<boolean> {
     // < 5 s: Prisma's interactive tx timeout is 5 s (race-probe harness rule).
     const deadline = Date.now() + 4_000;
     while (Date.now() < deadline && !done()) {
       // eslint-disable-next-line no-await-in-loop
-      const { rows } = await pool.query(
-        "SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))",
-        [blockerPid],
-      );
+      const { rows } = await pool.query("SELECT cardinality(pg_blocking_pids($1::int)) AS n", [
+        writerPid,
+      ]);
       if (rows[0].n > 0) return true;
       // eslint-disable-next-line no-await-in-loop
       await new Promise((r) => setTimeout(r, 20));
@@ -177,112 +163,108 @@ describeDb("SA-584 B1 — assignToVariants takes the family row first (no 40P01)
         currentStock: 0,
       },
     });
-    const familyCtid = (
-      await pool.query('SELECT ctid::text AS c FROM "Product" WHERE id = $1', [family.id])
-    ).rows[0].c as string;
 
     const writer = await pool.connect();
-    const probe = await pool.connect();
     let writerError: unknown;
     let serviceError: unknown;
     let blocked = false;
-    let blockedBackends = -1;
-    let blockedOnFamily = false;
-    let serviceHoldsVariant = true;
+    let blockerCount = -1;
     let capture: ReturnType<typeof captureRetriedStates> | undefined;
+    // The gate: the service pauses in createVariantRowInTx (first call only) until released.
+    let gateReached!: () => void;
+    let gateRelease!: () => void;
+    const reached = new Promise<void>((r) => (gateReached = r));
+    const released = new Promise<void>((r) => (gateRelease = r));
+    let gated = false;
+    const original = (InventoryService.prototype as any).createVariantRowInTx;
+    const gateSpy = jest
+      .spyOn(service as any, "createVariantRowInTx")
+      .mockImplementation(async function (this: unknown, ...args: unknown[]) {
+        if (!gated) {
+          gated = true;
+          gateReached();
+          await released;
+        }
+        return original.apply(this, args);
+      });
     try {
-      await writer.query("BEGIN");
-      await writer.query("SET LOCAL lock_timeout = '4s'");
-      const pid = Number((await writer.query("SELECT pg_backend_pid() AS pid")).rows[0].pid);
-      // 1. the family price edit: UPDATE the family tier price. This takes F in FOR NO KEY UPDATE
-      //    mode (see the header) and leaves it held until COMMIT.
-      await writer.query('UPDATE "Product" SET "priceTier2" = 8.75 WHERE id = $1', [family.id]);
-
-      let settled = false;
       // Records the SQLSTATE of each attempt the service's retryOnTxConflict re-ran (see header).
       capture = captureRetriedStates("inventory.assignToVariants");
-      const attempt = () =>
-        tenantCtx.run(tenantId, () =>
-          service.assignToVariants(
-            {
-              parentProductId: family.id,
-              assignments: [
-                { productId: existing.id, qty: 5 },
-                { newVariant: { name: "Grape" }, qty: 5 },
-              ],
-            } as any,
-            userId,
-          ),
-        );
-      // The service retries a plain 40001/P2034 itself (SA-587e retryOnTxConflict), so the spec
-      // makes ONE call and asserts on its outcome; there is no retry loop here.
+      let settled = false;
+      // ONE call: the service retries a plain 40001/P2034 itself (SA-587e); no retry loop here.
       const running = (async () => {
         try {
-          await attempt();
+          await tenantCtx.run(tenantId, () =>
+            service.assignToVariants(
+              {
+                parentProductId: family.id,
+                assignments: [
+                  { productId: existing.id, qty: 5 },
+                  { newVariant: { name: "Grape" }, qty: 5 },
+                ],
+              } as any,
+              userId,
+            ),
+          );
         } catch (err) {
           serviceError = err;
         } finally {
           settled = true;
+          gateReached(); // never leave the round waiting on a gate the service died before
         }
       })();
 
-      // 2. lock-edge assert: the service must really be waiting on the editor
-      blocked = await waitUntilBlockedBy(pid, () => settled);
-      if (blocked) {
-        // count ALL backends the editor blocks (must be exactly the one assign backend)
-        blockedBackends = (
-          await pool.query(
-            "SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))",
-            [pid],
-          )
-        ).rows[0].n;
-        // ... and it waits on the FAMILY row F. Postgres queues a row-lock waiter as: it GRANTS
-        //     itself the row's heavyweight tuple lock, then waits (not granted) on the holder's
-        //     transactionid. So under the fixed order the assign backend shows a GRANTED tuple
-        //     lock on F's ctid (and no tuple lock on V); a NOT-granted tuple lock would mean it is
-        //     the second waiter behind another backend, which is not this interleave.
-        blockedOnFamily =
-          (
-            await pool.query(
-              `SELECT count(*)::int AS n
-                 FROM pg_locks l
-                WHERE l.granted AND l.locktype = 'tuple'
-                  AND l.relation = '"Product"'::regclass
-                  AND '(' || l.page || ',' || l.tuple || ')' = $2
-                  AND $1::int = ANY(pg_blocking_pids(l.pid))`,
-              [pid, familyCtid],
-            )
-          ).rows[0].n === 1;
-        // ... while holding NO lock on the variant row V. Row locks are not in pg_locks, so probe
-        // it: FOR UPDATE NOWAIT succeeds iff nobody (in particular the assign backend) holds V.
-        await probe.query("BEGIN");
-        try {
-          await probe.query('SELECT id FROM "Product" WHERE id = $1 FOR UPDATE NOWAIT', [
-            existing.id,
-          ]);
-          serviceHoldsVariant = false;
-        } catch {
-          serviceHoldsVariant = true;
-        } finally {
-          await probe.query("ROLLBACK").catch(() => undefined);
+      // 1. the service runs first and pauses on the gate (parent movement + V written, F not yet
+      //    taken FOR UPDATE by the old order; held FOR UPDATE by the fixed order)
+      await reached;
+      await writer.query("BEGIN");
+      await writer.query("SET LOCAL lock_timeout = '4s'");
+      const writerPid = Number((await writer.query("SELECT pg_backend_pid() AS pid")).rows[0].pid);
+
+      // 2. the writer's F FOR UPDATE queues behind the service; the barrier waits until Postgres
+      //    reports the writer BLOCKED (fixed order: by the service's F lock; old order: by the
+      //    service's FK KEY SHARE), so the interleave is real, not assumed.
+      let writerLock: Promise<unknown> | undefined;
+      if (!settled) {
+        writerLock = writer
+          .query('SELECT id FROM "Product" WHERE id = $1 FOR UPDATE', [family.id])
+          .catch((err) => {
+            writerError = err;
+          });
+        blocked = await waitUntilWriterBlocked(writerPid, () => settled);
+        if (blocked) {
+          blockerCount = (
+            await pool.query("SELECT cardinality(pg_blocking_pids($1::int)) AS n", [writerPid])
+          ).rows[0].n;
         }
       }
-      try {
-        // 3. release: propagateFamilyPrice's next lock + write, the variant row V, then COMMIT
-        await writer.query(
-          'UPDATE "Product" SET "priceTier2" = 8.75 WHERE "parentProductId" = $1',
-          [family.id],
-        );
-        await writer.query("COMMIT");
-      } catch (err) {
-        writerError = err;
+
+      // 3. release the gate; the service proceeds to the new-variant F FOR UPDATE
+      gateRelease();
+      if (writerLock) await writerLock;
+      await running;
+      if (!writerError) {
+        try {
+          // the writer now holds F: propagate the edited tier price (what propagateFamilyPrice
+          // does) to F and every variant, then COMMIT
+          await writer.query('UPDATE "Product" SET "priceTier2" = 8.75 WHERE id = $1', [family.id]);
+          await writer.query(
+            'UPDATE "Product" SET "priceTier2" = 8.75 WHERE "parentProductId" = $1',
+            [family.id],
+          );
+          await writer.query("COMMIT");
+        } catch (err) {
+          writerError = err;
+          await writer.query("ROLLBACK").catch(() => undefined);
+        }
+      } else {
         await writer.query("ROLLBACK").catch(() => undefined);
       }
-      await running;
     } finally {
+      gateRelease();
+      gateSpy.mockRestore();
       capture?.restore();
       writer.release();
-      probe.release();
     }
 
     // wait for the refetch: read only after both sides have settled and committed
@@ -293,9 +275,7 @@ describeDb("SA-584 B1 — assignToVariants takes the family row first (no 40P01)
     });
     return {
       blocked,
-      blockedBackends,
-      blockedOnFamily,
-      serviceHoldsVariant,
+      blockerCount,
       retriedStates: capture ? [...capture.states] : [],
       writerError,
       serviceError,
@@ -305,7 +285,7 @@ describeDb("SA-584 B1 — assignToVariants takes the family row first (no 40P01)
     };
   }
 
-  it("assign [existing V, new W] vs a family price edit (F then V), 3 rounds: no 40P01, assign waits on F holding no V lock, both effects applied", async () => {
+  it("assign [existing V, new W] vs a family price edit (F then V), 3 rounds: no 40P01, writer queues behind the paused service, both effects applied", async () => {
     for (let n = 1; n <= 3; n += 1) {
       // eslint-disable-next-line no-await-in-loop
       const r = await round(n);
@@ -324,8 +304,8 @@ describeDb("SA-584 B1 — assignToVariants takes the family row first (no 40P01)
         r.retriedStates.every((s) => ["40001", "P2034", "TransactionWriteConflict"].includes(s)),
       ).toBe(true);
 
-      // (a) REVERT-RED: under the old variant-first order the service holds V and waits on F while
-      //     the editor holds F and wants V: 40P01 on one side, EVERY round. Fixed: neither.
+      // (a) REVERT-RED: without the family lock the service's KEY SHARE -> FOR UPDATE upgrade
+      //     deadlocks against the queued writer (40P01, EVERY round). Fixed: neither side.
       expect({ n, dead: isDeadlock(r.writerError) || isDeadlock(r.serviceError) }).toEqual({
         n,
         dead: false,
@@ -339,19 +319,11 @@ describeDb("SA-584 B1 — assignToVariants takes the family row first (no 40P01)
         service: describeErr(r.serviceError),
       }).toEqual({ n, writer: "none", service: "none" });
 
-      // (b) lock edges (old order: service holds V, so serviceHoldsVariant is true and this fails)
-      expect({
-        n,
-        blocked: r.blocked,
-        blockedBackends: r.blockedBackends,
-        blockedOnFamily: r.blockedOnFamily,
-        serviceHoldsVariant: r.serviceHoldsVariant,
-      }).toEqual({
+      // (b) the forced interleave really happened: the writer queued behind exactly one backend
+      expect({ n, blocked: r.blocked, blockerCount: r.blockerCount }).toEqual({
         n,
         blocked: true,
-        blockedBackends: 1,
-        blockedOnFamily: true,
-        serviceHoldsVariant: false,
+        blockerCount: 1,
       });
 
       // (c) end state: stock moved exactly once AND the edited tier price reached V and W
