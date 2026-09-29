@@ -7,6 +7,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { isUpsellLine } from "@routeflow/pricing";
 import { redactUpsellLines } from "../common/upsell-redaction";
+import { EmailService } from "../email/email.service";
 import { showOriginalPrice } from "../invoices/invoice-pdf-item";
 
 const discounted = { priceType: "DISCOUNTED", unitPrice: 4, originalPrice: 6 };
@@ -38,5 +39,34 @@ describe("staff-override consumers (#2716c)", () => {
   it("email lines use the same showOriginalPrice helper (no second strike rule)", () => {
     const src = fs.readFileSync(path.join(__dirname, "../email/email.service.ts"), "utf8");
     expect(src).toMatch(/showOriginalPrice\(it, !!params\.hideOriginalPrice\)/);
+  });
+});
+
+describe("email invoice body strike (EmailService.buildInvoiceEmail) — behaviour, same rule as the PDF", () => {
+  // buildInvoiceEmail reads no `this.*`, so a prototype-only instance is enough (no constructor deps).
+  const emailService = Object.create(EmailService.prototype);
+  const render = (item: Record<string, unknown>) =>
+    (emailService as any).buildInvoiceEmail(
+      {
+        customerName: "Acme",
+        invoiceNumber: "INV-1",
+        issueDate: "2026-09-29",
+        dueDate: "2026-10-29",
+        total: 8,
+        items: [{ description: "Widget", qty: 1, subtotal: 8, ...item }],
+      },
+      "Biz",
+    ).html as string;
+
+  it("a below-list edited line (DISCOUNTED, original = list) shows the struck list price", () => {
+    const html = render({ unitPrice: 8, originalPrice: 10, priceType: "DISCOUNTED" });
+    expect(html).toContain("text-decoration:line-through");
+    expect(html).toMatch(/<s [^>]*>\$10\.00<\/s>/);
+  });
+
+  it("a MANUAL line above list (upsell) never exposes the lower base", () => {
+    const html = render({ unitPrice: 12, originalPrice: 10, priceType: "MANUAL", subtotal: 12 });
+    expect(html).not.toContain("line-through");
+    expect(html).not.toContain("$10.00");
   });
 });
