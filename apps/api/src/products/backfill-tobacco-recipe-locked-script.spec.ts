@@ -38,6 +38,116 @@ function run(recipes: unknown[]) {
   return JSON.parse(r.stdout);
 }
 
+/** Evaluates `expr` (JS, with `m` = the helper module and `input` = parsed INPUT) in one child. */
+function evalHelper(expr: string, input: unknown) {
+  const code = `import * as m from "${HELPER_HREF}"; const input = JSON.parse(process.env.INPUT);
+    const out = await (async () => { ${expr} })(); console.log(JSON.stringify(out));`;
+  const r = spawnSync(process.execPath, ["--input-type=module", "-e", code], {
+    env: { ...process.env, INPUT: JSON.stringify(input) },
+    encoding: "utf8",
+  });
+  if (r.status !== 0) throw new Error(r.stderr);
+  return JSON.parse(r.stdout);
+}
+
+const P = (id: string, isTobacco: boolean, trackedCategoryId: string | null) => ({
+  id,
+  name: `n-${id}`,
+  isTobacco,
+  trackedCategoryId,
+});
+
+describe("backfill-tobacco-category link planner (SA-587b, pure)", () => {
+  const products = [
+    P("free", true, null),
+    P("locked", true, null),
+    P("conf", true, "other"),
+    P("mem", false, "tob"),
+  ];
+  const recipes = [
+    {
+      status: "ACTIVE",
+      productId: "r",
+      familyProductId: "f",
+      components: [{ componentProductId: "locked" }],
+    },
+  ];
+
+  it("plans link=[free], recipeLocked=[locked], conflict, flag; locked id is never in link", () => {
+    const plan = evalHelper(
+      `const c = m.tobaccoLinkCandidates(input.products);
+       const p = m.planTobaccoLink({ tobaccoCat: input.cat, products: input.products, openRecipes: input.recipes });
+       return { cand: c.map((x) => x.id), link: p.link.map((x) => x.id),
+         locked: p.recipeLocked.map((x) => x.id), conflicts: p.conflicts.map((x) => x.id),
+         flag: p.flag.map((x) => x.id), create: p.createCategory };`,
+      { products, recipes, cat: { id: "tob", name: "Tobacco", active: true } },
+    );
+    expect(plan).toEqual({
+      cand: ["free", "locked"],
+      link: ["free"],
+      locked: ["locked"],
+      conflicts: ["conf"],
+      flag: ["mem"],
+      create: false,
+    });
+  });
+
+  it("no category yet: create only when a FREE link row exists (all-locked creates nothing)", () => {
+    const run = (prods: unknown[]) =>
+      evalHelper(
+        `const p = m.planTobaccoLink({ tobaccoCat: null, products: input.products, openRecipes: input.recipes });
+         return { link: p.link.length, locked: p.recipeLocked.length, create: p.createCategory };`,
+        { products: prods, recipes },
+      );
+    expect(run([P("free", true, null)])).toEqual({ link: 1, locked: 0, create: true });
+    expect(run([P("locked", true, null)])).toEqual({ link: 0, locked: 1, create: false });
+  });
+
+  it("executePlan writes ONLY plan.link ids (never a recipe-locked id) and only plan.flag ids", () => {
+    const calls = evalHelper(
+      `const log = [];
+       const tx = { trackedCategory: { create: async () => ({ id: "new" }) },
+         product: { updateMany: async (a) => { log.push(a); } } };
+       const plan = m.planTobaccoLink({ tobaccoCat: input.cat, products: input.products, openRecipes: input.recipes });
+       await m.applyTobaccoPlan(tx, { tenant: { id: "t" }, ...plan });
+       return log;`,
+      { products, recipes, cat: { id: "tob", name: "Tobacco", active: true } },
+    );
+    expect(calls).toEqual([
+      { where: { id: { in: ["free"] } }, data: { trackedCategoryId: "tob" } },
+      { where: { id: { in: ["mem"] } }, data: { isTobacco: true } },
+    ]);
+    expect(JSON.stringify(calls)).not.toContain("locked");
+  });
+
+  it("all-locked plan writes nothing; a created category id is what link points at", () => {
+    const out = evalHelper(
+      `const log = []; const creates = [];
+       const tx = { trackedCategory: { create: async (a) => { creates.push(a.data.name); return { id: "new" }; } },
+         product: { updateMany: async (a) => { log.push(a); } } };
+       await m.applyTobaccoPlan(tx, { tenant: { id: "t" }, ...m.planTobaccoLink({ tobaccoCat: null, products: [input.locked], openRecipes: input.recipes }) });
+       const tx2 = { trackedCategory: tx.trackedCategory, product: { updateMany: async (a) => { log.push(a); } } };
+       await m.applyTobaccoPlan(tx2, { tenant: { id: "t" }, ...m.planTobaccoLink({ tobaccoCat: null, products: [input.free], openRecipes: [] }) });
+       return { log, creates };`,
+      { locked: P("locked", true, null), free: P("free", true, null), recipes },
+    );
+    expect(out).toEqual({
+      log: [{ where: { id: { in: ["free"] } }, data: { trackedCategoryId: "new" } }],
+      creates: ["Tobacco"],
+    });
+  });
+
+  it("--all-tenants summary totals recipe-locked as a COUNT only", () => {
+    const out = evalHelper(`return m.summarizePlans(input.plans);`, {
+      plans: [
+        { link: [1, 2], flag: [1], createCategory: true, conflicts: [1], recipeLocked: [1, 2, 3] },
+        { link: [], flag: [], createCategory: false, conflicts: [], recipeLocked: [1] },
+      ],
+    });
+    expect(out).toEqual({ writes: 4, conflicts: 1, recipeLocked: 4 });
+  });
+});
+
 describe("backfill-tobacco-category recipe-locked partition (SA-587b)", () => {
   it("a DRAFT-recipe product and an ACTIVE-recipe component are locked; the free one links", () => {
     const out = run([
@@ -75,10 +185,12 @@ describe("backfill-tobacco-category recipe-locked partition (SA-587b)", () => {
 
   it("the link step uses the helper and prints a count-only recipe-locked bucket", () => {
     expect(SCRIPT).toMatch(/from "\.\/lib\/recipe-locked\.mjs"/);
-    expect(SCRIPT).toContain("partitionRecipeLocked(");
+    expect(SCRIPT).toContain("planTobaccoLink(");
+    expect(SCRIPT).toContain("applyTobaccoPlan(");
     const lines = SCRIPT.split("\n").filter((l) => l.includes("recipe-locked ("));
     expect(lines.length).toBeGreaterThan(0);
     for (const l of lines) expect(l).not.toMatch(/\.(id|name|slug)\b/);
     expect(SCRIPT).not.toMatch(/for \(const \w+ of (plan\.)?recipeLocked\)/);
+    expect(SCRIPT).toMatch(/recipe-locked total|recipeLocked} recipe-locked/);
   });
 });
