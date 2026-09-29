@@ -202,7 +202,9 @@ describe("NewOrderScreen scan-tray price affordance (REG-NEWORDER-TRAYPRICE)", (
   });
 
   it("REG-NEWORDER-TRAYPRICE-C: a SPECIAL-tier line refuses the edit", () => {
-    const handler = (screen.match(/const onTrayEditPrice = useCallback[\s\S]*?\}, \[\]\);/) ?? [
+    // B901: the handler moved into lib/use-scan-price-edit.ts (size ratchet); the refusal is unchanged.
+    const hook = readFileSync(join(__dirname, "..", "lib", "use-scan-price-edit.ts"), "utf8");
+    const handler = (hook.match(/const onTrayEditPrice = useCallback\([\s\S]*?\n {2}\);/) ?? [
       "",
     ])[0];
     expect(handler).toBeTruthy();
