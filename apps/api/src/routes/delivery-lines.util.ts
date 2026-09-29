@@ -83,6 +83,37 @@ export function assertRunInProgress(status: string): void {
 }
 
 /**
+ * #2631 / SA-550: the completion's in-tx run re-check. Called RIGHT AFTER claimStopCompletion (which
+ * holds this stop's row lock), a plain read — NO run lock, so the completion adds no RouteRun edge.
+ * Correct under READ COMMITTED: a terminal status committed before our stop lock was granted is
+ * visible to this statement; a terminal transition that starts later locks the run's stop rows FIRST
+ * (lockRunStopsForTerminalStatus) and so waits on ours until we commit. Same refusal as the pre-tx
+ * assertRunInProgress (reused, not copied); the throw rolls the whole completion back.
+ */
+export async function assertRunStillInProgress(tx: any, runId: string): Promise<void> {
+  // The same unique read as the completion's pre-tx check, now on the transaction client.
+  const run = await tx.routeRun.findUnique({ where: { id: runId }, select: { status: true } });
+  if (!run) throw new NotFoundException("Route run not found");
+  assertRunInProgress(run.status);
+}
+
+/**
+ * #2631 / SA-550: a run's move to COMPLETED / CANCELLED takes the house order STOP rows → RouteRun:
+ * its CURRENT stop rows FOR UPDATE (by id, a stable order) BEFORE the run row or any order write —
+ * so a stop completion in flight is waited for, never overtaken, and the old run→order vs
+ * stop→order→run deadlock with completeStop / completeWithPayment is gone. A run with no stop rows
+ * locks the run row directly.
+ */
+export async function lockRunStopsForTerminalStatus(tx: any, runId: string): Promise<void> {
+  // SA-511c: an undefined id would lock nothing and silently skip the serialization.
+  if (!runId) throw new Error("#2631: run id missing for the terminal-status stop lock");
+  const stops: unknown[] = await tx.$queryRaw`
+    SELECT id FROM "RouteRunStop" WHERE "routeRunId" = ${runId} ORDER BY id FOR UPDATE`;
+  if (stops.length === 0)
+    await tx.$queryRaw`SELECT id FROM "RouteRun" WHERE id = ${runId} FOR UPDATE`;
+}
+
+/**
  * #2514 (SA-533 / 533e): a stop status PATCH (IN_PROGRESS / SKIPPED) on a LIVE run only. One
  * transaction, in the house lock order for this family, STOP rows → RouteRun, the order
  * completeStop / completeWithPayment (claimStopCompletion, then the RF-016 run auto-complete) and
