@@ -1,5 +1,6 @@
 import { normalizeBoxesPieces, type SellLevel } from "@routeflow/pricing";
 import { scanLevelForHit } from "../orders/_components/scan/useScanCodeHandler";
+import { explicitBumpLevel } from "../orders/[id]/scan-level-line";
 
 // #2717 M4a-1 / SA-595c (1): the invoice screens' scan-level helpers. The LEVEL comes from the
 // shared resolver the order screens use (`scanLevelForHit` -> `resolveScanSellLevel`), never a
@@ -40,4 +41,16 @@ export function bumpInvoiceLine<
   const pieces = (it.pieces ?? 0) + (isUnitScanOnBoxed(upb, level) ? 1 : 0);
   const n = normalizeBoxesPieces({ boxes, pieces, unitsPerBox: upb });
   return { ...it, boxes: n.boxes ?? 0, pieces: n.pieces ?? 0, qty: n.qty };
+}
+
+/**
+ * The qty (total pieces) a scan puts on an EDIT-invoice row, or undefined to leave the row's qty
+ * alone (a picker tap, a shared code, upb <= 1). A distinct UNIT code is one loose piece; a
+ * distinct BOX code (the shared explicit-BOX rule) is a whole case.
+ */
+export function scanRowQty(code: string, product: any): number | undefined {
+  const upb = Number(product?.unitsPerBox ?? 0);
+  if (!(upb > 1)) return undefined;
+  if (isUnitScanOnBoxed(upb, scanLevelForHit(code, product))) return 1;
+  return explicitBumpLevel(code, product) === "BOX" ? upb : undefined;
 }

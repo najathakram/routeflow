@@ -18,6 +18,7 @@ import { useProducts } from "@/lib/api/products";
 import { apiClient } from "@/lib/api-client";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
+import { scanRowQty } from "../../invoice-scan-level";
 import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
 import { displayProductName } from "@/lib/product-display";
 import {
@@ -98,6 +99,8 @@ function ProductSearchInput({
     productId?: string,
     unitPrice?: number,
     unitsPerBox?: number,
+    /** #2717 M4a-1: the qty a SCAN put on the row (undefined = a tap / shared code: leave it). */
+    scanQty?: number,
   ) => void;
   onCreateProduct?: (searchTerm: string) => void;
   onBarcodeNotFound?: (barcode: string) => void;
@@ -169,7 +172,13 @@ function ProductSearchInput({
                 .then((r) => r.data);
               if (product) {
                 setQuery(product.name);
-                onChange(product.name, product.id, tierPriceFor(product), product.unitsPerBox);
+                onChange(
+                  product.name,
+                  product.id,
+                  tierPriceFor(product),
+                  product.unitsPerBox,
+                  scanRowQty(code, product),
+                );
                 setOpen(false);
                 return;
               }
@@ -773,7 +782,7 @@ export default function EditInvoicePage() {
                         setCreateProductTargetIdx(idx);
                         setCreateProductOpen(true);
                       }}
-                      onChange={(description, productId, unitPrice, unitsPerBox) => {
+                      onChange={(description, productId, unitPrice, unitsPerBox, scanQty) => {
                         // Re-picking the SAME product keeps the row's own pack (never the live one); a real swap is a
                         // NEW line (SA-186): no stored id, and the picker's pack.
                         const swapped = productId !== item.productId;
@@ -789,6 +798,8 @@ export default function EditInvoicePage() {
                               ? unitsPerBox
                               : undefined
                             : item.unitsPerBox,
+                          // A scanned distinct UNIT / BOX code sets the qty (one piece / a case).
+                          ...(swapped && scanQty !== undefined ? { qty: scanQty } : {}),
                         });
                       }}
                     />
