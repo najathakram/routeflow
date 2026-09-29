@@ -86,4 +86,15 @@ describe("recipes migration shape (#2717 M2, test 27)", () => {
     const firstCreate = stmts.findIndex((s) => /^CREATE\b/i.test(s));
     expect(firstCreate).toBeGreaterThan(1);
   });
+
+  it("SA-583: exactly ONE BEGIN and ONE COMMIT (a second pair would end the first transaction early)", () => {
+    expect(count(/^BEGIN;$/gm, sql)).toBe(1);
+    expect(count(/^COMMIT;$/gm, sql)).toBe(1);
+  });
+
+  it("SA-583: the counter is discriminating: a doubled or missing BEGIN/COMMIT is seen", () => {
+    expect(count(/^BEGIN;$/gm, "BEGIN;\nBEGIN;\nCOMMIT;")).toBe(2);
+    expect(count(/^COMMIT;$/gm, "BEGIN;\nCOMMIT;\nCOMMIT;")).toBe(2);
+    expect(count(/^COMMIT;$/gm, "BEGIN;\nSELECT 1;")).toBe(0);
+  });
 });
