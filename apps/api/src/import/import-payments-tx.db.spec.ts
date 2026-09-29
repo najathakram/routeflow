@@ -20,6 +20,7 @@ import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { CustomersService } from "../customers/customers.service";
 import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -65,6 +66,12 @@ describeDb("#2262 import payments + Invoice row in one transaction (real Postgre
             emitCatalogBulkChanged: jest.fn(),
             assertCanFlagTobacco: jest.fn().mockResolvedValue(undefined),
             assertMsrpAllowed: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
           },
         },
       ],

@@ -11,6 +11,7 @@ import { ConflictException } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
 import { ImportService } from "./import.service";
 import { ProductsService } from "../products/products.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { CustomersService } from "../customers/customers.service";
@@ -68,6 +69,13 @@ describe("#2468 invoice re-import never resurrects a VOID / WRITTEN_OFF invoice 
             emitCatalogBulkChanged: jest.fn(),
             assertCanFlagTobacco: jest.fn().mockResolvedValue(undefined),
             assertMsrpAllowed: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        // #2093: importInvoices flags banned lines (never blocks); ALLOW keeps this suite's rows unflagged.
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
           },
         },
       ],

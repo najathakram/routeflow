@@ -38,6 +38,7 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { InvoiceStatus } from "@prisma/client";
 import { assertIntegerPieces, billPackOf } from "./unit-line-bill-guard";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { fillSparseCasBasis } from "./testing/sparse-line-fixtures";
 
 describe("InvoicesService — B652 unit-line partial billing", () => {
   let service: InvoicesService;
@@ -82,7 +83,10 @@ describe("InvoicesService — B652 unit-line partial billing", () => {
   const mockNumbering = { reserveNext: jest.fn().mockResolvedValue("INV-2026-0001") };
 
   beforeEach(async () => {
+    fillSparseCasBasis(); // #2645: sparse order fixtures vs the CAS basis pin
     prisma = createMockPrisma();
+    // #2070: createPartialFromOrder's invoicedQty bump is a CAS (updateMany); a clean read matches 1.
+    prisma.orderItem.updateMany.mockResolvedValue({ count: 1 } as any);
     prisma.invoice.findFirst.mockResolvedValue({ items: [] });
 
     const module: TestingModule = await Test.createTestingModule({
@@ -177,8 +181,8 @@ describe("InvoicesService — B652 unit-line partial billing", () => {
         unitsPerBox: 12,
       });
       expect(Number(line.subtotal)).toBe(520); // 960 x 52/96
-      expect(prisma.orderItem.update).toHaveBeenCalledWith({
-        where: { id: "oi-1" },
+      expect(prisma.orderItem.updateMany).toHaveBeenCalledWith({
+        where: expect.objectContaining({ id: "oi-1", status: { not: "CANCELLED" } }),
         data: { invoicedQty: { increment: 52 } },
       });
     });
@@ -367,7 +371,12 @@ describe("InvoicesService — B652 unit-line partial billing", () => {
         },
         customer: { findFirst: jest.fn().mockResolvedValue({ isTaxExempt: false }) },
         trackedCategory: { findMany: jest.fn().mockResolvedValue([]) },
-        orderItem: { update: jest.fn().mockResolvedValue({}) },
+        orderItem: {
+          update: jest.fn().mockResolvedValue({}),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }), // #2612: the CAS bump
+        },
+        // B760: no DeliveryMutation evidence — remaining stays qty - invoicedQty.
+        deliveryMutation: { findMany: jest.fn().mockResolvedValue([]) },
         $executeRaw: jest.fn().mockResolvedValue(0),
         $queryRaw: jest.fn().mockResolvedValue([]),
       };
@@ -387,8 +396,8 @@ describe("InvoicesService — B652 unit-line partial billing", () => {
       await service.createInvoiceFromOrder("ord-c2", tx);
       const line = tx.invoice.create.mock.calls[0][0].data.items.create[0];
       expect(line).toMatchObject({ unitLabel: "Case", qty: 52, boxes: 4, pieces: 4 });
-      expect(tx.orderItem.update).toHaveBeenCalledWith({
-        where: { id: "oi-1" },
+      expect(tx.orderItem.updateMany).toHaveBeenCalledWith({
+        where: expect.objectContaining({ id: "oi-1", invoicedQty: 44 }),
         data: { invoicedQty: { increment: 52 } },
       });
     });
@@ -400,6 +409,7 @@ describe("InvoicesService — B652 unit-line partial billing", () => {
       );
       expect(tx.invoice.create).not.toHaveBeenCalled();
       expect(tx.orderItem.update).not.toHaveBeenCalled();
+      expect(tx.orderItem.updateMany).not.toHaveBeenCalled();
     });
   });
 

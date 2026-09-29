@@ -9,6 +9,20 @@ import {
   Inter_700Bold,
   useFonts,
 } from "@expo-google-fonts/inter";
+import {
+  SplineSans_400Regular,
+  SplineSans_500Medium,
+  SplineSans_600SemiBold,
+  SplineSans_700Bold,
+} from "@expo-google-fonts/spline-sans";
+import {
+  SplineSansMono_400Regular,
+  SplineSansMono_500Medium,
+} from "@expo-google-fonts/spline-sans-mono";
+import {
+  InstrumentSerif_400Regular,
+  InstrumentSerif_400Regular_Italic,
+} from "@expo-google-fonts/instrument-serif";
 import * as SplashScreen from "expo-splash-screen";
 import * as Notifications from "expo-notifications";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -18,11 +32,15 @@ import { ios } from "@routeflow/ui/tokens";
 import { useAuthStore } from "../lib/auth-store";
 import { useTenantStore } from "../lib/tenant-store";
 import { useBuyerSessionStore } from "../lib/buyer-session-store";
+import { rootBuyerGate } from "../lib/buyer-route-guard";
+import { SHELL_ON } from "../lib/web-shell/shell-env";
+import { shellGate } from "../lib/web-shell/shell-routing";
 import { useDeveloperMode } from "../lib/api/addons";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { initSentry } from "../lib/sentry";
 import { maybeDevParityLogin } from "../lib/dev-parity-login";
 import { queryClient } from "../lib/query-client";
+import { AppThemeProvider } from "../lib/theme";
 
 initSentry();
 
@@ -73,12 +91,16 @@ function RootLayoutNav() {
   useEffect(() => {
     if (isLoading || tenantLoading || buyerLoading) return;
 
-    // Buyer portal: if logged in as buyer (and not also as staff), route to customer section
-    // RF-218: land on the dashboard home tab.
-    if (buyer && activeSeller && !user) {
-      if (segments[0] !== "(customer)") {
-        router.replace("/(customer)/(tabs)/home");
-      }
+    // Buyer portal (buyer signed in, no staff session): with a seller → customer section
+    // (RF-218: home tab); with 0 sellers → sellers/connect only (#2341).
+    const buyerGate = rootBuyerGate({
+      hasBuyer: !!buyer,
+      hasSeller: !!activeSeller,
+      hasStaff: !!user,
+      segments,
+    });
+    if (buyerGate.handled) {
+      if (buyerGate.to) router.replace(buyerGate.to as any);
       return;
     }
 
@@ -86,6 +108,10 @@ function RootLayoutNav() {
     // BUG-B2-5: when the requested route is buyer-protected (e.g. a deep-linked
     // /invoices/<uuid>), send the user to /customer-login with returnTo so post-
     // login they land back on the intended page instead of the marketing home.
+    // #2653: a signed-out buyer may stay in the shell (the web's own buyer login, until the
+    // sign-in handoff lands). Every other signed-out route falls through unchanged.
+    if (!user && shellGate({ shellOn: SHELL_ON, segments, hasStaffUser: false }).handled) return;
+
     if (!user) {
       if (segments.length > 0 && segments[0] !== "(auth)") {
         const isBuyerRoute = segments[0] === "(customer)";
@@ -167,6 +193,15 @@ function RootLayoutNav() {
     }
 
     if (activeRole === "operator") {
+      // #2653: with the shell ON, operators and tenant admins get the NEW web in the WebShell
+      // (RF-087's customer-login exemption still wins). Shell OFF → the native screens below.
+      if (!onCustomerLogin) {
+        const shell = shellGate({ shellOn: SHELL_ON, segments, hasStaffUser: true, activeRole });
+        if (shell.handled) {
+          if (shell.to) router.replace(shell.to as any);
+          return;
+        }
+      }
       if (segments[0] !== "(operator)" && !onCustomerLogin) {
         const mapped = mapSharedCustomerPathToOperator();
         router.replace(mapped ?? "/(operator)/home");
@@ -274,6 +309,15 @@ export default function RootLayout() {
     Inter_500Medium,
     Inter_600SemiBold,
     Inter_700Bold,
+    // Ledger faces (#2330). Inter stays until the last pre-Ledger screen is rebuilt.
+    SplineSans_400Regular,
+    SplineSans_500Medium,
+    SplineSans_600SemiBold,
+    SplineSans_700Bold,
+    SplineSansMono_400Regular,
+    SplineSansMono_500Medium,
+    InstrumentSerif_400Regular,
+    InstrumentSerif_400Regular_Italic,
   });
 
   useEffect(() => {
@@ -284,15 +328,17 @@ export default function RootLayout() {
   // (`if (!fontsLoaded) return null`) caused the web bundle to render an
   // empty <div id="root"> when expo-font's promise hung or errored. Render
   // immediately with the system font fallback; the tree re-renders once the
-  // Inter family is available. fontsError unblocks the splash screen so it
+  // font families are available. fontsError unblocks the splash screen so it
   // can never sit forever if font loading genuinely fails.
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <QueryClientProvider client={queryClient}>
-          <RootLayoutNav />
-          <ConfirmModal />
+          <AppThemeProvider>
+            <RootLayoutNav />
+            <ConfirmModal />
+          </AppThemeProvider>
         </QueryClientProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

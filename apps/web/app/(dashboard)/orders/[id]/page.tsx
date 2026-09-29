@@ -62,6 +62,16 @@ import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON, useOrderUiV2 } from "@/lib/api/addons";
 import { RecordReturnAction } from "../../returns/_components/RecordReturnAction";
+import {
+  OrderInlineReturnsSection,
+  type OrderInlineReturnsSectionHandle,
+} from "../_components/OrderInlineReturnsSection";
+import {
+  RETURN_SAVE_BLOCKED,
+  useOrderInlineReturnSave,
+} from "../_components/use-order-inline-return-save";
+import { AppliedCreditsSection } from "./_components/AppliedCreditsSection";
+import { OrderReturnsPanel } from "./_components/OrderReturnsPanel";
 import { describeCancelImpact } from "@/lib/cancel-impact";
 import { fmtCalendarDate, isInternalEmail } from "@/lib/formatting";
 import { formatMoney, formatQty } from "@/lib/format";
@@ -77,6 +87,7 @@ import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
 import { OrderLineItemCards } from "./_components/OrderLineItemCards";
 import { ActionTier } from "./_components/ActionTier";
 import { DemoteReasonModal } from "./_components/DemoteReasonModal";
+import { EditScanBar } from "./_components/EditScanBar";
 import {
   findLockedUnitLineEdit,
   LockedUnitLineBadge,
@@ -1293,8 +1304,9 @@ export function EditableLineItems({
     scheduleScannerRefocus(addInputRef, [80, 200]);
   }
 
-  async function handleScanEnter() {
-    const code = addSearch.trim();
+  // #2715 PR-1: one resolve path for the field's Enter AND the shared scanner button (camera + wedge).
+  async function handleScanCode(raw: string) {
+    const code = raw.trim();
     if (!code) return;
     setAddLoading(true);
     try {
@@ -1425,16 +1437,21 @@ export function EditableLineItems({
             if (el) rowRefs.current.set(item.id, el);
             else rowRefs.current.delete(item.id);
           }}
+          // #2715 PR-1: the WHOLE line (row + price-edit row + note + substitute picker) is ONE
+          // bordered card — the price row and the note used to be bare ml-11 siblings under it.
+          className={cn(
+            "rounded-lg border px-3 py-2.5 transition-colors",
+            item.cancelled
+              ? "border-surface-border bg-surface-raised opacity-60"
+              : "border-surface-border bg-white",
+          )}
         >
           <div
             className={cn(
               // REG-B521: flex-wrap so Qty/price/actions overflow to a second line under
               // pressure instead of starving the name column to its min-w-0 floor (390px,
               // a long custom item name) — the name column below gets a real minimum instead.
-              "flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border px-3 py-2.5 transition-colors",
-              item.cancelled
-                ? "border-surface-border bg-surface-raised opacity-60"
-                : "border-surface-border bg-white",
+              "flex flex-wrap items-center gap-x-3 gap-y-2",
             )}
           >
             {/* Product icon */}
@@ -1725,50 +1742,27 @@ export function EditableLineItems({
 
       {/* ── Add Item / Scan row ── */}
       <div ref={addRef} className="relative">
-        <div className="flex items-center gap-2 rounded-lg border border-dashed border-brand-300 bg-brand-50 px-3 py-2">
-          {addLoading ? (
-            <Loader2 className="h-4 w-4 shrink-0 animate-spin text-brand-400" />
-          ) : (
-            <Search className="h-4 w-4 shrink-0 text-brand-400" />
-          )}
-          <input
-            ref={addInputRef}
-            type="text"
-            placeholder="Scan barcode or type name…"
-            value={addSearch}
-            disabled={!pricingReady}
-            onChange={(e) => {
-              setAddSearch(e.target.value);
-              if (e.target.value) setAddOpen(true);
-              else setAddOpen(false);
-            }}
-            onFocus={() => {
-              if (addSearch) setAddOpen(true);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                e.stopPropagation();
-                handleScanEnter();
-              } else if (e.key === "Escape") {
-                setAddSearch("");
-                setAddOpen(false);
-              }
-            }}
-            className="flex-1 bg-transparent text-sm text-navy placeholder:text-navy/70 outline-none"
-          />
-          {!pricingReady && (
-            // shrink-0 + whitespace-nowrap keep this row exactly as tall as it is
-            // without the hint (ux-spec: no layout jump); below sm only the spinner
-            // shows, so the label can never wrap the row open on a phone.
-            <span className="flex shrink-0 items-center gap-1 text-xs text-navy/70">
-              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-              <span className="sr-only whitespace-nowrap sm:not-sr-only">
-                Loading customer pricing…
-              </span>
-            </span>
-          )}
-        </div>
+        <EditScanBar
+          inputRef={addInputRef}
+          value={addSearch}
+          loading={addLoading}
+          pricingReady={pricingReady}
+          onChange={(v) => {
+            setAddSearch(v);
+            setAddOpen(Boolean(v));
+          }}
+          onFocus={() => addSearch && setAddOpen(true)}
+          onEnter={() => handleScanCode(addSearch)}
+          onEscape={() => {
+            setAddSearch("");
+            setAddOpen(false);
+          }}
+          onScan={(code) => {
+            setAddSearch(code);
+            void handleScanCode(code);
+          }}
+          onError={(message) => toast({ variant: "error", title: message })}
+        />
         {addOpen && products.length > 0 && (
           <div className="absolute left-0 top-full z-50 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
             <ul className="max-h-52 overflow-y-auto py-1">
@@ -2052,6 +2046,11 @@ export default function OrderDetailPage() {
   // (undefined on the wire = leave the server's stored intents untouched).
   const [editCredits, setEditCredits] = React.useState<CreditSelection[]>([]);
   const [creditsTouched, setCreditsTouched] = React.useState(false);
+  // #2406: an inline return started in edit mode, folded into the SAME updateOrderItems write.
+  const returnsRef = React.useRef<OrderInlineReturnsSectionHandle>(null);
+  const returnSave = useOrderInlineReturnSave(returnsRef, (why) =>
+    toast({ title: RETURN_SAVE_BLOCKED[why], variant: "error" }),
+  );
 
   // Demotion modal
   const [demoteTarget, setDemoteTarget] = React.useState<ApiOrderStatus | null>(null);
@@ -2273,7 +2272,11 @@ export default function OrderDetailPage() {
     // matches the API's "no dto.shippingFee ⇒ keep the stored fee" rule).
     const feeChanged = Math.abs(editShippingFee - Number(order!.shippingFee ?? 0)) > 0.0001;
 
-    if (updates.length === 0 && !feeChanged && !creditsTouched) {
+    // #2406: fold in whatever the operator has typed into the edit-mode Returns section.
+    const inlineReturn = returnSave.prepare(order!.customerId, order!.id);
+    if (inlineReturn === null) return;
+
+    if (updates.length === 0 && !feeChanged && !creditsTouched && !inlineReturn) {
       setIsEditing(false);
       return;
     }
@@ -2292,6 +2295,7 @@ export default function OrderDetailPage() {
         // the picker — undefined on the wire leaves the server's stored
         // intents untouched (see CreditNotePicker / syncOrderCreditSelections).
         ...(creditsTouched ? { appliedCreditNotes: editCredits } : {}),
+        ...(inlineReturn ? { inlineReturn } : {}),
       },
       {
         onSuccess: () => {
@@ -2299,8 +2303,12 @@ export default function OrderDetailPage() {
           setEditItems([]);
           setEditCredits([]);
           setCreditsTouched(false);
+          returnSave.onSuccess();
         },
-        onError: guardError(() => handleSaveItems()),
+        onError: returnSave.chainError(
+          inlineReturn,
+          guardError(() => handleSaveItems()),
+        ),
       },
     );
   }
@@ -3062,6 +3070,16 @@ export default function OrderDetailPage() {
                   estimatedOrderTotal={editTotal}
                 />
 
+                {/* Returns Inside Order Creation, edit mode (#2406) — quoted here, captured
+                    in the SAME save as the item edits below. */}
+                <OrderInlineReturnsSection
+                  ref={returnsRef}
+                  customerId={order.customerId}
+                  entryOrderId={order.id}
+                  refusalMessage={returnSave.refusalMessage}
+                  refusalReturn={returnSave.refusalReturn}
+                />
+
                 <div className="flex gap-2 flex-wrap">
                   {localStatus === "DRAFT" ? (
                     <>
@@ -3104,8 +3122,16 @@ export default function OrderDetailPage() {
                           // from edit mode silently drops the fee the operator typed.
                           const feeChanged =
                             Math.abs(editShippingFee - Number(order!.shippingFee ?? 0)) > 0.0001;
+                          // #2406: the Returns section rides this save too, never silently dropped.
+                          const inlineReturn = returnSave.prepare(order!.customerId, order!.id);
+                          if (inlineReturn === null) return;
                           const saveThenPublish = () => {
-                            if (updates.length > 0 || feeChanged || creditsTouched) {
+                            if (
+                              updates.length > 0 ||
+                              feeChanged ||
+                              creditsTouched ||
+                              inlineReturn
+                            ) {
                               updateItems.mutate(
                                 {
                                   id: order!.id,
@@ -3123,10 +3149,14 @@ export default function OrderDetailPage() {
                                   // need the explicit carry-through (shippingFee had
                                   // this exact miss last PR — do not repeat it).
                                   ...(creditsTouched ? { appliedCreditNotes: editCredits } : {}),
+                                  ...(inlineReturn ? { inlineReturn } : {}),
                                 },
                                 {
-                                  onSuccess: doPublish,
-                                  onError: guardError(() => saveThenPublish()),
+                                  onSuccess: () => (returnSave.onSuccess(), doPublish()),
+                                  onError: returnSave.chainError(
+                                    inlineReturn,
+                                    guardError(() => saveThenPublish()),
+                                  ),
                                 },
                               );
                             } else {
@@ -3456,56 +3486,11 @@ export default function OrderDetailPage() {
               </div>
             </dl>
 
-            {/* Applied credits — intent (order.orderCreditNotes) vs money already
-                moved (Σ CREDIT_NOTE payments across this order's invoices). Credits
-                reduce the invoice balance due, never this order total above. */}
-            {(order.orderCreditNotes?.length ?? 0) > 0 && (
-              <div className="mt-3 space-y-2 border-t border-surface-border pt-3">
-                <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
-                  Applied credits
-                </p>
-                {order.orderCreditNotes!.map((oc) => {
-                  const appliedSoFar = (order.invoices ?? []).reduce((sum, inv) => {
-                    const pays = inv.payments ?? [];
-                    return (
-                      sum +
-                      pays
-                        .filter((p) => p.creditNoteId === oc.creditNoteId)
-                        .reduce((s, p) => s + Number(p.amount), 0)
-                    );
-                  }, 0);
-                  return (
-                    <div key={oc.id} className="flex items-start justify-between gap-2 text-xs">
-                      <div className="min-w-0">
-                        <Link
-                          href={`/credit-notes/${oc.creditNoteId}`}
-                          className="font-mono font-medium text-brand-600 hover:underline"
-                        >
-                          {oc.creditNote?.creditNoteNumber ?? oc.creditNoteId.slice(0, 8)}
-                        </Link>
-                        {oc.creditNote?.reason && (
-                          <span
-                            className="ml-1.5 truncate text-navy/70"
-                            title={oc.creditNote.reason}
-                          >
-                            {oc.creditNote.reason}
-                          </span>
-                        )}
-                        <div className="text-navy/50">
-                          {oc.amount != null
-                            ? `Requested ${formatMoney(oc.amount)}`
-                            : "Up to remaining"}
-                        </div>
-                      </div>
-                      <span className="shrink-0 font-medium text-navy">
-                        {formatMoney(appliedSoFar)} applied
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+            <AppliedCreditsSection order={order} />
           </Card>
+
+          {/* Returns on this order (#2406) — server figures only, never the quote's. */}
+          <OrderReturnsPanel orderId={order.id} />
 
           {/* Carrier shipment — operator records carrier + tracking when goods ship
               via a carrier instead of our own route. Gated so it doesn't render on

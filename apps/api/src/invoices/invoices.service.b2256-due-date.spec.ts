@@ -38,6 +38,7 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { InvoiceStatus } from "@prisma/client";
 import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
+import { fillSparseCasBasis } from "./testing/sparse-line-fixtures";
 
 describe("InvoicesService — #2256 due dates are the literal calendar day", () => {
   let service: InvoicesService;
@@ -82,7 +83,10 @@ describe("InvoicesService — #2256 due dates are the literal calendar day", () 
   const mockNumbering = { reserveNext: jest.fn().mockResolvedValue("INV-2026-0001") };
 
   beforeEach(async () => {
+    fillSparseCasBasis(); // #2645: sparse order fixtures vs the CAS basis pin
     prisma = createMockPrisma();
+    // #2612: the split path's invoicedQty bump is a CAS (updateMany); a clean read matches 1.
+    prisma.orderItem.updateMany.mockResolvedValue({ count: 1 } as any);
     prisma.invoice.findFirst.mockResolvedValue({ items: [] });
 
     const module: TestingModule = await Test.createTestingModule({

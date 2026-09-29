@@ -21,6 +21,7 @@ import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
 import { ProductsService } from "../products/products.service";
 import { AuditService } from "../audit/audit.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 describe("ImportService — security (F8-003 / F9-008)", () => {
   let service: ImportService;
@@ -71,6 +72,12 @@ describe("ImportService — security (F8-003 / F9-008)", () => {
           },
         },
         { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
       ],
     }).compile();
     service = mod.get(ImportService);

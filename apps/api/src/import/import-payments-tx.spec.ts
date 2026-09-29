@@ -18,6 +18,7 @@ import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
 import { ProductsService } from "../products/products.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 type Write = {
   op: "payment" | "invoiceUpdate" | "invoiceCreate";
@@ -68,6 +69,12 @@ describe("#2262 import writes payments + the Invoice row in one transaction (SA-
             emitCatalogBulkChanged: jest.fn(),
             assertCanFlagTobacco: jest.fn().mockResolvedValue(undefined),
             assertMsrpAllowed: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
           },
         },
       ],

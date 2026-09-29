@@ -4,13 +4,16 @@ import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Truck } from "lucide-react";
 import { Badge, Button, type BadgeVariant } from "@routeflow/ui/web";
-import { isTrackingLive } from "@routeflow/types";
-import { BUYER_TRACKING_POLL_MS, useBuyerOrderTracking } from "@/lib/api/buyer";
 import {
+  TRACKING_PILL_LABEL,
   deriveTrackingView,
-  stopsBeforeYouLabel,
+  describeTrackingView,
+  isTrackingLive,
+  trackingFacts,
   type TrackingView,
-} from "./delivery-tracking.logic";
+  type TrackingViewKind,
+} from "@routeflow/types";
+import { BUYER_TRACKING_POLL_MS, useBuyerOrderTracking } from "@/lib/api/buyer";
 
 /**
  * #2095 — "Track your delivery" on the buyer's order detail: where the order stands on its
@@ -61,8 +64,8 @@ export function DeliveryTrackingCard({
           </h2>
         </div>
         {!waiting && (
-          <Badge variant={STATUS_PILL[view.kind].variant} data-testid="tracking-status">
-            {STATUS_PILL[view.kind].label}
+          <Badge variant={STATUS_PILL_VARIANT[view.kind]} data-testid="tracking-status">
+            {TRACKING_PILL_LABEL[view.kind]}
           </Badge>
         )}
       </div>
@@ -93,8 +96,8 @@ export function DeliveryTrackingCard({
 }
 
 function TrackingBody({ view, live }: { view: TrackingView; live: boolean }) {
-  const { headline, detail } = describeView(view);
-  const facts = factsOf(view);
+  const { headline, detail } = describeTrackingView(view);
+  const facts = trackingFacts(view);
   return (
     <>
       <p
@@ -131,118 +134,23 @@ function TrackingBody({ view, live }: { view: TrackingView; live: boolean }) {
 }
 
 // ─── Copy ───────────────────────────────────────────────────────────────────────
+// Headline, detail, facts and pill text are shared with mobile (@routeflow/types
+// order-tracking-view, #2348); only the web badge tone per state lives here.
 
-const STATUS_PILL: Record<TrackingView["kind"], { label: string; variant: BadgeVariant }> = {
-  cancelled: { label: "Cancelled", variant: "danger" },
-  delivered: { label: "Delivered", variant: "success" },
-  unscheduled: { label: "Not scheduled", variant: "neutral" },
-  "out-for-delivery": { label: "Out for delivery", variant: "info" },
-  "partly-delivered": { label: "Partly delivered", variant: "warning" },
-  rescheduling: { label: "Rescheduling", variant: "warning" },
-  skipped: { label: "Stop skipped", variant: "warning" },
-  "stop-completed": { label: "Stop completed", variant: "success" },
-  "route-finished": { label: "Route finished", variant: "neutral" },
-  scheduled: { label: "Scheduled", variant: "info" },
-  "on-the-way": { label: "On the way", variant: "info" },
-  arriving: { label: "Arriving", variant: "success" },
+const STATUS_PILL_VARIANT: Record<TrackingViewKind, BadgeVariant> = {
+  cancelled: "danger",
+  delivered: "success",
+  unscheduled: "neutral",
+  "out-for-delivery": "info",
+  "partly-delivered": "warning",
+  rescheduling: "warning",
+  skipped: "warning",
+  "stop-completed": "success",
+  "route-finished": "neutral",
+  scheduled: "info",
+  "on-the-way": "info",
+  arriving: "success",
 };
-
-function describeView(view: TrackingView): { headline: string; detail: string } {
-  switch (view.kind) {
-    case "cancelled":
-      return { headline: "This order was cancelled", detail: "There's no delivery to track." };
-    case "delivered":
-      return {
-        headline: "Delivered",
-        detail: view.deliveredAt
-          ? `Delivered on ${deliveredOn(view.deliveredAt)}.`
-          : "Your order has been delivered.",
-      };
-    case "unscheduled":
-      return {
-        headline: "Not scheduled yet",
-        detail:
-          "Your driver and delivery window will show here once this order is on a delivery route.",
-      };
-    case "out-for-delivery":
-      return {
-        headline: "Out for delivery",
-        detail: "Your order is on its way. Live stop updates aren't available for this delivery.",
-      };
-    case "partly-delivered":
-      return {
-        headline: "Partly delivered",
-        detail:
-          "Part of this order has been delivered. The rest will show here once it's on a delivery route.",
-      };
-    case "rescheduling":
-      return {
-        headline: "Being rescheduled",
-        detail: "This delivery run was called off. Your seller will reschedule your order.",
-      };
-    case "skipped":
-      return {
-        headline: "Stop skipped",
-        detail: "Your stop was skipped on this run. Your seller will follow up to reschedule.",
-      };
-    case "stop-completed":
-      return { headline: "Stop completed", detail: "Your driver has completed your stop." };
-    case "route-finished":
-      return {
-        headline: "Route finished",
-        detail:
-          "This delivery route has finished. Contact your seller if your order hasn't arrived.",
-      };
-    case "scheduled":
-      return { headline: "Scheduled for delivery", detail: "Your order is on a delivery route." };
-    case "on-the-way":
-      return {
-        headline: stopsBeforeYouLabel(view.stopsAhead),
-        detail: view.driverName
-          ? `${view.driverName} is on the way.`
-          : "Your driver is on the way.",
-      };
-    case "arriving":
-      return {
-        headline: "Your driver has arrived",
-        detail: view.driverName
-          ? `${view.driverName} is at your stop now.`
-          : "Your driver is at your stop now.",
-      };
-  }
-}
-
-function factsOf(view: TrackingView): Array<{ label: string; value: string }> {
-  const facts: Array<{ label: string; value: string }> = [];
-  if (view.kind === "scheduled") {
-    facts.push({ label: "Delivery date", value: calendarDay(view.scheduledDate) });
-  }
-  if (view.kind === "scheduled" || view.kind === "on-the-way" || view.kind === "arriving") {
-    if (view.driverName) facts.push({ label: "Driver", value: view.driverName });
-  }
-  if ((view.kind === "scheduled" || view.kind === "on-the-way") && view.window) {
-    facts.push({ label: "Delivery window", value: view.window });
-  }
-  return facts;
-}
-
-/** The run's calendar day (stored as UTC midnight), e.g. "Tue, Sep 29". */
-function calendarDay(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-US", {
-    timeZone: "UTC",
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  });
-}
-
-/** A real delivery timestamp in the viewer's own time, e.g. "Sep 24, 2026 at 2:14 PM". */
-function deliveredOn(iso: string): string {
-  const at = new Date(iso);
-  const day = at.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-  const time = at.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-  return `${day} at ${time}`;
-}
 
 function pollCadence(): string {
   const minutes = Math.round(BUYER_TRACKING_POLL_MS / 60_000);

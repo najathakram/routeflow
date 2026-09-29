@@ -47,9 +47,11 @@ import { importCalendarDay } from "../import/import.service";
 import { isOverdue, overdueCutoff } from "../common/calendar-date";
 import { recomputeInvoiceStatus } from "./invoice-status";
 import { applyInvoiceStatusFilters } from "./invoice-list-query";
+import { markOverdueForTenant } from "./overdue-sweep.service";
 import * as fs from "fs";
 import * as path from "path";
 import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
+import { fillSparseCasBasis } from "./testing/sparse-line-fixtures";
 
 describe("InvoicesService — #2493 due dates under a negative-offset process zone", () => {
   let service: InvoicesService;
@@ -94,7 +96,10 @@ describe("InvoicesService — #2493 due dates under a negative-offset process zo
   const mockNumbering = { reserveNext: jest.fn().mockResolvedValue("INV-2026-0001") };
 
   beforeEach(async () => {
+    fillSparseCasBasis(); // #2645: sparse order fixtures vs the CAS basis pin
     prisma = createMockPrisma();
+    // #2070: createPartialFromOrder's invoicedQty bump is a CAS (updateMany); a clean read matches 1.
+    prisma.orderItem.updateMany.mockResolvedValue({ count: 1 } as any);
     prisma.invoice.findFirst.mockResolvedValue({ items: [] });
 
     const module: TestingModule = await Test.createTestingModule({
@@ -339,7 +344,7 @@ describe("InvoicesService — #2493 due dates under a negative-offset process zo
       );
       expect(recomputeInvoiceStatus(0, 100, due, "SENT" as any, LA, at0030LA)).toBe("OVERDUE");
       // No zone: UTC — the due day ended at 00:00Z on the 26th.
-      expect(recomputeInvoiceStatus(0, 100, due, "SENT" as any, undefined, eveningOfDueDayLA)).toBe(
+      expect(recomputeInvoiceStatus(0, 100, due, "SENT" as any, null, eveningOfDueDayLA)).toBe(
         "OVERDUE",
       );
       // Payments and terminal states still win over the date.
@@ -375,9 +380,9 @@ describe("InvoicesService — #2493 due dates under a negative-offset process zo
         const where: any = {};
         applyInvoiceStatusFilters(where, { isOverdue: true } as any, LA);
         expect(due < where.dueDate.lt).toBe(overdue);
-        // 4. the overdue cron
+        // 4. the overdue cron (#2520: per tenant, OverdueSweepService)
         prisma.invoice.updateMany.mockResolvedValue({ count: 0 });
-        await service.markOverdue();
+        await markOverdueForTenant(prisma as any, "test-tenant", now);
         expect(due < prisma.invoice.updateMany.mock.calls[0][0].where.dueDate.lt).toBe(overdue);
         // 5. the KPI summary buckets on the TENANT's today, whatever day the viewer sends
         prisma.invoice.findMany.mockResolvedValue([

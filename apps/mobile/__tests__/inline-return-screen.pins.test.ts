@@ -70,6 +70,24 @@ describe("inline-return screen wiring pins", () => {
   });
 });
 
+describe("inline-return screen: 'return only what was bought' with nothing bought (#2693)", () => {
+  it("the re-quote is guarded by the shared canReturnOnlyPurchased BEFORE dropExcessAndRequote", () => {
+    const guard = screen.indexOf("if (!canReturnOnlyPurchased(screen.quote)) return;");
+    const requote = screen.indexOf("dropExcessAndRequote(customerId, screen.quote)");
+    expect(guard).toBeGreaterThan(-1);
+    expect(requote).toBeGreaterThan(guard);
+  });
+
+  it("the option chip is disabled and the plain-words reason comes from the shared package", () => {
+    expect(screen).toMatch(/value === "RETURN_ONLY_PURCHASED" && !onlyBoughtPossible/);
+    expect(screen).toMatch(/\{NOTHING_BOUGHT_BEFORE_MESSAGE\}/);
+    expect(screen).toMatch(/notBoughtBeforeNames\(quote, props\.lines\)/);
+    // No local copy of the predicate or the message.
+    expect(screen).not.toMatch(/function canReturnOnlyPurchased/);
+    expect(screen).not.toMatch(/hasn't bought these items before/);
+  });
+});
+
 describe("useInlineReturnQuote wiring pin", () => {
   it("the quote POST opts out of the offline queue (a queued quote is meaningless)", () => {
     expect(hook).toMatch(

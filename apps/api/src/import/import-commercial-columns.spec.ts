@@ -35,6 +35,7 @@ import { ExternalRefService } from "./external-ref.service";
 import { ProductsService } from "../products/products.service";
 import { AuditService } from "../audit/audit.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PRODUCT_COLUMNS, CUSTOMER_COLUMNS } from "./import-columns";
 
 describe("ImportService — commercial columns (B858/B859)", () => {
@@ -80,6 +81,12 @@ describe("ImportService — commercial columns (B858/B859)", () => {
 
     const mod = await Test.createTestingModule({
       providers: [
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
         ImportService,
         { provide: PrismaService, useValue: prisma },
         { provide: VendorBillsService, useValue: { create: jest.fn(), receive: jest.fn() } },

@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { SellingRestrictionsModule } from "../selling-restrictions/selling-restrictions.module";
 import { InvoicesController } from "./invoices.controller";
 import { InvoicesService } from "./invoices.service";
+import { OverdueSweepService } from "./overdue-sweep.service";
 import { InvoicePdfService } from "./invoice-pdf.service";
 import { PrismaModule } from "../prisma/prisma.module";
 import { GatewaysModule } from "../gateways/gateways.module";
@@ -36,7 +37,7 @@ import { NumberingModule } from "../import/numbering.module";
     NumberingModule,
   ],
   controllers: [InvoicesController],
-  providers: [InvoicesService, InvoicePdfService],
+  providers: [InvoicesService, InvoicePdfService, OverdueSweepService],
   exports: [InvoicesService, InvoicePdfService],
 })
 export class InvoicesModule {}

@@ -8,6 +8,7 @@ import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
 import { ProductsService } from "../products/products.service";
 import { AuditService } from "../audit/audit.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 /**
  * F4 — a contacts CSV writes CustomerAddress rows through `ImportService.importContacts`; the
@@ -52,6 +53,12 @@ describe("ImportService.importContacts — address state columns (F4)", () => {
           },
         },
         { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
       ],
     }).compile();
     service = mod.get(ImportService);

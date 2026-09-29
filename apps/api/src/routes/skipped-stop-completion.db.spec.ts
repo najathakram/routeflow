@@ -173,7 +173,9 @@ describeDb("#2409 a SKIPPED stop refuses a replayed completion — real Postgres
     await prisma.tenant.delete({ where: { id: tenantId } });
   }
 
-  async function seedSkippedStop(label: string) {
+  /** `secondStop` (SA-533a): a second PENDING stop keeps the run IN_PROGRESS after the first
+   *  stop completes, so a racing PATCH reaches the stop CAS instead of the run-status 409. */
+  async function seedSkippedStop(label: string, opts: { secondStop?: boolean } = {}) {
     const slug = freshTenantSlug(label);
     const tenant = await prisma.tenant.create({ data: { slug, name: `#2409 ${slug}` } });
     createdTenantIds.push(tenant.id);
@@ -213,6 +215,21 @@ describeDb("#2409 a SKIPPED stop refuses a replayed completion — real Postgres
         tenantId,
       },
     });
+    if (opts.secondStop) {
+      const routeStop2 = await prisma.routeStop.create({
+        data: { routeId: route.id, customerId: customer.id, stopNumber: 2, tenantId },
+      });
+      await prisma.routeRunStop.create({
+        data: {
+          routeRunId: run.id,
+          routeStopId: routeStop2.id,
+          customerId: customer.id,
+          stopNumber: 2,
+          status: "PENDING",
+          tenantId,
+        },
+      });
+    }
     return { tenantId, runId: run.id, stopId: runStop.id };
   }
 
@@ -282,7 +299,9 @@ describeDb("#2409 a SKIPPED stop refuses a replayed completion — real Postgres
 
   it("#2415: skip vs complete race on a real PENDING row — exactly one winner, never COMPLETED→SKIPPED", async () => {
     for (let round = 0; round < 5; round++) {
-      const s = await seedSkippedStop(`race${round}`);
+      // SA-533a: a TWO-stop run — on one stop the completion also completes the run, and #2514's
+      // run re-check then refuses the skip before it can meet the #2415 stop CAS pinned here.
+      const s = await seedSkippedStop(`race${round}`, { secondStop: true });
       await setStopStatus(s.stopId, "PENDING");
       const [complete, skip] = await Promise.allSettled([
         tenantCtx.run(s.tenantId, () =>
@@ -325,7 +344,9 @@ describeDb("#2409 a SKIPPED stop refuses a replayed completion — real Postgres
     // it: updateStopStatus reads the stop (PENDING), then reads the run via
     // forTenant().routeRun.findFirst — the pause point (AFTER that read), identical in the pre-#2415 code, so this
     // pin is RED on the old check-then-update (the skip overwrites COMPLETED with SKIPPED).
-    const s = await seedSkippedStop("latch");
+    // SA-533a: a TWO-stop run, so completing this stop leaves the run IN_PROGRESS and the paused
+    // skip reaches the #2415 stop CAS (on one stop, #2514's run re-check would refuse first).
+    const s = await seedSkippedStop("latch", { secondStop: true });
     await setStopStatus(s.stopId, "PENDING");
 
     let armed = true;
@@ -382,6 +403,313 @@ describeDb("#2409 a SKIPPED stop refuses a replayed completion — real Postgres
     } finally {
       release?.();
       spy.mockRestore();
+    }
+  });
+
+  it("#2514 ONE-STOP (SA-533e): the LAST stop's completion also completes the run while the paused skip waits → 409 STOP_ALREADY_COMPLETED at the stop (never the run guard, never 40P01)", async () => {
+    // F2 (#938): the concurrent race above never produced the B707 interleave — the quick skip
+    // always committed before completeWithPayment's long tx reached its claim. This latch forces
+    // it: updateStopStatus reads the stop (PENDING), then reads the run via
+    // forTenant().routeRun.findFirst — the pause point (AFTER that read), identical in the pre-#2415 code, so this
+    // pin is RED on the old check-then-update (the skip overwrites COMPLETED with SKIPPED).
+    // SA-533e: ONE stop — completing it auto-completes the run (RF-016). In the house order (stop
+    // CAS FIRST, then the run lock) the skip still loses at the STOP, never to the run guard; the
+    // SA-533 run-first order refused here with the run 409 and could deadlock against completion.
+    const s = await seedSkippedStop("latch-one");
+    await setStopStatus(s.stopId, "PENDING");
+
+    let armed = true;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let reachedPause!: () => void;
+    const paused = new Promise<void>((r) => (reachedPause = r));
+    const realForTenant = prisma.forTenant.bind(prisma);
+    const spy = jest.spyOn(prisma, "forTenant").mockImplementation(() => {
+      const client = realForTenant();
+      return new Proxy(client, {
+        get(target, prop) {
+          const value = Reflect.get(target, prop);
+          if (prop !== "routeRun" || !armed) return value;
+          return new Proxy(value, {
+            get(delegate, method) {
+              const fn = Reflect.get(delegate, method);
+              if (method !== "findFirst" || !armed) return fn;
+              return async (...args: unknown[]) => {
+                armed = false; // one pause only — the skip's run read
+                // F2 (#2511 @d7ca35c5): read the run FIRST, then hold. Holding before the read let
+                // the single-stop fixture's completion also complete the RUN, so the skip was
+                // refused by the run guard ("completed run") on both codes and never reached the
+                // CAS. With the run already read as IN_PROGRESS, the skip goes on to its write.
+                const result = await Reflect.apply(fn, delegate, args);
+                reachedPause();
+                await gate;
+                return result;
+              };
+            },
+          });
+        },
+      });
+    });
+    try {
+      const skip = tenantCtx.run(s.tenantId, () =>
+        routesService.updateStopStatus(s.runId, s.stopId, { status: "SKIPPED" }, operator),
+      );
+      await paused; // the skip has read the stop as PENDING and is held
+      await tenantCtx.run(s.tenantId, () =>
+        routesService.completeWithPayment(s.runId, s.stopId, { deliveries: [] } as never, operator),
+      );
+      expect((await prisma.routeRunStop.findUnique({ where: { id: s.stopId } }))?.status).toBe(
+        "COMPLETED",
+      );
+      release();
+      await expect(skip).rejects.toMatchObject({
+        response: expect.objectContaining({ code: "STOP_ALREADY_COMPLETED" }),
+      });
+      // The completion survives: never COMPLETED → SKIPPED.
+      expect((await prisma.routeRunStop.findUnique({ where: { id: s.stopId } }))?.status).toBe(
+        "COMPLETED",
+      );
+    } finally {
+      release?.();
+      spy.mockRestore();
+    }
+  });
+
+  it("#2514 ONE-STOP race (SA-533e): N rounds of skip vs completing the LAST stop — never a deadlock or 500, one winner", async () => {
+    for (let round = 0; round < 8; round++) {
+      const s = await seedSkippedStop(`race-one${round}`);
+      await setStopStatus(s.stopId, "PENDING");
+      const [complete, skip] = await Promise.allSettled([
+        tenantCtx.run(s.tenantId, () =>
+          routesService.completeWithPayment(
+            s.runId,
+            s.stopId,
+            { deliveries: [] } as never,
+            operator,
+          ),
+        ),
+        tenantCtx.run(s.tenantId, () =>
+          routesService.updateStopStatus(s.runId, s.stopId, { status: "SKIPPED" }, operator),
+        ),
+      ]);
+      // No deadlock (Postgres 40P01 / Prisma P2034) and no un-mapped 500: every loser is a 409.
+      for (const r of [complete, skip]) {
+        if (r.status !== "rejected") continue;
+        const e = r.reason as any;
+        expect(String(e?.code ?? "")).not.toMatch(/P2034|40P01/);
+        expect(JSON.stringify(e?.meta ?? {})).not.toMatch(/40P01|deadlock/i);
+        expect(e?.getStatus?.()).toBe(409);
+      }
+      expect(complete.status === "fulfilled" && skip.status === "fulfilled").toBe(false);
+      const after = await prisma.routeRunStop.findUnique({ where: { id: s.stopId } });
+      if (after?.status === "COMPLETED") {
+        expect(skip.status).toBe("rejected");
+        expect(isSkipLostToCompletion((skip as PromiseRejectedResult).reason)).toBe(true);
+      } else {
+        expect(after?.status).toBe("SKIPPED");
+        expect(complete.status).toBe("rejected");
+      }
+    }
+  });
+
+  it("#2514 DETERMINISTIC run-latch (SA-533e order): the run COMPLETES while the PATCH waits on the run lock → 409, the stop CAS rolled back", async () => {
+    // updateStopStatus is paused after its pre-lock run read (IN_PROGRESS). A second transaction
+    // then marks the run COMPLETED and HOLDS the run row lock. The PATCH resumes: its stop CAS
+    // (house order, stop FIRST) succeeds, then it blocks on `RouteRun FOR UPDATE`; once the run
+    // transaction commits, the PATCH re-reads the run under the lock and refuses — the throw rolls
+    // its stop CAS back. RED on the pre-#2514 code: no run lock, so the stop was written.
+    // Two stops (SA-533e): the second stays PENDING. Stop B's own completion cannot auto-complete
+    // the run while stop A is open (RF-016 needs every stop done), so a held terminal UPDATE on the
+    // run is the actor that "completes the run while the PATCH waits".
+    const s = await seedSkippedStop("run-latch", { secondStop: true });
+    await setStopStatus(s.stopId, "PENDING");
+
+    let armed = true;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let reachedPause!: () => void;
+    const paused = new Promise<void>((r) => (reachedPause = r));
+    const realForTenant = prisma.forTenant.bind(prisma);
+    const spy = jest.spyOn(prisma, "forTenant").mockImplementation(() => {
+      const client = realForTenant();
+      return new Proxy(client, {
+        get(target, prop) {
+          const value = Reflect.get(target, prop);
+          if (prop !== "routeRun" || !armed) return value;
+          return new Proxy(value, {
+            get(delegate, method) {
+              const fn = Reflect.get(delegate, method);
+              if (method !== "findFirst" || !armed) return fn;
+              return async (...args: unknown[]) => {
+                armed = false;
+                const result = await Reflect.apply(fn, delegate, args);
+                reachedPause();
+                await gate;
+                return result;
+              };
+            },
+          });
+        },
+      });
+    });
+    let commitRun!: () => void;
+    const holdRun = new Promise<void>((r) => (commitRun = r));
+    let locked!: () => void;
+    const runLocked = new Promise<void>((r) => (locked = r));
+    try {
+      const patch = tenantCtx.run(s.tenantId, () =>
+        routesService.updateStopStatus(s.runId, s.stopId, { status: "SKIPPED" }, operator),
+      );
+      await paused; // the PATCH read the run as IN_PROGRESS and is held
+      const terminal = prisma.$transaction(
+        async (tx) => {
+          await tx.$executeRaw`UPDATE "RouteRun" SET status = 'COMPLETED' WHERE id = ${s.runId}`;
+          locked();
+          await holdRun;
+        },
+        { timeout: 30_000 },
+      );
+      await runLocked;
+      release(); // the PATCH resumes and must now wait on the run row lock
+      await new Promise((r) => setTimeout(r, 300));
+      commitRun();
+      await terminal;
+      await expect(patch).rejects.toMatchObject({ status: 409 });
+      await expect(patch).rejects.toThrow(/completed run/);
+      expect((await prisma.routeRunStop.findUnique({ where: { id: s.stopId } }))?.status).toBe(
+        "PENDING",
+      );
+    } finally {
+      release?.();
+      commitRun?.();
+      spy.mockRestore();
+    }
+  });
+
+  // ─── #2631 / SA-550: the STOP row serializes a run's terminal transition with a completion ────────
+
+  /** Resolves once any lock request in this (throwaway, serial-lane) database is waiting. */
+  async function untilSomeoneBlocks(): Promise<boolean> {
+    for (let i = 0; i < 200; i++) {
+      const rows: Array<{ n: number }> = await prisma.$queryRaw`
+        SELECT count(*)::int AS n FROM pg_locks WHERE NOT granted`;
+      if (rows[0].n > 0) return true;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    return false;
+  }
+
+  it.each(["completeStop", "completeWithPayment"] as const)(
+    "#2631 %s: the run is CANCELLED (stop-first order) while the completion waits on its stop ⇒ 403, nothing written",
+    async (method) => {
+      // Two stops: completing stop A cannot auto-complete the run, so the only actor that ends the
+      // run is the held terminal transaction below, in the NEW house order (stops FOR UPDATE, then run).
+      const s = await seedSkippedStop(`2631-latch-${method}`, { secondStop: true });
+      await setStopStatus(s.stopId, "PENDING");
+      let commitCancel!: () => void;
+      const hold = new Promise<void>((r) => (commitCancel = r));
+      let locked!: () => void;
+      const stopsLocked = new Promise<void>((r) => (locked = r));
+      const cancel = prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT id FROM "RouteRunStop" WHERE "routeRunId" = ${s.runId} ORDER BY id FOR UPDATE`;
+          await tx.$executeRaw`UPDATE "RouteRun" SET status = 'CANCELLED' WHERE id = ${s.runId}`;
+          locked();
+          await hold;
+        },
+        { timeout: 30_000 },
+      );
+      try {
+        await stopsLocked;
+        // The completion's pre-tx reads still see IN_PROGRESS (the cancel is uncommitted); it then
+        // blocks on its stop claim, held by the cancel.
+        const completion = tenantCtx.run(s.tenantId, () =>
+          (routesService as any)[method](s.runId, s.stopId, {}, operator),
+        );
+        expect(await untilSomeoneBlocks()).toBe(true);
+        commitCancel();
+        await cancel;
+        const err = await completion.catch((e: unknown) => e);
+        // RED pre-#2631: no in-tx re-check, so the stop was completed on a cancelled run.
+        expect((err as any)?.status).toBe(403);
+        expect((err as Error).message).toMatch(/not in progress \(current status: CANCELLED\)/);
+        expect((await prisma.routeRunStop.findUnique({ where: { id: s.stopId } }))?.status).toBe(
+          "PENDING",
+        );
+        await expectNothingWritten(s);
+      } finally {
+        commitCancel?.();
+        await cancel.catch(() => undefined);
+      }
+    },
+  );
+
+  it("#2631 pg_locks: the REAL cancel blocked behind an in-flight completion's stop holds NO RouteRun lock", async () => {
+    const s = await seedSkippedStop("2631-locks", { secondStop: true });
+    await setStopStatus(s.stopId, "PENDING");
+    let releaseStop!: () => void;
+    const hold = new Promise<void>((r) => (releaseStop = r));
+    let held!: () => void;
+    const stopHeld = new Promise<void>((r) => (held = r));
+    // T1 stands in for a completion that has claimed stop A (holds its row lock).
+    const t1 = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "RouteRunStop" WHERE id = ${s.stopId} FOR UPDATE`;
+        held();
+        await hold;
+      },
+      { timeout: 30_000 },
+    );
+    try {
+      await stopHeld;
+      const cancel = tenantCtx.run(s.tenantId, () =>
+        routesService.updateRunStatus(s.runId, { status: "CANCELLED" } as any, operator),
+      );
+      // RED pre-#2631: the cancel took no stop lock, so it never blocked here.
+      expect(await untilSomeoneBlocks()).toBe(true);
+      // While the cancel waits on the stop row, the RUN row must be free (no RouteRun edge held).
+      const probe = await prisma
+        .$transaction(async (tx) => {
+          await tx.$queryRaw`SELECT id FROM "RouteRun" WHERE id = ${s.runId} FOR UPDATE NOWAIT`;
+          return "free";
+        })
+        .catch((e: any) => e?.meta?.code ?? e?.code ?? String(e));
+      expect(probe).toBe("free");
+      releaseStop();
+      await t1;
+      await cancel;
+      expect((await prisma.routeRun.findUnique({ where: { id: s.runId } }))?.status).toBe(
+        "CANCELLED",
+      );
+    } finally {
+      releaseStop?.();
+      await t1.catch(() => undefined);
+    }
+  });
+
+  it("#2631 cancel × completion ×6: never a 40P01 under contention — regression guard, not a discriminator", async () => {
+    for (let round = 0; round < 6; round++) {
+      // eslint-disable-next-line no-await-in-loop
+      const s = await seedSkippedStop(`2631-race-${round}`, { secondStop: true });
+      // eslint-disable-next-line no-await-in-loop
+      await setStopStatus(s.stopId, "PENDING");
+      const results = await Promise.allSettled([
+        tenantCtx.run(s.tenantId, () =>
+          routesService.completeStop(s.runId, s.stopId, {} as any, operator),
+        ),
+        tenantCtx.run(s.tenantId, () =>
+          routesService.updateRunStatus(s.runId, { status: "CANCELLED" } as any, operator),
+        ),
+      ]);
+      for (const r of results) {
+        if (r.status === "fulfilled") continue;
+        const e: any = r.reason;
+        const code = e?.meta?.code ?? e?.code ?? e?.cause?.originalCode;
+        expect({ round, code }).not.toEqual({ round, code: "40P01" });
+        expect({ round, code }).not.toEqual({ round, code: "P2034" });
+        // Only the defined refusal may lose the race: the completion's 403 (the run ended first).
+        expect({ round, status: e?.status }).toEqual({ round, status: 403 });
+      }
     }
   });
 });

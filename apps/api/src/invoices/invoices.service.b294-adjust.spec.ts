@@ -24,6 +24,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { InvoiceStatus } from "@prisma/client";
+import { BadRequestException } from "@nestjs/common";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { isNsfLine, notNsfLineWhere } from "./nsf-line";
 import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
@@ -175,6 +176,27 @@ describe("B294 — applyPriceAdjustment keeps a legacy invoice's sales tax (REG-
     expect(rows.find((r) => r.id === "nsf-1")!.taxRate).toBe(0);
     // Goods 95 × 7.5% = 7.125 → 7.13; the fee adds 25 to the subtotal and nothing to the tax.
     expect(invoiceWrite()).toMatchObject({ subtotal: 120, taxAmount: 7.13, total: 127.13 });
+  });
+
+  it("#2392 (d): a SINGLE-scope re-price naming the NSF fee line is refused (400) — nothing written", async () => {
+    withInvoice({ subtotal: 125, taxAmount: 7.5, total: 132.5 }, [
+      line("li-1", 100, 0),
+      {
+        ...line("nsf-1", 25, 0),
+        productId: null,
+        description: `${NSF_FEE_DESCRIPTION_PREFIX} P-1`,
+        systemKind: "NSF_FEE",
+      },
+    ]);
+
+    await expect(
+      service.applyPriceAdjustment("inv-1", {
+        items: [{ itemId: "nsf-1", newUnitPrice: 0 }],
+        scope: "SINGLE",
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.invoiceItem.updateMany).not.toHaveBeenCalled();
+    expect(rows.find((r) => r.id === "nsf-1")!.unitPrice).toBe(25);
   });
 
   it("PIN-B294-mixed: one line at 7.5% and one at 0 is NOT inferred — nothing is stamped", async () => {
