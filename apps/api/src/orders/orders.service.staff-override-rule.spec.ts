@@ -328,6 +328,35 @@ describe("OrdersService — staff price-override rule (#2716c)", () => {
     });
   });
 
+  describe("restore: the tier price typed back on an edited line (SA-592 fold 2)", () => {
+    it("B6: stored DISCOUNTED-4 (reason on file) on tier 3, typed 5 => SPECIAL/list, reason and attribution cleared", async () => {
+      prime(
+        [line({ priceType: "DISCOUNTED", originalPrice: 6, unitPrice: 4, overrideReason: "old" })],
+        3,
+      );
+      await edit(5);
+      expect(updated()).toMatchObject({
+        unitPrice: 5,
+        priceType: "SPECIAL",
+        originalPrice: 6,
+        overrideReason: null,
+        overriddenBy: null,
+      });
+    });
+
+    it("B7: tier-1 line stored DISCOUNTED-4, typed list 6 => STANDARD, no original, no reason", async () => {
+      prime([line({ priceType: "DISCOUNTED", originalPrice: 6, unitPrice: 4 })]);
+      await edit(6);
+      expect(updated()).toMatchObject({
+        unitPrice: 6,
+        priceType: "STANDARD",
+        originalPrice: null,
+        overrideReason: null,
+        overriddenBy: null,
+      });
+    });
+  });
+
   describe("(C) add-line-during-edit", () => {
     const add = (unitPrice: number, extra: Record<string, unknown> = {}) =>
       service.updateOrderItems(
@@ -394,6 +423,21 @@ describe("OrdersService — staff price-override rule (#2716c)", () => {
         originalPrice: 6,
         unitPrice: 4,
         overrideReason: "old",
+      });
+    });
+
+    it("R5: stored DISCOUNTED-4 on tier 3, typed 5 (the tier price) => SPECIAL/list, reason cleared", async () => {
+      prime(
+        [line({ priceType: "DISCOUNTED", originalPrice: 6, unitPrice: 4, overrideReason: "old" })],
+        3,
+      );
+      await replace(5);
+      expect(created()).toMatchObject({
+        priceType: "SPECIAL",
+        originalPrice: 6,
+        unitPrice: 5,
+        overrideReason: null,
+        overriddenBy: null,
       });
     });
 

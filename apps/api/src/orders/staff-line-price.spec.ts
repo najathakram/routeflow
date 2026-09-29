@@ -212,3 +212,84 @@ describe("SA-592 fold 1 — the band is withinStaffOverrideTolerance, not a raw 
     });
   });
 });
+
+describe("SA-592 fold 2 — typing the TIER price back restores the clean type (SA-558 (1))", () => {
+  const edited = {
+    listPrice: 12,
+    isSpecialTier: true,
+    hasReason: false,
+    isUnlisted: false,
+    productName: "Widget",
+  };
+
+  it("edit: stored MANUAL-12, special tier 10, typed 10 => SPECIAL/10, list 12, no reason needed", () => {
+    expect(
+      decideEditedLinePrice({ ...edited, storedPrice: 12, tierPrice: 10, overridePrice: 10 }),
+    ).toEqual({ priceType: "SPECIAL", unitPrice: 10, originalPrice: 12 });
+  });
+
+  it("edit: within half a cent of the tier price restores at the clean tier price", () => {
+    expect(
+      decideEditedLinePrice({ ...edited, storedPrice: 12, tierPrice: 10, overridePrice: 10.004 }),
+    ).toEqual({ priceType: "SPECIAL", unitPrice: 10, originalPrice: 12 });
+  });
+
+  it("edit: tier-1 line stored DISCOUNTED-8, list 10, typed 10 => STANDARD, no original", () => {
+    expect(
+      decideEditedLinePrice({
+        ...edited,
+        listPrice: 10,
+        isSpecialTier: false,
+        storedPrice: 8,
+        tierPrice: 10,
+        overridePrice: 10,
+      }),
+    ).toEqual({ priceType: "STANDARD", unitPrice: 10, originalPrice: null });
+  });
+
+  it("edit: a price that is neither stored nor tier still needs the reason on a special tier", () => {
+    expect(() =>
+      decideEditedLinePrice({ ...edited, storedPrice: 12, tierPrice: 10, overridePrice: 9 }),
+    ).toThrow(BadRequestException);
+  });
+
+  it("replaceAll: existing MANUAL-12, special tier 10, typed 10 => SPECIAL/10, restored, no reason", () => {
+    expect(
+      decideReplaceAllLinePrice({
+        overridePrice: 10,
+        existing: { unitPrice: 12, priceType: "MANUAL", originalPrice: 12 },
+        tierPrice: 10,
+        listPrice: 12,
+        isSpecialTier: true,
+        hasReason: false,
+        skipReasonGuard: false,
+      }),
+    ).toEqual({
+      priceType: "SPECIAL",
+      unitPrice: 10,
+      originalPrice: 12,
+      repriced: false,
+      restored: true,
+    });
+  });
+
+  it("replaceAll: tier-1 existing DISCOUNTED-8, list 10, typed 10 => STANDARD, restored", () => {
+    expect(
+      decideReplaceAllLinePrice({
+        overridePrice: 10,
+        existing: { unitPrice: 8, priceType: "DISCOUNTED", originalPrice: 10 },
+        tierPrice: 10,
+        listPrice: 10,
+        isSpecialTier: false,
+        hasReason: false,
+        skipReasonGuard: false,
+      }),
+    ).toEqual({
+      priceType: "STANDARD",
+      unitPrice: 10,
+      originalPrice: null,
+      repriced: false,
+      restored: true,
+    });
+  });
+});
