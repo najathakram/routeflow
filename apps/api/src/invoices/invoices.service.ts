@@ -8,6 +8,7 @@ import {
   Optional,
 } from "@nestjs/common";
 import { syncOrderLineCompositions } from "../orders/order-composition";
+import { invoiceCompositionFields } from "./invoice-line-composition";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import * as unitAware from "../orders/unit-aware-guard";
 import { assertNoNegativeLineSubtotal } from "../common/money-invariants.util";
@@ -531,6 +532,7 @@ export class InvoicesService {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
           include: {
+            components: { orderBy: { position: "asc" } },
             product: {
               select: {
                 name: true,
@@ -957,6 +959,8 @@ export class InvoicesService {
       categoryTaxRate: li.categoryTaxRate != null ? Number(li.categoryTaxRate) : null,
       categoryPriceIncludesTax: li.categoryPriceIncludesTax ?? null,
       ...(tenantId ? { tenantId } : {}),
+      // #2717 M3: FIXED provenance + frozen component rows for THIS bill; {} on a plain line.
+      ...invoiceCompositionFields(li, billQty, prior, subtotal, tenantId),
     };
   }
 
@@ -1434,6 +1438,7 @@ export class InvoicesService {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
           include: {
+            components: { orderBy: { position: "asc" } },
             product: {
               select: {
                 name: true,
@@ -1659,6 +1664,7 @@ export class InvoicesService {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
           include: {
+            components: { orderBy: { position: "asc" } },
             product: {
               select: {
                 name: true,
@@ -2419,6 +2425,7 @@ export class InvoicesService {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
           include: {
+            components: { orderBy: { position: "asc" } },
             product: {
               select: {
                 name: true,
@@ -2644,6 +2651,7 @@ export class InvoicesService {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
           include: {
+            components: { orderBy: { position: "asc" } },
             product: {
               select: {
                 name: true,
