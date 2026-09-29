@@ -49,6 +49,27 @@ const CODES = [
   ["row BOX code", "ROW-B"],
 ] as const;
 
+// Independent literal expectations (NOT derived from either path), keyed "code|upb|withRows":
+// a regression in the shared levelsForScannedCode fails here even though both paths call it.
+const EXPECTED: Record<string, SellLevel[]> = {
+  "4000000000019|6|false": ["BOX", "UNIT"],
+  "4000000000019|6|true": [],
+  "4000000000019|1|false": ["UNIT"],
+  "4000000000019|1|true": [],
+  "COLA-6|6|false": ["BOX"],
+  "COLA-6|6|true": ["BOX"],
+  "COLA-6|1|false": ["BOX"],
+  "COLA-6|1|true": ["BOX"],
+  "2000000000012|6|false": ["UNIT"],
+  "2000000000012|6|true": ["UNIT"],
+  "2000000000012|1|false": ["UNIT"],
+  "2000000000012|1|true": ["UNIT"],
+  "ROW-U|6|true": ["UNIT"],
+  "ROW-U|1|true": ["UNIT"],
+  "ROW-B|6|true": ["BOX"],
+  "ROW-B|1|true": ["BOX"],
+};
+
 describe("SA-595 parity: client levelsForScannedCode == server findScanMatches", () => {
   const cases = CODES.flatMap(([name, code]) =>
     [6, 1].flatMap((upb) => [true, false].map((withRows) => [name, code, upb, withRows] as const)),
@@ -57,6 +78,9 @@ describe("SA-595 parity: client levelsForScannedCode == server findScanMatches",
     const p = make(upb, withRows);
     const client = levelsForScannedCode(code, p);
     const server = await serverLevels(p, code);
+    const expected = EXPECTED[`${code}|${upb}|${withRows}`] ?? [];
+    expect([...client].sort()).toEqual([...expected].sort());
+    expect([...server].sort()).toEqual([...expected].sort());
     expect([...client].sort()).toEqual([...server].sort());
     expect(resolveScanSellLevel(p, client)).toBe(resolveScanSellLevel(p, server));
   });
