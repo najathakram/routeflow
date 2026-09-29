@@ -95,10 +95,9 @@ export function addScannedLevelToLine<T extends SaleLineQty & { unitLabel?: stri
   isBoxed: boolean,
   unitsPerBox: number,
 ): T & { qty: number; boxes?: number | null; pieces?: number | null } {
-  if (isUnitLine(prev)) return { ...prev, qty: (prev.qty ?? 0) + 1 };
-  return level === "UNIT"
-    ? incrementLinePiece(prev, isBoxed, unitsPerBox)
-    : incrementLine(prev, isBoxed, unitsPerBox);
+  if (level === "UNIT" && !isUnitLine(prev)) return incrementLinePiece(prev, isBoxed, unitsPerBox);
+  // SA-085f one qty step: a unit line / BOX scan is exactly stepLineQty(+1) (never null for +1).
+  return stepLineQty(prev, 1, isBoxed, unitsPerBox) as T & { qty: number };
 }
 
 /**
