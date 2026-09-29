@@ -1,6 +1,8 @@
 /** @type {import('jest').Config} */
 module.exports = {
   preset: "ts-jest",
+  // #2671: a per-worktree cache (dies with the worktree), never the shared OS-temp jest cache.
+  cacheDirectory: "<rootDir>/.jest-cache",
   testEnvironment: "node",
   // Campaign gate artifact — see scripts/jest-campaign-reporter.cjs.
   reporters: [
@@ -45,6 +47,8 @@ module.exports = {
     // Same reason for the shared return-state helpers: resolve to SOURCE, no build step to depend on.
     "^@routeflow/returns$": "<rootDir>/../../packages/returns/src/index.ts",
     "^expo-secure-store$": "<rootDir>/__tests__/__mocks__/expo-secure-store.js",
+    // #2653: the shell bridge is pure TS (zod only) — resolve it to SOURCE, ahead of the ui stub.
+    "^@routeflow/ui/shell-bridge$": "<rootDir>/../../packages/ui/src/shell-bridge.ts",
     "^@routeflow/ui/(.*)$": "<rootDir>/__tests__/__mocks__/@routeflow/ui.js",
     "^@routeflow/types$": "<rootDir>/__tests__/__mocks__/@routeflow/types.js",
   },

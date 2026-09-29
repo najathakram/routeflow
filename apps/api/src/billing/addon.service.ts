@@ -13,7 +13,13 @@ import { FeatureResolverService } from "./feature-resolver.service";
 import { PlanCatalogService, PlanVersionWithCatalog } from "./plan-catalog.service";
 import { LEGACY_ADDON_KEY_TO_SKU, addonSkuCode } from "./plan-catalog.constants";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
-import { ADDON_KEY_TO_REGISTRY_KEY } from "./feature-registry";
+import {
+  ADDON_KEY_TO_REGISTRY_KEY,
+  DEFAULT_GRANTED_ADDON_FEATURES,
+  defaultGrantRequirementKeys,
+  isDefaultGrantedAddon,
+} from "./feature-registry";
+import { FeatureOverrideService } from "./feature-override.service";
 import { EntitlementAuthority } from "./entitlement-authority.service";
 import { BillingEventService } from "./billing-event.service";
 import { emitAddonDelta, lockTenantForLedger } from "./addon-ledger";
@@ -56,6 +62,7 @@ export class AddonService {
     private readonly featureResolver: FeatureResolverService,
     private readonly authority: EntitlementAuthority,
     private readonly events: BillingEventService,
+    private readonly featureOverrides: FeatureOverrideService,
   ) {}
 
   // ─── Check access ─────────────────────────────────────────────────────────
@@ -72,18 +79,94 @@ export class AddonService {
   async hasAddon(tenantId: string, addonKey: string): Promise<boolean> {
     // #2188 / SA-385: resolves the add-on whichever way it was keyed (legacy key or SKU).
     const addon = await findAddonRow(this.prisma, tenantId, addonCodeOf(addonKey));
-    return addon?.active === true;
+    // Any key that is not default-granted is decided by its row alone, exactly as before.
+    if (!DEFAULT_GRANTED_ADDON_FEATURES.some((f) => f.key === addonKey)) {
+      return addon?.active === true;
+    }
+    // Owner ruling 2026-09-28 / SA-540: effective = (preset ∪ default ∪ grants) − denies, in
+    // AddonGuard's own order, so a service-level check (InlineReturnsService.assertGranted) never
+    // disagrees with the guard in front of it: an override is absolute, then a held row, then
+    // the default rule (isDefaultGrantedAddon).
+    const override = await this.featureOverrides.get(tenantId, addonKey);
+    if (override === "DENY") return false;
+    if (override === "GRANT" || addon?.active === true) return true;
+    const rowKeys = await this.activeRowKeys(tenantId);
+    return (await this.defaultGrantedKeys(tenantId, rowKeys, [addonKey])).includes(addonKey);
   }
 
   /**
-   * Get all active add-ons for a tenant.
+   * Get all active add-ons for a tenant: its active TenantAddon rows plus every default-granted
+   * key it qualifies for (owner ruling 2026-09-28 / SA-540, `isDefaultGrantedAddon`). This is what
+   * AddonGuard and GET /tenants/me/addons read, so both see the default grant the same way.
+   * `onlyKeys` (AddonGuard passes its route's keys) limits the DEFAULT-grant work to those keys:
+   * a route gated on some other add-on never pays for it. Rows are always returned in full.
    */
-  async getActiveAddons(tenantId: string): Promise<string[]> {
+  async getActiveAddons(
+    tenantId: string,
+    opts?: { onlyKeys?: readonly string[] },
+  ): Promise<string[]> {
+    const rowKeys = await this.activeRowKeys(tenantId);
+    const defaults = await this.defaultGrantedKeys(tenantId, rowKeys, opts?.onlyKeys);
+    return defaults.length === 0 ? rowKeys : [...rowKeys, ...defaults];
+  }
+
+  private async activeRowKeys(tenantId: string): Promise<string[]> {
     const addons = await this.prisma.tenantAddon.findMany({
       where: { tenantId, active: true },
       select: { addonKey: true },
     });
     return addons.map((a) => a.addonKey);
+  }
+
+  /** Last fail-closed warn per tenant — the default-grant path runs on polled guard routes. */
+  private readonly defaultGrantWarnedAt = new Map<string, number>();
+
+  /**
+   * The default-granted add-on keys `tenantId` holds with no row: registry `defaultGranted`, no
+   * DENY override on the key, and `requires` met against its requirement set (rows ∪ ent.flags,
+   * with GRANT/DENY overrides applied — SA-540: a DENY on flag.returns removes inline returns
+   * too). If ENTITLEMENTS cannot be resolved it fails CLOSED (returns []), so that outage never
+   * widens access and a held row is never affected. Overrides follow the house contract instead:
+   * FeatureOverrideService fails open to an empty map on a DB error (as AddonGuard's own read
+   * does), so during an override-table outage a DENY is not seen here either.
+   */
+  private async defaultGrantedKeys(
+    tenantId: string,
+    rowKeys: string[],
+    onlyKeys?: readonly string[],
+  ): Promise<string[]> {
+    const rows = new Set(rowKeys);
+    const pending = DEFAULT_GRANTED_ADDON_FEATURES.filter(
+      (f) => !rows.has(f.key) && (!onlyKeys || onlyKeys.includes(f.key)),
+    );
+    if (pending.length === 0) return [];
+    try {
+      const [ent, overrides] = await Promise.all([
+        this.entitlements.resolve(tenantId),
+        this.featureOverrides.getMany(tenantId, [
+          ...pending.map((f) => f.key),
+          ...defaultGrantRequirementKeys(pending),
+        ]),
+      ]);
+      return pending
+        .filter(
+          (f) =>
+            overrides.get(f.key) !== "DENY" && isDefaultGrantedAddon(f, rows, ent.flags, overrides),
+        )
+        .map((f) => f.key);
+    } catch (err) {
+      const now = Date.now();
+      if (now - (this.defaultGrantWarnedAt.get(tenantId) ?? 0) > 60_000) {
+        // Bounded (lead nit n2): the throttle only needs recent tenants.
+        if (this.defaultGrantWarnedAt.size >= 1_000) this.defaultGrantWarnedAt.clear();
+        this.defaultGrantWarnedAt.set(tenantId, now);
+        this.logger.warn(
+          `default-granted add-ons skipped for tenant ${tenantId} (fail closed): ` +
+            `${(err as Error)?.message ?? err}`,
+        );
+      }
+      return [];
+    }
   }
 
   /**
@@ -387,6 +470,18 @@ export class AddonService {
    * an add-on the tenant no longer has.
    */
   async disableAddon(tenantId: string, addonKey: string) {
+    // Owner ruling 2026-09-28 / SA-540: a default-granted key is held with NO row, so disabling a
+    // row would report success and remove nothing. Only a DENY override removes it — say so.
+    if (DEFAULT_GRANTED_ADDON_FEATURES.some((f) => f.key === addonKey)) {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: "ADDON_DEFAULT_GRANTED",
+        addonKey,
+        message:
+          `"${addonKey}" is granted to every eligible tenant by default, so disabling its add-on ` +
+          `row would not remove it. Add a DENY feature override for this tenant instead.`,
+      });
+    }
     // #2188 / SA-385: finds the row whichever way it was keyed (legacy key or SKU).
     const addon = await findAddonRow(this.prisma, tenantId, addonCodeOf(addonKey));
 

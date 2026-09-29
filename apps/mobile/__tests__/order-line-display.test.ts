@@ -240,6 +240,18 @@ describe("orderLineCardModel", () => {
     expect(orderLineCardModel(line({ deliveredQty: 8 }), "DELIVERED").deliveryText).toBeNull();
   });
 
+  it("B669 (#1702): a CANCELLED line shows no delivery progress, on screen or spoken; a short line still does", () => {
+    for (const orderStatus of ["OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED", "DELIVERED"]) {
+      const m = orderLineCardModel(line({ status: "CANCELLED", deliveredQty: 0 }), orderStatus);
+      expect(m.deliveryText).toBeNull();
+      expect(m.spoken).not.toMatch(/delivered/i);
+    }
+    expect(
+      orderLineCardModel(line({ status: "PENDING", deliveredQty: 6 }), "PARTIALLY_DELIVERED")
+        .deliveryText,
+    ).toBe("6 of 8 delivered");
+  });
+
   it("carries the price tag with its struck original, the free label, and the trimmed note", () => {
     const m = orderLineCardModel(
       line({

@@ -37,7 +37,7 @@ import {
   inviteOnlyCheckoutAllowed,
   addonSkuCode,
 } from "../billing/plan-catalog.constants";
-import { bookAddonsOnCrossing } from "../billing/addon-ledger";
+import { bookAddonsOnCrossing, lockTenantForLedger } from "../billing/addon-ledger";
 import { roundMoney } from "@routeflow/pricing";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { AppConfig } from "../config/configuration";
@@ -62,6 +62,7 @@ import {
   type AdminAuditActionCode,
 } from "./audit-actions.constant";
 import { escapeHtml } from "../common/html-escape";
+import { CUSTOM_FEE_UNCHANGED, priceOverrideOf } from "../billing/price-override";
 import { issueSetPasswordLink } from "../users/set-password-token";
 
 @Injectable()
@@ -747,6 +748,7 @@ export class PlatformAdminService {
         );
       }
       await this.prisma.$transaction(async (tx) => {
+        await lockTenantForLedger(tx, id); // #2551 / SA-503a: Tenant before the subscription
         await tx.tenantSubscription.update({
           where: { tenantId: id },
           data: {
@@ -796,23 +798,29 @@ export class PlatformAdminService {
     // Stripe here; both admin and tenant plan-change paths are Stripe-silent). Computed from
     // the SAME shared helper and the SAME inputs (sub window + monthly-price delta) the
     // tenant-facing upgrade() uses, so the two paths never drift apart on the money math.
+    // #2223 / SA-444a: an override row keeps paying its negotiated fee — the upgrade quotes 0.
+    const override = priceOverrideOf(priorSub);
     const proratedNow =
       isRankedPlanChange && rankTo > rankFrom
-        ? this.proration.proratedDiff(
-            {
-              cycle: priorSub?.cycle ?? "MONTHLY",
-              periodStart: priorSub?.periodStart ?? null,
-              periodEnd: priorSub?.periodEnd ?? null,
-            },
-            Number(definition.monthlyPrice ?? 0) - Number(fromDefinition?.monthlyPrice ?? 0),
-          )
+        ? override != null
+          ? 0
+          : this.proration.proratedDiff(
+              {
+                cycle: priorSub?.cycle ?? "MONTHLY",
+                periodStart: priorSub?.periodStart ?? null,
+                periodEnd: priorSub?.periodEnd ?? null,
+              },
+              Number(definition.monthlyPrice ?? 0) - Number(fromDefinition?.monthlyPrice ?? 0),
+            )
         : null;
 
     // A custom (Enterprise) definition has no catalog price — the tenant's negotiated fee
     // lives in `priceOverrideMonthly` instead. Writing `planKey` with a null snapshot would
     // enter the tenant in the rollup at $0 base while its active add-ons start counting
     // (mrr.service.ts:63-66), the "add-on MRR with no base behind it" that guard warns about.
-    const baseSnapshot = definition.monthlyPrice ?? priorSub?.priceOverrideMonthly ?? null;
+    // SA-444a: the snapshot is what the tenant PAYS, so the negotiated fee comes first — a
+    // catalog-target change on an override row keeps it (delta 0, MRR and ledger unmoved).
+    const baseSnapshot = priorSub?.priceOverrideMonthly ?? definition.monthlyPrice ?? null;
 
     // SA-140: uses the shared isPayingRow predicate — this previously checked only
     // status+planKey, missing class/deletedAt (a real gap: a plan change on an ACTIVE but
@@ -835,41 +843,67 @@ export class PlatformAdminService {
 
     const tenant = await this.prisma.$transaction(async (tx) => {
       await this.planTransition.onPlanChange(tx, transition, preparedTransition);
-      const updated = await tx.tenant.update({
-        where: { id },
-        data: { plan: dto.plan, planVersionId: version.id },
-      });
-      // Upsert subscription record to reflect plan change — the same catalog-derived
-      // fields subscribe() writes, so entitlements resolution reads a consistent state
-      // regardless of which mutation path last touched this tenant. `basePriceSnapshot`
-      // must move WITH `planKey`: MrrService prices a tenant from the snapshot alone
-      // (mrr.service.ts:82), so leaving it stale/null would book the old plan's price —
-      // or $0 — under the new plan.
-      await tx.tenantSubscription.upsert({
-        where: { tenantId: id },
-        create: {
-          tenantId: id,
-          currentPlan: dto.plan,
-          planKey: definition.planKey,
-          planVersionId: version.id,
-          basePriceSnapshot: baseSnapshot,
-        },
-        update: {
-          currentPlan: dto.plan,
-          planKey: definition.planKey,
-          planVersionId: version.id,
-          basePriceSnapshot: baseSnapshot,
-          // A committing plan write disarms any scheduled downgrade — the same invariant every
-          // self-service writer holds (subscription-mutation.service.ts). Left armed, the 02:00
-          // sweep (which filters on downgradeEffectiveAt alone, never on rank or current plan)
-          // would silently undo this admin's change and deactivate the tenant's staff.
-          // `cancelAtPeriodEnd` is deliberately NOT touched: an admin plan edit must not revoke
-          // a cancellation the tenant asked for — that is resume()'s job.
-          downgradeToPlanKey: null,
-          downgradeEffectiveAt: null,
-          retainedUserIds: [],
-        },
-      });
+      // Hook FIRST (house lock order: snapshot/config rows before tenant rows, as upgrade() does).
+      // #2470 / SA-485b (i): priorSub, `before` and everything derived from them were read BEFORE this
+      // tx. Take the Tenant row lock updateTenantPriceOverride and reconcilePriceLedger take, then write
+      // by compare-and-set on what was read — the tenant's status, the subscription's planKey + fee +
+      // snapshot. Anything that moved since (a Pricing change, its reconcile, a status change) is a 409,
+      // never a stale fee/snapshot written back or a double-booked delta.
+      await tx.$queryRaw`SELECT id FROM "Tenant" WHERE id = ${id} FOR UPDATE`;
+      const conflict = () =>
+        new ConflictException("The subscription changed concurrently — please retry.");
+      const updated = await tx.tenant
+        .update({
+          where: { id, status: before.status },
+          data: { plan: dto.plan, planVersionId: version.id },
+        })
+        .catch((e: unknown) => {
+          if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2025")
+            throw conflict();
+          throw e;
+        });
+      // The subscription moves to the target plan — the same catalog-derived fields subscribe()
+      // writes. `basePriceSnapshot` must move WITH `planKey`: MrrService prices a tenant from the
+      // snapshot alone (mrr.service.ts:82), so a stale/null one would book the old plan's price.
+      const subWrite = {
+        currentPlan: dto.plan,
+        planKey: definition.planKey,
+        planVersionId: version.id,
+        basePriceSnapshot: baseSnapshot,
+      };
+      if (priorSub) {
+        const { count } = await tx.tenantSubscription.updateMany({
+          where: {
+            tenantId: id,
+            planKey: priorSub.planKey ?? null,
+            priceOverrideMonthly: priorSub.priceOverrideMonthly ?? null,
+            basePriceSnapshot: priorSub.basePriceSnapshot ?? null,
+          },
+          data: {
+            ...subWrite,
+            // A committing plan write disarms any scheduled downgrade — the same invariant every
+            // self-service writer holds (subscription-mutation.service.ts). Left armed, the 02:00
+            // sweep (which filters on downgradeEffectiveAt alone) would silently undo this change
+            // and deactivate the tenant's staff. `cancelAtPeriodEnd` is deliberately NOT touched: an
+            // admin plan edit must not revoke a cancellation the tenant asked for (resume()'s job).
+            downgradeToPlanKey: null,
+            downgradeEffectiveAt: null,
+            retainedUserIds: [],
+          },
+        });
+        if (count === 0) throw conflict();
+      } else {
+        // #2549: two concurrent first-plan writes both read "no row"; the loser's create hits the
+        // tenantId unique key (P2002) — the same lost race as a guarded-update miss, so the same 409
+        // (the tx rolls back: nothing written, nothing booked).
+        await tx.tenantSubscription
+          .create({ data: { tenantId: id, ...subWrite } })
+          .catch((e: unknown) => {
+            if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002")
+              throw conflict();
+            throw e;
+          });
+      }
 
       // Moving the snapshot run-rate without a matching ledger delta makes `mrr` and
       // `ledgerMrr`/`momDelta` diverge permanently (mrr.service.ts:21-27), so this path
@@ -919,6 +953,7 @@ export class PlatformAdminService {
       slug: tenant.slug,
       plan: tenant.plan,
       ...(proratedNow != null ? { proratedNow } : {}),
+      ...(proratedNow != null && override != null ? { note: CUSTOM_FEE_UNCHANGED } : {}),
     };
   }
 
@@ -984,9 +1019,42 @@ export class PlatformAdminService {
           status: true,
           class: true,
           deletedAt: true,
-          subscription: { select: { planKey: true, basePriceSnapshot: true, discount: true } },
+          subscription: {
+            select: {
+              planKey: true,
+              basePriceSnapshot: true,
+              discount: true,
+              priceOverrideMonthly: true,
+            },
+          },
         },
       });
+
+      // B557 / SA-140: status is unconditionally ACTIVE and planKey unconditionally resolved by
+      // the write below, so only class/deletedAt (untouched here) gate whether this activation
+      // actually crosses into MrrService's paying set — via the shared isPayingRow predicate.
+      const wasPaying = isPayingRow(before, before.subscription?.planKey ?? null);
+      const isPaying = isPayingRow({ ...before, status: "ACTIVE" }, definition.planKey);
+      // #2460 / SA-464 (1): manual activation is a PAID path (owner 09-24), so a crossing INTO the
+      // paying set snapshots what the tenant pays — a negotiated override (0 = free, explicitly),
+      // else the catalog price — in this same tx, and books it below. A renewal of a row already in
+      // the set writes no snapshot and books nothing (a legacy NULL stays NULL, reported as unpriced).
+      const crossingIn = !wasPaying && isPaying;
+      // #2522 / SA-464f: a renewal of an already-paying row that also changes planKey is a ranked
+      // plan change — rebase the snapshot onto the NEW plan and book the difference below.
+      const planSwitch =
+        wasPaying &&
+        isPaying &&
+        normalizePlanKey(before.subscription?.planKey) !== definition.planKey;
+      const override = before.subscription?.priceOverrideMonthly;
+      // #2570: round every monetary write — the snapshot (and so the delta booked from it) at cents.
+      const newBase =
+        override != null
+          ? roundMoney(Number(override))
+          : definition.monthlyPrice != null
+            ? roundMoney(Number(definition.monthlyPrice))
+            : null;
+      const snapshotWrite = crossingIn || planSwitch ? { basePriceSnapshot: newBase } : {};
 
       const [updated] = await Promise.all([
         tx.tenant.update({
@@ -1008,6 +1076,7 @@ export class PlatformAdminService {
             externalPaymentMethod: dto.paymentMethod,
             externalPaymentRef: dto.paymentRef ?? null,
             externalPaymentNotes: dto.notes ?? null,
+            ...snapshotWrite,
           },
           update: {
             currentPlan: dto.plan,
@@ -1027,31 +1096,28 @@ export class PlatformAdminService {
             externalPaymentMethod: dto.paymentMethod,
             externalPaymentRef: dto.paymentRef ?? null,
             externalPaymentNotes: dto.notes ?? null,
+            ...snapshotWrite,
           },
         }),
       ]);
 
-      // B557 / SA-140: status is unconditionally ACTIVE and planKey unconditionally resolved by
-      // the write above, so only class/deletedAt (untouched here) gate whether this activation
-      // actually crosses into MrrService's paying set — via the shared isPayingRow predicate.
-      const wasPaying = isPayingRow(before, before.subscription?.planKey ?? null);
-      const isPaying = isPayingRow({ ...before, status: "ACTIVE" }, definition.planKey);
       if (wasPaying !== isPaying) {
         const addons = await tx.tenantAddon.findMany({
           where: { tenantId: id, active: true },
           select: { priceSnapshot: true, quantity: true, sku: true, addonKey: true },
         });
-        // basePriceSnapshot/discount are untouched by this write (external/manual activations
-        // are priced outside the catalog run-rate — see the REG-743-N5/F2 note in
-        // mrr.service.ts), so the "after" contribution reuses the exact fields the write
-        // leaves in place — never a catalog-price guess.
+        // #2460 / SA-464: entering, the contribution is priced off the snapshot this call just
+        // wrote (after − before, where before contributed 0 outside the set); leaving (latent,
+        // see below), off the stored snapshot the tenant was counted at (−before).
         // SA-277b: the PLAN_CHANGED amount here is the BASE (plan) share only — the add-on
         // share of this same crossing is booked separately, through `bookAddonsOnCrossing`
         // below (the SAME helper `subscribe()` uses for its own kept/prior add-ons), so nothing
         // is double-counted between a plan.changed row and the addon.enabled rows it books.
         const baseContribution = this.mrrService.priceSubscription(
           {
-            basePriceSnapshot: before.subscription?.basePriceSnapshot ?? null,
+            basePriceSnapshot: crossingIn
+              ? newBase
+              : (before.subscription?.basePriceSnapshot ?? null),
             discount: before.subscription?.discount ?? null,
           },
           [],
@@ -1097,6 +1163,29 @@ export class PlatformAdminService {
           })),
           wasPaying,
           adminId,
+        );
+      }
+
+      // #2522 / SA-464f: already paying on both sides, so add-ons and the discount cancel — the
+      // base alone moves: Δ = newBase − (stored snapshot ?? 0). An override row books Δ0; a legacy
+      // NULL self-heals (books the full new base, as upgrade()/updatePlan do).
+      if (planSwitch) {
+        await this.billingEventService.emit(
+          id,
+          BILLING_EVENTS.PLAN_CHANGED,
+          {
+            fromPlan: before.subscription?.planKey ?? null,
+            toPlan: definition.planKey,
+            platformAdmin: true,
+            externalActivation: true,
+          },
+          {
+            amountDelta: roundMoney(
+              Number(newBase ?? 0) - Number(before.subscription?.basePriceSnapshot ?? 0),
+            ),
+            actorId: adminId,
+            tx,
+          },
         );
       }
 
@@ -1861,9 +1950,10 @@ export class PlatformAdminService {
       status: t.status,
       // SA-140 (B556): `plan` keeps its existing shape (the raw legacy TenantPlan enum) for
       // compatibility with existing consumers — `planKey` is ADDED alongside it, resolved
-      // through the subscription first (resolveDisplayPlanKey), so a drifted tenant
-      // (Tenant.plan set, subscription.planKey null) is visible as such rather than silently
-      // shown as a paying customer via the legacy field alone.
+      // through the subscription first (resolveDisplayPlanKey). #2045: a drifted tenant
+      // (Tenant.plan set, subscription.planKey null) still shows a plan badge here — the
+      // resolver falls back to the legacy enum — so this field alone does NOT reveal the drift;
+      // MRR, which requires a subscription planKey, is what excludes such a row.
       plan: t.plan,
       planKey: this._resolveDisplayPlanKey(t),
       trialEndsAt: t.trialEndsAt,
@@ -2016,21 +2106,23 @@ export class PlatformAdminService {
     dto: UpdateTenantClassDto,
     adminId: string | null = null,
   ) {
-    const before = await this.prisma.tenant.findUniqueOrThrow({
-      where: { id: tenantId },
-      select: { id: true, slug: true, class: true },
-    });
-
     // The tenant update and the BillingEvent emit must land or roll back together: a class
     // flip that crosses the PRODUCTION boundary without its BillingEvent would leave
     // MrrService's ledger silently out of sync with the tenant table. recordAdminAction stays
     // OUTSIDE the transaction (below) — it doesn't accept a Prisma client (see its signature
     // above) and is fire-and-forget by design (AuditService.log swallows its own errors).
-    const updated = await this.prisma.$transaction(async (tx) => {
+    const { result: updated, before } = await this.prisma.$transaction(async (tx) => {
       // SA-140: lock first, same reasoning as updateStatus() — a concurrent write to this same
       // tenant (a status change, a price resync) must not interleave with the read-then-decide
       // logic below.
       await tx.$queryRaw`SELECT id FROM "Tenant" WHERE id = ${tenantId} FOR UPDATE`;
+      // #2045: the class the PRODUCTION-boundary decision is made from is read UNDER that lock —
+      // read before it, a concurrent class flip committing in between would make this call book
+      // (or skip) the class_changed rebase against a stale class.
+      const before = await tx.tenant.findUniqueOrThrow({
+        where: { id: tenantId },
+        select: { id: true, slug: true, class: true },
+      });
 
       const result = await tx.tenant.update({
         where: { id: tenantId },
@@ -2077,7 +2169,7 @@ export class PlatformAdminService {
         );
       }
 
-      return result;
+      return { result, before };
     });
 
     await this.recordAdminAction(tenantId, adminId, AdminAuditAction.TENANT_CLASS_CHANGED, {

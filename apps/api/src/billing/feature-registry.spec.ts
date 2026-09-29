@@ -151,8 +151,14 @@ const EXPECTED_LEGACY_REGISTRY = {
       "POST /orders/:id/inline-returns (PR-1d)",
       "POST /returns/inline/:id/* (PR-1c/1d)",
     ],
-    grantPath: 'Platform Admin → Tenants → [tenant] → add-ons (addonKey "orders_inline_returns")',
-    backfill: "New feature 2026-09-16; zero existing users; nothing to backfill.",
+    // Owner ruling 2026-09-28 ("On for everyone"): default-granted; text re-pinned with it.
+    grantPath:
+      "Default-granted to every tenant whose plan carries flag.returns (owner ruling " +
+      '2026-09-28); remove per tenant with a DENY override (addonKey "orders_inline_returns")',
+    backfill:
+      'New feature 2026-09-16; zero existing users. Owner ruling 2026-09-28 ("On for ' +
+      'everyone"): defaultGranted, so no TenantAddon row is needed and none is backfilled — ' +
+      "isDefaultGrantedAddon() grants it at runtime; flag.returns still gates it (requires).",
   },
 };
 

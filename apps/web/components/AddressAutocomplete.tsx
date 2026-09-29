@@ -53,7 +53,8 @@ export function AddressAutocomplete({
 
   const debounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = React.useRef<HTMLDivElement>(null);
-  const inputId = label?.toLowerCase().replace(/\s+/g, "-") ?? "street";
+  // B891: unique per instance (two address fields on one form no longer share an id).
+  const inputId = React.useId();
 
   // ── Fetch suggestions from backend proxy ─────────────────────────────────
 

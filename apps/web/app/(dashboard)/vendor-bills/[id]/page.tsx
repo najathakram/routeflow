@@ -1312,7 +1312,7 @@ export default function VendorBillDetailPage() {
             ) : (
               <div className="border-t border-surface-border pt-4">
                 <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-                  <p className="overline">Line Items</p>
+                  <p className="eyebrow-label">Line Items</p>
                   <span className="text-xs text-navy/70">
                     unlinked lines don&apos;t update stock or costs until mapped
                   </span>

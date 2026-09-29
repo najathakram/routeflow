@@ -17,6 +17,7 @@ import { assertBillWithinPo, type BillLinePieces } from "./po-bill-match";
 import { assertPackSizeKnownOrLog } from "./pack-size-gate";
 import { roundMoney } from "@routeflow/pricing";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
+import { calendarFieldStamp } from "../common/calendar-date";
 import Anthropic from "@anthropic-ai/sdk";
 import sharp from "sharp";
 import { buildTokenWeights, composedProductName, matchLine } from "./product-matcher";
@@ -274,6 +275,8 @@ export class VendorBillsService {
   }
 
   async create(dto: any) {
+    // #2488: the literal calendar day, refused (400 naming the field) before any read or write.
+    const dueDate = dto.dueDate ? calendarFieldStamp(dto.dueDate, "dueDate") : null;
     // supplierId is required when creating manually from the UI, but optional for import-created bills
     if (dto.requireSupplier !== false) {
       if (!dto.supplierId || typeof dto.supplierId !== "string" || dto.supplierId.trim() === "") {
@@ -460,7 +463,7 @@ export class VendorBillsService {
             taxAmount: this.moneyOrNull(dto.taxAmount),
             subtotal: this.moneyOrNull(dto.subtotal),
             billDate,
-            dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
+            dueDate,
             // Persisted verbatim, never recomputed here — bills have no
             // due-date-computation machinery server side (see schema comment).
             termsLabel: dto.termsLabel ?? null,
@@ -850,6 +853,8 @@ export class VendorBillsService {
   }
 
   async update(id: string, dto: any) {
+    // #2488: 400 (naming the field) before any read or write.
+    const dueDate = dto.dueDate ? calendarFieldStamp(dto.dueDate, "dueDate") : null;
     const bill = await this.prisma.forTenant().vendorBill.findUnique({ where: { id } });
     if (!bill) throw new NotFoundException("Bill not found");
     if (bill.status !== "DRAFT") {
@@ -944,7 +949,7 @@ export class VendorBillsService {
           ...(dto.billDate !== undefined && {
             billDate: dto.billDate ? new Date(dto.billDate) : null,
           }),
-          ...(dto.dueDate !== undefined && { dueDate: dto.dueDate ? new Date(dto.dueDate) : null }),
+          ...(dto.dueDate !== undefined && { dueDate }),
           ...(dto.termsLabel !== undefined && { termsLabel: dto.termsLabel }),
           ...(dto.notes !== undefined && { notes: dto.notes }),
           ...(dto.supplierInvoiceNumber !== undefined && {
@@ -1205,8 +1210,8 @@ export class VendorBillsService {
           },
         });
 
-        // Backdated bill: later movements' snapshots (and possibly the
-        // average) are now stale — replay the product, like recordPurchase.
+        // Backdated bill: the average later rows imply may have moved — replay the
+        // product like recordPurchase (a dated COST_BASIS correction, SA-136 §4).
         // `throwOnGap: false` — a gap here must flag this ONE line, never
         // abort the whole bill (see the comment above the loop).
         const newer = await tx.stockMovement.count({
@@ -1215,6 +1220,8 @@ export class VendorBillsService {
         if (newer > 0) {
           const replay = await this.inventory.recomputeProductInTx(tx, item.productId, {
             throwOnGap: false,
+            trigger: `BILL:${id}`,
+            performedById: performedById ?? null,
           });
           if (replay?.gapDetected) {
             gapsDetected.push({

@@ -17,6 +17,7 @@
  *    dequeued with zero signal (REG-B143 / REG-B111).
  */
 import axios from "axios";
+import { API_ERROR_CODES } from "@routeflow/types";
 import type { QueuedAction } from "../store/offlineQueue";
 
 export const MAX_RETRIES = 3;
@@ -137,6 +138,8 @@ function isRetriableLockContention(err: unknown, status: number | undefined): bo
   const code = typeof data?.code === "string" ? data.code : undefined;
   if (status === 409 && code === "MERGE_IN_PROGRESS") return true;
   if (status === 503 && code === "LOCK_UNAVAILABLE") return true;
+  // #2645: the invoicedQty CAS miss rolls the whole invoice back (nothing billed) — safe to retry.
+  if (status === 409 && code === API_ERROR_CODES.ORDER_LINE_CHANGED) return true;
   return false;
 }
 
@@ -285,4 +288,16 @@ export function describeFailedDrain(records: FailedActionRecord[]): {
     title: `${records.length} actions could not be sent`,
     message: `${shown}${rest > 0 ? `\n• …and ${rest} more` : ""}\n\n${footer}`,
   };
+}
+
+/**
+ * #2410: the query keys to refresh after a drain DELIVERED these actions. A replayed stop
+ * completion (or any route-run write) changes the run the driver's route list reads, so the list
+ * showed the stop as "Up next" with 0 Done until a manual pull-to-refresh. `["route-runs"]` is the
+ * prefix every route-run query shares (active, scheduled, the run itself, its packing list).
+ */
+export function queriesToRefreshAfterDrain(
+  delivered: readonly Pick<QueuedAction, "endpoint">[],
+): string[][] {
+  return delivered.some((a) => a.endpoint.startsWith("/route-runs/")) ? [["route-runs"]] : [];
 }

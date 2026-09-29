@@ -1,5 +1,6 @@
 import { InvoiceStatus, Prisma } from "@prisma/client";
 import { formatMoney } from "../messaging/messaging.helpers";
+import { isBlockingPayment, roundMoney } from "@routeflow/pricing";
 
 /**
  * #2255 / SA-404: the send and void decisions as pure guards. Each Serializable send/void tx is
@@ -64,9 +65,47 @@ export async function lockInvoicesForPayment(tx: any, invoiceIds: string[]): Pro
   await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id IN (${Prisma.join(ids)}) ORDER BY id FOR UPDATE`;
 }
 
+/** #2472: an invoice may be written off only from an open, collectible status (checked on the LOCKED row). */
+export function writeOffRefusal(status: InvoiceStatus): string | null {
+  const open: InvoiceStatus[] = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"] as InvoiceStatus[];
+  return open.includes(status) ? null : `Cannot write off an invoice with status ${status}`;
+}
+
 /** A payment may not land on a VOID or WRITTEN_OFF invoice (checked on the LOCKED row). */
 export function paymentRefusal(status: InvoiceStatus): string | null {
   if (status === InvoiceStatus.VOID) return "voided";
   if (status === InvoiceStatus.WRITTEN_OFF) return "written-off";
   return null;
+}
+
+/**
+ * Money on an invoice comes in two flavours and they unwind differently:
+ *
+ *  - **Wallet money** (CREDIT_NOTE, ADVANCE) came from a balance this system
+ *    owns, so voiding can simply put it back — and MUST, or the customer's
+ *    credit is silently consumed by an invoice that no longer exists.
+ *  - **External money** (cash, check, card) left the customer's hands. Software
+ *    cannot un-take it, so it still blocks the void until a human refunds or
+ *    reverses it.
+ *
+ * Returns the external total so callers can decide whether to block.
+ */
+export function externalPaidOn(
+  payments: Array<{ method?: unknown; amount: unknown; status?: string }>,
+) {
+  // PR-2 (check-payments B1 hardening, N4 owner ruling): isBlockingPayment (NOT
+  // isHeldPayment) — a DRAFT external payment is money in flight and must keep
+  // blocking the void exactly as it does today; HELD (PAID ∪ PENDING) is for money
+  // TOTALS only, never an existence/blocking check. See orders.service.ts's
+  // cancelImpact for the identical conversion.
+  return roundMoney(
+    payments
+      .filter(
+        (p) =>
+          isBlockingPayment(p) &&
+          (p.method as any) !== "CREDIT_NOTE" &&
+          (p.method as any) !== "ADVANCE",
+      )
+      .reduce((s, p) => s + Number(p.amount), 0),
+  );
 }

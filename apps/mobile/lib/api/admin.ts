@@ -213,7 +213,19 @@ export interface AdminOrder {
     invoiceNumber: string;
     status: string;
     total: number;
-    payments?: Array<{ id: string; amount: number | string; creditNoteId?: string | null }>;
+    // #2404: `creditNote` is attached by the order read; `autoApplied` is SA-436 PR-1's column.
+    payments?: Array<{
+      id: string;
+      amount: number | string;
+      creditNoteId?: string | null;
+      autoApplied: boolean;
+      creditNote?: {
+        id: string;
+        creditNoteNumber: string;
+        reason?: string | null;
+        autoApplied?: boolean;
+      } | null;
+    }>;
   }>;
   /**
    * P5-08 edit-window descriptor (server-computed). `editable` is the single source
@@ -402,6 +414,8 @@ export interface AdminInvoice {
   items?: Array<{
     id: string;
     description: string;
+    /** #2169: the system line kind ("NSF_FEE" for the bounce-fee line), null for a normal line. */
+    systemKind?: string | null;
     qty: number;
     /** Boxed denomination snapshot — when set, unitPrice is the BOX price. */
     boxes?: number | null;

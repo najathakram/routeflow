@@ -79,6 +79,11 @@ describeDb(
         { invalidate: jest.fn() } as any, // featureResolver (cache invalidate only)
         { assertFeatureRequiresMet: jest.fn().mockResolvedValue(undefined) } as any, // authority
         events,
+        // featureOverrides (default-granted add-ons, SA-540): none of this spec's keys is one.
+        {
+          get: jest.fn().mockResolvedValue(null),
+          getMany: jest.fn().mockResolvedValue(new Map()),
+        } as any,
       );
     });
 

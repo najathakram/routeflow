@@ -12,8 +12,10 @@ import {
 } from "@nestjs/common";
 import { randomUUID } from "crypto";
 import { LeaderCron } from "../common/cron-lock";
+import { withAfterCommit } from "../common/after-commit";
 import { InlineReturnsService } from "../returns/inline-returns.service";
 import * as inlineReturn from "./order-inline-return";
+import { attachPaymentCreditNotes } from "./order-payment-credit-notes";
 import { prepareInlineReturn, replayAfterCheck } from "./order-inline-return";
 import { reserveInlineReturnNumber as reserveReturnNo } from "./order-inline-return";
 import { applyInlineReturnInTx as applyReturn } from "./order-inline-return";
@@ -61,6 +63,7 @@ import { nextOrderNumberFor } from "./order-number";
 import * as unitAware from "./unit-aware-guard";
 import * as cancelledLines from "./order-edit-cancelled";
 import * as driverAccess from "./driver-edit-access";
+import { assertRemovalsNameALine, writeLineRemoval, writeLineUpdate } from "./order-line-removal";
 import { ORDER_STATUS_TRANSITIONS, assertOrderStatusTransition } from "./order-status-transitions";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
 import {
@@ -68,10 +71,14 @@ import {
   IDEMPOTENCY_REPLAY_NEEDS_RECONCILE,
   shouldSkipInPlaceResync,
   findOrderIdByKeyCheckingReturn as findOrderIdByKey,
+  insertMergeIdempotencyKey,
+  loadReplayCandidateByKey,
+  stampOrderIdempotencyKey,
+  type IdempotencyLookupDeps,
 } from "./merge-idempotency";
 import { BUYER_EDIT_CLOSED_STATUSES, computeEditWindow } from "./edit-window";
 import { cancelBlockedMessage, cancelImpact, lockOrderForCancel } from "./order-cancel-impact";
-import { classifyEditPayload } from "./order-edit-payload";
+import { assertBuyerDiffShape, classifyEditPayload } from "./order-edit-payload";
 import {
   applyBuyerMergeHeaderImpl,
   bulkDeleteOrdersImpl,
@@ -101,6 +108,7 @@ import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import { currentTaxRate } from "../common/tax-rate";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InvoicesService } from "../invoices/invoices.service";
+import { dueStamp } from "../invoices/invoice-due-dates";
 import {
   decrementStockForSale,
   restoreStockForReopen,
@@ -467,7 +475,8 @@ export class OrdersService implements OnApplicationBootstrap {
             // scan-ok: draft-payment-not-void — pending F03 classification, see above.
             payments: {
               where: { method: "CREDIT_NOTE", status: { not: "VOID" } },
-              select: { id: true, amount: true, creditNoteId: true },
+              // #2404: autoApplied (SA-436 PR-1) labels each credit Automatic / Manual.
+              select: { id: true, amount: true, creditNoteId: true, autoApplied: true },
             },
           },
         },
@@ -525,6 +534,8 @@ export class OrdersService implements OnApplicationBootstrap {
     // `editableUntil` (the soft cutoff countdown) stays null until the per-weekday
     // routes-cutoff config lands — the HARD close is dispatch, which is authoritative.
     (order as any).editWindow = computeEditWindow(order, user.role);
+
+    await attachPaymentCreditNotes(this.prisma.forTenant(), order); // #2404
 
     return order;
   }
@@ -1020,7 +1031,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // SA-124: see mergeAllPendingForCustomer — split by kind, independent conditions.
           const counts = reportPackWarnings(this.logger, "consolidate", winner.id, packWarnings);
 
-          await this.prisma.tenantTransaction(async (tx) => {
+          await withAfterCommit(this.prisma, async (tx, after) => {
             for (const write of mergeWrites) {
               if (write.kind === "update") {
                 await tx.orderItem.update({ where: { id: write.lineId }, data: write.data });
@@ -1129,6 +1140,7 @@ export class OrdersService implements OnApplicationBootstrap {
             await this.invoicesService.reconcileOrderDraftInvoice(winner.id, {
               basis: "order",
               tx,
+              after,
             });
           });
 
@@ -1311,116 +1323,30 @@ export class OrdersService implements OnApplicationBootstrap {
     idempotencyKey: string,
     customerId: string,
     requestHash?: string,
-    returnKey?: string,
+    inlineReturn?: { returnKey?: string; items?: any[]; reason?: string | null }, // #2424
   ): Promise<{ orderId: string; verified: boolean } | null> {
-    const deps = { prisma: this.prisma, logger: this.logger };
-    return findOrderIdByKey(deps, idempotencyKey, customerId, requestHash, returnKey);
+    return findOrderIdByKey(this.idemDeps(), idempotencyKey, customerId, requestHash, inlineReturn);
   }
 
-  /**
-   * B215: `create()`'s replay candidate for `idempotencyKey`, loaded with the include its
-   * caller's ownership + cart checks read.
-   *
-   * Consults the OrderIdempotencyKey TABLE first and the Order COLUMN only as a fallback: a
-   * keyed request that reached the merge branch has its key in the table alone (the fold writes
-   * it there), and such a request CAN fall through to `create()` — the merge target vanishing
-   * before the advisory lock is the live path — so a column-only lookup would miss the replay
-   * and mint a duplicate order.
-   *
-   * B215/R4 (round 2): the CALLER'S OWN row wins. Lookup order is (1) a key-TABLE row on an
-   * order belonging to `customerId`, (2) this customer's key-stamped Order COLUMN, (3) only then
-   * the tenant-wide table row — which the caller's ownership gate still turns into a 409. Without
-   * step 1/2 a key-table row belonging to ANOTHER customer was fetched first and 409'd a caller
-   * whose own column-stamped order was sitting right there (the same D3 ordering bug already
-   * fixed in `findOrderIdByIdempotencyKey`).
-   */
+  /** B215/F30: replay-key lookup + stamping live in merge-idempotency.ts (size ratchet). */
   async findReplayCandidateByKey(idempotencyKey: string, customerId: string) {
-    const include = {
-      customer: { select: { id: true, businessName: true } },
-      lineItems: { include: { product: { select: { id: true, name: true, unit: true } } } },
-    };
-    const load = (where: Record<string, unknown>) =>
-      this.prisma.forTenant().order.findFirst({ where, include });
-    // (1) a key-table row on an order that is THIS customer's.
-    const owned = await this.prisma.forTenant().orderIdempotencyKey.findFirst({
-      where: { key: idempotencyKey, order: { customerId } },
-      select: { orderId: true },
-    });
-    if (owned) return load({ id: owned.orderId });
-    // (2) this customer's own key-stamped Order column.
-    const ownColumn = await load({ idempotencyKey, customerId });
-    if (ownColumn) return ownColumn;
-    // (3) the tenant-wide key-table row — the caller's ownership gate turns this into a 409.
-    const keyed = await this.prisma
-      .forTenant()
-      .orderIdempotencyKey.findFirst({ where: { key: idempotencyKey }, select: { orderId: true } });
-    // (4) and finally the tenant-wide column, which is likewise gated by ownership. Unchanged
-    // behaviour for a key stamped on another customer's order: found, then refused.
-    return load(keyed ? { id: keyed.orderId } : { idempotencyKey });
+    return loadReplayCandidateByKey(this.idemDeps(), idempotencyKey, customerId);
   }
 
-  /**
-   * F30/R8 (B196): stamp the replay key onto the order a staff merge landed on,
-   * so a re-delivery of that same request replays instead of folding the same
-   * items in again.
-   *
-   * An order holds at most one key, so a merge overwrites whatever key created
-   * the order. That is deliberate: replays arrive within seconds/minutes of the
-   * request they duplicate, so the MOST RECENT operation on the order is the one
-   * whose replay window is still open. A concurrent claim from another API
-   * replica loses the unique-constraint race (P2002) — the merge it raced has
-   * already been written, so swallow it rather than fail a completed write.
-   */
   async recordIdempotencyKey(orderId: string, idempotencyKey: string): Promise<void> {
-    try {
-      // First key wins (R1): an order can absorb several queued requests (auto-
-      // merge waves); the EARLIEST key is the one a stuck client will retry
-      // with, so never let a later wave clobber it — the later request's own
-      // replay is answered by content comparison against the same order anyway,
-      // for `create()`; the merge path's replay is a bare key lookup, so a key
-      // that was already set leaves that fold unguarded (campaign candidate).
-      await this.prisma.forTenant().order.updateMany({
-        where: { id: orderId, idempotencyKey: null },
-        data: { idempotencyKey },
-      });
-    } catch (e: any) {
-      if (e?.code !== "P2002") throw e;
-    }
+    return stampOrderIdempotencyKey(this.idemDeps(), orderId, idempotencyKey);
   }
 
-  /**
-   * B215: record a staff merge's Idempotency-Key in OrderIdempotencyKey through the FOLD's own
-   * transaction client `tx`, so the key and the fold commit — or roll back — together. Called
-   * only from updateOrderItems' transaction callback. A P2002 means the key already belongs to
-   * another request (every same-customer retry is answered by the replay pre-check before the
-   * fold), so it aborts the fold with a 409: swallowing an error inside a Postgres transaction
-   * would leave the transaction aborted anyway. Uses only this.prisma (the DB lane builds this
-   * service without DI).
-   */
   async recordMergeIdempotencyKey(
     tx: any,
     orderId: string,
     idem: { key: string; responseHash: string },
   ): Promise<void> {
-    const tenantId = this.prisma.getTenantId();
-    if (!tenantId) {
-      this.logger.warn(`idempotency key refused: no tenant scope key=${idem.key}`);
-      throw new ForbiddenException("Idempotency-Key requires a tenant-scoped session");
-    }
-    try {
-      await tx.orderIdempotencyKey.create({
-        data: { tenantId, key: idem.key, orderId, responseHash: idem.responseHash },
-      });
-    } catch (e: any) {
-      if (e?.code === "P2002") {
-        this.logger.warn(
-          `idempotency key already held by another order: fold rolled back ` +
-            `tenant=${tenantId} order=${orderId} key=${idem.key}`,
-        );
-        throw new ConflictException("Idempotency-Key already used for a different order");
-      }
-      throw e;
-    }
+    return insertMergeIdempotencyKey(this.idemDeps(), tx, orderId, idem);
+  }
+
+  private idemDeps(): IdempotencyLookupDeps {
+    return { prisma: this.prisma, logger: this.logger };
   }
 
   async create(
@@ -2249,6 +2175,10 @@ export class OrdersService implements OnApplicationBootstrap {
    * existing open order.
    */
   async createSale(dto: CreateSaleDto, user: JwtPayload) {
+    // #2493: refuse a due date that names no real day (the DTO's @IsDateString passes
+    // `2026-02-31`) BEFORE the order is created and stock decremented; the invoice step would
+    // otherwise 400 and leave a DELIVERED order with no invoice.
+    dueStamp(dto.dueDate, "dueDate");
     const orderDate = parseOrderDate(dto.orderDate, user.role);
 
     // Delivery-date picker (owner 2026-08-25): `deliveredOn` REPLACES
@@ -2587,7 +2517,6 @@ export class OrdersService implements OnApplicationBootstrap {
         // are ONE decision, not two: `reopenOrder` re-decrements exactly the lines
         // this cancel marked, so marking a line we did not credit would make reopen
         // take stock the order never held (understating it by the full quantity).
-        const cancelReturnsStock = order.status !== OrderStatus.DRAFT;
         // #2255 / SA-404d: re-run on a write conflict (SA-269). The CANCELLED status write sits in this
         // locked tx, so a refusal under the lock leaves the order exactly as it was — never
         // cancelled-but-not-unwound — and voidInvoiceInTx's claim keeps a re-run from voiding twice.
@@ -2595,6 +2524,13 @@ export class OrdersService implements OnApplicationBootstrap {
           this.prisma.tenantTransaction(
             async (tx) => {
               await lockOrderForCancel(tx, id);
+              // #2472 (2): decided from the status UNDER the lock, never the unlocked pre-read.
+              const lockedStatus = (await tx.order.findUnique({
+                where: { id },
+                select: { status: true },
+              }))!.status;
+              const cancelReturnsStock = lockedStatus !== OrderStatus.DRAFT;
+              const lockedOrder = { ...order, status: lockedStatus };
               // SA-404f F2: compare-and-set on the cancellable set the pre-check used — a retry after
               // a 40001 caused by a concurrent DELIVERED must never cancel a delivered order.
               const cancellable = Object.keys(ORDER_STATUS_TRANSITIONS).filter((k) =>
@@ -2616,10 +2552,9 @@ export class OrdersService implements OnApplicationBootstrap {
                   where: { orderId: id, status: { not: "CANCELLED" } },
                   select: STOCK_SETTLE_SELECT,
                 });
-                // Return the creation-time decrement, clamped to the undelivered
-                // remainder (settleStockForEdit with an empty final set). `order` here
-                // is the PRE-cancel record (status not yet CANCELLED in memory).
-                await this.settleStockForEdit(tx, order, activeItems, [], user, {
+                // Return the creation-time decrement, clamped to the undelivered remainder (empty final
+                // set), AS the status read under the lock (#2472: a stale DRAFT pre-read would no-op).
+                await this.settleStockForEdit(tx, lockedOrder, activeItems, [], user, {
                   notes: "CANCEL",
                 });
               }
@@ -2954,6 +2889,7 @@ export class OrdersService implements OnApplicationBootstrap {
       isCreateMerge?: boolean;
     },
   ) {
+    assertRemovalsNameALine(dto.items); // #2563: an id-less CANCEL/DELETE, before any read or write
     // SA-429: a DRIVER edits only an order on their own IN_PROGRESS run — FIRST, before any state leaks.
     await driverAccess.assertDriverMayEditOrder(this.prisma.forTenant(), orderId, user);
     const order = await this.prisma.forTenant().order.findUnique({
@@ -2964,6 +2900,16 @@ export class OrdersService implements OnApplicationBootstrap {
       },
     });
     if (!order) throw new NotFoundException("Order not found");
+    // #2565: a buyer's ownership is settled FIRST, unconditionally — before any status or shape
+    // answer and before any side effect (the linked-invoice revert below commits on its own
+    // connection). The later buyer checks were each conditional, so a non-owner's diff could revert
+    // another customer's invoice and only then meet the 403. A non-owner gets the bare 403 here.
+    if (user?.role === UserRole.CUSTOMER) {
+      const owner = await this.prisma
+        .forTenant()
+        .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
+      if (!owner || owner.id !== order.customerId) throw new ForbiddenException();
+    }
     // R1: items are editable at ANY live stage — DRAFT/PENDING/CONFIRMED and now
     // OUT_FOR_DELIVERY / PARTIALLY_DELIVERED / DELIVERED too (operator + driver). Only
     // a CANCELLED order is off-limits (nothing to edit). Post-delivery edits re-sync
@@ -2984,9 +2930,11 @@ export class OrdersService implements OnApplicationBootstrap {
     const inlineRet = await prepareInlineReturn(this.inlineReturns, dto.inlineReturn, user);
     let inlineMinted: any = null; // #2094: emitted after the commit
     // units_v1: every branch below re-derives factor + price from the LIVE product (see the guard).
-    await unitAware.assertOrderEditAllowed(order, dto, user, () =>
-      this.prisma.forTenant().customer.findFirst({ where: { userId: user?.sub, deletedAt: null } }),
-    );
+    const findOwner = () =>
+      this.prisma.forTenant().customer.findFirst({ where: { userId: user?.sub, deletedAt: null } });
+    await unitAware.assertOrderEditAllowed(order, dto, user, findOwner);
+    // SA-507a/b: the buyer-diff 400 runs AFTER the guard (ownership, then the 409 shapes).
+    await assertBuyerDiffShape(order, dto, user, isDiffPayload, findOwner);
 
     // units_v1 (A1): resolve every dto item's unit-awareness ONCE, up front — see unit-line-edit.ts.
     // Hoisted here, BEFORE the restriction plan and the un-tx'd revertLinkedInvoicesForOrderEdit
@@ -3003,6 +2951,7 @@ export class OrdersService implements OnApplicationBootstrap {
       const product = pid ? unitCtx.products.get(pid) : undefined;
       if (product)
         unitRows.set(item, resolveLineUnits(product, unitCtx.ladders.get(pid!) ?? [], item, li));
+      unitEdit.assertNoPackRedenomination(li, item, unitRows.get(item)); // SA-474
     }
 
     // B63 (REG-B63): buyers self-edit only pre-dispatch orders — the post-dispatch
@@ -3177,14 +3126,16 @@ export class OrdersService implements OnApplicationBootstrap {
               item,
               resolveLineUnits(product, unitCtx.ladders.get(pid!) ?? [], item, li),
             );
+          unitEdit.assertNoPackRedenomination(li, item, unitRows.get(item)); // SA-474
         }
 
         // Customer/Driver path: replace items by productId. A4: a DRIVER diff
         // payload skips this branch entirely — it merges below like an operator
         // edit (with prices already stripped), so untouched lines survive.
+        // SA-407: a buyer's per-line diff (a unit line's count / a removal) merges like staff's too.
         if (
-          user?.role === UserRole.CUSTOMER ||
-          (user?.role === UserRole.DRIVER && !isDiffPayload)
+          (user?.role === UserRole.CUSTOMER || user?.role === UserRole.DRIVER) &&
+          !isDiffPayload
         ) {
           if (user.role === UserRole.CUSTOMER) {
             // REG-B131: `deletedAt: null` — the buyer replace-all path is the last door a
@@ -3402,6 +3353,7 @@ export class OrdersService implements OnApplicationBootstrap {
           }
         } else {
           // Operator/admin path.
+          await unitEdit.assertBuyerOwnsOrder(tx, user, order.customerId); // SA-407: buyer diff
           // Whether to wipe + recreate (mobile "replace-all") vs. merge incrementally.
           // R10/B198: explicit `replaceAll: true` ONLY — the old shape-inference
           // heuristic ("every item lacks an id" ⇒ replace) is gone. That
@@ -3428,6 +3380,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // tier is resolved and no extra query is issued for them.
           const isStaffEdit =
             user?.role === UserRole.OPERATOR || user?.role === UserRole.TENANT_ADMIN;
+          const atCustomerTier = isStaffEdit || user?.role === UserRole.CUSTOMER; // SA-407: unit counts
           // B465 fix round (Opus BLOCK): an id-only UPDATE entry (web/mobile send
           // {id, action, qty, unitPrice} with no productId of their own) must resolve
           // tier pricing for the EXISTING line's product too — not just products
@@ -3443,7 +3396,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // CustomerPrice lookup always fell back to the customer's DEFAULT tier even
           // when a per-product SPECIAL row existed for the substitute specifically.
           const substituteProductIds = dto.items.map((i) => i.substituteProductId).filter(Boolean);
-          const operatorProductIds = isStaffEdit
+          const operatorProductIds = atCustomerTier
             ? ([
                 ...new Set([
                   ...dto.items.map((i) => i.productId).filter(Boolean),
@@ -3452,7 +3405,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 ]),
               ] as string[])
             : [];
-          const operatorTierCtx = isStaffEdit
+          const operatorTierCtx = atCustomerTier
             ? await tx.customer.findFirst({
                 where: { id: order.customerId },
                 select: { pricingTier: true },
@@ -3469,9 +3422,10 @@ export class OrdersService implements OnApplicationBootstrap {
           );
           const uctx: unitEdit.UnitWriteContext = {
             tx,
+            orderId,
             ladders: unitCtx.ladders,
             tenantId: this.prisma.getTenantId(),
-            tier: (pid) => (isStaffEdit ? (operatorCpMap.get(pid) ?? operatorDefaultTier) : 1),
+            tier: (pid) => (atCustomerTier ? (operatorCpMap.get(pid) ?? operatorDefaultTier) : 1),
             categoryMap: await loadCategoryMapForProducts(tx, unitCtx.products), // B297
           };
 
@@ -3862,35 +3816,11 @@ export class OrdersService implements OnApplicationBootstrap {
                 const hasDeliveries = await tx.deliveryMutation.count({
                   where: { orderItemId: item.id },
                 });
-                if ((li && Number(li.invoicedQty ?? 0) > 0) || hasDeliveries > 0) {
-                  await tx.orderItem.update({
-                    where: { id: item.id },
-                    data: {
-                      status: "CANCELLED",
-                      qty: 0,
-                      subtotal: 0,
-                      boxes: null,
-                      pieces: null,
-                      // A zeroed line has no free units left to show against it.
-                      promoFreeUnits: null,
-                    },
-                  });
-                } else {
-                  await tx.orderItem.delete({ where: { id: item.id } });
-                }
+                const keep = (li && Number(li.invoicedQty ?? 0) > 0) || hasDeliveries > 0;
+                // #2563: scoped to THIS order ({ id, orderId }); a foreign line id is a 404.
+                await writeLineRemoval(tx, orderId, item.id, keep ? "strike-off" : "delete");
               } else if (item.action === "CANCEL") {
-                await tx.orderItem.update({
-                  where: { id: item.id },
-                  data: {
-                    status: "CANCELLED",
-                    qty: 0,
-                    subtotal: 0,
-                    boxes: null,
-                    pieces: null,
-                    // A zeroed line has no free units left to show against it.
-                    promoFreeUnits: null,
-                  },
-                });
+                await writeLineRemoval(tx, orderId, item.id, "strike-off");
               } else if (item.substituteProductId) {
                 const product = await tx.product.findUniqueOrThrow({
                   where: { id: item.substituteProductId },
@@ -3989,43 +3919,41 @@ export class OrdersService implements OnApplicationBootstrap {
                   pieces: split?.pieces ?? null,
                   unitsPerBox: product.unitsPerBox,
                 });
-                await tx.orderItem.update({
-                  where: { id: item.id },
-                  data: {
-                    productId: item.substituteProductId,
-                    unitPrice,
-                    qty: qtyVal,
-                    // Always set the split explicitly — a loose substitute must not
-                    // keep the replaced product's boxes/pieces.
-                    boxes: split?.boxes ?? null,
-                    pieces: split?.pieces ?? null,
-                    // Re-snapshot the substitute's box size on box-split lines.
-                    unitsPerBox: split ? upb : null,
-                    // The product changed — a BOGO discount computed for the REPLACED
-                    // product doesn't carry to a different one (this branch never
-                    // re-runs applyBestPromotion; B13 non-staff-price posture above).
-                    promoFreeUnits: null,
-                    subtotal,
-                    status: "PENDING",
-                    notes: item.notes,
-                    priceType,
-                    originalPrice,
-                    overrideReason: isOverridden ? (item.overrideReason ?? null) : null,
-                    overriddenBy: isOverridden ? (user?.sub ?? null) : null,
-                    // The product changed — re-snapshot the substitute's category so
-                    // it doesn't keep the replaced product's (spec §7).
-                    trackedCategoryId: product.trackedCategoryId ?? null,
-                    // RF-3: re-snapshot the reporting subcategory alongside the category.
-                    trackedSubcategoryId: product.trackedSubcategoryId ?? null,
-                    // B297 (SA-098a): the product changed — re-stamp the trio from the
-                    // NEW product's live category, same substance as updateUnitLine's
-                    // isSubstitute:true arm.
-                    ...categoryTaxSnapshotOf(
-                      product.trackedCategoryId
-                        ? (substituteCategoryMap.get(product.trackedCategoryId) ?? null)
-                        : null,
-                    ),
-                  },
+                // #2577: scoped to THIS order ({ id, orderId }) — a foreign line id is a 404.
+                await writeLineUpdate(tx, orderId, item.id, {
+                  productId: item.substituteProductId,
+                  unitPrice,
+                  qty: qtyVal,
+                  // Always set the split explicitly — a loose substitute must not
+                  // keep the replaced product's boxes/pieces.
+                  boxes: split?.boxes ?? null,
+                  pieces: split?.pieces ?? null,
+                  // Re-snapshot the substitute's box size on box-split lines.
+                  unitsPerBox: split ? upb : null,
+                  // The product changed — a BOGO discount computed for the REPLACED
+                  // product doesn't carry to a different one (this branch never
+                  // re-runs applyBestPromotion; B13 non-staff-price posture above).
+                  promoFreeUnits: null,
+                  subtotal,
+                  status: "PENDING",
+                  notes: item.notes,
+                  priceType,
+                  originalPrice,
+                  overrideReason: isOverridden ? (item.overrideReason ?? null) : null,
+                  overriddenBy: isOverridden ? (user?.sub ?? null) : null,
+                  // The product changed — re-snapshot the substitute's category so
+                  // it doesn't keep the replaced product's (spec §7).
+                  trackedCategoryId: product.trackedCategoryId ?? null,
+                  // RF-3: re-snapshot the reporting subcategory alongside the category.
+                  trackedSubcategoryId: product.trackedSubcategoryId ?? null,
+                  // B297 (SA-098a): the product changed — re-stamp the trio from the
+                  // NEW product's live category, same substance as updateUnitLine's
+                  // isSubstitute:true arm.
+                  ...categoryTaxSnapshotOf(
+                    product.trackedCategoryId
+                      ? (substituteCategoryMap.get(product.trackedCategoryId) ?? null)
+                      : null,
+                  ),
                 });
               } else if (
                 item.qty !== undefined ||

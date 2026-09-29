@@ -26,6 +26,12 @@
 //   2. --guard-sha is a git ancestor of this checkout's HEAD (the fix that stops new 0-rate lines);
 //   3. the DB fingerprint (database, tenant ids) still matches the dry run;
 //   4. a LIVE (non-test) tenant needs --live-tenant-override plus the literal type-back phrase;
+//   4b. #2639 / SA-547: a PROTECTED tenant (paying, or its subscription linked to Stripe) is HELD at
+//      the dry run (PAYING-HELD, never planned) unless --allow-paying-tenant; the apply RE-DERIVES
+//      protection in its transaction and needs --allow-paying-tenant plus
+//      --confirm-paying "APPLY TO PAYING <slug,slug,...>" (sorted) for any protected tenant it
+//      writes, and refuses the whole apply if a tenant turned protected since the dry run. The
+//      plan file and the logs carry tenant IDS and counts only — never slugs;
 //   5. --i-have-a-fresh-backup, always;
 //   6. every planned invoice is RE-READ: subtotal, taxAmount, updatedAt, its line ids, and every
 //      line still at 0 — any change refuses the whole apply.
@@ -36,8 +42,15 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import pg from "pg";
-import { inferredFlatRate } from "@routeflow/pricing";
+import {
+  NSF_FEE_DESCRIPTION_PREFIX,
+  NSF_FEE_SYSTEM_KIND,
+  NSF_HAS_TRANSITION_LEG,
+  inferredGoodsFlatRate,
+  isNsfLine,
+} from "@routeflow/pricing";
 import { isTestTenant } from "../../../scripts/lib/test-tenants.cjs";
+import payingTenant from "./lib/paying-tenant.cjs";
 import { isLocalDbTarget } from "./lib/local-db-target.cjs";
 import { requireLocalPgConfig } from "./lib/local-pg-config.mjs";
 import { redactUrl, resolveDatabaseUrl } from "./lib/railway-db-url.mjs";
@@ -57,14 +70,39 @@ const argOf = (name) => {
 const sha256 = (obj) => createHash("sha256").update(JSON.stringify(obj)).digest("hex");
 const refuse = (msg) => Object.assign(new Error(msg), { refuse: true });
 
+/**
+ * #2392 / SA-478: the SQL twin of @routeflow/pricing isNsfLine — "this InvoiceItem is NOT the NSF
+ * fee line", with the same transition flag. `starts_with` on COALESCE(description, ''): a bare
+ * NULL description would make `NOT (… AND NULL)` NULL and silently skip an ordinary line.
+ */
+export function notNsfSql(firstParam) {
+  const kind = `$${firstParam}`;
+  if (!NSF_HAS_TRANSITION_LEG) {
+    return { sql: `"systemKind" IS DISTINCT FROM ${kind}`, params: [NSF_FEE_SYSTEM_KIND] };
+  }
+  const prefix = `$${firstParam + 1}`;
+  return {
+    sql: `("systemKind" IS DISTINCT FROM ${kind} AND NOT ("systemKind" IS NULL AND starts_with(COALESCE(description, ''), ${prefix})))`,
+    params: [NSF_FEE_SYSTEM_KIND, NSF_FEE_DESCRIPTION_PREFIX],
+  };
+}
+
 /** Pure: one invoice → APPLY / REVIEW / null (skipped). */
 export function classifyInvoice(invoice, lines, fixDate = FIX_DATE) {
-  const inferred = inferredFlatRate({
+  // #2392 / SA-478: the NSF bounce-fee line is never taxed — excluded from the inference, both its
+  // line and its money. #2656: that goods-only rule (rounded) is the ONE shared helper.
+  const inferred = inferredGoodsFlatRate({
     subtotal: invoice.subtotal,
     taxAmount: invoice.taxAmount,
     lines,
   });
   if (!inferred) return null;
+  // #2656 / SA-549: an NSF line ALREADY carrying a rate means the header tax includes tax on the fee,
+  // so the goods-only rate is inflated. Never APPLY it (the apply's re-read gate would refuse the whole
+  // tx on that line anyway) — a human looks.
+  if (lines.some((l) => isNsfLine(l) && Number(l.taxRate ?? 0) > 0)) {
+    return { kind: "REVIEW", rate: inferred.rate, reason: "NSF line already taxed" };
+  }
   if (!inferred.verified) {
     return {
       kind: "REVIEW",
@@ -82,6 +120,105 @@ export function classifyInvoice(invoice, lines, fixDate = FIX_DATE) {
   return { kind: "APPLY", rate: inferred.rate };
 }
 
+const { protectedArm } = payingTenant;
+
+/** #2639: each tenant's protection inputs (same client as the backfill; read in its transaction). */
+const PROTECTION_SQL = `
+  SELECT t.id, t.slug, t.status, t.class, t."deletedAt", s."planKey", s."stripeSubId"
+  FROM "Tenant" t LEFT JOIN "TenantSubscription" s ON s."tenantId" = t.id
+  WHERE t.id = ANY($1::text[])`;
+
+/** Pure (#2639): rows from PROTECTION_SQL → Map<tenantId, "paying" | "stripe-linked"> (protected only). */
+export function protectedTenants(rows) {
+  const out = new Map();
+  for (const r of rows) {
+    const arm = protectedArm(
+      { status: r.status, class: r.class, deletedAt: r.deletedAt },
+      { planKey: r.planKey, stripeSubId: r.stripeSubId },
+    );
+    if (arm) out.set(r.id, arm);
+  }
+  return out;
+}
+
+/**
+ * Pure (#2639 / SA-547, dry run): a protected tenant's candidates are HELD (never planned) unless the
+ * operator passed --allow-paying-tenant. Returns the plan's apply list, the held list and the protected
+ * tenant ids the plan ADMITS (only with the flag) — ids, never slugs.
+ */
+export function splitProtected(candidates, protectedById, allowPayingTenant) {
+  const apply = [];
+  const held = [];
+  for (const c of candidates) {
+    if (!protectedById.has(c.tenantId)) apply.push(c);
+    else if (allowPayingTenant) apply.push(c);
+    else
+      held.push({
+        invoiceId: c.invoiceId,
+        tenantId: c.tenantId,
+        arm: protectedById.get(c.tenantId),
+      });
+  }
+  const admitted = allowPayingTenant
+    ? [...new Set(apply.filter((c) => protectedById.has(c.tenantId)).map((c) => c.tenantId))].sort()
+    : [];
+  return { apply, held, admittedProtectedTenantIds: admitted };
+}
+
+/**
+ * Pure (#2639 / SA-547, apply): the apply NEVER trusts the plan. `nowProtected` is re-derived in the
+ * apply transaction for the plan's tenants (Map id → { arm, slug }). A tenant protected NOW that the
+ * plan did not admit (it turned protected since the dry run) refuses the WHOLE apply. Any protected
+ * tenant being written needs --allow-paying-tenant AND the typed phrase over the sorted slugs. The
+ * refusal text names tenant IDS only; the slugs live only in what the operator types.
+ */
+export function payingGate({
+  admittedProtectedTenantIds,
+  nowProtected,
+  allowPayingTenant,
+  confirmPaying,
+}) {
+  const admitted = new Set(admittedProtectedTenantIds ?? []);
+  const turned = [...nowProtected.keys()].filter((id) => !admitted.has(id)).sort();
+  if (turned.length)
+    return {
+      ok: false,
+      reason: `tenant(s) ${turned.join(", ")} became protected (paying / Stripe-linked) since the dry run — re-run the dry run`,
+    };
+  if (nowProtected.size === 0) return { ok: true };
+  const ids = [...nowProtected.keys()].sort();
+  const phrase = `APPLY TO PAYING ${[...nowProtected.values()]
+    .map((v) => v.slug)
+    .sort()
+    .join(",")}`;
+  if (!allowPayingTenant || confirmPaying !== phrase)
+    return {
+      ok: false,
+      reason:
+        `${ids.length} protected tenant(s) in this plan (${ids.join(", ")}): pass --allow-paying-tenant ` +
+        `--confirm-paying "APPLY TO PAYING <their slugs, sorted, comma-joined>"`,
+    };
+  return { ok: true };
+}
+
+/**
+ * Pure (#2639, lead's Opus HIGH-1): THE plan-file shape, written by the dry run and verified by the
+ * apply. The hash covers the plan BODY only; `planHash`, `review` and `held` ride along unhashed. One
+ * pair of functions on both sides, so the dry run and the apply can never disagree on what is hashed
+ * (a `held` key hashed out but not stripped back made every --apply refuse).
+ */
+const UNHASHED_PLAN_KEYS = ["planHash", "review", "held"];
+export function planFileOf(plan, review, held) {
+  return { ...plan, planHash: sha256(plan), review, held };
+}
+/** The plan body when `saved` is intact and `confirmPlan` is its hash; null otherwise. */
+export function verifyPlanFile(saved, confirmPlan) {
+  const plan = Object.fromEntries(
+    Object.entries(saved).filter(([k]) => !UNHASHED_PLAN_KEYS.includes(k)),
+  );
+  return sha256(plan) === confirmPlan && saved.planHash === confirmPlan ? plan : null;
+}
+
 const DERIVED_INVOICES_SQL = `
   SELECT i.id, i."tenantId", i.subtotal, i."taxAmount", i."createdAt", i."updatedAt"
   FROM "Invoice" i
@@ -90,7 +227,7 @@ const DERIVED_INVOICES_SQL = `
          OR EXISTS (SELECT 1 FROM "Estimate" e WHERE e."invoiceId" = i.id))
   ORDER BY i.id`;
 const LINES_SQL = `
-  SELECT id, "invoiceId", "taxRate", "categoryTaxAmount"
+  SELECT id, "invoiceId", "taxRate", "categoryTaxAmount", subtotal, "systemKind", description
   FROM "InvoiceItem" WHERE "invoiceId" = ANY($1::text[]) ORDER BY id`;
 
 async function resolveTarget() {
@@ -132,11 +269,15 @@ async function dryRun() {
     const lines = invoices.length
       ? (await client.query(LINES_SQL, [invoices.map((i) => i.id)])).rows
       : [];
+    const scopeTenantIds = [...new Set(invoices.map((i) => i.tenantId))];
+    const protectedById = protectedTenants(
+      scopeTenantIds.length ? (await client.query(PROTECTION_SQL, [scopeTenantIds])).rows : [],
+    );
     await client.query("ROLLBACK");
 
     const linesBy = new Map();
     for (const l of lines) linesBy.set(l.invoiceId, [...(linesBy.get(l.invoiceId) ?? []), l]);
-    const apply = [];
+    const candidates = [];
     const review = [];
     for (const inv of invoices) {
       const own = linesBy.get(inv.id) ?? [];
@@ -146,7 +287,7 @@ async function dryRun() {
         review.push({ invoiceId: inv.id, rate: c.rate, reason: c.reason });
         continue;
       }
-      apply.push({
+      candidates.push({
         invoiceId: inv.id,
         tenantId: inv.tenantId,
         rate: c.rate,
@@ -159,12 +300,26 @@ async function dryRun() {
       });
     }
 
-    const plan = { generatedAt: new Date().toISOString(), fingerprint: fp, apply };
-    const hash = sha256(plan);
+    // #2639 / SA-547: a protected tenant is HELD unless --allow-paying-tenant (ids + counts only).
+    const allowPayingTenant = process.argv.includes("--allow-paying-tenant");
+    const { apply, held, admittedProtectedTenantIds } = splitProtected(
+      candidates,
+      protectedById,
+      allowPayingTenant,
+    );
+    const plan = {
+      generatedAt: new Date().toISOString(),
+      fingerprint: fp,
+      allowPayingTenant,
+      admittedProtectedTenantIds,
+      apply,
+    };
+    const planFile = planFileOf(plan, review, held);
+    const hash = planFile.planHash;
     const dir = resolve(REPO_ROOT, "local-assets/handoff", new Date().toISOString().slice(0, 10));
     mkdirSync(dir, { recursive: true });
     const file = resolve(dir, `b294-plan-${Date.now()}.json`);
-    writeFileSync(file, JSON.stringify({ ...plan, planHash: hash, review }, null, 2));
+    writeFileSync(file, JSON.stringify(planFile, null, 2));
 
     console.log(`\n${TAG}: ${invoices.length} derived invoice(s) scanned`);
     console.log(
@@ -172,6 +327,12 @@ async function dryRun() {
     );
     console.log(
       `  REVIEW: ${review.length} invoice(s) (listed in the plan file; nothing is written for them)`,
+    );
+    console.log(
+      `  PAYING-HELD: ${held.length} invoice(s) across ${new Set(held.map((h) => h.tenantId)).size} protected tenant(s)` +
+        (admittedProtectedTenantIds.length
+          ? `; ${admittedProtectedTenantIds.length} protected tenant(s) ADMITTED (--allow-paying-tenant)`
+          : " (pass --allow-paying-tenant to plan them; ids are in the plan file)"),
     );
     console.log(`\nplan: ${file}\nplan hash: ${hash}`);
     if (apply.length > 0) {
@@ -211,8 +372,8 @@ async function apply() {
     return 1;
   }
   const saved = JSON.parse(readFileSync(planFile, "utf8"));
-  const { planHash, review: _review, ...plan } = saved;
-  if (sha256(plan) !== confirmPlan || planHash !== confirmPlan) {
+  const plan = verifyPlanFile(saved, confirmPlan);
+  if (!plan) {
     console.error(`${TAG}: --confirm-plan does not match the plan file's own hash -- refusing`);
     return 1;
   }
@@ -237,6 +398,21 @@ async function apply() {
       tenantIds,
     ]);
     const slugById = new Map(slugs.rows.map((t) => [t.id, t.slug]));
+    // #2639 / SA-547: protection is RE-DERIVED here, in the apply transaction — the plan is never trusted.
+    const protRows = tenantIds.length
+      ? (await client.query(`${PROTECTION_SQL} FOR SHARE OF t`, [tenantIds])).rows
+      : [];
+    const nowArm = protectedTenants(protRows);
+    const nowProtected = new Map(
+      [...nowArm.entries()].map(([id, arm]) => [id, { arm, slug: slugById.get(id) }]),
+    );
+    const gate = payingGate({
+      admittedProtectedTenantIds: plan.admittedProtectedTenantIds,
+      nowProtected,
+      allowPayingTenant: process.argv.includes("--allow-paying-tenant"),
+      confirmPaying: argOf("--confirm-paying"),
+    });
+    if (!gate.ok) throw refuse(gate.reason);
     const live = tenantIds.filter((id) => !isTestTenant(slugById.get(id)));
     if (live.length > 0) {
       const phrase = `APPLY ${plan.apply.length} INVOICES`;
@@ -269,9 +445,11 @@ async function apply() {
         JSON.stringify(lines.map((l) => l.id)) !== JSON.stringify(a.expected.lineIds) ||
         lines.some((l) => Number(l.taxRate) !== 0);
       if (changed) throw refuse(`invoice ${a.invoiceId} has changed since the dry run`);
+      // #2392: never stamp a rate onto the NSF fee line.
+      const notNsf = notNsfSql(3);
       const res = await client.query(
-        'UPDATE "InvoiceItem" SET "taxRate" = $1 WHERE "invoiceId" = $2 AND "taxRate" = 0',
-        [a.rate, a.invoiceId],
+        `UPDATE "InvoiceItem" SET "taxRate" = $1 WHERE "invoiceId" = $2 AND "taxRate" = 0 AND ${notNsf.sql}`,
+        [a.rate, a.invoiceId, ...notNsf.params],
       );
       stamped += res.rowCount;
     }
@@ -321,6 +499,55 @@ function selfTest() {
       null,
     ],
     ["skipped: no tax", { subtotal: 100, taxAmount: 0, createdAt: before }, zero, null],
+    // #2392: $125 = $100 goods + a $25 NSF fee; $7.50 tax is 7.5% of the goods — never 0.06.
+    [
+      "APPLY #2392: a stamped NSF line is out of the inference (7.5% on goods, not 0.06)",
+      { subtotal: 125, taxAmount: 7.5, createdAt: before },
+      [
+        { taxRate: 0, subtotal: 100, systemKind: null, description: "Cola 12pk" },
+        {
+          taxRate: 0,
+          subtotal: 25,
+          systemKind: "NSF_FEE",
+          description: `${NSF_FEE_DESCRIPTION_PREFIX} #9`,
+        },
+      ],
+      "APPLY",
+      0.075,
+    ],
+    [
+      "APPLY #2392: a pre-backfill NSF line (prefix only) is out of the inference too",
+      { subtotal: 125, taxAmount: 7.5, createdAt: before },
+      [
+        { taxRate: 0, subtotal: 100, systemKind: null, description: "Cola 12pk" },
+        {
+          taxRate: 0,
+          subtotal: 25,
+          systemKind: null,
+          description: `${NSF_FEE_DESCRIPTION_PREFIX} #9`,
+        },
+      ],
+      "APPLY",
+      0.075,
+    ],
+    // #2656 / SA-549: goods at 0 but the NSF line ALREADY taxed (7.5% on the $25 fee, $1.88) —
+    // the header tax is inflated to $9.38, which a goods-only inference reads as 0.0938. Never APPLY
+    // (the apply's re-read gate would refuse the whole tx on the rated NSF line anyway): REVIEW.
+    [
+      "REVIEW #2656: goods at 0 + an NSF line already taxed is never planned as APPLY",
+      { subtotal: 125, taxAmount: 9.38, createdAt: before },
+      [
+        { taxRate: 0, subtotal: 100, systemKind: null, description: "Cola 12pk" },
+        {
+          taxRate: 0.075,
+          subtotal: 25,
+          systemKind: "NSF_FEE",
+          description: `${NSF_FEE_DESCRIPTION_PREFIX} #9`,
+        },
+      ],
+      "REVIEW",
+      0.0938,
+    ],
     [
       "skipped: only category tax",
       { subtotal: 100, taxAmount: 5, createdAt: before },

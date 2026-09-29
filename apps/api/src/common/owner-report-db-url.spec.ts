@@ -51,7 +51,6 @@ const ALLOWED: Record<string, string> = {
   "backfill-b294-order-line-taxrate.mjs": "--local mode only (writer: requireProxy otherwise)",
   // The drift gate and the production guard deliberately read the raw variable.
   "schema-drift.mjs": "drift gate (railway-db-url.mjs: read-only drift check)",
-  "lib/production-guard.js": "the guard that inspects DATABASE_URL itself",
   // Writers, destructive/QA and admin scripts: out of B768's scope (a separate decision). Listed so
   // any change to them is deliberate. propose-pack-sizes.mjs reports by default but WRITES
   // unitsPerBox under --execute, so it is a writer.
@@ -66,7 +65,6 @@ const ALLOWED: Record<string, string> = {
   "create-super-admin.js": "writer",
   "fix-legacy-business-name.js": "writer",
   "fix-order-number-duplicates.js": "writer",
-  "import-zoho.js": "writer",
   "invalidate-tenant-pdf-cache.js": "writer",
   "link-google.js": "writer",
   "merge-duplicate-products.js": "destructive",
@@ -88,7 +86,6 @@ const ALLOWED: Record<string, string> = {
   "tidy-regulated-categories.mjs": "writer",
   "ux-audit-cleanup.js": "destructive",
   "ux-audit-seed.js": "QA seed",
-  "wipe-tenant-fresh-start.js": "destructive",
   // Aliased or indirect readers, found once the scan matched the bare name.
   // The resolver itself, and the one writer that hands its requireProxy result to Prisma.
   "lib/railway-db-url.mjs": "the resolver: the fallback it implements",
