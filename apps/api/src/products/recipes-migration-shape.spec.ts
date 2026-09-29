@@ -73,4 +73,17 @@ describe("recipes migration shape (#2717 M2, test 27)", () => {
   it("bounds lock waits with SET LOCAL lock_timeout", () => {
     expect(sql).toMatch(/^SET LOCAL lock_timeout = '\d+s';/m);
   });
+
+  it("runs in one transaction: BEGIN, then SET LOCAL, then the DDL, then COMMIT", () => {
+    const stmts = sql
+      .split(";")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+      .map((s) => `${s};`);
+    expect(stmts[0]).toBe("BEGIN;");
+    expect(stmts[stmts.length - 1]).toBe("COMMIT;");
+    expect(stmts[1]).toBe("SET LOCAL lock_timeout = '5s';");
+    const firstCreate = stmts.findIndex((s) => /^CREATE\b/i.test(s));
+    expect(firstCreate).toBeGreaterThan(1);
+  });
 });
