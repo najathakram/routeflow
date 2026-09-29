@@ -3,7 +3,12 @@
 import * as React from "react";
 import { Package } from "lucide-react";
 import { Badge, cn, type BadgeStatus } from "@routeflow/ui/web";
-import { computeLineSubtotal, formatQtySplit } from "@routeflow/pricing";
+import {
+  computeLineSubtotal,
+  formatQtySplit,
+  invoiceLineQtyText,
+  normalizeBoxesPieces,
+} from "@routeflow/pricing";
 import { formatMoney } from "@/lib/format";
 import { objectPositionForUrl } from "@/lib/image-focal";
 import { splitProductName } from "@/lib/product-display";
@@ -116,7 +121,21 @@ export function LineItemRowReadOnly({
       ? // A stored boxes/pieces split but no known pack size: keep the split the operator entered
         // (priced per piece by `computeLineSubtotal`, so the price reads per unit).
         `${formatQtySplit({ qty, boxes, pieces, unitLabel, boxLabel })} × ${formatMoney(unitPrice)}`
-      : `${formatQtySplit({ qty })} × ${formatMoney(unitPrice)}`;
+      : // #2049: a factor-1 units_v1 line (no split) still carries its own selling-unit name — the
+        // caller maps the stored `li.unitLabel` into THIS component's `boxLabel` prop (same as the
+        // boxed branch above uses), never its `unitLabel` prop (a different, loose-pieces label).
+        // invoiceLineQtyText falls back to formatQtySplit(qty) byte-identical when it's empty.
+        `${invoiceLineQtyText({ qty, unitLabel: boxLabel })} × ${formatMoney(unitPrice)}`;
+  // `qty` and `deliveredQty` are both PIECES; a boxed line shows its quantity as boxes + pieces, so
+  // progress must read in the same units ("0 of 2 boxes + 3 pcs", never "0 of 51").
+  const progressText = (n: number) =>
+    boxed
+      ? formatQtySplit({
+          ...normalizeBoxesPieces({ qty: n, unitsPerBox }),
+          unitLabel,
+          boxLabel,
+        })
+      : formatQtySplit({ qty: n });
   const delivered = deliveredQty == null ? null : Number(deliveredQty);
   const priceTag = linePriceTag({ priceType, originalPrice, unitPrice });
   const freeCount = Math.max(0, Math.trunc(Number(freeUnits ?? 0) || 0));
@@ -200,9 +219,9 @@ export function LineItemRowReadOnly({
         {freeCount > 0 && (
           <p className="text-[10px] font-medium text-amber-700">{freeCount} free</p>
         )}
-        {showDeliveryProgress && delivered != null && delivered < qty && (
+        {showDeliveryProgress && !cancelled && delivered != null && delivered < qty && (
           <p className="text-xs text-navy/70">
-            {formatQtySplit({ qty: delivered })} of {formatQtySplit({ qty })} delivered
+            {progressText(delivered)} of {progressText(qty)} delivered
           </p>
         )}
         {note?.trim() && (

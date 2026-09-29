@@ -1,5 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
-import { classifyEditPayload } from "./order-edit-payload";
+import { assertBuyerDiffShape, classifyEditPayload } from "./order-edit-payload";
 import type { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 
 describe("classifyEditPayload (A4/B13 payload classification)", () => {
@@ -20,11 +20,18 @@ describe("classifyEditPayload (A4/B13 payload classification)", () => {
     expect(classifyEditPayload(order, dto, { role: "OPERATOR" })).toBe(true);
   });
 
-  it("a CUSTOMER diff payload is refused outright, before any mutation", () => {
+  it("a CUSTOMER diff payload is classified, not refused here: the 400 is assertBuyerDiffShape's, after the unit guard (SA-507a)", async () => {
     const dto = { replaceAll: false, items: [{ id: "li-1", qty: 3 }] } as UpdateOrderItemsDto;
-    expect(() => classifyEditPayload(order, dto, { role: "CUSTOMER" })).toThrow(
-      BadRequestException,
-    );
+    expect(classifyEditPayload(order, dto, { role: "CUSTOMER" })).toBe(true);
+    await expect(
+      assertBuyerDiffShape(
+        { customerId: "c1", ...order } as any,
+        dto,
+        { role: "CUSTOMER" },
+        true,
+        async () => ({ id: "c1" }),
+      ),
+    ).rejects.toThrow(BadRequestException);
   });
 
   it("a DRIVER diff payload strips unitPrice/overrideReason from catalog-linked entries only", () => {

@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { SelectablePaymentMethod } from "../payment-methods";
+import { shouldRetryCustomerPrices } from "../query-retry-policy";
 import type { CustomerComment, CustomerDocument } from "@routeflow/types";
 export type { CustomerComment, CustomerDocument } from "@routeflow/types";
 
@@ -233,6 +234,7 @@ export function useCustomerPrices(id: string) {
     queryFn: () => apiClient.get(`/customers/${id}/prices`).then((r) => r.data),
     enabled: !!id,
     staleTime: 2 * 60_000,
+    retry: shouldRetryCustomerPrices,
   });
 }
 

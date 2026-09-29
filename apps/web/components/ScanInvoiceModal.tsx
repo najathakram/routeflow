@@ -40,6 +40,7 @@ import {
   useReceiveVendorBill,
   useSaveProductMapping,
   getDuplicateVendorBillError,
+  getPackSizeUnknownError,
   type CreateVendorBillItem,
   type DuplicateVendorBillInfo,
   type PriorScanSummary,
@@ -1341,12 +1342,23 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                     : "Vendor bill received",
             );
           } catch (receiveErr: unknown) {
-            // Bill was created but receive failed — surface the issue but don't lose the bill
-            const rmsg =
-              (receiveErr as { response?: { data?: { message?: string } } })?.response?.data
-                ?.message ??
-              "created in Draft (could not auto-receive — open the bill and click Receive to update stock)";
-            notes.push(`Vendor bill ${rmsg}`);
+            // B743: NEVER auto-acknowledge a missing case size (acknowledgeUnlinked above is a
+            // different, up-front confirmation). The bill stays in Draft, and its own page asks
+            // the operator to fix the case sizes or knowingly receive as loose pieces.
+            const packUnknown = getPackSizeUnknownError(receiveErr);
+            if (packUnknown) {
+              const n = packUnknown.packSizeUnknownItems.length;
+              notes.push(
+                `Vendor bill created in Draft — ${n} line${n === 1 ? "" : "s"} don't state units per case. Open the bill to set case sizes (or receive them as loose pieces) before stock updates.`,
+              );
+            } else {
+              // Bill was created but receive failed — surface the issue but don't lose the bill
+              const rmsg =
+                (receiveErr as { response?: { data?: { message?: string } } })?.response?.data
+                  ?.message ??
+                "created in Draft (could not auto-receive — open the bill and click Receive to update stock)";
+              notes.push(`Vendor bill ${rmsg}`);
+            }
           }
         } else {
           notes.push("Vendor bill created");

@@ -1180,14 +1180,14 @@ export default function AnalyticsPage() {
       <PageHeader
         title="Analytics"
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <Calendar className="h-4 w-4 text-navy/70 flex-shrink-0" />
             <input
               type="date"
               value={fromInput}
               max={toInput}
               onChange={(e) => setFromInput(e.target.value)}
-              className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
               title="From date"
             />
             <span className="text-navy/70 text-sm">–</span>
@@ -1196,7 +1196,7 @@ export default function AnalyticsPage() {
               value={toInput}
               min={fromInput}
               onChange={(e) => setToInput(e.target.value)}
-              className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
               title="To date"
             />
             <Button variant="primary" size="sm" onClick={handleApply}>

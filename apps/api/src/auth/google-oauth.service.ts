@@ -19,6 +19,7 @@ import type { JwtPayload } from "./jwt-payload.interface";
 import type { BuyerJwtPayload } from "../buyer/interfaces/buyer-jwt-payload.interface";
 import { EntitlementsService } from "../billing/entitlements.service";
 import type { DeviceInfo } from "./auth.service";
+import { escapeHtml } from "../common/html-escape";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -40,6 +41,18 @@ interface OAuthState {
    * builds don't send it.
    */
   deviceState?: string;
+  /**
+   * B825: the browser origin the callback should redirect back to for a
+   * BROWSER-based flow (never the native `mobile` deep-link flow above) —
+   * the Expo mobile-web build's own origin, so a driver signing in from
+   * there returns to it instead of always landing on the Next web app.
+   * Already validated against the exact allow-list (AuthController's
+   * `resolveReturnOrigin`) at mint time, in `generateAuthUrl` — the HMAC over
+   * this whole payload (B349) makes it tamper-proof from here on, so nothing
+   * downstream needs to re-derive or re-check it against the allow-list;
+   * only the callback's PRE-signature-check peek does (untrusted input).
+   */
+  returnOrigin?: string;
 }
 
 export interface GoogleProfile {
@@ -57,6 +70,8 @@ export interface GoogleProfile {
   mobile?: boolean;
   /** F12-005: device-generated state nonce to echo back in the mobile deep link. */
   deviceState?: string;
+  /** B825: already-validated browser origin for a non-`mobile` (browser) flow. */
+  returnOrigin?: string;
 }
 
 interface TokenPair {
@@ -236,6 +251,9 @@ export class GoogleOAuthService {
     context?: "portal" | "staff" | "buyer-standalone",
     mobile?: boolean,
     deviceState?: string,
+    // B825: already validated by the caller (AuthController.resolveReturnOrigin)
+    // against the exact WEB_URL/MOBILE_WEB_URL allow-list — never re-derived here.
+    returnOrigin?: string,
   ): Promise<string> {
     const nonce = crypto.randomUUID();
     const stateObj: OAuthState = {
@@ -247,6 +265,7 @@ export class GoogleOAuthService {
       ...(mobile && { mobile: true }),
       // F12-005: carry the device state nonce through Google (opaque round-trip).
       ...(deviceState && { deviceState }),
+      ...(returnOrigin && { returnOrigin }),
     };
     const payloadJson = JSON.stringify(stateObj);
     const state = this.signState(payloadJson);
@@ -330,7 +349,7 @@ export class GoogleOAuthService {
         .send({
           to: user.email,
           subject: "Google Sign-In linked to your RouteFlow account",
-          html: `<p>Your Google account (<strong>${email}</strong>) has been linked to your RouteFlow account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
+          html: `<p>Your Google account (<strong>${escapeHtml(email)}</strong>) has been linked to your RouteFlow account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
           // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
           senderClass: "platform",
         })
@@ -430,6 +449,7 @@ export class GoogleOAuthService {
       linkUserId: stateObj.linkUserId,
       mobile: stateObj.mobile,
       deviceState: stateObj.deviceState,
+      returnOrigin: stateObj.returnOrigin,
     };
   }
 
@@ -657,7 +677,7 @@ export class GoogleOAuthService {
           .send({
             to: buyer.email,
             subject: "Google Sign-In linked to your RouteFlow account",
-            html: `<p>Your Google account (<strong>${profile.email}</strong>) has been linked to your RouteFlow portal account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
+            html: `<p>Your Google account (<strong>${escapeHtml(profile.email)}</strong>) has been linked to your RouteFlow portal account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
             // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
             senderClass: "platform",
           })
@@ -717,9 +737,10 @@ export class GoogleOAuthService {
       );
     }
 
-    // REG-B141: this count decides the mobile Google-login branch (sellerCount === 0 shows the
-    // "not connected to any supplier" message), so it must use the SAME definition of a usable
-    // seller as BuyerService.getSellers — a link whose customer was removed is not one.
+    // REG-B141: the count of USABLE sellers the Google callback hands the client (web reads it
+    // from the redirect). It must use the SAME definition as BuyerService.getSellers' ACTIVE
+    // links — a link whose customer was removed is not one. Mobile no longer branches on it
+    // (#2546): it reads GET /buyer/sellers itself so a pending-only buyer lands on its seller list.
     const sellerCount = await this.prisma.customerLink.count({
       where: { buyerAccountId: buyer.id, status: "ACTIVE", customer: { deletedAt: null } },
     });
@@ -783,6 +804,13 @@ export class GoogleOAuthService {
     tenantSlug: string | null,
     deviceInfo?: DeviceInfo,
   ): Promise<TokenPair> {
+    // #2159 S1: a Google sign-in is an interactive sign-in too — stamp lastLoginAt exactly as
+    // AuthService.login() does (best-effort; a failed stamp never blocks the sign-in).
+    try {
+      await this.prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+    } catch (err) {
+      this.logger.warn(`lastLoginAt stamp failed for user ${user.id}: ${(err as Error).message}`);
+    }
     const jwtConfig = this.configService.get<{
       secret: string;
       refreshSecret: string;
@@ -798,6 +826,9 @@ export class GoogleOAuthService {
       tenantId: user.tenantId ?? null,
       tenantSlug: tenantSlug ?? null,
       hasPassword: !!user.password,
+      // #1534: the same capability claim password login and refresh mint (auth.service) — the
+      // staff socket re-check compares it with the user row.
+      canActAsDriver: user.canActAsDriver ?? false,
     };
     // Plans & Billing: embed the entitlement snapshot for Google-login users too.
     const claims = await this.entitlements.claimsFor(payload.tenantId);

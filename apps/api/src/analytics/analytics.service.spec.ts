@@ -5,6 +5,8 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AddonService } from "../billing/addon.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { ProductInsightsService } from "../sales-facts/product-insights.service";
+import { SalesFactsService } from "../sales-facts/sales-facts.service";
 
 const D = (n: number | string) => new Prisma.Decimal(n);
 
@@ -22,6 +24,10 @@ describe("AnalyticsService — invoiced-sales readers", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AnalyticsService,
+        // #2118: getProductSales/getProductDemand delegate into the sales-facts layer — the
+        // REAL services over the same mocked Prisma, so every pin below still exercises them.
+        ProductInsightsService,
+        SalesFactsService,
         { provide: PrismaService, useValue: prisma },
         { provide: AddonService, useValue: addonService },
         { provide: SystemConfigService, useValue: systemConfig },
@@ -64,8 +70,8 @@ describe("AnalyticsService — invoiced-sales readers", () => {
       // avgCostAfter snapshots: 2.00 until June 10, then 3.00 — the two
       // invoices straddle the change and must be costed differently.
       prisma.stockMovement.findMany.mockResolvedValue([
-        { productId: "p1", createdAt: new Date("2026-06-01"), avgCostAfter: D(2) },
-        { productId: "p1", createdAt: new Date("2026-06-10"), avgCostAfter: D(3) },
+        { productId: "p1", effectiveAt: new Date("2026-06-01"), avgCostAfter: D(2) },
+        { productId: "p1", effectiveAt: new Date("2026-06-10"), avgCostAfter: D(3) },
       ]);
 
       const result = await service.getGrossMarginTrend();
@@ -147,7 +153,7 @@ describe("AnalyticsService — invoiced-sales readers", () => {
       expect(movementArgs.where).toEqual({
         productId: { in: ["p1"] },
         avgCostAfter: { not: null },
-        createdAt: { lte: expect.any(Date) },
+        effectiveAt: { lte: expect.any(Date) },
       });
     });
   });
@@ -342,7 +348,7 @@ describe("AnalyticsService — invoiced-sales readers", () => {
       ]);
       prisma.stockMovement.findMany
         .mockResolvedValueOnce([]) // nothing since the cutoff
-        .mockResolvedValueOnce([{ productId: "p1", createdAt: daysAgo(40) }]);
+        .mockResolvedValueOnce([{ productId: "p1", effectiveAt: daysAgo(40) }]);
 
       const res = await service.getDeadStock(30);
 
@@ -357,9 +363,9 @@ describe("AnalyticsService — invoiced-sales readers", () => {
 
       await service.getDeadStock(30);
 
-      const { createdAt } = prisma.stockMovement.findMany.mock.calls[0][0].where;
-      expect(createdAt.gte).toEqual(expect.any(Date));
-      expect(createdAt.lte).toBeUndefined();
+      const { effectiveAt } = prisma.stockMovement.findMany.mock.calls[0][0].where;
+      expect(effectiveAt.gte).toEqual(expect.any(Date));
+      expect(effectiveAt.lte).toBeUndefined();
     });
 
     it("a from/to range REPLACES the rolling window — activity outside it doesn't rescue", async () => {
@@ -380,9 +386,9 @@ describe("AnalyticsService — invoiced-sales readers", () => {
       // Display fields stay "most recent activity ever", not range-clipped.
       expect(res[0].lastMovement).toEqual(new Date("2026-06-20"));
       // The movement query is bounded to the same window.
-      const { createdAt } = prisma.stockMovement.findMany.mock.calls[0][0].where;
-      expect(createdAt.gte).toEqual(new Date("2026-05-01"));
-      expect(createdAt.lte.toISOString()).toContain("2026-05-31T23:59:59");
+      const { effectiveAt } = prisma.stockMovement.findMany.mock.calls[0][0].where;
+      expect(effectiveAt.gte).toEqual(new Date("2026-05-01"));
+      expect(effectiveAt.lte.toISOString()).toContain("2026-05-31T23:59:59");
     });
   });
 
@@ -451,8 +457,8 @@ describe("AnalyticsService — invoiced-sales readers", () => {
       systemConfig.get.mockResolvedValue("true");
       prisma.invoice.findMany.mockResolvedValue([tobaccoInvoice]);
       prisma.stockMovement.findMany.mockResolvedValue([
-        { productId: "pt", createdAt: new Date("2026-06-01"), avgCostAfter: D(10) },
-        { productId: "pn", createdAt: new Date("2026-06-01"), avgCostAfter: D(2) },
+        { productId: "pt", effectiveAt: new Date("2026-06-01"), avgCostAfter: D(10) },
+        { productId: "pn", effectiveAt: new Date("2026-06-01"), avgCostAfter: D(2) },
       ]);
 
       const result = await service.getGrossMarginTrend();
@@ -516,13 +522,13 @@ describe("AnalyticsService — invoiced-sales readers", () => {
       const day2 = new Date("2026-06-15");
       prisma.stockMovement.findMany.mockResolvedValue([
         {
-          createdAt: day1,
+          effectiveAt: day1,
           unitCost: D(2),
           avgCostAfter: D(2),
           type: "PURCHASE",
         },
         {
-          createdAt: day2,
+          effectiveAt: day2,
           unitCost: D(3.15),
           avgCostAfter: D(3.15),
           type: "COST_BASIS",
@@ -568,7 +574,7 @@ describe("AnalyticsService — invoiced-sales readers", () => {
       ...over,
     });
 
-    it("reads THROUGH Invoice (never invoiceItem) and filters to real sales", async () => {
+    it("reads THROUGH Invoice (never invoiceItem) and filters to accrual sales", async () => {
       prisma.invoice.findMany.mockResolvedValue([inv()]);
 
       await service.getProductSales("p1");
@@ -578,7 +584,8 @@ describe("AnalyticsService — invoiced-sales readers", () => {
       expect(prisma.invoiceItem.findMany).not.toHaveBeenCalled();
       const args = prisma.invoice.findMany.mock.calls[0][0];
       expect(args.where.items).toEqual({ some: { productId: "p1" } });
-      expect(args.where.status).toEqual({ notIn: ["DRAFT", "VOID", "WRITTEN_OFF"] });
+      // #2118 plan A2: a WRITTEN_OFF invoice was a sale at issue (badged); only DRAFT/VOID out.
+      expect(args.where.status).toEqual({ notIn: ["DRAFT", "VOID"] });
       // Only this product's lines come back, not every line on the invoice.
       expect(args.select.items.where).toEqual({ productId: "p1" });
     });
@@ -762,13 +769,14 @@ describe("AnalyticsService — invoiced-sales readers", () => {
       expect(res.range).toBe(range);
     });
 
-    it("filters out DRAFT/VOID/WRITTEN_OFF and matches only this product's lines", async () => {
+    it("filters out DRAFT/VOID (accrual basis) and matches only this product's lines", async () => {
       prisma.invoice.findMany.mockResolvedValue([]);
 
       await service.getProductDemand("p1", "30d");
 
       const args = prisma.invoice.findMany.mock.calls[0][0];
-      expect(args.where.status).toEqual({ notIn: ["DRAFT", "VOID", "WRITTEN_OFF"] });
+      // #2118 plan A2: WRITTEN_OFF is a sale at issue; only DRAFT/VOID are excluded.
+      expect(args.where.status).toEqual({ notIn: ["DRAFT", "VOID"] });
       expect(args.where.items).toEqual({ some: { productId: "p1" } });
       // The nested filter is what keeps other products' (and null-productId ad-hoc)
       // lines out of each invoice's item array.

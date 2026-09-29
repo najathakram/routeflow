@@ -30,8 +30,13 @@ import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { resolveLineUnits } from "../products/line-units";
-import { decrementStockForSale } from "./order-stock";
-import { MAX_LINE_QTY, MAX_LINE_SUBTOTAL, buildUnitLine } from "./unit-line-build";
+import { decrementStockForSale, type StockLineUnits } from "./order-stock";
+import {
+  MAX_LINE_QTY,
+  MAX_LINE_SUBTOTAL,
+  buildUnitLine,
+  categoryTaxForLine,
+} from "./unit-line-build";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -79,21 +84,33 @@ describeDb("units_v1 ladder — real Postgres", () => {
   let orderId = "";
   let productId = "";
 
-  const taxNone = () => 0;
+  // B297/SA-088 (#938 fix): this fixture's product carries no trackedCategoryId, so a NULL
+  // category — never a bare 0 — is the correct "no regulated tax" shape. Reuses the real
+  // production helper `categoryTaxForLine` (the ONE place taxFor's {amount, snapshot} shape
+  // is produced) instead of hand-rolling an equivalent that can drift from the real contract
+  // the way the old `() => 0` did: buildUnitLine destructures `taxFor(...).snapshot.categoryTaxType`,
+  // and a bare number crashes with "Cannot read properties of undefined (reading 'categoryTaxType')".
+  const taxNone = (qty: number, subtotal: number) => categoryTaxForLine(null, qty, subtotal);
   const stockOf = async () =>
     Number((await raw.product.findUniqueOrThrow({ where: { id: productId } })).currentStock);
   const ladderOf = (tenantId: string) =>
     tenantCtx.run(tenantId, () => loadUnitLadders(prisma.forTenant(), [productId]));
 
-  /** The real stock statement (FOR UPDATE + aggregated UPDATE) inside a tenant-scoped transaction. */
-  const stock = (qty: number) =>
+  /**
+   * The real stock statement (FOR UPDATE + aggregated UPDATE) inside a tenant-scoped transaction.
+   * B703 (SA-136b): it is handed the line's unit fields, as create() does — a unit line's `qty` is
+   * already base pieces, which only its `unitLabel` tells the piece converter.
+   */
+  const stock = (line: StockLineUnits & { qty: unknown }) =>
     tenantCtx.run(tenantA, () =>
       prisma.tenantTransaction(async (tx: any) => {
         await decrementStockForSale(
           { logger: new Logger("unit-ladder.db.spec"), tenantId: tenantA },
           tx,
-          [{ productId, qty }],
+          [{ ...line, productId, qty: Number(line.qty) }],
           true,
+          // B562 PR-2: the SALE movement's reference/event (this spec has no acting user).
+          { orderId: orderId || "unit-ladder-spec", notes: "CREATE", performedById: null },
         );
       }),
     );
@@ -197,6 +214,7 @@ describeDb("units_v1 ladder — real Postgres", () => {
     await raw.orderItem.deleteMany({ where: { orderId } });
     await raw.order.deleteMany({ where: { id: orderId } });
     await raw.productUnit.deleteMany({ where: { productId } });
+    await raw.stockMovement.deleteMany({ where: { productId } }); // B562 PR-2: the SALE rows
     await raw.product.deleteMany({ where: { id: productId } });
     await raw.customer.deleteMany({ where: { id: customerId } });
     await raw.user.deleteMany({ where: { id: userId } });
@@ -230,7 +248,7 @@ describeDb("units_v1 ladder — real Postgres", () => {
     expect(row).toMatchObject({ unitLabel: "Case", boxes: 3, pieces: 0, unitsPerBox: 288 });
     expect(Number(row.unitPrice)).toBe(480);
     expect(Number(row.subtotal)).toBe(1440);
-    await stock(Number(row.qty));
+    await stock(row);
     expect(await stockOf()).toBe(before - 864);
   });
 
@@ -238,7 +256,7 @@ describeDb("units_v1 ladder — real Postgres", () => {
     const line = await unitLine("Pallet", 2);
     expect(line).toMatchObject({ unitPrice: 10080, subtotal: 20160, qty: 11520 });
     const before = await stockOf();
-    await stock(line.qty);
+    await stock(line);
     expect(await stockOf()).toBe(before - 11520);
     expect(await stockOf()).toBeLessThan(0);
   });

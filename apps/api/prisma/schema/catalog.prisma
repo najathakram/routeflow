@@ -229,13 +229,18 @@ model StockMovement {
   quantity      Decimal      @db.Decimal(10, 3)
   unitCost      Decimal?     @db.Decimal(10, 4)
   // Running snapshots: product state AFTER this movement was applied.
-  // Point-in-time average cost = avgCostAfter of the latest movement <= T.
+  // Point-in-time average cost = avgCostAfter of the latest movement with effectiveAt <= T.
   avgCostAfter  Decimal?     @db.Decimal(10, 4)
   stockAfter    Decimal?     @db.Decimal(10, 3)
   supplierId    String?
   reference     String?
   notes         String?
   performedById String?
+  // B562 (SA-136 §3): the ACCOUNTING date of the movement — a backdated purchase/adjustment/bill
+  // receive carries its effective date here. `createdAt` is write-once insertion time and is only
+  // a tiebreaker. Replay, point-in-time cost and every "when did this happen" read order/filter by
+  // (effectiveAt, createdAt, id).
+  effectiveAt   DateTime     @default(now())
   createdAt     DateTime     @default(now())
   tenantId      String?
 
@@ -247,6 +252,7 @@ model StockMovement {
   @@index([productId])
   @@index([type])
   @@index([createdAt])
+  @@index([effectiveAt])
   @@index([supplierId])
   @@index([tenantId])
 }

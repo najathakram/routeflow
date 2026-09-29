@@ -19,7 +19,10 @@ function walk(dir: string, out: string[] = []): string[] {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, e.name);
     if (e.isDirectory()) walk(p, out);
-    else if (/\.tsx$/.test(e.name) && !/\.test\.tsx$/.test(e.name)) out.push(p);
+    // .ts too: class-name maps (a badge colour table) live in plain .ts and carry text colours the
+    // contrast guard must see; the JSX scans below simply find no tags in a .ts file.
+    else if (/\.tsx?$/.test(e.name) && !/\.test\.tsx?$/.test(e.name) && !e.name.endsWith(".d.ts"))
+      out.push(p);
   }
   return out;
 }
@@ -156,6 +159,11 @@ describe("platform-admin a11y — controls carry an accessible name (A3 F1/F2/F3
   // (slate-600) is 1.93:1 — both below WCAG AA's 4.5:1 for body text. Secondary text on this dark
   // console is slate-400 (5.7:1) or lighter; a new slate-500/600 text colour would bring back the
   // ~130 failing nodes the A3 audit found on every page.
+  it("the contrast scan covers plain .ts colour tables, not only .tsx (badge.ts once slipped past it)", () => {
+    expect(files.some((f) => f.rel.endsWith("badge.ts"))).toBe(true);
+    expect(files.some((f) => /\.test\.tsx?$/.test(f.rel))).toBe(false);
+  });
+
   it("no text-slate-500 / text-slate-600 text colour (fails AA on the dark console surfaces)", () => {
     const bad = files.flatMap((f) =>
       f.src
@@ -163,6 +171,44 @@ describe("platform-admin a11y — controls carry an accessible name (A3 F1/F2/F3
         .map((l, i) => ({ l, n: i + 1 }))
         .filter(({ l }) => /(?<![\w:-])text-slate-(500|600)\b/.test(l))
         .map(({ n }) => `${f.rel}:${n}`),
+    );
+    expect(bad).toEqual([]);
+  });
+
+  // A3 F8: a control disabled for a reason the user cannot see. Each site below renders a
+  // <DisabledHint id="X"> and points the control's aria-describedby at the same id, in the same
+  // file. (The other ~60 `disabled` sites are pending-state or pagination bounds: self-evident.)
+  const REASONED_DISABLED: Array<[string, string]> = [
+    [path.join("admin", "tenants", "[id]", "page.tsx"), "feature-override-hint"],
+    [
+      path.join("admin", "tenants", "[id]", "_features", "ConfigSnapshotsTab.tsx"),
+      "restore-nothing-hint",
+    ],
+    [
+      path.join("admin", "tenants", "[id]", "_features", "PreviewDrawer.tsx"),
+      "preview-empty-reason",
+    ],
+    [path.join("admin", "buyers", "merge-requests", "[id]", "page.tsx"), "mr-notes-hint"],
+    [path.join("admin", "settings", "page.tsx"), "test-connection-hint"],
+    [path.join("admin", "billing", "page.tsx"), "export-csv-hint"],
+  ];
+  it.each(REASONED_DISABLED)("%s explains why a control is disabled (%s)", (rel, id) => {
+    const f = files.find((x) => x.rel === rel);
+    expect(f).toBeDefined();
+    expect(f!.src).toContain(`aria-describedby={`); // some control is described
+    expect(f!.src).toContain(`"${id}"`); // by this id
+    const declared = new RegExp(`(<DisabledHint\\s+id="${id}"|\\bid="${id}")`).test(f!.src);
+    expect({ rel, id, declared }).toEqual({ rel, id, declared: true });
+  });
+
+  // A3 F9: an error banner must be announced. The red banner pattern of the console
+  // (`bg-red-900/40 … text-red-400`) has to carry role="alert".
+  it("every red error banner div carries role=alert", () => {
+    const bad = files.flatMap((f) =>
+      openingTags(f.src, "div")
+        .filter((t) => /bg-red-900\/40/.test(t.text) && /text-red-400/.test(t.text))
+        .filter((t) => !/role="alert"/.test(t.text))
+        .map((t) => `${f.rel}:${t.line}`),
     );
     expect(bad).toEqual([]);
   });

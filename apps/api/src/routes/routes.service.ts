@@ -8,8 +8,15 @@ import {
 } from "@nestjs/common";
 import { createHash, randomUUID } from "crypto";
 import { ConfigService } from "@nestjs/config";
-import { assertDeliveriesFitStop } from "./delivery-lines.util";
+import {
+  assertDeliveriesFitStop,
+  assertStopNotSkipped,
+  claimStopCompletion,
+  claimStopStatusChangeOnLiveRun,
+  assertRunInProgress,
+} from "./delivery-lines.util";
 import { PrismaService } from "../prisma/prisma.service";
+import { reorderRunStopsInTx } from "./run-stop-reorder";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import {
   UserRole,
@@ -32,6 +39,7 @@ import { LIVE_CUSTOMER_STOP_WHERE, SCHEDULED_ROUTE_KIND_WHERE } from "./route-st
 // desync from every other confirmed-money read in the codebase.
 import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
 import { geocodeAddress } from "../common/geocode.util";
+import { withAfterCommit } from "../common/after-commit";
 import { TripOriginDto, TripOriginType } from "../trips/dto/create-trip.dto";
 import { TripEndDto, TripEndType } from "../trips/dto/route-planning.dto";
 import { ListRoutesDto } from "./dto/list-routes.dto";
@@ -51,14 +59,8 @@ import { CompleteWithPaymentDto } from "./dto/complete-with-payment.dto";
 import { SettleRunDto } from "./dto/settle-run.dto";
 import { AttachPodArtifactDto } from "./dto/attach-pod-artifact.dto";
 import { StorageService } from "../storage/storage.service";
-import { compressImage } from "../storage/compress.util";
-import {
-  isPodStorageKey,
-  isRenderableDataUrl,
-  parseImageDataUrl,
-  podArtifactKey,
-  type PodArtifactKind,
-} from "./pod-artifacts.util";
+import { ingestPodCapture, ingestPodDataUrl, requirePodTenantId } from "./pod-ingest";
+import { isPodStorageKey, isRenderableDataUrl, parseImageDataUrl } from "./pod-artifacts.util";
 import {
   assertRegulatedDeliverySatisfied,
   deriveStopRegulatedRequirements,
@@ -72,6 +74,11 @@ import {
 import { FeatureConfigService } from "../billing/feature-config.service";
 import { ROUTES_DISPATCH_KEY, assertRouteKindDispatchAllowed } from "./route-dispatch-mode";
 import { observeRunCredit } from "./run-credit-observation";
+import { RouteRealtime } from "./route-realtime";
+import {
+  reconcileDeliveredStopOrders,
+  resolvePostReconcileOrderTotals,
+} from "./complete-payment-reconcile";
 
 // The run/stop select shapes and status constants live in routes.constants.ts (size-ratchet
 // prefactor, verbatim move); re-exported here so every existing import path keeps working.
@@ -81,6 +88,10 @@ import {
   RUN_LINE_ITEMS_SELECT,
   RUN_STOP_INCLUDE,
 } from "./routes.constants";
+import { withDeliveredSoFar } from "./run-delivered-so-far";
+import { DeletedEvidenceRow, deliveredQtyRecompute } from "./delivered-so-far";
+import { withPayableInvoicesFlat } from "./run-projections";
+import { withRunStopProjections, withRunStopProjectionsForRunsPage } from "./run-projections";
 export {
   NON_ROUTABLE_ORDER_STATUSES,
   RELEASED_CHANGE_REQUEST_REASON,
@@ -91,6 +102,10 @@ export {
 @Injectable()
 export class RoutesService {
   private readonly logger = new Logger(RoutesService.name);
+  /** #2512: the POD-ingest helpers' dependencies (routes/pod-ingest.ts). */
+  private get podDeps() {
+    return { prisma: this.prisma, storage: this.storage, logger: this.logger };
+  }
 
   constructor(
     private readonly prisma: PrismaService,
@@ -102,6 +117,11 @@ export class RoutesService {
     private readonly storage: StorageService,
     private readonly featureConfig: FeatureConfigService,
   ) {}
+
+  /** #2095: post-commit realtime announcements (never throws). A getter, not a field initializer. */
+  private get live() {
+    return new RouteRealtime(this.prisma, this.gateway, this.logger);
+  }
 
   // ── Route Templates ────────────────────────────────────────────────────
 
@@ -566,33 +586,9 @@ export class RoutesService {
   }
 
   async reorderRunStops(runId: string, order: { id: string; stopNumber: number }[]) {
-    const run = await this.prisma.forTenant().routeRun.findUnique({ where: { id: runId } });
-    if (!run) throw new NotFoundException("Route run not found");
-    if (run.status === "IN_PROGRESS" || run.status === "COMPLETED") {
-      throw new BadRequestException("Cannot reorder stops on an active or completed route run");
-    }
-    const allStops = await this.prisma.forTenant().routeRunStop.findMany({
-      where: { routeRunId: runId },
-      select: { id: true, stopNumber: true },
-    });
-    const offset = allStops.length + order.length + 100;
-    await this.prisma.$transaction([
-      ...allStops.map((s) =>
-        this.prisma.forTenant().routeRunStop.update({
-          where: { id: s.id },
-          data: { stopNumber: s.stopNumber + offset },
-        }),
-      ),
-      ...order.map(({ id, stopNumber }) =>
-        this.prisma.forTenant().routeRunStop.update({ where: { id }, data: { stopNumber } }),
-      ),
-      // The polyline lives on the parent route but is what this run's map
-      // draws — a hand reorder here makes it wrong too. See
-      // clearPlannedPolyline.
-      this.prisma
-        .forTenant()
-        .route.update({ where: { id: run.routeId }, data: { plannedPolyline: null } }),
-    ]);
+    await this.prisma.tenantTransaction((tx: any) => reorderRunStopsInTx(tx, runId, order));
+    // #2095: post-commit — announce only after the reorder transaction has committed.
+    await this.live.runProgress(runId);
     return { success: true };
   }
 
@@ -1006,6 +1002,7 @@ export class RoutesService {
         `applyStopRegulatedFlags failed for run ${run.id}: ${e instanceof Error ? e.message : e}`,
       ),
     );
+    await this.live.runProgress(run.id);
 
     // RF-015: notify the assigned driver via WebSocket + push so the run
     // appears on their device immediately after dispatch (no pull-to-refresh needed).
@@ -1130,14 +1127,18 @@ export class RoutesService {
     // Same normalisation as findOneRun: legacy/seeded run stops may lack a
     // direct customer/address link — fall back to the template RouteStop's
     // data so address-dependent UI (Maps button, "no location" badge) works.
-    const normalisedData = data.map((run: any) => ({
+    const normalisedRuns = data.map((run: any) => ({
       ...run,
-      stops: run.stops.map((s: any) => ({
+      stops: run.stops.map((s) => ({
         ...s,
         customer: s.customer ?? s.routeStop?.customer ?? null,
         customerAddress: s.customerAddress ?? s.routeStop?.customerAddress ?? null,
       })),
     }));
+    const normalisedData = await withRunStopProjectionsForRunsPage(
+      this.prisma.forTenant(),
+      normalisedRuns,
+    );
 
     // F05 / R5: `collectedPayments` only for a driver's own list — operator-wide
     // lists (every run, every driver) skip it; the operator reads cash truth
@@ -1290,22 +1291,29 @@ export class RoutesService {
           // is the one extra field this fallback needs to group by.
           select: { ...RUN_STOP_INCLUDE.orders.select, customerId: true },
         });
-        const byCustomer: Record<string, any[]> = {};
-        for (const o of orders) {
+        const ordersWithBalances = await withPayableInvoicesFlat(this.prisma.forTenant(), orders);
+        const byCustomer: Record<string, typeof ordersWithBalances> = {};
+        for (const o of ordersWithBalances) {
           (byCustomer[o.customerId] ??= []).push(o);
         }
+        const fallbackStops = normalisedStops.map((s: any) => ({
+          ...s,
+          orders: s._resolvedCustomerId ? (byCustomer[s._resolvedCustomerId] ?? []) : [],
+        }));
         return {
           ...run,
-          stops: normalisedStops.map((s: any) => ({
-            ...s,
-            orders: s._resolvedCustomerId ? (byCustomer[s._resolvedCustomerId] ?? []) : [],
-          })),
+          // B785/SA-116: the fallback build must ALSO carry deliveredSoFar (B810 drift class).
+          stops: await withDeliveredSoFar(this.prisma.forTenant(), fallbackStops),
           collectedPayments,
         };
       }
     }
 
-    return { ...run, stops: normalisedStops, collectedPayments };
+    return {
+      ...run,
+      stops: await withRunStopProjections(this.prisma.forTenant(), normalisedStops),
+      collectedPayments,
+    };
   }
 
   async updateRun(
@@ -1532,6 +1540,7 @@ export class RoutesService {
         updatedAt: new Date().toISOString(),
       });
     }
+    await this.live.runProgress(id);
 
     return updated;
   }
@@ -1944,7 +1953,12 @@ export class RoutesService {
     if (dto.driverNote !== undefined) updates.driverNote = dto.driverNote;
     if (dto.status === "IN_PROGRESS" && !stop.arrivedAt) updates.arrivedAt = new Date();
 
-    return this.prisma.forTenant().routeRunStop.update({ where: { id: stopId }, data: updates });
+    // #2415 stop CAS, then (#2514) the RouteRun lock + re-check — stop → run, the house order —
+    // so neither a completion nor a run finishing meanwhile is ever overwritten.
+    await claimStopStatusChangeOnLiveRun(this.prisma, runId, stopId, updates);
+    const updated = await this.prisma.forTenant().routeRunStop.findFirst({ where: { id: stopId } });
+    await this.live.runProgress(runId);
+    return updated;
   }
 
   // ── RF-019: Idempotency helpers ───────────────────────────────────────────
@@ -1996,69 +2010,6 @@ export class RoutesService {
   // (file:// URIs, the old "native-captured" sentinel) pass through
   // unchanged so not-yet-updated driver builds keep completing stops.
 
-  /** Tenant id for POD storage keys — every POD caller is a tenant-scoped request. */
-  private requireTenantId(): string {
-    const tenantId = this.prisma.getTenantId();
-    if (!tenantId) throw new ForbiddenException("Tenant context required");
-    return tenantId;
-  }
-
-  /**
-   * Rasterize + store one data-URL artifact; returns the storage key, or null
-   * when the value isn't an ingestable image data URL OR the rasterize fails —
-   * on failure the caller keeps the original data URL, which is still durable
-   * and renderable by the web client (just larger than a stored file).
-   */
-  private async ingestPodDataUrl(
-    value: string,
-    stopId: string,
-    kind: PodArtifactKind,
-    artifactId?: string,
-  ): Promise<string | null> {
-    const parsed = parseImageDataUrl(value);
-    if (!parsed) return null;
-    try {
-      const compressed = await compressImage(
-        parsed.buffer,
-        parsed.mimeType,
-        kind === "signature" ? 1000 : 1600,
-      );
-      const key = podArtifactKey(
-        this.requireTenantId(),
-        stopId,
-        kind,
-        artifactId ?? randomUUID(),
-        compressed.ext,
-      );
-      await this.storage.upload(key, compressed.buffer, compressed.mimeType);
-      return key;
-    } catch (e) {
-      this.logger.warn(
-        `POD ${kind} ingest failed for stop ${stopId}: ${(e as Error)?.message ?? e}`,
-      );
-      return null;
-    }
-  }
-
-  /** Rewrite a completion payload's data-URL artifacts to storage keys in place. */
-  private async ingestPodCapture(
-    dto: { signatureUrl?: string; podPhotoUrls?: string[] },
-    stopId: string,
-  ): Promise<void> {
-    if (dto.signatureUrl) {
-      const key = await this.ingestPodDataUrl(dto.signatureUrl, stopId, "signature");
-      if (key) dto.signatureUrl = key;
-    }
-    if (dto.podPhotoUrls?.length) {
-      const rewritten: string[] = [];
-      for (const value of dto.podPhotoUrls) {
-        const key = await this.ingestPodDataUrl(value, stopId, "photo");
-        rewritten.push(key ?? value);
-      }
-      dto.podPhotoUrls = rewritten;
-    }
-  }
-
   /**
    * Attach one POD artifact to a run stop, before OR after completion (the
    * driver app uploads photos right before firing the completion; an offline
@@ -2094,7 +2045,7 @@ export class RoutesService {
       throw new BadRequestException("dataUrl must be a data:image/... URL");
     }
 
-    const tenantId = this.requireTenantId();
+    const tenantId = requirePodTenantId(this.prisma);
     const artifactId = dto.artifactId ?? randomUUID();
     const marker = `/${dto.kind}-${artifactId}.`;
     const existing =
@@ -2123,7 +2074,7 @@ export class RoutesService {
       );
     }
 
-    const key = await this.ingestPodDataUrl(dto.dataUrl, stopId, dto.kind, artifactId);
+    const key = await ingestPodDataUrl(this.podDeps, dto.dataUrl, stopId, dto.kind, artifactId);
     if (!key) throw new BadRequestException("File is not a decodable image");
 
     await this.prisma.forTenant().routeRunStop.update({
@@ -2161,7 +2112,7 @@ export class RoutesService {
       }
     }
 
-    const tenantId = this.requireTenantId();
+    const tenantId = requirePodTenantId(this.prisma);
     const photos: { url: string }[] = [];
     let legacyPhotoCount = 0;
     for (const value of stop.podPhotoUrls ?? []) {
@@ -2207,11 +2158,6 @@ export class RoutesService {
     // drivers mark deliveries done without ever dispatching the run.
     const run = await this.prisma.forTenant().routeRun.findUnique({ where: { id: runId } });
     if (!run) throw new NotFoundException("Route run not found");
-    if (run.status !== RouteRunStatus.IN_PROGRESS) {
-      throw new ForbiddenException(
-        `Cannot complete a stop on a run that is not in progress (current status: ${run.status}).`,
-      );
-    }
 
     const stop = await this.prisma.forTenant().routeRunStop.findFirst({
       where: { id: stopId, routeRunId: runId },
@@ -2222,7 +2168,6 @@ export class RoutesService {
       },
     });
     if (!stop) throw new NotFoundException("Stop not found");
-    if (stop.status === "COMPLETED") throw new BadRequestException("Stop is already completed");
 
     const driver =
       user.role === UserRole.DRIVER
@@ -2234,6 +2179,11 @@ export class RoutesService {
     if (user.role === UserRole.DRIVER && (!driver || run.driverId !== driver.id)) {
       throw new ForbiddenException("You do not have access to this route run");
     }
+    assertRunInProgress(run.status); // #2514: RUN state only after ownership too
+    // #2415: stop STATE only after the B72 ownership check, so a driver with no claim on this run
+    // can't learn whether the stop is completed or skipped.
+    if (stop.status === "COMPLETED") throw new BadRequestException("Stop is already completed");
+    assertStopNotSkipped(stop.status); // #2409
 
     // RF-019: Idempotency check (outside transaction for speed)
     if (dto.idempotencyKey) {
@@ -2244,11 +2194,11 @@ export class RoutesService {
 
     // Durable POD: rewrite data-URL artifacts to storage keys before the tx
     // (after the idempotency check so a cached replay never re-uploads).
-    await this.ingestPodCapture(dto, stopId);
+    await ingestPodCapture(this.podDeps, dto, stopId);
 
     let autoCompleted = false;
     await this.prisma.tenantTransaction(async (tx) => {
-      await assertDeliveriesFitStop(tx, stop.orders, dto.deliveries);
+      await assertDeliveriesFitStop(tx, stopId, stop.orders, dto.deliveries);
       // Phase 4 (W7b): regulated-delivery POD gate. Re-derive the age/ID
       // requirement from the stop's current orders (authoritative — orders can be
       // linked after dispatch), then block a regulated completion that lacks the
@@ -2267,18 +2217,15 @@ export class RoutesService {
         existingSignatureUrl: stop.signatureUrl,
       });
 
-      // 1. Mark stop completed
-      await tx.routeRunStop.update({
-        where: { id: stopId },
-        data: {
-          status: "COMPLETED",
-          completedAt: new Date(),
-          ...(dto.driverNote !== undefined ? { driverNote: dto.driverNote } : {}),
-          ...(dto.podPhotoUrls ? { podPhotoUrls: dto.podPhotoUrls } : {}),
-          ...(dto.signatureUrl !== undefined ? { signatureUrl: dto.signatureUrl } : {}),
-          ...(dto.safeDropEnabled !== undefined ? { safeDropEnabled: dto.safeDropEnabled } : {}),
-          ...regulatedPatch,
-        },
+      // 1. Mark stop completed (SA-151, see claimStopCompletion).
+      await claimStopCompletion(tx, stopId, {
+        status: "COMPLETED",
+        completedAt: new Date(),
+        ...(dto.driverNote !== undefined ? { driverNote: dto.driverNote } : {}),
+        ...(dto.podPhotoUrls ? { podPhotoUrls: dto.podPhotoUrls } : {}),
+        ...(dto.signatureUrl !== undefined ? { signatureUrl: dto.signatureUrl } : {}),
+        ...(dto.safeDropEnabled !== undefined ? { safeDropEnabled: dto.safeDropEnabled } : {}),
+        ...regulatedPatch,
       });
 
       // 2. Record delivery mutations if provided
@@ -2392,22 +2339,8 @@ export class RoutesService {
         .catch(() => {});
     }
 
-    if (autoCompleted) {
-      const completed = await this.prisma.forTenant().routeRun.findUnique({
-        where: { id: runId },
-        include: {
-          driver: { select: { id: true, contactName: true, user: { select: { username: true } } } },
-        },
-      });
-      if (completed?.driver) {
-        this.gateway.emitDriverStatusUpdated(this.prisma.getTenantId(), {
-          driverId: completed.driver.id,
-          driverName: completed.driver.contactName ?? completed.driver.user?.username ?? "Driver",
-          status: RouteRunStatus.COMPLETED,
-          updatedAt: new Date().toISOString(),
-        });
-      }
-    }
+    // #2095: post-commit order/stop/driver/progress events — see route-realtime.ts.
+    await this.live.stopCompleted(runId, stop, autoCompleted);
 
     const result = await this.prisma
       .forTenant()
@@ -2436,11 +2369,6 @@ export class RoutesService {
   ) {
     const run = await this.prisma.forTenant().routeRun.findUnique({ where: { id: runId } });
     if (!run) throw new NotFoundException("Route run not found");
-    if (run.status !== RouteRunStatus.IN_PROGRESS) {
-      throw new ForbiddenException(
-        `Cannot complete a stop on a run that is not in progress (current status: ${run.status}).`,
-      );
-    }
 
     const stop = await this.prisma.forTenant().routeRunStop.findFirst({
       where: { id: stopId, routeRunId: runId },
@@ -2451,7 +2379,6 @@ export class RoutesService {
       },
     });
     if (!stop) throw new NotFoundException("Stop not found");
-    if (stop.status === "COMPLETED") throw new BadRequestException("Stop is already completed");
 
     const driver =
       user.role === UserRole.DRIVER
@@ -2463,6 +2390,11 @@ export class RoutesService {
     if (user.role === UserRole.DRIVER && (!driver || run.driverId !== driver.id)) {
       throw new ForbiddenException("You do not have access to this route run");
     }
+    assertRunInProgress(run.status); // #2514: RUN state only after ownership too
+    // #2415: stop STATE only after the B72 ownership check, so a driver with no claim on this run
+    // can't learn whether the stop is completed or skipped.
+    if (stop.status === "COMPLETED") throw new BadRequestException("Stop is already completed");
+    assertStopNotSkipped(stop.status); // #2409
 
     // RF-006: reject physical-money payment with zero amount
     if (dto.payment && dto.payment.amount <= 0) {
@@ -2483,7 +2415,7 @@ export class RoutesService {
 
     // Durable POD: rewrite data-URL artifacts to storage keys before the tx
     // (after the idempotency check so a cached replay never re-uploads).
-    await this.ingestPodCapture(dto, stopId);
+    await ingestPodCapture(this.podDeps, dto, stopId);
 
     let autoCompleted = false;
     let paymentIds: string[] = [];
@@ -2491,8 +2423,8 @@ export class RoutesService {
     // no payment was collected this completion — no payment call, no fields).
     let excess: number | undefined;
     let advancePaymentId: string | null | undefined;
-    await this.prisma.tenantTransaction(async (tx) => {
-      await assertDeliveriesFitStop(tx, stop.orders, dto.deliveries);
+    await withAfterCommit(this.prisma, async (tx, after) => {
+      await assertDeliveriesFitStop(tx, stopId, stop.orders, dto.deliveries);
       // Phase 4 (W7b): regulated-delivery POD gate (same as completeStop).
       const db = tx as unknown as RegulatedDeliveryDb;
       const sets = await loadAgeIdCategorySets(db);
@@ -2507,18 +2439,15 @@ export class RoutesService {
         existingSignatureUrl: stop.signatureUrl,
       });
 
-      // 1. Mark stop completed
-      await tx.routeRunStop.update({
-        where: { id: stopId },
-        data: {
-          status: "COMPLETED",
-          completedAt: new Date(),
-          ...(dto.driverNote !== undefined ? { driverNote: dto.driverNote } : {}),
-          ...(dto.podPhotoUrls ? { podPhotoUrls: dto.podPhotoUrls } : {}),
-          ...(dto.signatureUrl !== undefined ? { signatureUrl: dto.signatureUrl } : {}),
-          ...(dto.safeDropEnabled !== undefined ? { safeDropEnabled: dto.safeDropEnabled } : {}),
-          ...regulatedPatch,
-        },
+      // 1. Mark stop completed — SA-151 review, see claimStopCompletion (delivery-lines.util.ts).
+      await claimStopCompletion(tx, stopId, {
+        status: "COMPLETED",
+        completedAt: new Date(),
+        ...(dto.driverNote !== undefined ? { driverNote: dto.driverNote } : {}),
+        ...(dto.podPhotoUrls ? { podPhotoUrls: dto.podPhotoUrls } : {}),
+        ...(dto.signatureUrl !== undefined ? { signatureUrl: dto.signatureUrl } : {}),
+        ...(dto.safeDropEnabled !== undefined ? { safeDropEnabled: dto.safeDropEnabled } : {}),
+        ...regulatedPatch,
       });
 
       // 2. Record delivery mutations. Track which orders were actually delivered
@@ -2528,6 +2457,7 @@ export class RoutesService {
       // it against a deliveredQty of 0 would wrongly zero its open draft.
       const deliveredOrderIdSet = new Set<string>();
       if (dto.deliveries && dto.deliveries.length > 0) {
+        const orderIdByItemId = new Map<string, string>();
         for (const d of dto.deliveries) {
           const item = await tx.orderItem.findFirst({
             where: { id: d.orderItemId },
@@ -2535,6 +2465,7 @@ export class RoutesService {
           });
           if (!item) continue;
           deliveredOrderIdSet.add(item.orderId);
+          orderIdByItemId.set(d.orderItemId, item.orderId);
           await tx.deliveryMutation.create({
             data: {
               orderId: item.orderId,
@@ -2548,13 +2479,18 @@ export class RoutesService {
               quantityDelivered: d.quantityDelivered,
             },
           });
-          // Record the delivered qty so a payment-path invoice bills what was
-          // actually delivered (short/refused lines don't over-bill). Consumed by
-          // recordDeliveryPaymentInTx → reconcileOrderDraftInvoice(basis:"delivered").
-          await tx.orderItem.update({
-            where: { id: d.orderItemId },
-            data: { deliveredQty: (d.type as any) === "REFUSED" ? 0 : d.quantityDelivered },
-          });
+        }
+        // B785/SA-133: RECOMPUTE deliveredQty, never increment/overwrite -- other cumulative
+        // consumers (order-cancel-impact.ts, order-stock.ts, orders.service.ts) are unaffected.
+        for (const orderId of deliveredOrderIdSet) {
+          const pairs = [...orderIdByItemId].filter((p) => p[1] === orderId);
+          const itemIds = pairs.map((p) => p[0]);
+          for (const u of await deliveredQtyRecompute(tx, orderId, itemIds)) {
+            await tx.orderItem.update({
+              where: { id: u.id },
+              data: { deliveredQty: u.deliveredQty },
+            });
+          }
         }
       }
 
@@ -2570,24 +2506,29 @@ export class RoutesService {
         });
       }
 
-      // 4. Record payment (atomic with stop completion — RF-005). The invoice is
+      // 4. B663: reconcile every delivered order's invoice onto the DELIVERED
+      // quantities, UNCONDITIONALLY — see complete-payment-reconcile.ts for the
+      // full rationale (why this must not live behind the payment step below).
+      const deliveredOrderIds = await reconcileDeliveredStopOrders(
+        this.invoicesService,
+        tx,
+        stop.orders,
+        deliveredOrderIdSet,
+      );
+
+      // 5. Record payment (atomic with stop completion — RF-005). The invoice is
       // resolved SERVER-side from the delivered orders — the mobile client cannot
       // supply an invoiceId (Order has no invoiceId scalar), so the old
-      // client-invoiceId path silently recorded nothing. This ensures a finalized
-      // invoice exists and records the payment the canonical way (InvoicePayment
-      // + recomputeStatus over non-VOID sums).
+      // client-invoiceId path silently recorded nothing. This records the payment
+      // the canonical way (InvoicePayment + recomputeStatus over non-VOID sums)
+      // against the invoice(s) step 4 just reconciled.
       if (dto.payment && dto.payment.amount > 0) {
-        const deliveredOrderIds = stop.orders
-          // DELIVERED stays in (the office may have marked it already; it keeps its invoice), but a
-          // DRAFT is not a commitment yet: never invoiced or paid at the door.
-          .filter((o) => o.status !== OrderStatus.CANCELLED && o.status !== OrderStatus.DRAFT)
-          .map((o) => o.id);
         const recorded = await this.invoicesService.recordDeliveryPaymentInTx(
           tx,
+          after,
           deliveredOrderIds,
           dto.payment.amount,
           dto.payment.method,
-          Array.from(deliveredOrderIdSet),
           { runId, stopId },
         );
         paymentIds = recorded.paymentIds;
@@ -2605,7 +2546,7 @@ export class RoutesService {
         }
       }
 
-      // 5. RF-016: Auto-complete run when last stop is done
+      // 6. RF-016: Auto-complete run when last stop is done
       const allStops = await tx.routeRunStop.findMany({
         where: { routeRunId: runId },
         select: { id: true, status: true },
@@ -2658,37 +2599,37 @@ export class RoutesService {
 
     // P6-5: DELIVERED per order this completion flipped (driver bypasses
     // changeStatus). AFTER the tx, fire-and-forget; skip DRAFT/CANCELLED/DELIVERED.
+    //
+    // B663/I2: see complete-payment-reconcile.ts — orderTotal must read the
+    // reconciled invoice(s) post-tx, never the stale pre-reconcile Order.total.
+    const routableOrderIds = stop.orders
+      .filter((o) => !NON_ROUTABLE_ORDER_STATUSES.includes(o.status))
+      .map((o) => o.id);
+    const postReconcileTotalByOrder = await resolvePostReconcileOrderTotals(
+      this.prisma.forTenant(),
+      routableOrderIds,
+      this.logger,
+    );
     for (const o of stop.orders) {
       if (NON_ROUTABLE_ORDER_STATUSES.includes(o.status)) continue;
+      // No non-void invoice at all (shouldn't happen for a routed order, but never
+      // silently notify a wrong amount) falls back to the pre-tx order total.
+      const total = postReconcileTotalByOrder.get(o.id) ?? Number(o.total);
       this.messaging
         .notifyEvent(NotificationEvent.DELIVERED, {
           customerId: o.customerId,
           senderId: user.sub || null,
           vars: {
             orderNumber: o.orderNumber ?? "",
-            orderTotal: formatMoney(o.total),
+            orderTotal: formatMoney(total),
             deliveredAt: formatDate(new Date()),
           },
         })
         .catch(() => {});
     }
 
-    if (autoCompleted) {
-      const completed = await this.prisma.forTenant().routeRun.findUnique({
-        where: { id: runId },
-        include: {
-          driver: { select: { id: true, contactName: true, user: { select: { username: true } } } },
-        },
-      });
-      if (completed?.driver) {
-        this.gateway.emitDriverStatusUpdated(this.prisma.getTenantId(), {
-          driverId: completed.driver.id,
-          driverName: completed.driver.contactName ?? completed.driver.user?.username ?? "Driver",
-          status: RouteRunStatus.COMPLETED,
-          updatedAt: new Date().toISOString(),
-        });
-      }
-    }
+    // #2095: post-commit order/stop/driver/progress events — see route-realtime.ts.
+    await this.live.stopCompleted(runId, stop, autoCompleted);
 
     const result = await this.prisma
       .forTenant()
@@ -2861,14 +2802,18 @@ export class RoutesService {
       orderBy: { scheduledDate: "asc" },
     });
 
-    const normalisedData = data.map((run: any) => ({
+    const normalisedRuns = data.map((run: any) => ({
       ...run,
-      stops: run.stops.map((s: any) => ({
+      stops: run.stops.map((s) => ({
         ...s,
         customer: s.customer ?? s.routeStop?.customer ?? null,
         customerAddress: s.customerAddress ?? s.routeStop?.customerAddress ?? null,
       })),
     }));
+    const normalisedData = await withRunStopProjectionsForRunsPage(
+      this.prisma.forTenant(),
+      normalisedRuns,
+    );
 
     // F05 / R5: this endpoint is always driver-scoped (the authenticated
     // driver's own runs), so it always gets `collectedPayments`.
@@ -3016,6 +2961,7 @@ export class RoutesService {
       }
     }
 
+    const reopened: typeof stop.orders = [];
     await this.prisma.tenantTransaction(async (tx) => {
       // 0. B306: a zero-payable-invoice completion books the WHOLE at-door
       // amount as an AdvancePayment with no InvoicePayment row, so the
@@ -3032,34 +2978,43 @@ export class RoutesService {
         reason: "stop reopened",
       });
 
-      // 1. Delete delivery mutations for this stop
+      // 1. Delete this stop's delivery mutations — capture their orders/lines FIRST (SA-151): an
+      // order moved to another stop is no longer in `stop.orders`, yet its evidence goes too.
+      const deletedRows: DeletedEvidenceRow[] = await tx.deliveryMutation.findMany({
+        where: { routeRunStopId: stopId },
+        select: { orderId: true, orderItemId: true, type: true, quantityDelivered: true },
+      });
+      const staleDeliveredQtyOrderIds = new Set(deletedRows.map((r) => r.orderId));
+      for (const order of stop.orders) staleDeliveredQtyOrderIds.add(order.id);
       await tx.deliveryMutation.deleteMany({ where: { routeRunStopId: stopId } });
 
-      // 2. Reset order items → PENDING, order status → CONFIRMED (safe
-      // fallback — it was at least CONFIRMED before going OUT_FOR_DELIVERY),
-      // and delete UNPAID transactions.
-      //
-      // `deliveredQty` MUST be reset with the status. `completeWithPayment`
-      // writes it per item (`deliveredQty: REFUSED ? 0 : quantityDelivered`)
-      // independently of whether money changed hands, and
-      // `reconcileOrderDraftInvoice(basis:"delivered")` bills
-      // `Number(li.deliveredQty ?? 0)`. Leaving it standing after a reversal
-      // bills the UNDONE delivery: complete a stop on account (item A 5, item B
-      // 3, $0 collected) → reopen (permitted, since the B54 live-money guard
-      // sees no confirmed payment) → re-deliver only item A with payment, and
-      // item B is invoiced for 3 units nobody delivered. One order maps to one
-      // stop (`Order.routeRunStopId`), so zeroing every item of this stop's
-      // orders reverses exactly this stop's delivery and nothing else.
+      // 2. Reset items → PENDING, order → CONFIRMED, delete UNPAID — STILL-linked orders only.
       for (const order of stop.orders) {
         await tx.orderItem.updateMany({
           // A cancelled line stays cancelled: reopening a stop undoes a DELIVERY, never a cancel.
           where: { orderId: order.id, status: { not: "CANCELLED" } },
-          data: { status: "PENDING", deliveredQty: 0 },
+          data: { status: "PENDING" },
         });
         if (order.status === "DELIVERED" || order.status === "OUT_FOR_DELIVERY") {
           await tx.order.update({ where: { id: order.id }, data: { status: "CONFIRMED" } });
+          reopened.push(order);
         }
         await tx.transaction.deleteMany({ where: { orderId: order.id, status: "UNPAID" } });
+      }
+
+      // Recompute for EVERY affected order (broader than `stop.orders`) — never zeroed (B803).
+      for (const orderId of staleDeliveredQtyOrderIds) {
+        const lines = await tx.orderItem.findMany({
+          where: { orderId, status: { not: "CANCELLED" } },
+          select: { id: true },
+        });
+        const itemIds = lines.map((li) => li.id);
+        for (const u of await deliveredQtyRecompute(tx, orderId, itemIds, deletedRows)) {
+          await tx.orderItem.update({
+            where: { id: u.id },
+            data: { deliveredQty: u.deliveredQty },
+          });
+        }
       }
 
       // 3. B120: the reset below discards the only pointers to the stored POD
@@ -3152,6 +3107,7 @@ export class RoutesService {
       }
     });
 
+    await this.live.stopReopened(runId, reopened);
     return { success: true, message: "Stop reopened — you can now re-submit the delivery." };
   }
 

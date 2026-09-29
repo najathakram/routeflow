@@ -7,9 +7,21 @@
 // broke every local:* gate on a Windows checkout. This script sets the variables in Node and
 // hands the command to the platform shell, so the same package.json line works on both.
 //
-// Usage: node scripts/local-env.mjs [--db] [--smoke] [--db-specs] [--smtp-specs] [--e2e] -- "<command string>"
+// Usage: node scripts/local-env.mjs [--db] [--smoke] [--db-specs] [--smtp-specs] [--e2e]
+//          [--build-sha] [--proof-stack] -- "<command string>"
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
+import { loadLocalSaEnv } from "./lib/local-sa-env.mjs";
+import {
+  STACK_IMAGES,
+  buildStamp,
+  checkProofStack,
+  isAncestor,
+  readImage,
+  requiredCommit,
+  stampLine,
+} from "./lib/proof-stack.mjs";
 import { fileURLToPath } from "node:url";
 
 // Repo root, computed from this file's own location — used to build an ABSOLUTE
@@ -45,6 +57,16 @@ Flags:
                <repo-root>/.campaign/runs/web-e2e-local.json (an absolute path — keeps the
                local run out of web-e2e.json, which scripts/campaign-check.mjs reads as
                campaign evidence).
+  --build-sha  #2491: ROUTEFLOW_BUILD_SHA=<this checkout's HEAD> and ROUTEFLOW_BUILD_DIRTY=true|false,
+               which docker-compose.yml stamps on the api/web images as the org.routeflow.sha /
+               org.routeflow.dirty labels (used by local:up and local:build).
+  --proof-stack  #2491 (SA-473 (d)): BEFORE the command runs, read both stack images' build shas,
+               print them as one "proof-stack:" line, append the record to
+               local-assets/proof-stack.jsonl (PROOF_STACK_LOG overrides), and refuse (exit 1,
+               "stale image", command never run) unless each image was built from a descendant
+               of PROOF_STACK_REQUIRE (a PR's merge or head commit) or, when that is unset, of
+               this checkout's HEAD. With PROOF_STACK_REQUIRE set, an image built from a dirty
+               tree is refused too (the HEAD dev loop only warns).
   --help       Print this help and exit 0.
 
 Everything after \`--\` is one command string, run through the platform shell (so \`&&\`
@@ -66,7 +88,16 @@ const flags = new Set(argv.slice(0, sep));
 const command = argv.slice(sep + 1).join(" ");
 
 const unknown = [...flags].filter(
-  (f) => !["--db", "--smoke", "--db-specs", "--smtp-specs", "--e2e"].includes(f),
+  (f) =>
+    ![
+      "--db",
+      "--smoke",
+      "--db-specs",
+      "--smtp-specs",
+      "--e2e",
+      "--build-sha",
+      "--proof-stack",
+    ].includes(f),
 );
 if (unknown.length) {
   console.error(`local-env: unknown flag(s): ${unknown.join(", ")} — see --help`);
@@ -87,7 +118,7 @@ if (flags.has("--db")) {
   const user = process.env.POSTGRES_USER || "user";
   const password = process.env.POSTGRES_PASSWORD || "pass";
   const database = process.env.POSTGRES_DB || "routeflow_dev";
-  env.DATABASE_URL = `postgresql://${user}:${password}@localhost:5432/${database}`;
+  env.DATABASE_URL = `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@localhost:5432/${encodeURIComponent(database)}`;
   // POSTGRES_* are kept (the compose defaults above are derived from them), but the proxy
   // pair they pair with is gone, so the proxy branch can no longer trigger.
 }
@@ -124,7 +155,7 @@ if (flags.has("--e2e")) {
   env.PLAYWRIGHT_BASE_URL = "http://localhost:3001";
   env.SMOKE_BASE_URL = "http://localhost:3000";
   env.PLAYWRIGHT_TENANT_SLUG = "e2e-routeflow";
-  env.E2E_SEED_DATABASE_URL = `postgresql://${user}:${password}@localhost:5432/${database}`;
+  env.E2E_SEED_DATABASE_URL = `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@localhost:5432/${encodeURIComponent(database)}`;
   // playwright.config.ts hardcodes `outputFile: "../../.campaign/runs/web-e2e.json"` (matches
   // master — never read PLAYWRIGHT_JSON_OUTPUT_NAME, that var only feeds the OUTPUT_DIR/
   // OUTPUT_NAME fallback path for a reporter's output *directory*, not its file). The var that
@@ -137,6 +168,45 @@ if (flags.has("--e2e")) {
   // an ABSOLUTE path computed from REPO_ROOT above rather than a "../../"-relative one.
   env.PLAYWRIGHT_JSON_OUTPUT_FILE = path.join(REPO_ROOT, ".campaign", "runs", "web-e2e-local.json");
   delete env.CI;
+  // D-03 (#1803): the local-only throwaway super-admin minted by `npm run local:sa` (scripts/local-super-admin.mjs)
+  // lives in a gitignored, owner-only file and WINS over an exported PLAYWRIGHT_SA_* (with a loud warning when it
+  // overrides one). See scripts/lib/local-sa-env.mjs.
+  loadLocalSaEnv(env, path.join(REPO_ROOT, "local-assets", "local-sa.env"));
+}
+
+const exec = (cmd, args) => {
+  const r = spawnSync(cmd, args, { cwd: REPO_ROOT, encoding: "utf8" });
+  return { status: r.error ? null : r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+};
+
+if (flags.has("--build-sha")) {
+  const stamp = buildStamp(exec);
+  env.ROUTEFLOW_BUILD_SHA = stamp.sha;
+  env.ROUTEFLOW_BUILD_DIRTY = stamp.dirty;
+  console.log(`local-env: stamping images with ${stamp.sha} (dirty: ${stamp.dirty})`);
+}
+
+if (flags.has("--proof-stack")) {
+  const result = checkProofStack({
+    required: requiredCommit(process.env, exec),
+    images: STACK_IMAGES.map((image) => readImage(image, exec)),
+    ancestor: (a, b) => isAncestor(a, b, exec),
+  });
+  console.log(stampLine(result));
+  for (const w of result.warnings) console.warn(`proof-stack: WARNING ${w}`);
+  try {
+    const log =
+      process.env.PROOF_STACK_LOG || path.join(REPO_ROOT, "local-assets", "proof-stack.jsonl");
+    fs.mkdirSync(path.dirname(log), { recursive: true });
+    fs.appendFileSync(log, `${JSON.stringify({ ...result.record, command })}\n`);
+  } catch (err) {
+    console.warn(`proof-stack: could not record the stamp (${err.message})`);
+  }
+  if (!result.ok) {
+    for (const f of result.failures) console.error(`proof-stack: ${f}`);
+    console.error("proof-stack: refusing to run the lane against a stale stack");
+    process.exit(1);
+  }
 }
 
 const res = spawnSync(command, { shell: true, stdio: "inherit", env });

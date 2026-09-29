@@ -13,6 +13,7 @@
  *   • No transaction is left open; the connection is closed in `finally`.
  */
 import pg from "pg";
+import { resolveReportDbUrl } from "./lib/report-db-url.mjs";
 
 /**
  * Resolve a connection string. Railway's `postgres` service publishes only its
@@ -21,22 +22,11 @@ import pg from "pg";
  * the external proxy URL from the injected variables instead. Credentials are
  * never printed — only host/database.
  */
+// B768: one shared resolver (scripts/lib/report-db-url.mjs) instead of hand-copied ones.
+// Railway's TCP-proxy variables win; DATABASE_URL is the fallback when they are absent.
+// Returns null (after logging why) when nothing usable is set.
 function resolveUrl() {
-  const direct = process.env.DATABASE_URL;
-  if (direct && !direct.includes(".railway.internal")) return direct;
-  const {
-    POSTGRES_USER,
-    POSTGRES_PASSWORD,
-    POSTGRES_DB,
-    RAILWAY_TCP_PROXY_DOMAIN,
-    RAILWAY_TCP_PROXY_PORT,
-  } = process.env;
-  if (RAILWAY_TCP_PROXY_DOMAIN && POSTGRES_USER && POSTGRES_PASSWORD) {
-    const db = POSTGRES_DB || "railway";
-    const port = RAILWAY_TCP_PROXY_PORT || "5432";
-    return `postgresql://${encodeURIComponent(POSTGRES_USER)}:${encodeURIComponent(POSTGRES_PASSWORD)}@${RAILWAY_TCP_PROXY_DOMAIN}:${port}/${db}`;
-  }
-  return direct || null;
+  return resolveReportDbUrl("prod-readonly-audit");
 }
 
 const url = resolveUrl();
@@ -129,9 +119,15 @@ async function main() {
                     AND col.column_name='tenantId')
     ORDER BY 1`);
 
+  // Platform-level tables whose `tenantId` is LEGITIMATELY null: a row there is not an orphan and
+  // not an RLS blast-radius row, so it must never move the orphans-zero baseline.
+  //   OnboardingCase (#2159 S1): a case exists before its workspace; tenantId is set at Activate.
+  const PLATFORM_NULL_TENANT_TABLES = new Set(["OnboardingCase"]);
+
   const affected = [];
   let unknown = 0;
   for (const { t, est_rows } of tenantTables) {
+    if (PLATFORM_NULL_TENANT_TABLES.has(t)) continue;
     try {
       const r = await q(`SELECT count(*)::bigint AS c FROM public."${t}" WHERE "tenantId" IS NULL`);
       const c = Number(r[0].c);

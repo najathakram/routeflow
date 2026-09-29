@@ -432,6 +432,11 @@ export function RecurringInvoiceForm({
               <span className="text-xs font-medium text-navy/70 text-right">Unit Price</span>
               <span />
             </div>
+            {/* B646 / SA-135: a boxed product's template line is a BOX count at the per-box price. */}
+            <p className="px-1 text-xs text-navy/60" data-testid="recurring-qty-boxes-hint">
+              For a product sold in boxes, Qty counts boxes and Unit Price is per box (2.5 = 2 boxes
+              + half a box).
+            </p>
             {items.map((item) => (
               <div
                 key={item.key}

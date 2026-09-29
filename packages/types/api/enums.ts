@@ -85,7 +85,7 @@ export type ReturnPriceSource = (typeof RETURN_PRICE_SOURCE_VALUES)[number];
 export const CREDIT_NOTE_STATUS_VALUES = ["ISSUED", "APPLIED", "VOID"] as const;
 export type CreditNoteStatus = (typeof CREDIT_NOTE_STATUS_VALUES)[number];
 
-export const REGULATED_FILING_STATUS_VALUES = ["GENERATED", "FAILED"] as const;
+export const REGULATED_FILING_STATUS_VALUES = ["GENERATED", "FAILED", "LOCKED"] as const;
 export type RegulatedFilingStatus = (typeof REGULATED_FILING_STATUS_VALUES)[number];
 
 export const INVOICE_TREATMENT_VALUES = [
@@ -153,6 +153,28 @@ export type PriceType = (typeof PRICE_TYPE_VALUES)[number];
 
 export const CHECK_STATUS_VALUES = ["RECORDED", "DEPOSITED", "CLEARED", "BOUNCED"] as const;
 export type CheckStatus = (typeof CHECK_STATUS_VALUES)[number];
+
+// #2169 (SA-395): a system-written InvoiceItem purpose marker — today only the NSF bounce-fee
+// line (the real Prisma enum: `InvoiceItemSystemKind.NSF_FEE`). NOTE: the API never value-imports
+// this array (apps/api/src/common/no-runtime-workspace-imports.spec.ts forbids it —
+// @routeflow/types ships raw TS, no build step, and would crash `node dist/main.js` at boot);
+// apps/api/src/invoices/nsf-line.ts instead value-imports the real generated `@prisma/client`
+// enum directly, and the one place that CANNOT do that either (the plain .mjs backfill script,
+// apps/api/scripts/backfill-2169-nsf-system-kind.mjs) hand-copies the single string as
+// `NSF_FEE_SYSTEM_KIND`, pinned there against the schema source in its own `--self-test`. This
+// array is the shared mirror for web/mobile (and this file's own enum-parity pin).
+export const INVOICE_ITEM_SYSTEM_KIND_VALUES = ["NSF_FEE"] as const;
+export type InvoiceItemSystemKind = (typeof INVOICE_ITEM_SYSTEM_KIND_VALUES)[number];
+
+// SA-436 (#2401): why a (credit note, invoice) pair is never re-applied automatically — the
+// CreditNoteApplyBlock row's reason. Mirrors the Prisma enum for the web/mobile "Applied credits"
+// panel (SA-436 PR-3).
+export const CREDIT_NOTE_APPLY_BLOCK_REASON_VALUES = [
+  "UNAPPLIED",
+  "UNTICKED",
+  "VOID_REVERSAL",
+] as const;
+export type CreditNoteApplyBlockReason = (typeof CREDIT_NOTE_APPLY_BLOCK_REASON_VALUES)[number];
 
 export const DOCUMENT_NUMBER_TYPE_VALUES = [
   "INVOICE",
@@ -393,3 +415,36 @@ export type RestrictionAddressPrecedence = (typeof RESTRICTION_ADDRESS_PRECEDENC
 /** Why a TenantFeatureConfigSnapshot was taken (Lane B A2): automatic on a downgrade, or by an admin. */
 export const SNAPSHOT_REASON_VALUES = ["DOWNGRADE", "MANUAL"] as const;
 export type SnapshotReasonValue = (typeof SNAPSHOT_REASON_VALUES)[number];
+
+// Order tracking (#2095): the three statuses the tracking payload (`./order-tracking.ts`) carries,
+// pinned set-equal to the generated Prisma `OrderStatus` / `RouteRunStatus` / `RouteRunStopStatus`
+// enums (see `enum-parity.spec.ts`'s `ENUM_TABLE` rows). The derived types are `…Value`, not the
+// bare names: `../index.ts` still exports hand-written legacy TS enums under `OrderStatus`,
+// `RouteRunStatus` and `RouteRunStopStatus` (its `OrderStatus` lacks DRAFT and
+// PARTIALLY_DELIVERED), and a local export silently shadows a same-named `export *`.
+export const ORDER_STATUS_VALUES = [
+  "DRAFT",
+  "PENDING",
+  "CONFIRMED",
+  "OUT_FOR_DELIVERY",
+  "PARTIALLY_DELIVERED",
+  "DELIVERED",
+  "CANCELLED",
+] as const;
+export type OrderStatusValue = (typeof ORDER_STATUS_VALUES)[number];
+
+export const ROUTE_RUN_STATUS_VALUES = [
+  "SCHEDULED",
+  "IN_PROGRESS",
+  "COMPLETED",
+  "CANCELLED",
+] as const;
+export type RouteRunStatusValue = (typeof ROUTE_RUN_STATUS_VALUES)[number];
+
+export const ROUTE_RUN_STOP_STATUS_VALUES = [
+  "PENDING",
+  "IN_PROGRESS",
+  "COMPLETED",
+  "SKIPPED",
+] as const;
+export type RouteRunStopStatusValue = (typeof ROUTE_RUN_STOP_STATUS_VALUES)[number];

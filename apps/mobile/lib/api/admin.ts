@@ -402,11 +402,18 @@ export interface AdminInvoice {
   items?: Array<{
     id: string;
     description: string;
+    /** #2169: the system line kind ("NSF_FEE" for the bounce-fee line), null for a normal line. */
+    systemKind?: string | null;
     qty: number;
     /** Boxed denomination snapshot — when set, unitPrice is the BOX price. */
     boxes?: number | null;
     pieces?: number | null;
     unitsPerBox?: number | null;
+    /** units_v1: the line's own selling unit ("Case"…) when sold by a non-pack
+     *  unit rather than loose pieces; null on a plain/pack line. B653 names it in
+     *  `invoice-line-display.ts`'s qty text; B784 names it in the unit-aware-edit
+     *  guard's refusal message. */
+    unitLabel?: string | null;
     unitPrice: number;
     /** Catalog base for an override line; unitPrice > originalPrice = upsell. */
     originalPrice?: number | null;

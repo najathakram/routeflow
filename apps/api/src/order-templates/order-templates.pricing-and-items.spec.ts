@@ -7,6 +7,8 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { OrdersService } from "../orders/orders.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { AuditService } from "../audit/audit.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 /**
@@ -64,6 +66,14 @@ describe("OrderTemplatesService — pricing via the shared resolver, PATCH item 
         { provide: OrdersService, useValue: ordersService },
         { provide: AuthorizationGuardService, useValue: authGuard },
         { provide: NotificationsService, useValue: notifications },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
       ],
     }).compile();
     service = mod.get(OrderTemplatesService);

@@ -19,10 +19,23 @@
 // CHECK_TRANSITIONS (post-dated check payments PR-1, 2026-09-15): a real runtime value
 // `lib/payments-logic.ts`'s `checkNextStates` needs under this stub — must stay byte-identical
 // to `packages/types/api/checks.ts`'s export (see that file for the V1-only rule).
+// API_ERROR_CODES (#2163): must stay equal to `packages/types/api/error-codes.ts`; pinned by
+// apps/api/src/common/api-error-codes-parity.spec.ts, which `require`s THIS file.
 module.exports = {
   UserRole: {},
   VENDOR_BILL_STATUS_VALUES: ["DRAFT", "RECEIVED", "PARTIAL", "PAID", "OVERDUE", "VOID"],
   PURCHASE_ORDER_STATUS_VALUES: ["DRAFT", "SENT", "PARTIAL", "RECEIVED", "CLOSED"],
+  API_ERROR_CODES: {
+    ADDON_GATE: "ADDON_GATE",
+    MAILBOX_CONNECT_SECRET_MISMATCH: "mailbox_connect_secret_mismatch",
+    MAILBOX_CONFIRM_IDENTITY_MISMATCH: "mailbox_confirm_identity_mismatch",
+    UNLINKED_ITEMS: "UNLINKED_ITEMS",
+    PACK_SIZE_UNKNOWN: "PACK_SIZE_UNKNOWN",
+    DUPLICATE_VENDOR_BILL: "DUPLICATE_VENDOR_BILL",
+    CLEANUP_IMPORTED_DISABLED: "CLEANUP_IMPORTED_DISABLED",
+    ORDER_LINE_CHANGED: "ORDER_LINE_CHANGED",
+    NSF_LINE_UNTAXED: "NSF_LINE_UNTAXED",
+  },
   CHECK_TRANSITIONS: {
     RECORDED: ["DEPOSITED", "BOUNCED"],
     DEPOSITED: ["CLEARED", "BOUNCED"],

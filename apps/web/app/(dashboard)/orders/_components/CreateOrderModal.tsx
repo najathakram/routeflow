@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { flushSync } from "react-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -9,6 +10,7 @@ import { Modal, Textarea, Button, cn, useToast } from "@routeflow/ui/web";
 import { useQuery } from "@tanstack/react-query";
 import { useCustomers, useCustomerPrices, useCustomer } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
+import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import {
   useCreateOrder,
   useActiveOrderForCustomer,
@@ -19,7 +21,7 @@ import { useCreateDraft, useUpdateDraft, useDeleteDraft, useDraft } from "@/lib/
 import { draftDeviceLabel, type OrderDraftPayload } from "@/lib/drafts";
 import { apiClient } from "@/lib/api-client";
 import { orderCreatedToast } from "./order-created-toast";
-import { mergeQtyIntoLine, mergedLineMessage, newLineQty, parseAddQty } from "./add-line-merge";
+import { mergeQtyIntoLine, mergedLineMessage, newLineQty } from "./add-line-merge";
 import { getTierPrice, computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MoneyInput, DecimalInput } from "@/components/MoneyInput";
@@ -50,6 +52,11 @@ import { CreditNotePicker, type CreditSelection } from "./CreditNotePicker";
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON, useOrderUiV2, useScanV2 } from "@/lib/api/addons";
+import {
+  OrderInlineReturnsSection,
+  type OrderInlineReturnsSectionHandle,
+} from "./OrderInlineReturnsSection";
+import { RETURN_SAVE_BLOCKED, useOrderInlineReturnSave } from "./use-order-inline-return-save";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -154,6 +161,9 @@ export function CreateOrderModal({
 }: CreateOrderModalProps) {
   const { toast } = useToast();
   const createOrder = useCreateOrder();
+  // #2406: an inline return started (lines entered + quoted) before this order is saved.
+  const returnsRef = React.useRef<OrderInlineReturnsSectionHandle>(null);
+  const returnSave = useOrderInlineReturnSave(returnsRef);
 
   // Minimize & resume drafts (pos-cost-roles-spec §2).
   const createDraft = useCreateDraft();
@@ -203,18 +213,16 @@ export function CreateOrderModal({
   const [customQty, setCustomQty] = React.useState("1");
   const [customError, setCustomError] = React.useState("");
   const productSearchRef = React.useRef<HTMLInputElement>(null);
-  // Quick-order "Qty" field next to the product search: how many of the NEXT picked product to
-  // add (cases for a case-packed product). Resets to 1 after every add.
-  const [addQtyRaw, setAddQtyRaw] = React.useState("1");
-  // Enter resolves the typed code through the scan handler (async, and it calls back through the
-  // `addLineItem` thunk), so the typed qty rides a short-lived ref; a camera scan never sets it
-  // and therefore stays +1 per scan.
-  const typedQtyRef = React.useRef<{ qty: number; at: number } | null>(null);
-  /** Back to a clean quick-add: the field to 1 and no pending Enter qty. */
-  const resetAddQty = () => {
-    setAddQtyRaw("1");
-    typedQtyRef.current = null;
-  };
+  // #2696 (owner): the quick-order "Qty" box beside the search is gone — every pick / scan adds 1
+  // (one case for a case-packed product) and a repeat merges +1; the line's own qty is tap-to-type.
+  // SA-090/Opus item 1: written INSIDE addLineItem's setLineItems updater (the only place the
+  // add-vs-merge decision is made against the true latest state), read immediately after —
+  // never a value computed before that decision, which a same-tick retry+live-scan race of the
+  // same product could make stale (both calls would otherwise decide "new line" from the same
+  // pre-commit snapshot and append two rows for one product).
+  const lastAddResultRef = React.useRef<{ created: boolean; mergedInto?: LineItem } | null>(null);
+  // #2696 (b): the line whose price/qty sheet (the scan screen's PriceEditor) is open, if any.
+  const [editingLineId, setEditingLineId] = React.useState<string | null>(null);
   // Scroll the just-scanned line into view so rapid scanning stays visible.
   const rowRefs = React.useRef<Map<string, HTMLLIElement>>(new Map());
   const [scrollToId, setScrollToId] = React.useState<string | null>(null);
@@ -241,6 +249,12 @@ export function CreateOrderModal({
   // Dialog must come back, never stay closed behind a screen that is no longer rendered.
   const scanScreenActive = scanV2 && scanScreenOpen;
   // A closed order builder (or a gate that turned off) never reopens straight into the scan screen.
+  // Opus review (#1271, optional item): this bypasses ScanOrderScreen's own requestClose guard (which
+  // refuses to close while a retry lookup is actually in flight) — accepted as harmless rather than
+  // plumbed through, because the whole order builder is closing here; any in-flight retry's own
+  // eventual add still lands (the screen stays mounted, rendering null, until its next open resets
+  // it), but it lands into a draft the operator has already abandoned, same as any other unsaved
+  // in-flight edit at close time.
   React.useEffect(() => {
     if (!isOpen || !scanV2) setScanScreenOpen(false);
   }, [isOpen, scanV2]);
@@ -341,14 +355,11 @@ export function CreateOrderModal({
   const barcodeScanHandlerRef = useScanCodeHandler({
     // A thunk: addLineItem is declared further down and is read only when a code is scanned.
     addLineItem: (product) => {
-      // `created` is read in the same closure that performs the add, so it is exact even
-      // though setLineItems has not flushed yet (the scan screen uses it to undo).
-      const created = !lineItems.some((li) => sameProductUnit(li, { productId: product.id }));
-      const typed = typedQtyRef.current;
-      typedQtyRef.current = null;
-      const fresh = !!typed && Date.now() - typed.at < 5000;
-      addLineItem(product, fresh ? typed!.qty : 1);
-      if (fresh) setAddQtyRaw("1"); // the typed qty was used — a scan that ignored it leaves it alone
+      // SA-090/Opus item 1: `created` comes from addLineItem's OWN return value now — it is
+      // decided inside the setLineItems updater, against the true latest state, never from a
+      // closure-captured `lineItems` read here beforehand (which a same-tick retry-plus-live-scan
+      // race of the same product could make stale — see addLineItem's own comment).
+      const { created } = addLineItem(product);
       return { created };
     },
     onUnknownCode: (code) => {
@@ -367,7 +378,6 @@ export function CreateOrderModal({
     if (!code) return;
     setProductSearch("");
     setDebouncedProductSearch("");
-    typedQtyRef.current = { qty: parseAddQty(addQtyRaw), at: Date.now() };
     barcodeScanHandlerRef.current(code);
   };
 
@@ -397,7 +407,6 @@ export function CreateOrderModal({
     setCustomName("");
     setCustomPrice("");
     setCustomQty("1");
-    resetAddQty();
     setCustomError("");
     setRequestedDeliveryDate("");
     setOrderDate("");
@@ -534,8 +543,8 @@ export function CreateOrderModal({
     return { ...li, qty: Math.max(1, li.qty + dir) };
   };
 
-  const addLineItem = (product: any, addQty = 1) => {
-    const n = orderUiV2 ? parseAddQty(addQty) : 1; // the typed Qty exists only under order_ui_v2
+  const addLineItem = (product: any): { created: boolean } => {
+    const n = 1; // #2696: every pick / scan adds one (the quick-add Qty field is gone)
     // Already in the list: MERGE (sum) into that line instead of adding a duplicate.
     //  - order_ui_v2: +1 for a scan / plain pick, +N for a typed qty. Box-aware: a case-packed line
     //    gains N cases and its qty is re-derived from boxes/pieces (pricing reads the split).
@@ -547,28 +556,8 @@ export function CreateOrderModal({
         : scanV2
           ? stepLineUnit(li, 1)
           : { ...li, qty: li.qty + 1 };
-    // Matched by product AND unit (sameProductUnit): once units_v1 lets one order hold two unit
-    // levels of the same product (a case line and a piece line), a scan/add must merge only into
-    // the line with the matching unit, never both.
-    const existing = lineItems.find((li) => sameProductUnit(li, { productId: product.id }));
-    if (existing) {
-      setLineItems((prev) =>
-        prev.map((li) => (sameProductUnit(li, { productId: product.id }) ? merge(li) : li)),
-      );
-      // The scan screen shows its own running rows (a toast per repeat scan would bury them).
-      if (orderUiV2 && !scanScreenActive) {
-        toast({
-          title: "Added to existing line",
-          description: mergedLineMessage(existing.productName, merge(existing)),
-          variant: "info",
-        });
-      }
-      setScrollToId(existing.tempId);
-      setProductSearch("");
-      setDebouncedProductSearch("");
-      setTimeout(() => productSearchRef.current?.focus(), 50);
-      return;
-    }
+    // Built once, outside the updater — none of it depends on `prev`, only on `product`/the
+    // customer/pricing context, so there is nothing here a race could make stale.
     const newTempId = product.id + "-" + Date.now();
     const upb: number | undefined = product.unitsPerBox ? Number(product.unitsPerBox) : undefined;
     const listPrice = Number(product.pricePerUnit ?? 0);
@@ -577,7 +566,6 @@ export function CreateOrderModal({
     const effectiveTier = tierOverride ?? customerTier;
     const tierPrice = getTierPrice(product, effectiveTier);
     const priceType = effectiveTier !== 1 ? ("SPECIAL" as const) : ("STANDARD" as const);
-
     // Pre-fill from customer's last-given price for this product (only when below
     // the effective tier price, and only when this isn't already a SPECIAL price
     // — SPECIAL prices are permanent, the discount is already in tierPrice).
@@ -589,52 +577,114 @@ export function CreateOrderModal({
     const hasHistUpsell =
       priceType !== "SPECIAL" && histEntry != null && histEntry.lastPrice > listPrice;
     const hasHistOverride = hasHistDiscount || hasHistUpsell;
-
-    setLineItems((prev) => [
-      ...prev,
-      {
-        tempId: newTempId,
-        productId: product.id,
-        // Show the full "<Parent> - <Variant>" name on the order line so the
-        // customer knows which flavor / variety they ordered. Variants store
-        // just the variant name in `product.name` (PR #44).
-        productName: displayProductName(product),
-        unit: product.unit ?? "each",
-        listPrice,
-        specialPrice: effectiveTier !== 1 ? tierPrice : undefined,
-        discountedPrice: hasHistOverride ? histEntry!.lastPrice : undefined,
-        unitPrice: hasHistOverride ? histEntry!.lastPrice : tierPrice,
-        priceType: hasHistUpsell
-          ? ("MANUAL" as const)
-          : hasHistDiscount
-            ? ("DISCOUNTED" as const)
-            : priceType,
-        ...newLineQty(upb, n),
-        unitsPerBox: upb,
-        unitCost: product.averageCost != null ? Number(product.averageCost) : undefined,
-        category: product.category ?? undefined,
-        trackedCategoryId: product.trackedCategoryId ?? null,
-        tierPrices: {
-          pricePerUnit: product.pricePerUnit,
-          priceTier2: product.priceTier2,
-          priceTier3: product.priceTier3,
-          priceTier4: product.priceTier4,
-          priceTier5: product.priceTier5,
-        },
+    const newLine: LineItem = {
+      tempId: newTempId,
+      productId: product.id,
+      // Show the full "<Parent> - <Variant>" name on the order line so the
+      // customer knows which flavor / variety they ordered. Variants store
+      // just the variant name in `product.name` (PR #44).
+      productName: displayProductName(product),
+      unit: product.unit ?? "each",
+      listPrice,
+      specialPrice: effectiveTier !== 1 ? tierPrice : undefined,
+      discountedPrice: hasHistOverride ? histEntry!.lastPrice : undefined,
+      unitPrice: hasHistOverride ? histEntry!.lastPrice : tierPrice,
+      priceType: hasHistUpsell
+        ? ("MANUAL" as const)
+        : hasHistDiscount
+          ? ("DISCOUNTED" as const)
+          : priceType,
+      ...newLineQty(upb, n),
+      unitsPerBox: upb,
+      unitCost: product.averageCost != null ? Number(product.averageCost) : undefined,
+      category: product.category ?? undefined,
+      trackedCategoryId: product.trackedCategoryId ?? null,
+      tierPrices: {
+        pricePerUnit: product.pricePerUnit,
+        priceTier2: product.priceTier2,
+        priceTier3: product.priceTier3,
+        priceTier4: product.priceTier4,
+        priceTier5: product.priceTier5,
       },
-    ]);
-    setScrollToId(newTempId);
-    setProductSearch("");
-    setDebouncedProductSearch("");
-    setLineItemsError("");
-    // Re-focus the product search so the scanner is ready for the next item
-    setTimeout(() => productSearchRef.current?.focus(), 50);
+    };
+
+    // SA-090/Opus item 1: the add-vs-merge DECISION happens INSIDE the updater, against the true
+    // latest `prev` React is about to commit — never against `lineItems` read from the render
+    // this closure was captured in, which a same-tick retry-plus-live-scan race of the SAME
+    // product can make stale (both calls would otherwise read "not present yet" and each append
+    // a new row). `flushSync` forces this updater to run and commit before `addLineItem`
+    // returns, so `lastAddResultRef` — written only from inside it — is exact by the time the
+    // caller reads it, the same guarantee the retry queue's own flushSync already relies on.
+    // Matched by product AND unit (sameProductUnit): once units_v1 lets one order hold two unit
+    // levels of the same product (a case line and a piece line), a scan/add must merge only into
+    // the line with the matching unit, never both — and only the FIRST such match, never every
+    // one `.map()` would find, so a duplicate (however it arose) is never double-merged into.
+    // Cleared first so a skipped updater (it should never be) is caught explicitly below
+    // instead of silently reusing a PREVIOUS call's stale result.
+    lastAddResultRef.current = null;
+    flushSync(() => {
+      setLineItems((prev) => {
+        const idx = prev.findIndex((li) => sameProductUnit(li, { productId: product.id }));
+        if (idx === -1) {
+          lastAddResultRef.current = { created: true };
+          return [...prev, newLine];
+        }
+        const merged = merge(prev[idx]);
+        lastAddResultRef.current = { created: false, mergedInto: merged };
+        const next = prev.slice();
+        next[idx] = merged;
+        return next;
+      });
+    });
+    // TS's flow analysis can't see the assignment inside the flushSync/setLineItems closure above,
+    // so it still treats `lastAddResultRef.current` as the `null` this function set it to before
+    // flushSync — an explicit cast to the ref's own declared type restores real narrowing for the
+    // runtime check below (the pre-#1271-review code used a bare `!` for the same closure-blindness
+    // reason; this keeps the throw instead of silently asserting).
+    const result = lastAddResultRef.current as { created: boolean; mergedInto?: LineItem } | null;
+    if (result === null) {
+      throw new Error(
+        "addLineItem: lastAddResultRef was never set — the setLineItems updater did not run " +
+          "inside flushSync as expected",
+      );
+    }
+
+    // SA-090f (#1271): the commit above already landed — nothing in this tail (a toast, building
+    // the merged-line message, the search-field reset/refocus) may ever throw back to the caller,
+    // or a retry that treats the throw as "resolveCode failed" would re-run this whole method and
+    // add the line a SECOND time. Logged, not silently swallowed; the commit's own outcome is
+    // returned either way.
+    try {
+      if (!result.created) {
+        // The scan screen shows its own running rows (a toast per repeat scan would bury them).
+        if (orderUiV2 && !scanScreenActive) {
+          toast({
+            title: "Added to existing line",
+            description: mergedLineMessage(result.mergedInto!.productName, result.mergedInto!),
+            variant: "info",
+          });
+        }
+        setScrollToId(result.mergedInto!.tempId);
+        setProductSearch("");
+        setDebouncedProductSearch("");
+        scheduleScannerRefocus(productSearchRef, 50);
+      } else {
+        setScrollToId(newTempId);
+        setProductSearch("");
+        setDebouncedProductSearch("");
+        setLineItemsError("");
+        // Re-focus the product search so the scanner is ready for the next item
+        scheduleScannerRefocus(productSearchRef, 50);
+      }
+    } catch (err) {
+      console.error("addLineItem: post-commit step failed (line was still added)", err);
+    }
+    return { created: result.created };
   };
 
-  /** A pick from the search dropdown: applies the typed Qty, then clears it. */
+  /** A pick from the search dropdown: +1 (#2696 — no typed quick-add qty). */
   const addPicked = (product: any) => {
-    addLineItem(product, parseAddQty(addQtyRaw));
-    setAddQtyRaw("1");
+    addLineItem(product);
   };
 
   const removeLineItem = (tempId: string) => {
@@ -680,7 +730,6 @@ export function CreateOrderModal({
     setCustomName("");
     setCustomPrice("");
     setCustomQty("1");
-    resetAddQty();
     setCustomError("");
   };
 
@@ -707,6 +756,12 @@ export function CreateOrderModal({
         return { ...li, unitPrice: price, listPrice: price };
       }),
     );
+  };
+
+  /** #2696 (b): a typed qty on a plain (non-case) line — a whole number, at least 1 (like the −). */
+  const setQty = (tempId: string, value: number) => {
+    const qty = Math.max(1, Number.isFinite(value) ? Math.trunc(value) : 1);
+    setLineItems((prev) => prev.map((li) => (li.tempId === tempId ? { ...li, qty } : li)));
   };
 
   const updateQty = (tempId: string, delta: number) => {
@@ -927,6 +982,12 @@ export function CreateOrderModal({
   // Radix's Escape interception (see Modal.onEscapeKeyDown). While mid-add, swallow
   // the Escape and clear just the sub-flow state, keeping the order builder open.
   const handleEscape = (event: KeyboardEvent) => {
+    // #2696 (b): an open price sheet takes Escape first — it closes the sheet, never the order.
+    if (editingLineId) {
+      event.preventDefault();
+      setEditingLineId(null);
+      return;
+    }
     if (!addItemFlowActive) return; // fall through → Radix dismiss → handleDismiss
     event.preventDefault();
     setProductSearch("");
@@ -936,7 +997,6 @@ export function CreateOrderModal({
       setCustomName("");
       setCustomPrice("");
       setCustomQty("1");
-      resetAddQty();
       setCustomError("");
     }
     setTimeout(() => productSearchRef.current?.focus(), 0);
@@ -1052,6 +1112,15 @@ export function CreateOrderModal({
     options: { mergeChoice?: "merge" | "separate"; asDraft?: boolean } = {},
   ) => {
     const { mergeChoice, asDraft } = options;
+    // #2406: fold in whatever the operator has typed into the Returns section.
+    const inlineReturn = returnSave.build(selectedCustomer!.id, "");
+    if (inlineReturn === "missing-reason" || inlineReturn === "needs-quote") {
+      // Close a merge-vs-separate prompt that led here, so the operator lands back on the
+      // Returns section they must fix (never a stale prompt over the blocked form).
+      setMergePrompt(null);
+      toast({ title: RETURN_SAVE_BLOCKED[inlineReturn], variant: "error" });
+      return;
+    }
     const itemsForSubmit = (
       asDraft
         ? lineItems.filter(
@@ -1098,6 +1167,8 @@ export function CreateOrderModal({
         // Bill-now (createSale) has no path through this modal today — only
         // the create-order payload needs threading here.
         ...(appliedCredits.length ? { appliedCreditNotes: appliedCredits } : {}),
+        // SA-484a: the create's Idempotency-Key HEADER rides with the returnKey (same lifecycle).
+        ...(inlineReturn ? { inlineReturn, idempotencyKey: returnSave.idempotencyKey() } : {}),
       } as any,
       {
         onSuccess: (created: any) => {
@@ -1107,6 +1178,7 @@ export function CreateOrderModal({
           setMergePrompt(null);
           pendingFormValuesRef.current = null;
           pendingAsDraftRef.current = false;
+          returnSave.onSuccess();
           onClose();
         },
         onError: (err: any) => {
@@ -1133,7 +1205,13 @@ export function CreateOrderModal({
           if (blocked && blocked.length > 0) {
             licenseRetryRef.current = { data, options };
             setLicenseBlock(blocked);
+            return;
           }
+          // #2406: none of the precondition flows above matched (each re-submits the SAME
+          // attempt and must keep the returnKey) — an inline-return-carrying save refused
+          // for any other 4xx reason mints a fresh one and surfaces the message near the
+          // Returns section. The modal itself stays open (no onClose() on this path already).
+          if (inlineReturn) returnSave.onError(err, false);
         },
       },
     );
@@ -1221,6 +1299,7 @@ export function CreateOrderModal({
         else rowRefs.current.delete(li.tempId);
       }}
       onQtyDelta={(delta) => updateQty(li.tempId, delta)}
+      onSetQty={(value) => setQty(li.tempId, value)}
       onSetBoxes={(value) => setBoxes(li.tempId, value)}
       onSetPieces={(value) => setPieces(li.tempId, value)}
       onSetUnitQty={(value) => setUnitQty(li.tempId, value)}
@@ -1299,6 +1378,14 @@ export function CreateOrderModal({
     });
     setCreateProductOpen(false);
   };
+
+  // #2696 (b): the main list's price/qty sheet — the scan screen's PriceEditor, same handlers, same
+  // floor check. Rendered only while the tapped line still exists (removing it closes the sheet),
+  // and INSIDE the Modal's content: outside it, Radix marks the sheet aria-hidden and the body
+  // pointer-events:none, so it could not be clicked.
+  const editingLine = editingLineId
+    ? lineItems.find((li) => li.tempId === editingLineId)
+    : undefined;
 
   const dialog = (
     <Modal
@@ -1494,32 +1581,10 @@ export function CreateOrderModal({
                     : "border-surface-border focus:border-transparent",
                 )}
               />
-              {orderUiV2 && (
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  min={1}
-                  max={9999}
-                  value={addQtyRaw}
-                  onChange={(e) => setAddQtyRaw(e.target.value)}
-                  onFocus={(e) => e.target.select()}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      productSearchRef.current?.focus(); // commit the qty, move on to the search
-                    }
-                  }}
-                  aria-label="Quantity to add"
-                  title="Quantity to add (cases for case-packed products)"
-                  className="h-10 w-14 shrink-0 rounded border border-surface-border bg-white px-1 text-center text-sm font-semibold text-navy [appearance:textfield] focus:outline-none focus:ring-2 focus:ring-brand-500 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                />
-              )}
               <BarcodeScannerButton
                 inputRef={productSearchRef}
                 onScan={(code) => {
-                  // A camera scan is always +1 — never inherit a typed qty from a failed Enter.
-                  typedQtyRef.current = null;
-                  barcodeScanHandlerRef.current(code);
+                  barcodeScanHandlerRef.current(code); // a camera scan is +1
                 }}
                 onError={(message) => toast({ variant: "error", title: message })}
                 onOpenContinuous={scanV2 ? () => setScanScreenOpen(true) : undefined}
@@ -1745,7 +1810,15 @@ export function CreateOrderModal({
             {/* Line items list */}
             {lineItems.length > 0 ? (
               <ul className="divide-y divide-surface-border overflow-hidden rounded-lg border border-surface-border">
-                {lineItems.map((li) => renderLine(li))}
+                {lineItems.map((li) =>
+                  renderLine(li, {
+                    // #2696 (b): tap the price → the line's price/qty sheet. NOT on a SPECIAL-priced
+                    // line until #2696(c) lands (SA-558): an editor over a price the app refuses to
+                    // change is exactly B721 — keep it untappable.
+                    onTapPrice:
+                      li.priceType === "SPECIAL" ? undefined : () => setEditingLineId(li.tempId),
+                  }),
+                )}
               </ul>
             ) : (
               <div className="rounded-lg border border-dashed border-surface-border bg-surface-raised py-6 text-center">
@@ -1833,6 +1906,16 @@ export function CreateOrderModal({
               value={appliedCredits}
               onChange={setAppliedCredits}
               estimatedOrderTotal={total}
+            />
+          )}
+
+          {/* ── Returns Inside Order Creation (#2406) — collapsed until opened ── */}
+          {selectedCustomer && (
+            <OrderInlineReturnsSection
+              ref={returnsRef}
+              customerId={selectedCustomer.id}
+              refusalMessage={returnSave.refusalMessage}
+              refusalReturn={returnSave.refusalReturn}
             />
           )}
 
@@ -2051,6 +2134,7 @@ export function CreateOrderModal({
           onClose={() => setLicenseBlock(null)}
         />
       )}
+      {editingLine && renderPriceEditor(editingLine, () => setEditingLineId(null))}
     </Modal>
   );
 
@@ -2067,10 +2151,8 @@ export function CreateOrderModal({
           lines={lineItems}
           renderLine={renderLine}
           renderPriceEditor={renderPriceEditor}
-          resolveCode={(code) => {
-            // A qty typed for an Enter that added nothing must never ride into a camera scan.
-            typedQtyRef.current = null;
-            return barcodeScanHandlerRef.current(code);
+          resolveCode={(code, opts) => {
+            return barcodeScanHandlerRef.current(code, opts);
           }}
           onUndo={undoScan}
           hasCustomer={!!selectedCustomer}

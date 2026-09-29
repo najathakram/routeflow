@@ -1,4 +1,5 @@
 import { computeLineSubtotal } from "@routeflow/pricing";
+import type { DraftLinePriceSource } from "@routeflow/types";
 import type { SaleDraft } from "./api/drafts";
 
 /**
@@ -76,6 +77,12 @@ export interface DraftLineItem {
   unitLabel?: string;
   /** The pack fields a unit switch overwrote (web restores them when the pack is chosen again). */
   packBase?: DraftPackBase;
+  /**
+   * B755: where `unitPrice` came from — a remembered price-history pre-fill, or a genuine
+   * operator override. Only meaningful alongside `priceType: "MANUAL"`; a MISSING value there
+   * means "operator" (unchanged pre-B755 behaviour). Draft-only — never sent on order create.
+   */
+  priceSource?: DraftLinePriceSource;
   /** Any other key on the wire line — see `DraftLineExtra`. */
   [extra: string]: unknown;
 }
@@ -147,6 +154,9 @@ export interface DraftCatalogLine {
   /** units_v1 unit this line was parked in (`undefined` = the pack). See `DraftLineItem`. */
   unitLabel?: string;
   packBase?: DraftPackBase;
+  /** B755: where `unitPrice` came from — only meaningful alongside `priceType: "MANUAL"`. See
+   *  `DraftLineItem`. */
+  priceSource?: DraftLinePriceSource;
   /** Wire keys this mirror does not model, carried through untouched. See `DraftLineExtra`. */
   extra?: DraftLineExtra;
 }
@@ -185,6 +195,7 @@ const CATALOG_MODELED_KEYS = new Set([
   "note",
   "unitLabel",
   "packBase",
+  "priceSource",
 ]);
 const UNLISTED_MODELED_KEYS = new Set([
   "tempId",
@@ -210,18 +221,6 @@ function splitLine(
     if (!modeled.has(key) && line[key] !== defaults[key]) extra[key] = line[key];
   }
   return Object.keys(extra).length ? extra : undefined;
-}
-
-/**
- * A parked draft with a line sold in a non-pack unit can't be resumed on mobile: the builder rebuilds
- * every line from the live product as pieces/boxes and has nowhere to hold a unit, so it would price
- * the line as a pack (288 pieces -> 1). Returns the reason to refuse the WHOLE draft, or null. Nothing
- * is edited or dropped, so the draft stays intact for the web dashboard.
- */
-export function unitLineRefusal(items: readonly DraftCatalogLine[]): string | null {
-  return items.some((li) => !!li.unitLabel)
-    ? "This draft has items sold by the case or another unit. Open it on the web dashboard."
-    : null;
 }
 
 /**
@@ -278,6 +277,7 @@ export function toOrderDraftPayload(state: DraftBuilderState): OrderDraftPayload
     note: li.note,
     unitLabel: li.unitLabel,
     packBase: li.packBase,
+    priceSource: li.priceSource,
   }));
   const unlistedItems: DraftLineItem[] = state.unlisted.map((u) => ({
     productId: "", // no catalog id — mirrors web's addUnlistedItem
@@ -350,6 +350,7 @@ export function fromOrderDraftPayload(payload: OrderDraftPayload): DraftBuilderS
         note: li.note,
         unitLabel: li.unitLabel,
         packBase: li.packBase,
+        priceSource: li.priceSource,
         extra: splitLine(li, CATALOG_MODELED_KEYS),
       });
     }

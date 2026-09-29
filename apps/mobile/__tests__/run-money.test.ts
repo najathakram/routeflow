@@ -6,13 +6,16 @@
  */
 import {
   deliveredCategoryTax,
+  earlierVisitsRemaining,
   lineItemSubtotal,
   orderAmountDue,
   reconciledAmountDue,
+  reconciledDoorDue,
   shortPickCategoryTax,
   stopAmountDue,
   sumOrderLineItems,
   sumStopOrders,
+  type RunMoneyPayableInvoice,
 } from "../lib/run-money";
 import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
 import { freeUnitSizeFor, reconciledTotal, type ShortPickLine } from "../lib/short-pick";
@@ -102,27 +105,20 @@ describe("sumOrderLineItems / sumStopOrders (REG-B49)", () => {
  * REG-B305 round 2 (Opus BLOCKER on round 1's basis): `Order.total` carries
  * NO discount and, on a split delivery, bills the WHOLE shipping fee on
  * every visit — it is not what the invoice actually bills. The driver's
- * amount due must be the order's OPEN DRAFT INVOICE as the server last
- * computed it (`order.invoices[0]`: `total = subtotal + taxAmount +
- * shippingFee - discount`). These fixtures pin that basis; before the fix,
- * `orderAmountDue`/`reconciledAmountDue` read `order.total` directly and the
- * discount/split-fee assertions below are red on the WRONG (pre-fix) value,
- * not on a missing export.
+ * amount due must be the order's own PAYABLE INVOICE(S) as the server last
+ * computed them (B810: `order.payableInvoices[].balanceDue`, server-computed
+ * as `total - confirmed payments` — reduces to `total` here since these
+ * fixtures carry no payments, byte-identical to the pre-B810 basis). These
+ * fixtures pin that basis; before the ORIGINAL fix, `orderAmountDue`/
+ * `reconciledAmountDue` read `order.total` directly and the discount/
+ * split-fee assertions below are red on the WRONG (pre-fix) value, not on a
+ * missing export.
  */
 describe("REG-B305 tax-inclusive amount due (round 2: read off the draft invoice)", () => {
   it("REG-B305 the bug's own numbers: quotes and collects the draft invoice's total", () => {
     const order = {
       lineItems: [{ qty: 1, unitPrice: 116.83, subtotal: 116.83 }],
-      invoices: [
-        {
-          id: "inv-1",
-          subtotal: "116.83",
-          taxAmount: "11.68",
-          discount: "0",
-          shippingFee: "0",
-          total: "128.51",
-        },
-      ],
+      payableInvoices: [{ id: "inv-1", status: "DRAFT", balanceDue: "128.51" }],
     };
     expect(orderAmountDue(order as any)).toBe(128.51);
     // Driver collected $130 cash; change should be $1.49, not $13.17 (pre-tax basis).
@@ -139,9 +135,7 @@ describe("REG-B305 tax-inclusive amount due (round 2: read off the draft invoice
       tax: 10,
       total: 110,
       discountAmount: 15,
-      invoices: [
-        { id: "inv-1", subtotal: 100, taxAmount: 10, discount: 15, shippingFee: 0, total: 95 },
-      ],
+      payableInvoices: [{ id: "inv-1", status: "DRAFT", balanceDue: 95 }],
     };
     expect(orderAmountDue(order as any)).toBe(95);
     expect(orderAmountDue(order as any)).not.toBe(110);
@@ -153,16 +147,12 @@ describe("REG-B305 tax-inclusive amount due (round 2: read off the draft invoice
     const baseOrder = { lineItems: [], subtotal: 50, tax: 5, total: 121 };
     const firstVisit = {
       ...baseOrder,
-      invoices: [
-        { id: "inv-1", subtotal: 50, taxAmount: 5, discount: 0, shippingFee: 10, total: 65 },
-      ],
+      payableInvoices: [{ id: "inv-1", status: "DRAFT", balanceDue: 65 }],
     };
     expect(orderAmountDue(firstVisit as any)).toBe(65);
     const secondVisit = {
       ...baseOrder,
-      invoices: [
-        { id: "inv-2", subtotal: 50, taxAmount: 5, discount: 0, shippingFee: 0, total: 55 },
-      ],
+      payableInvoices: [{ id: "inv-2", status: "DRAFT", balanceDue: 55 }],
     };
     expect(orderAmountDue(secondVisit as any)).toBe(55);
     expect(orderAmountDue(secondVisit as any)).not.toBe(121);
@@ -171,39 +161,183 @@ describe("REG-B305 tax-inclusive amount due (round 2: read off the draft invoice
   it("REG-B305 RULING 1: sums ALL open drafts, not just the first (a regulated split can have several)", () => {
     const order = {
       lineItems: [],
-      invoices: [
-        { id: "base", subtotal: 60, taxAmount: 0, discount: 0, shippingFee: 0, total: 120 },
-        { id: "base-R1", subtotal: 40, taxAmount: 0, discount: 0, shippingFee: 0, total: 80 },
+      payableInvoices: [
+        { id: "base", status: "DRAFT", balanceDue: 120 },
+        { id: "base-R1", status: "DRAFT", balanceDue: 80 },
       ],
     };
     expect(orderAmountDue(order as any)).toBe(200);
   });
 
-  it("REG-B305 without an open draft the amount due falls back to the pre-tax line sum, never a client-side discount guess", () => {
-    // Order.total (110) and discountAmount (15) look like they'd net to 95, but
-    // Order.total is only net-of-discount on the CREATE path — an edited/merged
-    // order can leave it stale, so re-deriving the discount client-side is never
-    // safe (RULING 2). No `invoices` at all -> the honest pre-tax line sum (100).
-    const order = {
-      lineItems: [{ qty: 2, unitPrice: 50, subtotal: 100 }],
-      total: 110,
-      discountAmount: 15,
-    };
-    expect(orderAmountDue(order as any)).toBe(sumOrderLineItems(order as any));
-    expect(orderAmountDue(order as any)).toBe(100);
-    expect(orderAmountDue(order as any)).not.toBe(95);
-  });
+  // B305 round 5: NO open draft is the DEFAULT state for a route order (the
+  // server only creates/reconciles one at stop-completion) — this used to
+  // fall back to the bare pre-tax line sum, so essentially every driver saw
+  // a pre-tax quote on essentially every stop. RULING 2 still stands
+  // (`Order.total` is never read here) but `Order.tax`/`Order.subtotal` are
+  // safe: every order-mutating path recomputes both fresh from the current
+  // line set, unlike `Order.total`'s discount term.
+  describe("REG-B305 round 5: without an open draft, the fallback is tax-inclusive, never the bare pre-tax line sum", () => {
+    it("repro: qty 1 @ 116.83, order.tax 11.68 (10%), no draft -> 128.51, not the pre-tax 116.83", () => {
+      const order = {
+        lineItems: [{ qty: 1, unitPrice: 116.83, subtotal: 116.83, status: "PENDING" }],
+        subtotal: 116.83,
+        tax: 11.68,
+      };
+      expect(orderAmountDue(order as any)).toBe(128.51);
+      expect(orderAmountDue(order as any)).not.toBe(sumOrderLineItems(order as any));
+    });
 
-  it("REG-B305 falls back to the pre-tax line sum when the payload carries no total at all", () => {
-    const order = { lineItems: [{ qty: 2, unitPrice: 10, subtotal: 20 }] };
-    expect(orderAmountDue(order as any)).toBe(sumOrderLineItems(order as any));
-  });
+    it("excludes a CANCELLED line's subtotal AND its stale categoryTaxAmount snapshot from the quote", () => {
+      // Line A 100.00; regulated line B 50.00 (categoryTaxAmount 7.50);
+      // CANCELLED line C: qty 0, subtotal 0, but its categoryTaxAmount
+      // snapshot was never zeroed on cancel (the server's line-cancel
+      // writers zero subtotal, not categoryTaxAmount) — must not leak in.
+      const order = {
+        lineItems: [
+          { qty: 2, unitPrice: 50, subtotal: 100, status: "PENDING" },
+          { qty: 1, unitPrice: 50, subtotal: 50, categoryTaxAmount: 7.5, status: "PENDING" },
+          { qty: 0, unitPrice: 20, subtotal: 0, categoryTaxAmount: 4, status: "CANCELLED" },
+        ],
+        subtotal: 150,
+        tax: 15,
+      };
+      expect(orderAmountDue(order as any)).toBe(172.5);
+      // Pins the two specific wrong values a partial fix would produce.
+      expect(orderAmountDue(order as any)).not.toBe(176.5); // no cancelled-line filter
+      expect(orderAmountDue(order as any)).not.toBe(165); // regular tax only, no category tax
+    });
 
-  it("REG-B305 a malformed total with no draft falls to the line sum, never NaN", () => {
-    const order = { lineItems: [{ qty: 2, unitPrice: 10, subtotal: 20 }], total: "abc" };
-    const due = orderAmountDue(order as any);
-    expect(due).toBe(20);
-    expect(Number.isNaN(due)).toBe(false);
+    it("an exempt customer's fallback zeroes BOTH tax terms, same repro line", () => {
+      // categoryTaxAmount 7.50 on the line: without it, this fixture can't
+      // tell "zeroes BOTH regular tax AND category tax" apart from "zeroes
+      // only regular tax" — there'd be no category tax present to leak.
+      const order = {
+        lineItems: [
+          {
+            qty: 1,
+            unitPrice: 116.83,
+            subtotal: 116.83,
+            categoryTaxAmount: 7.5,
+            status: "PENDING",
+          },
+        ],
+        subtotal: 116.83,
+        tax: 11.68,
+      };
+      expect(orderAmountDue(order as any, true)).toBe(116.83);
+      expect(orderAmountDue(order as any, true)).not.toBe(124.33); // 116.83 + leaked 7.50 category tax
+    });
+
+    it("an exempt customer's proportional-tax fixture (r = 0.5): still zero, never a fraction of either tax term", () => {
+      // active-line subtotal 50 vs order.subtotal 100 -> r = 0.5. Exempt
+      // zeroes both terms outright — r never enters the exempt branch at all,
+      // so this must read 50 flat, never 50 + half of anything.
+      const order = {
+        lineItems: [
+          { qty: 1, unitPrice: 50, subtotal: 50, categoryTaxAmount: 6, status: "PENDING" },
+        ],
+        subtotal: 100,
+        tax: 10,
+      };
+      expect(orderAmountDue(order as any, true)).toBe(50);
+    });
+
+    it("pins the proportional regularTax at r = 0.5 (active-line subtotal is HALF of order.subtotal)", () => {
+      // Active lines sum to 50 while order.subtotal is 100 (r = 0.5) — a line
+      // removed from the client's lineItems snapshot without a fresh
+      // order.subtotal write. regularTax = 10 * 0.5 = 5; categoryTax = 3
+      // (full stored value, never scaled by r). due = 50 + 5 + 3 = 58.
+      const order = {
+        lineItems: [
+          { qty: 1, unitPrice: 50, subtotal: 50, categoryTaxAmount: 3, status: "PENDING" },
+        ],
+        subtotal: 100,
+        tax: 10,
+      };
+      expect(orderAmountDue(order as any)).toBe(58);
+      expect(orderAmountDue(order as any)).not.toBe(63); // r=1 mistake: regularTax 10 flat, not 5
+    });
+
+    it("subtracts the order's own discount and adds its shipping fee, whole, never prorated", () => {
+      const order = {
+        lineItems: [{ qty: 1, unitPrice: 116.83, subtotal: 116.83, status: "PENDING" }],
+        subtotal: 116.83,
+        tax: 11.68,
+        discountAmount: 10,
+        shippingFee: 5,
+      };
+      expect(orderAmountDue(order as any)).toBe(123.51);
+    });
+
+    it("falls back to the pre-tax line sum only in the sense that missing tax/discount/fee fields default to zero — never NaN", () => {
+      const order = { lineItems: [{ qty: 2, unitPrice: 10, subtotal: 20, status: "PENDING" }] };
+      const due = orderAmountDue(order as any);
+      expect(due).toBe(20);
+      expect(Number.isNaN(due)).toBe(false);
+    });
+
+    it("a malformed order.tax/order.subtotal falls back to untaxed, never NaN", () => {
+      const order = {
+        lineItems: [{ qty: 2, unitPrice: 10, subtotal: 20, status: "PENDING" }],
+        subtotal: "garbage",
+        tax: "garbage",
+      };
+      const due = orderAmountDue(order as any);
+      expect(due).toBe(20);
+      expect(Number.isNaN(due)).toBe(false);
+    });
+
+    // SA-092b: this is the ACTUAL guard-removal repro (the earlier "exempt
+    // customer's fallback" tests above all supplied order.subtotal, so none
+    // of them exercised the `orderSubtotal == null` bail at all — removing
+    // the guard left every one of them green). order.subtotal is absent
+    // here, matching an OTA of this mobile fix shipped ahead of #1272's
+    // server deploy.
+    it("GUARD: order.subtotal entirely absent (pre-#1272-deploy shape) -> bare active subtotal, never the leaked category tax", () => {
+      const order = {
+        lineItems: [{ subtotal: 100, categoryTaxAmount: 8, status: "PENDING" }],
+        // subtotal/tax intentionally absent.
+      };
+      expect(orderAmountDue(order as any)).toBe(100);
+      expect(orderAmountDue(order as any)).not.toBe(108); // the leaked categoryTaxAmount
+    });
+
+    it("GUARD via stopAmountDue: same repro, exercised through the real caller chain", () => {
+      const stop = {
+        orders: [{ lineItems: [{ subtotal: 100, categoryTaxAmount: 8, status: "PENDING" }] }],
+        customer: {},
+      };
+      expect(stopAmountDue(stop as any)).toBe(100);
+      expect(stopAmountDue(stop as any)).not.toBe(108);
+    });
+
+    // SA-092b: a GENUINELY zero order.subtotal is NOT the guard case (the
+    // field IS present) — r lands at 0 via `orderSubtotal || 1`, matching
+    // the server's own `Number(order.subtotal) || 1` pattern exactly.
+    it("a genuinely $0 order.subtotal is not the guard case: fee stays whole, discount and tax scale to zero (r = 0)", () => {
+      const order = {
+        lineItems: [],
+        subtotal: 0,
+        tax: 0,
+        discountAmount: 3,
+        shippingFee: 5,
+      };
+      expect(orderAmountDue(order as any)).toBe(5);
+      expect(orderAmountDue(order as any)).not.toBe(2); // whole discount (0 - 3 + 5) — the old bug
+    });
+
+    it("pins discount x r at r = 0.5 (active-line subtotal is HALF of order.subtotal)", () => {
+      // Active lines sum to 50, order.subtotal 100 -> r = 0.5. discount 10 x
+      // 0.5 = 5 subtracted, never the whole 10.
+      const order = {
+        lineItems: [{ qty: 1, unitPrice: 50, subtotal: 50, status: "PENDING" }],
+        subtotal: 100,
+        tax: 0,
+        discountAmount: 10,
+      };
+      expect(orderAmountDue(order as any)).toBe(45); // 50 - 5
+      expect(orderAmountDue(order as any)).not.toBe(40); // whole discount (50 - 10) — the old bug
+    });
   });
 
   it("REG-B305 coerces string-Decimal draft totals", () => {
@@ -211,16 +345,7 @@ describe("REG-B305 tax-inclusive amount due (round 2: read off the draft invoice
     expect(
       orderAmountDue({
         ...base,
-        invoices: [
-          {
-            id: "i1",
-            subtotal: "10",
-            taxAmount: "0",
-            discount: "0",
-            shippingFee: "0",
-            total: "10",
-          },
-        ],
+        payableInvoices: [{ id: "i1", status: "DRAFT", balanceDue: "10" }],
       } as any),
     ).toBe(10);
   });
@@ -228,12 +353,320 @@ describe("REG-B305 tax-inclusive amount due (round 2: read off the draft invoice
   it("REG-B305 stopAmountDue mixes a draft-bearing order with a legacy order, never NaN", () => {
     const draftOrder = {
       lineItems: [],
-      invoices: [{ id: "i1", subtotal: 50, taxAmount: 5, discount: 0, shippingFee: 0, total: 55 }],
+      payableInvoices: [{ id: "i1", status: "DRAFT", balanceDue: 55 }],
     };
     const legacyOrder = { lineItems: [{ qty: 1, unitPrice: 20, subtotal: 20 }] };
     // No draft AND a malformed total -> falls all the way to the line sum.
     const brokenOrder = { lineItems: [{ qty: 1, unitPrice: 5, subtotal: 5 }], total: "garbage" };
     expect(stopAmountDue({ orders: [draftOrder, legacyOrder, brokenOrder] } as any)).toBe(80);
+  });
+
+  it("stopAmountDue: an exempt customer's no-draft order with category tax zeroes BOTH tax terms at the stop level", () => {
+    // No draft (the default pre-completion state) -> orderAmountDue's
+    // fallback runs. categoryTaxAmount 8 on the line: an exempt customer
+    // must not see it leak in via stopAmountDue's isTaxExempt plumbing
+    // (stop.customer.isTaxExempt -> orderAmountDue's isTaxExempt param).
+    const order = {
+      lineItems: [
+        { qty: 1, unitPrice: 100, subtotal: 100, categoryTaxAmount: 8, status: "PENDING" },
+      ],
+      subtotal: 100,
+      tax: 10,
+    };
+    const stop = { orders: [order], customer: { isTaxExempt: true } };
+    expect(stopAmountDue(stop as any)).toBe(100);
+    expect(stopAmountDue(stop as any)).not.toBe(118); // regular tax (10) + leaked category tax (8)
+    expect(stopAmountDue(stop as any)).not.toBe(110); // regular tax leaked, category tax correctly zeroed
+  });
+});
+
+/**
+ * REG-B810 (SA-125 ruling): once an order's invoice progresses past DRAFT
+ * (SENT/PARTIAL), the driver's amount due must reflect what the invoice
+ * ACTUALLY still owes — `balanceDue = total - confirmed payments`, server-
+ * computed — never the invoice's raw `total` re-billed as if nothing had
+ * been paid. Before the fix, `orderAmountDue` read `order.invoices[]`, which
+ * only ever carried DRAFT invoices (`deliveryBatchId: null`) — a SENT or
+ * PARTIAL invoice was invisible to it, so a part-paid order fell through to
+ * the order-total fallback and re-quoted the driver the FULL original total.
+ */
+describe("REG-B810 orderAmountDue sums payableInvoices[].balanceDue, including SENT/PARTIAL", () => {
+  it("a SENT invoice already paid 40 of 100 -> balanceDue 60, never the raw total 100", () => {
+    const order = {
+      lineItems: [],
+      payableInvoices: [{ id: "inv-1", status: "SENT", balanceDue: 60 }],
+    };
+    expect(orderAmountDue(order as any)).toBe(60);
+    expect(orderAmountDue(order as any)).not.toBe(100);
+  });
+
+  it("a PARTIAL invoice's balanceDue is used as-is, never its total", () => {
+    const order = {
+      lineItems: [],
+      payableInvoices: [{ id: "inv-1", status: "PARTIAL", balanceDue: 25 }],
+    };
+    expect(orderAmountDue(order as any)).toBe(25);
+  });
+
+  it("SA-125 worked example: DRAFT 50 + PARTIAL 100/paid 40 (balanceDue 60) -> 110, not 150", () => {
+    const order = {
+      lineItems: [],
+      payableInvoices: [
+        { id: "draft-1", status: "DRAFT", balanceDue: 50 },
+        { id: "partial-1", status: "PARTIAL", balanceDue: 60 },
+      ],
+    };
+    expect(orderAmountDue(order as any)).toBe(110);
+    expect(orderAmountDue(order as any)).not.toBe(150); // 50 + the PARTIAL's raw total (100)
+  });
+
+  it("an OVERDUE invoice's balanceDue is summed the same as SENT/PARTIAL", () => {
+    const order = {
+      lineItems: [],
+      payableInvoices: [{ id: "inv-1", status: "OVERDUE", balanceDue: 30 }],
+    };
+    expect(orderAmountDue(order as any)).toBe(30);
+  });
+});
+
+describe("REG-B810 earlierVisitsRemaining", () => {
+  it("sums balanceDue across non-DRAFT payable invoices", () => {
+    const payableInvoices = [
+      { id: "sent-1", status: "SENT", balanceDue: 60 },
+      { id: "partial-1", status: "PARTIAL", balanceDue: 25 },
+    ];
+    expect(earlierVisitsRemaining(payableInvoices as any)).toBe(85);
+  });
+
+  it("excludes DRAFT invoices from the sum", () => {
+    const payableInvoices = [
+      { id: "draft-1", status: "DRAFT", balanceDue: 50 },
+      { id: "sent-1", status: "SENT", balanceDue: 60 },
+    ];
+    expect(earlierVisitsRemaining(payableInvoices as any)).toBe(60);
+  });
+
+  it("returns 0 for an empty list", () => {
+    expect(earlierVisitsRemaining([])).toBe(0);
+  });
+
+  it("coerces a string-Decimal balanceDue and rounds the sum", () => {
+    const payableInvoices = [
+      { id: "sent-1", status: "SENT", balanceDue: "10.005" },
+      { id: "sent-2", status: "SENT", balanceDue: "0.005" },
+    ];
+    expect(earlierVisitsRemaining(payableInvoices as any)).toBe(10.01);
+  });
+
+  it("ignores a non-finite balanceDue rather than producing NaN", () => {
+    const payableInvoices = [
+      { id: "sent-1", status: "SENT", balanceDue: 60 },
+      { id: "sent-2", status: "SENT", balanceDue: "garbage" },
+    ];
+    expect(earlierVisitsRemaining(payableInvoices as any)).toBe(60);
+  });
+});
+
+/**
+ * REG-B810 round 2 (SA-130a/Opus): SA-125's original shape
+ * (`reconciledAmountDue(...) + earlierVisitsRemaining(...)`, unconditionally
+ * added in payment.tsx) double-counted once an order had no open draft and
+ * its only payable was a plain, already-finalized invoice. `reconciledDoorDue`
+ * is the fix: the caller's one decision point, per order, on the reconciled
+ * path.
+ */
+describe("REG-B810 reconciledDoorDue (SA-130a)", () => {
+  it("SA-130a's own repro: SENT 100 (no payments), no draft, short-picked to a reconciled estimate of 90 -> the invoice's OWN balanceDue (100), never ~190", () => {
+    const payableInvoices: RunMoneyPayableInvoice[] = [
+      { id: "inv-1", status: "SENT", total: 100, balanceDue: 100, isDepositMirror: false },
+    ];
+    const due = reconciledDoorDue({
+      hasOpenDraft: false,
+      reconciledEstimate: 90, // what a short-picked re-derivation of the order would give
+      payableInvoices,
+    });
+    expect(due).toBe(100);
+    expect(due).not.toBeCloseTo(190, 0);
+  });
+
+  it("(a) an open draft exists: reconciledEstimate + Σ balanceDue over the non-DRAFT payables — the existing SA-125 shape, unchanged", () => {
+    const payableInvoices: RunMoneyPayableInvoice[] = [
+      { id: "draft-1", status: "DRAFT", total: 50, balanceDue: 50, isDepositMirror: false },
+      { id: "partial-1", status: "PARTIAL", total: 100, balanceDue: 60, isDepositMirror: false },
+    ];
+    const due = reconciledDoorDue({
+      hasOpenDraft: true,
+      reconciledEstimate: 50, // the draft's own reconciled figure
+      payableInvoices,
+    });
+    expect(due).toBe(110); // the existing 110 example, unchanged
+  });
+
+  it("(a) also covers no payable invoice at all yet: reduces to the bare reconciled estimate, never 0", () => {
+    const due = reconciledDoorDue({
+      hasOpenDraft: false,
+      reconciledEstimate: 128.51,
+      payableInvoices: [],
+    });
+    expect(due).toBe(128.51);
+  });
+
+  it("(b) no open draft, the sole payable is a deposit mirror: reconciledEstimate minus what the mirror already collected", () => {
+    // A SENT deposit mirror of 100 with 30 paid (balanceDue 70), short-picked
+    // to a restated reconciledEstimate of 70 -> 70 - (100-70) = 40.
+    const payableInvoices: RunMoneyPayableInvoice[] = [
+      { id: "mirror-1", status: "SENT", total: 100, balanceDue: 70, isDepositMirror: true },
+    ];
+    const due = reconciledDoorDue({
+      hasOpenDraft: false,
+      reconciledEstimate: 70,
+      payableInvoices,
+    });
+    expect(due).toBe(40);
+  });
+
+  it("(b) an unpaid deposit mirror subtracts nothing — reconciledEstimate passes through unchanged", () => {
+    const payableInvoices: RunMoneyPayableInvoice[] = [
+      { id: "mirror-1", status: "SENT", total: 100, balanceDue: 100, isDepositMirror: true },
+    ];
+    const due = reconciledDoorDue({ hasOpenDraft: false, reconciledEstimate: 60, payableInvoices });
+    expect(due).toBe(60);
+  });
+
+  it("(c) no open draft, a plain (non-mirror) payable: Σ balanceDue ONLY — the reconciled estimate is never added on top", () => {
+    const payableInvoices: RunMoneyPayableInvoice[] = [
+      { id: "inv-1", status: "SENT", total: 100, balanceDue: 60, isDepositMirror: false },
+    ];
+    const due = reconciledDoorDue({
+      hasOpenDraft: false,
+      reconciledEstimate: 90, // a wrong-shaped caller would add this on top -- must be ignored
+      payableInvoices,
+    });
+    expect(due).toBe(60);
+  });
+
+  it("(c) sums MULTIPLE plain payables (a regulated split with no draft) rather than picking just one", () => {
+    const payableInvoices: RunMoneyPayableInvoice[] = [
+      { id: "base", status: "SENT", total: 60, balanceDue: 60, isDepositMirror: false },
+      { id: "base-R1", status: "PARTIAL", total: 40, balanceDue: 30, isDepositMirror: false },
+    ];
+    const due = reconciledDoorDue({
+      hasOpenDraft: false,
+      reconciledEstimate: 999,
+      payableInvoices,
+    });
+    expect(due).toBe(90);
+  });
+
+  it("SA-130b's exact repro: order 100, a 40 advance applied on the DRAFT, short-picked to an estimate of 90 -> the door shows 50, matching what recordDeliveryPaymentInTx collects (never the un-netted 90)", () => {
+    const payableInvoices: RunMoneyPayableInvoice[] = [
+      { id: "draft-1", status: "DRAFT", total: 100, balanceDue: 60, isDepositMirror: false },
+    ];
+    const due = reconciledDoorDue({
+      hasOpenDraft: true,
+      reconciledEstimate: 90,
+      payableInvoices,
+    });
+    expect(due).toBe(50);
+  });
+
+  it("fleet-lead round 2 pin (F2/B822): a $100 DRAFT with a $30 confirmed advance, short-picked to an estimate of $60 -> the door shows $30", () => {
+    const payableInvoices: RunMoneyPayableInvoice[] = [
+      { id: "draft-1", status: "DRAFT", total: 100, balanceDue: 70, isDepositMirror: false },
+    ];
+    const due = reconciledDoorDue({
+      hasOpenDraft: true,
+      reconciledEstimate: 60,
+      payableInvoices,
+    });
+    expect(due).toBe(30);
+  });
+
+  it("F2: the draft-already-paid subtraction composes with earlierVisitsRemaining over OTHER non-DRAFT payables", () => {
+    const payableInvoices: RunMoneyPayableInvoice[] = [
+      { id: "draft-1", status: "DRAFT", total: 100, balanceDue: 70, isDepositMirror: false },
+      { id: "sent-1", status: "SENT", total: 40, balanceDue: 40, isDepositMirror: false },
+    ];
+    const due = reconciledDoorDue({
+      hasOpenDraft: true,
+      reconciledEstimate: 60,
+      payableInvoices,
+    });
+    expect(due).toBe(70); // 60 - (100-70) + 40
+  });
+
+  it("Opus round 4: case (a) floors the draft-netted estimate at 0 -- draft 100 total, fully paid (balanceDue 0), short-picked to an estimate of 90 -> 0, never -10", () => {
+    const payableInvoices: RunMoneyPayableInvoice[] = [
+      { id: "draft-1", status: "DRAFT", total: 100, balanceDue: 0, isDepositMirror: false },
+    ];
+    const due = reconciledDoorDue({
+      hasOpenDraft: true,
+      reconciledEstimate: 90,
+      payableInvoices,
+    });
+    expect(due).toBe(0);
+    expect(due).not.toBeLessThan(0);
+  });
+
+  it("Opus round 4: a draft overpayment never offsets an unrelated SENT balance -- floors the draft term alone, then adds the SENT balance whole", () => {
+    const payableInvoices: RunMoneyPayableInvoice[] = [
+      { id: "draft-1", status: "DRAFT", total: 100, balanceDue: 0, isDepositMirror: false },
+      { id: "sent-1", status: "SENT", total: 50, balanceDue: 50, isDepositMirror: false },
+    ];
+    const due = reconciledDoorDue({
+      hasOpenDraft: true,
+      reconciledEstimate: 90,
+      payableInvoices,
+    });
+    expect(due).toBe(50); // max(0, 90-100) + 50 = 0 + 50, never 90-100+50=40
+  });
+
+  it("F3: a PARTIAL mirror of $100 with $70 paid, restated to $50 -> floors at 0, never negative", () => {
+    const payableInvoices: RunMoneyPayableInvoice[] = [
+      { id: "mirror-1", status: "PARTIAL", total: 100, balanceDue: 30, isDepositMirror: true },
+    ];
+    const due = reconciledDoorDue({
+      hasOpenDraft: false,
+      reconciledEstimate: 50,
+      payableInvoices,
+    });
+    expect(due).toBe(0);
+    expect(due).not.toBeLessThan(0);
+  });
+
+  it("F3: a two-order stop sums correctly when one order's mirror floors at 0 and the other has a normal positive due", () => {
+    const orderA = reconciledDoorDue({
+      hasOpenDraft: false,
+      reconciledEstimate: 50,
+      payableInvoices: [
+        { id: "mirror-1", status: "PARTIAL", total: 100, balanceDue: 30, isDepositMirror: true },
+      ],
+    });
+    const orderB = reconciledDoorDue({
+      hasOpenDraft: false,
+      reconciledEstimate: 999,
+      payableInvoices: [
+        { id: "sent-1", status: "SENT", total: 25, balanceDue: 25, isDepositMirror: false },
+      ],
+    });
+    expect(orderA + orderB).toBe(25); // 0 + 25, never a negative order dragging the stop total down
+  });
+
+  it("F4 (LOW): case (c) includes a DRAFT-status payable in the plain Σ balanceDue sum, never silently dropped via earlierVisitsRemaining's DRAFT exclusion", () => {
+    // hasOpenDraft is false (the separate o.invoices projection saw no open
+    // draft), yet payableInvoices still carries a DRAFT-status row -- must
+    // still be summed, not excluded the way case (a)'s earlierVisitsRemaining
+    // would exclude it.
+    const payableInvoices: RunMoneyPayableInvoice[] = [
+      { id: "draft-1", status: "DRAFT", total: 40, balanceDue: 40, isDepositMirror: false },
+      { id: "sent-1", status: "SENT", total: 60, balanceDue: 60, isDepositMirror: false },
+    ];
+    const due = reconciledDoorDue({
+      hasOpenDraft: false,
+      reconciledEstimate: 999,
+      payableInvoices,
+    });
+    expect(due).toBe(100); // 40 + 60, DRAFT included
   });
 });
 
@@ -300,15 +733,75 @@ describe("reconciledAmountDue (REG-B305 RULING 3: the server's delivered-basis r
     ).toBe(50);
   });
 
-  it("REG-B305 falls back to the bare delivered subtotal (legacy) when the payload carries no open draft", () => {
+  // B305 round 5: NO open draft is the DEFAULT state pre-completion — this
+  // used to bail out to the bare pre-tax `deliveredSubtotal`, so a
+  // short-picked stop omitted tax on every normal delivery. Now falls
+  // through to the SAME formula, sourcing discount/fee from the order's own
+  // columns instead of a (nonexistent) draft.
+  it("repro: order 116.83/11.68 (10%), delivered exactly half (58.42), no draft -> 64.26, not the bare 58.42", () => {
     expect(
       reconciledAmountDue({
         drafts: [],
-        order: { subtotal: 100, tax: 10 },
+        order: { subtotal: 116.83, tax: 11.68 },
+        deliveredSubtotal: 58.42,
+        deliveredCategoryTax: 0,
+      }),
+    ).toBe(64.26);
+  });
+
+  it("with no draft, sources discount/shippingFee from the order's own columns", () => {
+    // 42 - 5(discount) + 3(fee) + 10*(42/100) + 5(categoryTax) = 49.2
+    expect(
+      reconciledAmountDue({
+        drafts: [],
+        order: { subtotal: 100, tax: 10, discountAmount: 5, shippingFee: 3 },
         deliveredSubtotal: 42,
         deliveredCategoryTax: 5,
       }),
-    ).toBe(42);
+    ).toBe(49.2);
+  });
+
+  // SA-092b: the discount's share is the SEEDING share (activeSubtotal /
+  // orderSubtotal), NEVER the delivered share applied to regular tax — the
+  // server seeds the discount at the active-line share when the invoice is
+  // first created and the delivered-basis rebuild never re-scales it.
+  it("SA-092b discriminator: delivered share 0.5, seeding share (r_seed) 1 -> discount stays WHOLE (10), never scaled to the delivered share (5)", () => {
+    // order.subtotal 100 == activeSubtotal 100 -> r_seed 1. deliveredSubtotal
+    // 50 -> delivered share 0.5. If the code wrongly applied the DELIVERED
+    // share to discount, this would read 5, not 10.
+    const due = reconciledAmountDue({
+      drafts: [],
+      order: { subtotal: 100, tax: 0, discountAmount: 10, shippingFee: 0 },
+      activeSubtotal: 100,
+      deliveredSubtotal: 50,
+      deliveredCategoryTax: 0,
+    });
+    expect(due).toBe(40); // 50 - 10 + 0 + 0*0.5 + 0
+    expect(due).not.toBe(45); // 50 - 5 (wrongly delivered-share-scaled discount)
+  });
+
+  it("SA-092b: seeding share (r_seed) 0.5 scales the discount to 5, distinct from the delivered share", () => {
+    // activeSubtotal 50 vs order.subtotal 100 -> r_seed 0.5. discount 10 x
+    // 0.5 = 5.
+    const due = reconciledAmountDue({
+      drafts: [],
+      order: { subtotal: 100, tax: 0, discountAmount: 10, shippingFee: 0 },
+      activeSubtotal: 50,
+      deliveredSubtotal: 50,
+      deliveredCategoryTax: 0,
+    });
+    expect(due).toBe(45); // 50 - 5 + 0 + 0 + 0
+  });
+
+  it("SA-092b: a draft's own stored discount is used as-is, never re-scaled by r_seed", () => {
+    const due = reconciledAmountDue({
+      drafts: [{ discount: 10, shippingFee: 0 }],
+      order: { subtotal: 100, tax: 0 },
+      activeSubtotal: 50, // r_seed 0.5 -- must NOT touch a draft's own discount
+      deliveredSubtotal: 50,
+      deliveredCategoryTax: 0,
+    });
+    expect(due).toBe(40); // 50 - 10 (draft's own discount, whole) + 0 + 0 + 0
   });
 
   it("REG-B305 falls back to the bare delivered subtotal when the order's own subtotal isn't a usable basis", () => {

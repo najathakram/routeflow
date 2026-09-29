@@ -46,11 +46,13 @@ describe("submitEntry drops the draft when a successful create's resolve goes of
   const fnAt = src.indexOf("async function submitEntry(");
   const fnEnd = src.indexOf("\n  // Resumable batch runner", fnAt);
   const body = src.slice(fnAt, fnEnd);
-  const offlineAt = body.indexOf("isOfflineQueued");
+  const offlineAt = body.indexOf('case "offline":');
   const branchEnd = body.indexOf("return false;", offlineAt);
   const branchBody = body.slice(offlineAt, branchEnd);
 
-  it("finds the isOfflineQueued branch", () => {
+  it("switches on classifyAtStopResolveError and has an offline case", () => {
+    expect(body).toMatch(/switch \(outcome\.action\)/);
+    expect(body).toMatch(/classifyAtStopResolveError\(e\)/);
     expect(offlineAt).toBeGreaterThan(-1);
     expect(branchEnd).toBeGreaterThan(offlineAt);
   });
@@ -58,7 +60,14 @@ describe("submitEntry drops the draft when a successful create's resolve goes of
   it("drops the draft via dropSucceededAddedLine only when the create already succeeded and the entry is an ADD_ITEM", () => {
     expect(branchBody).toMatch(/createdCrId/);
     expect(branchBody).toMatch(/entry\.type === "ADD_ITEM"/);
-    expect(branchBody).toMatch(/dropSucceededAddedLine/);
+    expect(branchBody).toMatch(/setAdded\(\(prev\) => dropSucceededAddedLine\(prev, entry\)\)/);
+  });
+
+  it("the drop happens before the case returns false, and only under the offline case", () => {
+    const dropAt = body.indexOf("dropSucceededAddedLine");
+    expect(dropAt).toBeGreaterThan(offlineAt);
+    expect(dropAt).toBeLessThan(branchEnd);
+    expect(body.indexOf("dropSucceededAddedLine", dropAt + 1)).toBe(-1);
   });
 });
 
@@ -70,14 +79,16 @@ describe("submitEntry names a DECLINED already-resolved CR distinctly (round 1 f
     join(__dirname, "..", "app/(driver)/route/stop/[stopId]/adjust.tsx"),
     "utf8",
   );
-  const at = src.indexOf('"CHANGE_REQUEST_ALREADY_RESOLVED"');
+  const at = src.indexOf('case "already-resolved":');
   const branchEnd = src.indexOf("return true;", at);
   const branchBody = src.slice(at, branchEnd);
 
   it("checks the resolved status and uses a distinct declined message", () => {
     expect(at).toBeGreaterThan(-1);
-    expect(branchBody).toMatch(/DECLINED/);
-    expect(branchBody).toMatch(/declined/i);
+    expect(branchBody).toMatch(/outcome\.status === "DECLINED"/);
+    expect(branchBody).toMatch(/declined by the office/i);
+    // no status => the generic toast, never the declined one
+    expect(branchBody).toMatch(/changed elsewhere/);
   });
 });
 
