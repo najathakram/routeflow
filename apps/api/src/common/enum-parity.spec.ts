@@ -86,6 +86,8 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["ROUTE_OPTIMIZE_METRIC_VALUES", "RouteOptimizeMetric"],
   ["CHANGE_REQUEST_TYPE_VALUES", "ChangeRequestType"],
   ["CHANGE_REQUEST_STATUS_VALUES", "ChangeRequestStatus"],
+  ["ITEM_STATUS_VALUES", "ItemStatus"],
+  ["PAYMENT_METHOD_VALUES", "PaymentMethod"],
   ["RECURRING_FREQUENCY_VALUES", "RecurringFrequency"],
   ["MOVEMENT_TYPE_VALUES", "MovementType"],
   ["CRM_CONNECTION_STATUS_VALUES", "CrmConnectionStatus"],
