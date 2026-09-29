@@ -38,7 +38,7 @@ async function serverLevels(product: ReturnType<typeof make>, code: string) {
     product: { findMany: jest.fn().mockResolvedValue([product]) },
   };
   const got = await findScanMatches(db, normalizeScanCode(code));
-  return got?.scanMatch.levels ?? [];
+  return (got?.scanMatch.levels ?? []) as SellLevel[];
 }
 
 const CODES = [

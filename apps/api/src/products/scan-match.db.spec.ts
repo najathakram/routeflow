@@ -121,7 +121,7 @@ describeDb("#2717 M4a-1 scan lookup — real Postgres", () => {
     });
   }
 
-  const lookup = (tenantId: string, code: string, baseWhere: object = {}) =>
+  const lookup = (tenantId: string, code: string, baseWhere: Record<string, unknown> = {}) =>
     inTenant(tenantId, () =>
       findScanMatches(prisma.forTenant() as any, normalizeScanCode(code), baseWhere),
     );
