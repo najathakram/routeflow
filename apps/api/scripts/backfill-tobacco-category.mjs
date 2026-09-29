@@ -57,9 +57,11 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { isTestTenant } from "../../../scripts/lib/test-tenants.cjs";
 import {
-  lockedProductIds,
+  applyTobaccoPlan,
   openRecipeWhereAny,
-  partitionRecipeLocked,
+  planTobaccoLink,
+  summarizePlans,
+  tobaccoLinkCandidates,
 } from "./lib/recipe-locked.mjs";
 
 // ─── Connection (mirrors repair-receiving-units.mjs) ──────────────────────────
@@ -153,7 +155,8 @@ async function planForTenant(tenant) {
     },
   });
   // SA-587b: a would-be link product in an open (DRAFT/ACTIVE) recipe is skipped, counted only.
-  const linkCandidates = products.filter((p) => p.isTobacco && p.trackedCategoryId == null);
+  // The pure planner (scripts/lib/recipe-locked.mjs planTobaccoLink) decides link/recipe-locked.
+  const linkCandidates = tobaccoLinkCandidates(products);
   const openRecipes =
     linkCandidates.length > 0
       ? await prisma.recipe.findMany({
@@ -166,66 +169,11 @@ async function planForTenant(tenant) {
           },
         })
       : [];
-  const { free: link, recipeLocked } = partitionRecipeLocked(
-    linkCandidates,
-    lockedProductIds(openRecipes),
-  );
-  return {
-    tenant,
-    tobaccoCat,
-    // Flagged but pointing nowhere (and in no open recipe) → link into the Tobacco type.
-    link,
-    recipeLocked,
-    // Flagged but assigned to a DIFFERENT type → NEVER auto-moved. Reported
-    // for the owner to resolve by hand (moving could change invoice splitting
-    // and filing attribution for that product).
-    conflicts: products.filter(
-      (p) => p.isTobacco && p.trackedCategoryId != null && p.trackedCategoryId !== tobaccoCat?.id,
-    ),
-    // Members of the Tobacco type missing the mirror flag → set it.
-    flag: products.filter(
-      (p) => !p.isTobacco && tobaccoCat && p.trackedCategoryId === tobaccoCat.id,
-    ),
-    // No Tobacco type yet AND there are link rows that need one → create it
-    // (W1-seed values). Gated on link rows specifically: a tenant whose flagged
-    // products are ALL conflicts (assigned elsewhere, never auto-moved) must not
-    // get an empty "Tobacco" type it would then carry forever in the hub.
-    createCategory: !tobaccoCat && link.length > 0,
-  };
+  return { tenant, ...planTobaccoLink({ tobaccoCat, products, openRecipes }) };
 }
 
 async function executePlan(plan) {
-  await prisma.$transaction(async (tx) => {
-    let catId = plan.tobaccoCat?.id;
-    if (plan.createCategory) {
-      const created = await tx.trackedCategory.create({
-        data: {
-          tenantId: plan.tenant.id,
-          name: "Tobacco",
-          taxType: "NONE",
-          requiresLicense: false,
-          reportTemplate: "CA_CDTFA",
-          reportCadence: "MONTHLY",
-          invoiceTreatment: "SEPARATE_INVOICE",
-          active: true,
-        },
-        select: { id: true },
-      });
-      catId = created.id;
-    }
-    if (plan.link.length > 0 && catId) {
-      await tx.product.updateMany({
-        where: { id: { in: plan.link.map((p) => p.id) } },
-        data: { trackedCategoryId: catId },
-      });
-    }
-    if (plan.flag.length > 0) {
-      await tx.product.updateMany({
-        where: { id: { in: plan.flag.map((p) => p.id) } },
-        data: { isTobacco: true },
-      });
-    }
-  });
+  await prisma.$transaction((tx) => applyTobaccoPlan(tx, plan));
 }
 
 // ─── Reporting ─────────────────────────────────────────────────────────────
@@ -284,19 +232,19 @@ function printPlan(plan) {
     console.log(`\n===== TOBACCO-CATEGORY BACKFILL (DRY-RUN, --all-tenants) =====`);
     console.log(`Tenants scanned: ${tenants.length}\n`);
 
-    let totalWrites = 0;
-    let totalConflicts = 0;
+    const plans = [];
     for (const tenant of tenants) {
       const plan = await planForTenant(tenant);
       printPlan(plan);
-      totalWrites += plan.link.length + plan.flag.length + (plan.createCategory ? 1 : 0);
-      totalConflicts += plan.conflicts.length;
+      plans.push(plan);
     }
+    const { writes: totalWrites, conflicts: totalConflicts, recipeLocked } = summarizePlans(plans);
 
     console.log(`\n===== SUMMARY =====`);
     console.log(
       `${tenants.length} tenant(s) scanned · ${totalWrites} planned write(s) · ` +
-        `${totalConflicts} conflict(s) needing manual review`,
+        `${totalConflicts} conflict(s) needing manual review · ` +
+        `${recipeLocked} recipe-locked total (skipped, count only)`,
     );
     console.log(
       `\nDRY-RUN complete — nothing written (--all-tenants is dry-run-only).\n` +
