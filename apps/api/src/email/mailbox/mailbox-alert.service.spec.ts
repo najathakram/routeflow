@@ -356,15 +356,21 @@ describe("MailboxAlertService — subscription wiring", () => {
 });
 
 describe("MailboxAlertService — web bell (#2113)", () => {
+  // The throttle window is built per call (a thunk), never at collection time: a clock fuse like
+  // `Date.now() + N` in the table would tick while the suite waits (B793, REG-B791).
   it.each([
-    ["REVOKED", {}],
-    ["THROTTLED", { status: "THROTTLED", throttledUntil: new Date(Date.now() + 60 * 60_000) }],
+    ["REVOKED", () => ({})],
+    [
+      "THROTTLED",
+      () => ({ status: "THROTTLED" as const, throttledUntil: new Date(Date.now() + 60 * 60_000) }),
+    ],
   ] as const)(
     "%s: ONE mailbox.alert to the tenant's admin room, carrying only status, provider and the in-app copy",
-    async (_label, over) => {
+    async (_label, makeOver) => {
+      const over: Partial<MailboxStateChange> = makeOver();
       const { service, gateway, notifications } = build();
 
-      await service.notifyAdmins(change(over as Partial<MailboxStateChange>));
+      await service.notifyAdmins(change(over));
 
       expect(gateway.emitMailboxAlert).toHaveBeenCalledTimes(1);
       const [tenantId, payload] = gateway.emitMailboxAlert.mock.calls[0];
