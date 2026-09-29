@@ -362,7 +362,7 @@ describe("house lock order: recipe writers (SA-584 B1/B2)", () => {
   });
 });
 
-describe("createVersion re-validates the copied set under the locks (lead fold item 1)", () => {
+describe("createVersion re-validates the STRUCTURE of the copied set under the locks (lead fold item 1; SA-584b: no inactive refusal)", () => {
   const seedActive = () => ({ ...seedDraft(), recipes: [recipeRow("ACTIVE")] });
 
   it("locks family, recipe product, then the source's components FOR SHARE in id order; re-reads via tx after them", async () => {
@@ -385,16 +385,55 @@ describe("createVersion re-validates the copied set under the locks (lead fold i
     expect(recipes).toHaveLength(1);
   });
 
-  it("a re-parent that lands between the plan read and the tx is caught (the re-check decides)", async () => {
+  it("a component deactivated since the source was validated is cloned AS-IS: the DRAFT is created (SA-584b)", async () => {
+    const { service, products: rows, recipes, components } = await build(seedActive());
+    rows.find((p) => p.id === "v2")!.isActive = false;
+    const dto = await service.createVersion("r1");
+    expect(dto).toMatchObject({ version: 2, status: "DRAFT" });
+    expect(recipes).toHaveLength(2);
+    expect(
+      components
+        .filter((c) => c.recipeId === dto.id)
+        .map((c) => [c.componentProductId, c.qty])
+        .sort(),
+    ).toEqual([
+      ["v1", 8],
+      ["v2", 4],
+    ]);
+  });
+
+  it("a component deactivated between the plan read and the tx is cloned AS-IS too (no re-check refusal)", async () => {
     const { service, prisma, products: rows, recipes } = await build(seedActive());
     const original = prisma.tenantTransaction.getMockImplementation()!;
     prisma.tenantTransaction.mockImplementation(async (fn: any) => {
       rows.find((p) => p.id === "v2")!.isActive = false;
       return original(fn);
     });
-    const err = await service.createVersion("r1").catch((e) => e);
-    expect(bodyOf(err)).toMatchObject({ code: "RECIPE_INVALID", reason: "COMPONENT_INACTIVE" });
-    expect(recipes).toHaveLength(1);
+    await expect(service.createVersion("r1")).resolves.toMatchObject({ status: "DRAFT" });
+    expect(recipes).toHaveLength(2);
+  });
+
+  it("SA-584b path: deactivate -> clone (201) -> activate the clone refuses -> swap in the DRAFT -> activate (200), v1 RETIRED", async () => {
+    const { service, products: rows, recipes } = await build(seedActive());
+    rows.find((p) => p.id === "v2")!.isActive = false;
+    const draft = await service.createVersion("r1");
+    expect(draft).toMatchObject({ version: 2, status: "DRAFT" });
+
+    const refused = await service.activate(draft.id).catch((e) => e);
+    expect(bodyOf(refused)).toMatchObject({ code: "RECIPE_INVALID", reason: "COMPONENT_INACTIVE" });
+    expect(recipes.find((r) => r.id === draft.id)!.status).toBe("DRAFT");
+    expect(recipes.find((r) => r.id === "r1")!.status).toBe("ACTIVE");
+
+    await service.update(draft.id, {
+      components: [
+        { componentProductId: "v1", qty: 8 },
+        { componentProductId: "v3", qty: 4 },
+      ],
+    } as any);
+    const active = await service.activate(draft.id);
+    expect(active).toMatchObject({ status: "ACTIVE" });
+    expect(recipes.find((r) => r.id === "r1")!.status).toBe("RETIRED");
+    expect(recipes.find((r) => r.id === draft.id)!.status).toBe("ACTIVE");
   });
 });
 
