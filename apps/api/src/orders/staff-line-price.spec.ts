@@ -179,3 +179,36 @@ describe("decideReplaceAllLinePrice (SA-558d: replaceAll changed-price arm)", ()
     });
   });
 });
+
+describe("SA-592 fold 1 — the band is withinStaffOverrideTolerance, not a raw float compare", () => {
+  it("edit: 8.005 against a stored 8 is inside the band (raw Math.abs is 0.00500000000000078)", () => {
+    expect(
+      decideEditedLinePrice({
+        overridePrice: 8.005,
+        storedPrice: 8,
+        listPrice: 10,
+        isSpecialTier: false,
+        hasReason: false,
+        isUnlisted: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("replaceAll: 8.005 against a stored 8 echoes the stored row verbatim", () => {
+    const d = decideReplaceAllLinePrice({
+      overridePrice: 8.005,
+      existing: { unitPrice: 8, priceType: "DISCOUNTED", originalPrice: 10 },
+      tierPrice: 10,
+      listPrice: 10,
+      isSpecialTier: false,
+      hasReason: false,
+      skipReasonGuard: false,
+    });
+    expect(d).toEqual({
+      priceType: "DISCOUNTED",
+      unitPrice: 8,
+      originalPrice: 10,
+      repriced: false,
+    });
+  });
+});
