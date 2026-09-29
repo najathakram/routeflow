@@ -483,3 +483,8 @@ export type BarcodeSymbology = (typeof BARCODE_SYMBOLOGY_VALUES)[number];
 // owner's rule "one barcode ⇒ the units share it": the unit row copied from the box row.
 export const BARCODE_ORIGIN_VALUES = ["ENTERED", "COPIED"] as const;
 export type BarcodeOrigin = (typeof BARCODE_ORIGIN_VALUES)[number];
+
+// #2717 M2 (SA-574): the lifecycle of one recipe version (a fixed mix of a family's variants sold
+// as one RECIPE product). DRAFT is editable; ACTIVE and RETIRED are immutable (I3).
+export const RECIPE_STATUS_VALUES = ["DRAFT", "ACTIVE", "RETIRED"] as const;
+export type RecipeStatus = (typeof RECIPE_STATUS_VALUES)[number];
