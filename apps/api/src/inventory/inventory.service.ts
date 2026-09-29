@@ -9,7 +9,7 @@ import {
 import * as crypto from "crypto";
 import { CostingMethod, MovementType, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
-import { normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
+import { linePack, normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
 import { fetchInvoicedSaleLines, roundQty } from "../common/invoiced-sales";
 import { poLineFromInput } from "./po-line-input";
 import { costDecimal, nextAverageCost, planLotConsumption, reverseAverageCost } from "./costing";
@@ -1267,7 +1267,8 @@ export class InventoryService {
           ? normalizeBoxesPieces({
               boxes: recv.boxes,
               pieces: recv.pieces,
-              unitsPerBox: prod?.unitsPerBox,
+              // #2734: the line's stored pack wins; the live product pack is only the fallback.
+              unitsPerBox: linePack(item, Number(prod?.unitsPerBox ?? 0)),
             }).qty
           : (recv.receivedQty ?? recv.qtyReceived ?? 0);
 

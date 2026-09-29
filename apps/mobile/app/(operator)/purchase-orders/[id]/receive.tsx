@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { FormField, FormSection, FormSheet, FormTextInput } from "../../../../components/FormSheet";
 import { usePurchaseOrder, useReceivePO } from "../../../../lib/api/purchase-orders";
-import { normalizeBoxesPieces } from "@routeflow/pricing";
+import { linePack, normalizeBoxesPieces } from "@routeflow/pricing";
 import { showToast } from "../../../../lib/toast";
 import { hasTouchedReceiveForm } from "../../../../lib/discard-guard";
 
@@ -26,8 +26,9 @@ export default function ReceivePOScreen() {
   const [pieceQtys, setPieceQtys] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState("");
 
-  const upbOf = (item: { product?: { unitsPerBox?: number | null } }) =>
-    Math.trunc(Number(item.product?.unitsPerBox ?? 0));
+  // #2734: the line's stored pack wins (linePack); the live product pack is only the fallback.
+  const upbOf = (item: { packSize?: number | null; product?: { unitsPerBox?: number | null } }) =>
+    Math.trunc(linePack(item, Number(item.product?.unitsPerBox ?? 0)));
 
   const seededSplit = (remaining: number, unitsPerBox: number) =>
     normalizeBoxesPieces({ qty: remaining, unitsPerBox });
