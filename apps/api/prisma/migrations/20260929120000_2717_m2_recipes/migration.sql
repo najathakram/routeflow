@@ -18,6 +18,9 @@
 --   DROP TYPE "RecipeStatus";
 SET LOCAL lock_timeout = '5s';
 
+-- CreateEnum
+CREATE TYPE "RecipeStatus" AS ENUM ('DRAFT', 'ACTIVE', 'RETIRED');
+
 -- AlterTable
 ALTER TABLE "Product" ADD COLUMN     "familyPriceOverride" BOOLEAN NOT NULL DEFAULT false;
 
