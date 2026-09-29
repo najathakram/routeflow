@@ -131,7 +131,7 @@ const ALLOW: Allow[] = [
     shape: "x > 1",
     file: "apps/api/src/returns/inline-returns-quote.service.ts",
     count: 1,
-    id: "B-TBD",
+    id: "B900",
     // returns money module: `> 1` differs from `!== 1` on a null/0 pricingTier; left as is.
     reason: "returns money module: `> 1` differs from `!== 1` on a null/0 pricingTier; follow-up",
   },
