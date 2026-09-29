@@ -21,6 +21,8 @@ import type { BuyerJwtPayload } from "../buyer/interfaces/buyer-jwt-payload.inte
 import { EntitlementsService } from "../billing/entitlements.service";
 import type { DeviceInfo } from "./auth.service";
 import { escapeHtml } from "../common/html-escape";
+import { isLoginEligible } from "./login-eligibility";
+import { casLinkProviderId, resolveBySubThenEmail } from "./oauth-account-link";
 // GoogleAuthResult is reused verbatim (SA-418 §1) — Apple sign-in returns the same
 // discriminated union so downstream consumers (mobile, tests) don't branch on provider.
 import type { GoogleAuthResult } from "./google-oauth.service";
@@ -52,8 +54,8 @@ const CLIENT_SECRET_TTL = "5m";
  * Sign in with Apple (#2309, SA-418) — native iOS only. Mirrors GoogleOAuthService's
  * structure and rules; where SA-418 explicitly says "byte-for-byte the Google rules"
  * (buyer create + the squatted-password neutralization, §4) the logic below is a
- * careful duplicate of google-oauth.service.ts:620-730 rather than a shared helper,
- * so a future change to one provider's flow can't silently alter the other's.
+ * careful duplicate of google-oauth.service.ts:620-730. The sub-then-email resolve and the
+ * CAS link are NOT duplicated: both providers share oauth-account-link.ts (SA-598 P1).
  */
 @Injectable()
 export class AppleOAuthService {
@@ -259,6 +261,8 @@ export class AppleOAuthService {
     deviceInfo?: DeviceInfo,
   ): Promise<AppleAuthResult> {
     if (!tenantSlug) throw new BadRequestException("tenantSlug required");
+    // SA-598 P1: a falsy sub/email refuses before ANY query (an undefined filter would widen).
+    if (!appleId || !email) throw new ForbiddenException("unauthorized");
 
     const tenant = await this.prisma.tenant.findFirst({ where: { slug: tenantSlug } });
     if (!tenant) throw new ForbiddenException("tenant_suspended");
@@ -266,26 +270,38 @@ export class AppleOAuthService {
       throw new ForbiddenException("tenant_suspended");
     }
 
-    let staffUser = await this.prisma.user.findFirst({
-      where: {
+    // SA-598 P1 / #2495: sub first, then the ordered email match; an email row bound to a
+    // different sub is a 409 (oauth-account-link.ts, shared with Google).
+    let staffUser = await resolveBySubThenEmail({
+      findFirst: (args) => this.prisma.user.findFirst(args as any),
+      baseWhere: {
         tenantId: tenant.id,
         deletedAt: null,
         role: { in: ["OPERATOR", "DRIVER", "TENANT_ADMIN"] },
-        OR: [{ appleId }, { email }],
       },
+      column: "appleId",
+      sub: appleId,
+      email,
     });
 
     // SA-418 §3: no auto-create on the staff flow — a relay or otherwise-unmatched
     // email is a hard 403, unlike Google's shared endpoint which falls through to
     // buyer auto-create here.
     if (!staffUser) throw new ForbiddenException("apple_no_match");
-    if (staffUser.status !== "ACTIVE") throw new ForbiddenException("unauthorized");
+    // SA-598 P2: the one eligibility rule (deleted, locked, non-ACTIVE all refuse).
+    if (!isLoginEligible(staffUser)) throw new ForbiddenException("unauthorized");
 
     if (!staffUser.appleId) {
-      staffUser = await this.prisma.user.update({
-        where: { id: staffUser.id },
-        data: { appleId, forcePasswordChange: false },
+      const linked = await casLinkProviderId({
+        updateMany: (args) => this.prisma.user.updateMany(args as any),
+        findUnique: (id) => this.prisma.user.findUnique({ where: { id } }),
+        row: staffUser,
+        column: "appleId",
+        sub: appleId,
+        data: { forcePasswordChange: false },
+        extraWhere: { tenantId: tenant.id },
       });
+      staffUser = linked.row;
     }
 
     const tokens = await this.issueUserTokenPair(staffUser, tenant.slug, deviceInfo);
@@ -314,12 +330,20 @@ export class AppleOAuthService {
     // exactly (google-oauth.service.ts). apple_email_is_staff belongs only to a future
     // tenant-scoped portal context; the staff match itself stays tenant-scoped (handleStaffAuth).
 
-    let buyer = await this.prisma.buyerAccount.findFirst({
-      where: { deletedAt: null, OR: [{ appleId }, { email }] },
+    // SA-598 P1: a falsy sub/email refuses before ANY query.
+    if (!appleId || !email) throw new ForbiddenException("unauthorized");
+
+    let buyer = await resolveBySubThenEmail({
+      findFirst: (args) => this.prisma.buyerAccount.findFirst(args as any),
+      baseWhere: { deletedAt: null },
+      column: "appleId",
+      sub: appleId,
+      email,
     });
 
     if (buyer) {
-      if (buyer.status === "SUSPENDED") throw new ForbiddenException("unauthorized");
+      // SA-598 P2: the one eligibility rule (was a SUSPENDED-only inline check).
+      if (!isLoginEligible(buyer)) throw new ForbiddenException("unauthorized");
 
       // Mirrors google-oauth.service.ts:636 exactly — Apple attests the mailbox it
       // authenticated only when it matches the account's OWN email, not one found via
@@ -331,41 +355,42 @@ export class AppleOAuthService {
       const squattedPassword = appleAttestsMailbox && buyer.passwordSet && !buyer.emailVerified;
 
       if (!buyer.appleId) {
-        if (squattedPassword) {
-          const placeholderHash = await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 10);
-          buyer = await this.prisma.buyerAccount.update({
-            where: { id: buyer.id },
-            data: {
-              appleId,
-              emailVerified: true,
-              passwordHash: placeholderHash,
-              passwordSet: false,
-            },
-          });
-          await this.prisma.buyerRefreshToken.deleteMany({
-            where: { buyerAccountId: buyer.id },
-          });
-          this.logger.warn(
-            `Buyer ${buyer.id} had an unverified password neutralized on first Apple link ` +
-              `(mailbox now attested by Apple; prior sessions revoked)`,
-          );
-        } else {
-          buyer = await this.prisma.buyerAccount.update({
-            where: { id: buyer.id },
-            data: {
-              appleId,
-              ...(appleAttestsMailbox ? { emailVerified: true } : {}),
-            },
-          });
+        const placeholderHash = squattedPassword
+          ? await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 10)
+          : null;
+        // SA-598 P1: CAS link. Revocation and the email happen ONLY when THIS request wrote.
+        const cas = await casLinkProviderId({
+          updateMany: (args) => this.prisma.buyerAccount.updateMany(args as any),
+          findUnique: (id) => this.prisma.buyerAccount.findUnique({ where: { id } }),
+          row: buyer,
+          column: "appleId",
+          sub: appleId,
+          data: placeholderHash
+            ? { emailVerified: true, passwordHash: placeholderHash, passwordSet: false }
+            : appleAttestsMailbox
+              ? { emailVerified: true }
+              : {},
+        });
+        buyer = cas.row;
+        if (cas.linked) {
+          if (placeholderHash) {
+            await this.prisma.buyerRefreshToken.deleteMany({
+              where: { buyerAccountId: buyer.id },
+            });
+            this.logger.warn(
+              `Buyer ${buyer.id} had an unverified password neutralized on first Apple link ` +
+                `(mailbox now attested by Apple; prior sessions revoked)`,
+            );
+          }
+          void this.emailService
+            .send({
+              to: buyer.email,
+              subject: "Apple Sign-In linked to your RouteFlow account",
+              html: `<p>Sign in with Apple (<strong>${escapeHtml(email)}</strong>) has been linked to your RouteFlow portal account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
+              senderClass: "platform",
+            })
+            .catch((e: Error) => this.logger.warn(`Apple link notification failed: ${e.message}`));
         }
-        void this.emailService
-          .send({
-            to: buyer.email,
-            subject: "Apple Sign-In linked to your RouteFlow account",
-            html: `<p>Sign in with Apple (<strong>${escapeHtml(email)}</strong>) has been linked to your RouteFlow portal account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
-            senderClass: "platform",
-          })
-          .catch((e: Error) => this.logger.warn(`Apple link notification failed: ${e.message}`));
       } else if (appleAttestsMailbox && !buyer.emailVerified) {
         if (squattedPassword) {
           const placeholderHash = await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 10);
@@ -440,15 +465,17 @@ export class AppleOAuthService {
    * with context "staff" and no tenantSlug — the same binding this checks against.
    */
   async linkAppleAccount(userId: string, identityToken: string, nonce: string): Promise<void> {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user || user.deletedAt) throw new ForbiddenException("unauthorized");
-
     const { appleId, email } = await this.verifyIdentityToken(
       identityToken,
       nonce,
       undefined,
       "staff",
     );
+    // SA-598 P1: a falsy sub/email refuses before ANY query.
+    if (!appleId || !email) throw new ForbiddenException("unauthorized");
+
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user || user.deletedAt) throw new ForbiddenException("unauthorized");
 
     const existingByAppleId = await this.prisma.user.findFirst({
       where: { appleId, tenantId: user.tenantId, id: { not: userId }, deletedAt: null },
@@ -456,10 +483,17 @@ export class AppleOAuthService {
     if (existingByAppleId) throw new ForbiddenException("apple_already_linked");
     if (user.appleId) throw new ForbiddenException("apple_already_linked");
 
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { appleId, forcePasswordChange: false },
+    // SA-598 P1: CAS link (tenantId + id + appleId:null); a lost race to a different sub is a 409.
+    const cas = await casLinkProviderId({
+      updateMany: (args) => this.prisma.user.updateMany(args as any),
+      findUnique: (id) => this.prisma.user.findUnique({ where: { id } }),
+      row: user,
+      column: "appleId",
+      sub: appleId,
+      data: { forcePasswordChange: false },
+      extraWhere: { tenantId: user.tenantId },
     });
+    if (!cas.linked) return;
 
     this.logger.log(`Apple account linked for user ${userId} (${email})`);
 

@@ -137,4 +137,53 @@ describeDb("#2309 (SA-418 §5) — Apple sign-in unique constraints on real Post
     }
     expect(isP2002(error)).toBe(true);
   });
+  it("#2495 / SA-598 P1: the sub-first then email-ordered resolve picks the sub row over an older email-sharing row, and the CAS link writes once", async () => {
+    // Two rows match one Apple identity: an OLDER staff row that merely shares the email
+    // (appleId null) and a NEWER row already bound to the sub (a different email). The old
+    // `OR: [{ appleId }, { email }]` with no orderBy could return either.
+    const sub = `apple-sub-${run}-two-rows`;
+    const sharedEmail = `shared-${run}@example.test`;
+    const older = await raw.user.create({
+      data: {
+        tenantId: tenantAId,
+        email: sharedEmail,
+        username: `older-${run}`,
+        role: "OPERATOR",
+      },
+    });
+    const bound = await raw.user.create({
+      data: {
+        tenantId: tenantAId,
+        email: `bound-${run}@example.test`,
+        username: `bound-${run}`,
+        role: "OPERATOR",
+        appleId: sub,
+      },
+    });
+
+    const base = { tenantId: tenantAId, deletedAt: null };
+    const bySub = await raw.user.findFirst({ where: { ...base, appleId: sub } });
+    expect(bySub?.id).toBe(bound.id);
+
+    // No sub match for a different identity: the email fallback is deterministic, oldest first.
+    const byEmail = await raw.user.findFirst({
+      where: { ...base, email: sharedEmail },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    });
+    expect(byEmail?.id).toBe(older.id);
+
+    // CAS: the first writer links, the second (same row, appleId no longer null) matches nothing.
+    const first = await raw.user.updateMany({
+      where: { id: older.id, tenantId: tenantAId, appleId: null },
+      data: { appleId: `apple-sub-${run}-winner` },
+    });
+    const second = await raw.user.updateMany({
+      where: { id: older.id, tenantId: tenantAId, appleId: null },
+      data: { appleId: `apple-sub-${run}-loser` },
+    });
+    expect(first.count).toBe(1);
+    expect(second.count).toBe(0);
+    const after = await raw.user.findUnique({ where: { id: older.id } });
+    expect(after?.appleId).toBe(`apple-sub-${run}-winner`);
+  });
 });

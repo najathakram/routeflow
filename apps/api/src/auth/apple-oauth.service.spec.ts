@@ -1,6 +1,11 @@
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
-import { ForbiddenException, Logger, UnauthorizedException } from "@nestjs/common";
+import {
+  ConflictException,
+  ForbiddenException,
+  Logger,
+  UnauthorizedException,
+} from "@nestjs/common";
 import * as crypto from "crypto";
 import * as jose from "jose";
 import { AppleOAuthService } from "./apple-oauth.service";
@@ -488,8 +493,8 @@ describe("AppleOAuthService — staff flow (SA-418 §3)", () => {
   it("first link writes appleId + forcePasswordChange:false", async () => {
     const { service, prisma, privateKey } = await buildService();
     prisma.tenant.findFirst.mockResolvedValue(TENANT);
-    prisma.user.findFirst.mockResolvedValue({ ...STAFF_USER });
-    prisma.user.update.mockResolvedValue({ ...STAFF_USER, appleId: "apple-sub-1" });
+    prisma.user.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ ...STAFF_USER });
+    prisma.user.updateMany.mockResolvedValue({ count: 1 });
 
     const { nonce, identityToken } = await mintAndSign(service, privateKey, {
       tenantSlug: "acme",
@@ -506,8 +511,8 @@ describe("AppleOAuthService — staff flow (SA-418 §3)", () => {
     });
 
     expect(result.kind).toBe("staff");
-    expect(prisma.user.update).toHaveBeenCalledWith({
-      where: { id: STAFF_USER.id },
+    expect(prisma.user.updateMany).toHaveBeenCalledWith({
+      where: { id: STAFF_USER.id, tenantId: TENANT.id, appleId: null },
       data: { appleId: "apple-sub-1", forcePasswordChange: false },
     });
   });
@@ -588,8 +593,8 @@ describe("AppleOAuthService — buyer flow (SA-418 §4)", () => {
       status: "ACTIVE",
       name: "Victim",
     };
-    prisma.buyerAccount.findFirst.mockResolvedValue(squatted);
-    prisma.buyerAccount.update.mockResolvedValue({ ...squatted, appleId: "apple-sub-victim" });
+    prisma.buyerAccount.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce(squatted);
+    prisma.buyerAccount.updateMany.mockResolvedValue({ count: 1 });
 
     const { nonce, identityToken } = await mintAndSign(service, privateKey, {
       context: "buyer-standalone",
@@ -603,8 +608,8 @@ describe("AppleOAuthService — buyer flow (SA-418 §4)", () => {
       context: "buyer-standalone",
     });
 
-    expect(prisma.buyerAccount.update).toHaveBeenCalledWith({
-      where: { id: "buyer-squat" },
+    expect(prisma.buyerAccount.updateMany).toHaveBeenCalledWith({
+      where: { id: "buyer-squat", appleId: null },
       data: expect.objectContaining({
         appleId: "apple-sub-victim",
         emailVerified: true,
@@ -654,6 +659,357 @@ describe("AppleOAuthService — linking (SA-418 §2)", () => {
     await expect(service.linkAppleAccount("user-1", identityToken, nonce)).rejects.toThrow(
       ForbiddenException,
     );
+  });
+});
+
+describe("AppleOAuthService — SA-598 P1 sub-first resolve + CAS link (#2495 for Apple)", () => {
+  const TENANT = { id: "tenant-1", slug: "acme", status: "ACTIVE" };
+  const STAFF = {
+    id: "user-1",
+    tenantId: "tenant-1",
+    username: "op1",
+    role: "OPERATOR",
+    status: "ACTIVE",
+    email: "op@acme.example",
+    appleId: null as string | null,
+    forcePasswordChange: false,
+  };
+  const BUYER = {
+    id: "buyer-1",
+    email: "b@example.com",
+    name: "B",
+    status: "ACTIVE",
+    passwordSet: true,
+    emailVerified: true,
+    appleId: null as string | null,
+  };
+
+  async function staffSignIn(
+    env: Awaited<ReturnType<typeof buildService>>,
+    tokenOverrides: Parameters<typeof signIdentityToken>[1] = {},
+  ) {
+    const { nonce, identityToken } = await mintAndSign(env.service, env.privateKey, {
+      tenantSlug: "acme",
+      context: "staff",
+      tokenOverrides: { email: STAFF.email, sub: "apple-sub-1", ...tokenOverrides },
+    });
+    return env.service.signIn({
+      identityToken,
+      authorizationCode: "code",
+      nonce,
+      tenantSlug: "acme",
+      context: "staff",
+    });
+  }
+
+  async function buyerSignIn(
+    env: Awaited<ReturnType<typeof buildService>>,
+    tokenOverrides: Parameters<typeof signIdentityToken>[1] = {},
+  ) {
+    const { nonce, identityToken } = await mintAndSign(env.service, env.privateKey, {
+      context: "buyer-standalone",
+      tokenOverrides: { email: BUYER.email, sub: "apple-sub-1", ...tokenOverrides },
+    });
+    return env.service.signIn({
+      identityToken,
+      authorizationCode: "code",
+      nonce,
+      context: "buyer-standalone",
+    });
+  }
+
+  describe("staff", () => {
+    it("resolves by appleId FIRST: an email-sharing row is never queried or written", async () => {
+      const env = await buildService();
+      env.prisma.tenant.findFirst.mockResolvedValue(TENANT);
+      env.prisma.user.findFirst.mockResolvedValueOnce({ ...STAFF, appleId: "apple-sub-1" });
+
+      await expect(staffSignIn(env)).resolves.toMatchObject({ kind: "staff" });
+
+      expect(env.prisma.user.findFirst).toHaveBeenCalledTimes(1);
+      expect(env.prisma.user.findFirst.mock.calls[0][0].where).toMatchObject({
+        tenantId: "tenant-1",
+        appleId: "apple-sub-1",
+      });
+      expect(env.prisma.user.findFirst.mock.calls[0][0].where.OR).toBeUndefined();
+      expect(env.prisma.user.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("the email fallback is ordered createdAt,id and stays tenant-scoped", async () => {
+      const env = await buildService();
+      env.prisma.tenant.findFirst.mockResolvedValue(TENANT);
+      env.prisma.user.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ ...STAFF });
+      env.prisma.user.updateMany.mockResolvedValue({ count: 1 });
+
+      await staffSignIn(env);
+
+      expect(env.prisma.user.findFirst.mock.calls[1][0]).toMatchObject({
+        where: { tenantId: "tenant-1", deletedAt: null, email: STAFF.email },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      });
+    });
+
+    it("an email row bound to a DIFFERENT appleId is a 409 apple_account_mismatch with no write", async () => {
+      const env = await buildService();
+      env.prisma.tenant.findFirst.mockResolvedValue(TENANT);
+      env.prisma.user.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ ...STAFF, appleId: "someone-else" });
+
+      const err = await staffSignIn(env).catch((e) => e);
+
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getStatus()).toBe(409);
+      expect(err.message).toBe("apple_account_mismatch");
+      // P4: the Apple routes return JSON (no redirect allow-list like Google's mapErrorCode), so the
+      // code a client maps is exactly this response body message.
+      expect(err.getResponse()).toMatchObject({
+        statusCode: 409,
+        message: "apple_account_mismatch",
+      });
+      expect(env.prisma.user.updateMany).not.toHaveBeenCalled();
+      expect(env.prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it("a CAS lost race to a DIFFERENT sub is a 409; the token pair is never issued", async () => {
+      const env = await buildService();
+      env.prisma.tenant.findFirst.mockResolvedValue(TENANT);
+      env.prisma.user.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ ...STAFF });
+      env.prisma.user.updateMany.mockResolvedValue({ count: 0 });
+      env.prisma.user.findUnique.mockResolvedValue({ ...STAFF, appleId: "attacker" });
+
+      await expect(staffSignIn(env)).rejects.toThrow(
+        new ConflictException("apple_account_mismatch"),
+      );
+    });
+
+    it("a CAS lost race to the SAME sub proceeds", async () => {
+      const env = await buildService();
+      env.prisma.tenant.findFirst.mockResolvedValue(TENANT);
+      env.prisma.user.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ ...STAFF });
+      env.prisma.user.updateMany.mockResolvedValue({ count: 0 });
+      env.prisma.user.findUnique.mockResolvedValue({ ...STAFF, appleId: "apple-sub-1" });
+
+      await expect(staffSignIn(env)).resolves.toMatchObject({ kind: "staff" });
+    });
+
+    it("a falsy sub or email is refused with ZERO prisma calls", async () => {
+      for (const over of [{ sub: "" }, { email: "" }]) {
+        const env = await buildService();
+        env.prisma.tenant.findFirst.mockResolvedValue(TENANT);
+        // verifyIdentityToken may itself refuse; either way no prisma call may happen.
+        await expect(staffSignIn(env, over)).rejects.toThrow();
+        expect(env.prisma.tenant.findFirst).not.toHaveBeenCalled();
+        expect(env.prisma.user.findFirst).not.toHaveBeenCalled();
+        expect(env.prisma.user.updateMany).not.toHaveBeenCalled();
+      }
+    });
+
+    it.each([
+      ["SUSPENDED", { status: "SUSPENDED" }],
+      ["INACTIVE", { status: "INACTIVE" }],
+      ["locked", { lockedUntil: new Date(Date.now() + 86_400_000) }],
+      ["deleted", { deletedAt: new Date(Date.now() - 1000) }],
+    ])(
+      "a %s staff account cannot sign in via Apple (unauthorized, no link write)",
+      async (_n, over) => {
+        const env = await buildService();
+        env.prisma.tenant.findFirst.mockResolvedValue(TENANT);
+        env.prisma.user.findFirst
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce({ ...STAFF, ...over });
+
+        await expect(staffSignIn(env)).rejects.toThrow(new ForbiddenException("unauthorized"));
+        expect(env.prisma.user.updateMany).not.toHaveBeenCalled();
+      },
+    );
+  });
+
+  describe("buyer", () => {
+    it("resolves by appleId FIRST: the email is never queried when the sub matches", async () => {
+      const env = await buildService();
+      env.prisma.buyerAccount.findFirst.mockResolvedValueOnce({ ...BUYER, appleId: "apple-sub-1" });
+
+      await expect(buyerSignIn(env)).resolves.toMatchObject({ kind: "buyer" });
+
+      expect(env.prisma.buyerAccount.findFirst).toHaveBeenCalledTimes(1);
+      expect(env.prisma.buyerAccount.findFirst.mock.calls[0][0].where).toMatchObject({
+        appleId: "apple-sub-1",
+      });
+      expect(env.prisma.buyerAccount.findFirst.mock.calls[0][0].where.OR).toBeUndefined();
+      expect(env.prisma.buyerAccount.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("the email fallback is ordered createdAt,id", async () => {
+      const env = await buildService();
+      env.prisma.buyerAccount.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ ...BUYER });
+      env.prisma.buyerAccount.updateMany.mockResolvedValue({ count: 1 });
+
+      await buyerSignIn(env);
+
+      expect(env.prisma.buyerAccount.findFirst.mock.calls[1][0]).toMatchObject({
+        where: { deletedAt: null, email: BUYER.email },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      });
+    });
+
+    it("an email row bound to a DIFFERENT appleId is a 409 with no write, no create, no revoke", async () => {
+      const env = await buildService();
+      env.prisma.buyerAccount.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ ...BUYER, appleId: "someone-else" });
+
+      const err = await buyerSignIn(env).catch((e) => e);
+
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.message).toBe("apple_account_mismatch");
+      expect(env.prisma.buyerAccount.updateMany).not.toHaveBeenCalled();
+      expect(env.prisma.buyerAccount.update).not.toHaveBeenCalled();
+      expect(env.prisma.buyerAccount.create).not.toHaveBeenCalled();
+      expect(env.prisma.buyerRefreshToken.deleteMany).not.toHaveBeenCalled();
+    });
+
+    const squatted = { ...BUYER, passwordSet: true, emailVerified: false };
+
+    it("CAS lost race to a DIFFERENT sub is a 409: no revoke, no email", async () => {
+      const env = await buildService();
+      env.prisma.buyerAccount.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ ...squatted });
+      env.prisma.buyerAccount.updateMany.mockResolvedValue({ count: 0 });
+      env.prisma.buyerAccount.findUnique.mockResolvedValue({ ...squatted, appleId: "attacker" });
+
+      await expect(buyerSignIn(env)).rejects.toThrow(
+        new ConflictException("apple_account_mismatch"),
+      );
+      expect(env.prisma.buyerRefreshToken.deleteMany).not.toHaveBeenCalled();
+      expect(env.emailService.send).not.toHaveBeenCalled();
+    });
+
+    it("CAS lost race to the SAME sub proceeds WITHOUT revoking or emailing", async () => {
+      const env = await buildService();
+      env.prisma.buyerAccount.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ ...squatted });
+      env.prisma.buyerAccount.updateMany.mockResolvedValue({ count: 0 });
+      env.prisma.buyerAccount.findUnique.mockResolvedValue({ ...squatted, appleId: "apple-sub-1" });
+
+      await expect(buyerSignIn(env)).resolves.toMatchObject({ kind: "buyer" });
+      expect(env.prisma.buyerRefreshToken.deleteMany).not.toHaveBeenCalled();
+      expect(env.emailService.send).not.toHaveBeenCalled();
+    });
+
+    it("when THIS request links, it emails (and revokes for a squatted password)", async () => {
+      const env = await buildService();
+      env.prisma.buyerAccount.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ ...squatted });
+      env.prisma.buyerAccount.updateMany.mockResolvedValue({ count: 1 });
+
+      await buyerSignIn(env);
+
+      expect(env.prisma.buyerRefreshToken.deleteMany).toHaveBeenCalledWith({
+        where: { buyerAccountId: "buyer-1" },
+      });
+      expect(env.emailService.send).toHaveBeenCalledTimes(1);
+    });
+
+    it("a falsy sub or email is refused with ZERO prisma calls", async () => {
+      for (const over of [{ sub: "" }, { email: "" }]) {
+        const env = await buildService();
+        await expect(buyerSignIn(env, over)).rejects.toThrow();
+        expect(env.prisma.buyerAccount.findFirst).not.toHaveBeenCalled();
+        expect(env.prisma.buyerAccount.updateMany).not.toHaveBeenCalled();
+        expect(env.prisma.buyerAccount.create).not.toHaveBeenCalled();
+      }
+    });
+
+    it.each([
+      ["SUSPENDED", { status: "SUSPENDED" }],
+      ["locked", { lockedUntil: new Date(Date.now() + 86_400_000) }],
+      ["deleted", { deletedAt: new Date(Date.now() - 1000) }],
+    ])("a %s buyer cannot sign in via Apple (unauthorized, no link write)", async (_n, over) => {
+      const env = await buildService();
+      env.prisma.buyerAccount.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ ...BUYER, ...over });
+
+      await expect(buyerSignIn(env)).rejects.toThrow(new ForbiddenException("unauthorized"));
+      expect(env.prisma.buyerAccount.updateMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("linkAppleAccount", () => {
+    async function link(env: Awaited<ReturnType<typeof buildService>>) {
+      const { nonce } = await env.service.mintNonce(undefined, "staff");
+      const identityToken = await signIdentityToken(env.privateKey, {
+        nonce: sha256hex(nonce),
+        sub: "apple-sub-1",
+        email: "me@acme.example",
+      });
+      return env.service.linkAppleAccount("user-1", identityToken, nonce);
+    }
+    const ME = {
+      id: "user-1",
+      tenantId: "tenant-1",
+      deletedAt: null,
+      appleId: null,
+      email: "me@acme.example",
+    };
+
+    it("links by CAS scoped to id + tenantId + appleId:null, then emails", async () => {
+      const env = await buildService();
+      env.prisma.user.findUnique.mockResolvedValue({ ...ME });
+      env.prisma.user.findFirst.mockResolvedValue(null);
+      env.prisma.user.updateMany.mockResolvedValue({ count: 1 });
+
+      await link(env);
+
+      expect(env.prisma.user.updateMany).toHaveBeenCalledWith({
+        where: { id: "user-1", tenantId: "tenant-1", appleId: null },
+        data: { appleId: "apple-sub-1", forcePasswordChange: false },
+      });
+      expect(env.emailService.send).toHaveBeenCalledTimes(1);
+    });
+
+    it("a lost CAS to a DIFFERENT sub is a 409 and sends no email", async () => {
+      const env = await buildService();
+      env.prisma.user.findUnique
+        .mockResolvedValueOnce({ ...ME })
+        .mockResolvedValueOnce({ ...ME, appleId: "attacker" });
+      env.prisma.user.findFirst.mockResolvedValue(null);
+      env.prisma.user.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(link(env)).rejects.toThrow(new ConflictException("apple_account_mismatch"));
+      expect(env.emailService.send).not.toHaveBeenCalled();
+    });
+
+    it("a lost CAS to the SAME sub succeeds without a second email", async () => {
+      const env = await buildService();
+      env.prisma.user.findUnique
+        .mockResolvedValueOnce({ ...ME })
+        .mockResolvedValueOnce({ ...ME, appleId: "apple-sub-1" });
+      env.prisma.user.findFirst.mockResolvedValue(null);
+      env.prisma.user.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(link(env)).resolves.toBeUndefined();
+      expect(env.emailService.send).not.toHaveBeenCalled();
+    });
+
+    it("a falsy sub is refused with ZERO prisma calls", async () => {
+      const env = await buildService();
+      const { nonce } = await env.service.mintNonce(undefined, "staff");
+      const identityToken = await signIdentityToken(env.privateKey, {
+        nonce: sha256hex(nonce),
+        sub: "",
+      });
+      await expect(env.service.linkAppleAccount("user-1", identityToken, nonce)).rejects.toThrow();
+      expect(env.prisma.user.findUnique).not.toHaveBeenCalled();
+      expect(env.prisma.user.findFirst).not.toHaveBeenCalled();
+      expect(env.prisma.user.updateMany).not.toHaveBeenCalled();
+    });
   });
 });
 
