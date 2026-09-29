@@ -39,6 +39,8 @@ const NAMES = [
   "inferBarcodeSymbology",
   "scanUnitKind",
   "resolveScanLevel",
+  "resolveScanSellLevel",
+  "levelsForScannedCode",
 ];
 const DEFINITION = new RegExp(
   String.raw`(?:function\s+(?:${NAMES.join("|")})\b|(?:const|let|var)\s+(?:${NAMES.join("|")})\s*[=:])`,

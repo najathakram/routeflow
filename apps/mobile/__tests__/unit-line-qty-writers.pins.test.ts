@@ -33,9 +33,12 @@ describe("NewOrderScreen.tsx routes every +/- through stepLineQty (create flow)"
 
   it("a scan's level goes through addScannedLevelToLine, which steps a unit line's COUNT (never box math)", () => {
     expect(newOrderSrc).toMatch(/addScannedLevelToLine\(prev, level, isBoxed, upb\)/);
-    expect(
-      readFileSync(join(__dirname, "..", "lib", "sale-line.ts"), "utf8"),
-    ).toMatch(/export function addScannedLevelToLine[\s\S]*?if \(isUnitLine\(prev\)\)/);
+    const src = readFileSync(join(__dirname, "..", "lib", "sale-line.ts"), "utf8");
+    const body = src.slice(src.indexOf("export function addScannedLevelToLine"), src.indexOf("export function decrementLine"));
+    // SA-085f one qty step: the unit-line/BOX branch IS stepLineQty(+1), never re-implemented inline.
+    expect(body).toMatch(/stepLineQty\(prev, 1, isBoxed, unitsPerBox\)/);
+    expect(body).not.toMatch(/\(prev\.qty \?\? 0\) \+ 1/);
+    expect(body).not.toMatch(/incrementLine\(/);
   });
 
   it("the tray sends a unit line's typed total through setQty, never setUnits", () => {
