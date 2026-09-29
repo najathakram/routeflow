@@ -389,6 +389,26 @@ describe("syncLineCompositions (order side)", () => {
       });
     });
 
+    it("SA-593f: composing never writes a stored OrderItem money/quantity column (fresh, rescale, struck)", async () => {
+      const MONEY = ["qty", "boxes", "pieces", "unitPrice", "subtotal", "unitsPerBox", "unitLabel"];
+      for (const opts of [
+        { qtyOnly: true, qty: 2 },
+        { qtyOnly: true, qty: 3, existing: true },
+        { qtyOnly: true, qty: 0, existing: true },
+        { qtyOnly: false },
+      ]) {
+        const { tx, ctx } = fixture(opts as never);
+        await syncLineCompositions(tx as never, ["li-1"], ctx);
+        const writes = [
+          ...tx.orderItem.update.mock.calls.map((c: any[]) => c[0].data),
+          ...(tx.orderItem.updateMany?.mock?.calls ?? []).map((c: any[]) => c[0].data),
+        ];
+        for (const data of writes) {
+          expect(Object.keys(data).filter((k) => MONEY.includes(k))).toEqual([]);
+        }
+      }
+    });
+
     it("qty 2.5 -> 400 FIXED_WHOLE_BOXES, nothing written", async () => {
       const { tx, ctx } = fixture({ qtyOnly: true, qty: 2.5 });
       await expect(syncLineCompositions(tx as never, ["li-1"], ctx)).rejects.toMatchObject({

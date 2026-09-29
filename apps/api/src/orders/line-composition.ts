@@ -269,7 +269,11 @@ export async function syncLineCompositions(
   for (const l of lines) {
     if (l.product?.kind !== "RECIPE") continue;
     // A qty-only line composes as `qty` whole packs (local value; no column is rewritten).
-    const boxes = effectiveBoxes({ boxes: l.boxes, pieces: l.pieces, qty: l.qty });
+    const boxes = effectiveBoxes({
+      boxes: l.boxes,
+      pieces: l.pieces,
+      qty: l.qty == null ? null : Number(l.qty),
+    });
     const ownUpb = l.unitsPerBox == null ? null : Number(l.unitsPerBox);
     const productUpb = l.product.unitsPerBox == null ? null : Number(l.product.unitsPerBox);
     const unitsPerBox = ownUpb ?? (l.boxes == null ? productUpb : null);
