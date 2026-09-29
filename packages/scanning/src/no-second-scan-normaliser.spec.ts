@@ -29,8 +29,17 @@ function collect(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-// inferBarcodeSymbology joins this list in M4a-1, when M1's apps/api definition moves here.
-const NAMES = ["normalizeScanCode", "upcEToUpcA", "pickBestScanMatch"];
+// M4a-1 (SA-580): `scanUnitKind` (mobile's legacy-column classifier) is DELETED — every caller
+// moves to the shared resolver — and `resolveScanLevel` (pricing's M1 lineMode resolver, "unused by
+// any scanner") is replaced by `resolveScanSellLevel`. Neither may be defined outside the package.
+const NAMES = [
+  "normalizeScanCode",
+  "upcEToUpcA",
+  "pickBestScanMatch",
+  "inferBarcodeSymbology",
+  "scanUnitKind",
+  "resolveScanLevel",
+];
 const DEFINITION = new RegExp(
   String.raw`(?:function\s+(?:${NAMES.join("|")})\b|(?:const|let|var)\s+(?:${NAMES.join("|")})\s*[=:])`,
 );
@@ -55,6 +64,29 @@ describe("no second scan normaliser (M4a-0)", () => {
       DEFINITION.test(strip(fs.readFileSync(f, "utf8"))),
     );
     expect(offenders.map((f) => path.relative(REPO_ROOT, f))).toEqual([]);
+  });
+
+  it("scanUnitKind and inferBarcodeSymbology have exactly one definition, inside packages/scanning (M4a-1)", () => {
+    const only = (name: string) =>
+      FILES.filter((f) =>
+        new RegExp(String.raw`(?:function\s+${name}\b|(?:const|let|var)\s+${name}\s*[=:])`).test(
+          strip(fs.readFileSync(f, "utf8")),
+        ),
+      ).map((f) => path.relative(REPO_ROOT, f));
+    // inferBarcodeSymbology moved (packages/scanning/src/barcode-symbology.ts); scanUnitKind is
+    // deleted outright, replaced by resolveScanSellLevel in packages/scanning/src/scan-level.ts.
+    expect(only("inferBarcodeSymbology")).toEqual(["packages/scanning/src/barcode-symbology.ts"]);
+    expect(only("scanUnitKind")).toEqual([]);
+    expect(only("resolveScanSellLevel")).toEqual(["packages/scanning/src/scan-level.ts"]);
+  });
+
+  it("the old api symbology path is gone or a re-export shim, never a second definition", () => {
+    const rel = "apps/api/src/common/barcode-symbology.ts";
+    const abs = path.join(REPO_ROOT, rel);
+    if (!fs.existsSync(abs)) return;
+    expect(strip(fs.readFileSync(abs, "utf8")).trim()).toMatch(
+      /^export \* from "@routeflow\/scanning";$/,
+    );
   });
 
   it("the two legacy paths are re-export shims of @routeflow/scanning", () => {
