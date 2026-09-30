@@ -386,9 +386,10 @@ function resolveLocalArray(id: ts.Identifier, from: ts.Node): LocalArray | null 
     return { unresolvable: `${name} = ${init ? init.getText().slice(0, 40) : "(no initializer)"}` };
   }
   const elements: ts.Expression[] = [...init.elements];
-  let unsafe: string | null = null;
+  // The first unsafe use, held in an array: a closure-assigned `let` narrows to `never` after the walk.
+  const unsafe: string[] = [];
   const visit = (n: ts.Node) => {
-    if (unsafe) return;
+    if (unsafe.length > 0) return;
     if (ts.isIdentifier(n) && n.text === name && n !== decl!.name) {
       const par = n.parent;
       if (ts.isPropertyAccessExpression(par) && par.name === n) return; // `x.providers`, not ours
@@ -403,16 +404,18 @@ function resolveLocalArray(id: ts.Identifier, from: ts.Node): LocalArray | null 
           return;
         }
         if (READ_ONLY_ARRAY_MEMBERS.has(member)) return;
-        unsafe = `${name}.${member}`;
+        unsafe.push(`${name}.${member}`);
         return;
       }
-      unsafe = `${name} (${ts.SyntaxKind[par.kind]})`;
+      unsafe.push(`${name} (${ts.SyntaxKind[par.kind]})`);
       return;
     }
     ts.forEachChild(n, visit);
   };
   visit(scope);
-  return unsafe ? { unresolvable: `${name} is mutated or passed on: ${unsafe}` } : { elements };
+  return unsafe.length > 0
+    ? { unresolvable: `${name} is mutated or passed on: ${unsafe[0]}` }
+    : { elements };
 }
 
 export function analyseSpec(
