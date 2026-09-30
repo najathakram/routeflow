@@ -16,6 +16,9 @@ export interface OrderLineUnitPickerLine {
   listPrice: number;
   unitPrice: number;
   priceType: "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL";
+  /** #2784: the operator's own override fields: the start-on-default rule never touches a shaped line. */
+  qty?: number;
+  discountedPrice?: number;
   unitLabel?: string;
   packBase?: PackBase;
   tierPrices?: Parameters<typeof ladderProductOf>[0]["tierPrices"];
@@ -70,7 +73,15 @@ export function OrderLineUnitPicker({
   React.useEffect(() => {
     if (!startOnDefaultUnit || startedRef.current || options.length === 0) return;
     startedRef.current = true; // one shot per mount: the operator's later choice is never re-overridden
-    if (line.unitLabel || line.priceEdited || !units.data) return;
+    // Only a PRISTINE line (Opus #2865 B1): no unit, qty 1, no typed/discounted/manual price.
+    const shaped =
+      !!line.unitLabel ||
+      !!line.priceEdited ||
+      (line.qty ?? 1) > 1 ||
+      line.discountedPrice != null ||
+      line.priceType === "DISCOUNTED" ||
+      line.priceType === "MANUAL";
+    if (shaped || !units.data) return;
     const value = defaultUnitValue(product, units.data, tier);
     const option = value ? options.find((o) => o.value === value) : undefined;
     if (option) onChange(option, false);
@@ -82,6 +93,9 @@ export function OrderLineUnitPicker({
     tier,
     line.unitLabel,
     line.priceEdited,
+    line.qty,
+    line.discountedPrice,
+    line.priceType,
     onChange,
   ]);
 

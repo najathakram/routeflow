@@ -905,6 +905,8 @@ function ProductPickView({
           unitLabel: isPack ? undefined : option.value,
           unitBasePrice: isPack ? undefined : option.price,
           unitFactor: isPack ? undefined : option.factorToBase,
+          // any unit choice CONSUMES the default-start flag (a cart re-open never re-applies it, Opus #2865 B2)
+          startOnDefaultUnit: undefined,
           qty: 1,
           boxes: undefined,
           pieces: undefined,

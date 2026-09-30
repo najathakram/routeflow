@@ -856,10 +856,15 @@ export function CreateOrderModal({
     setLineItems((prev) => {
       const target = prev.find((li) => li.tempId === tempId);
       if (!target) return prev;
-      const next = applyLineUnit(target, option, {
-        tier: tierForProduct(target.productId),
-        keepQty: refresh,
-      });
+      // startOnDefaultUnit is CONSUMED by any unit choice (incl. the pack): a remount (list <-> scan screen) can never
+      // re-apply the default over the operator's choice (Opus #2865 B1).
+      const next = {
+        ...applyLineUnit(target, option, {
+          tier: tierForProduct(target.productId),
+          keepQty: refresh,
+        }),
+        startOnDefaultUnit: false,
+      };
       const twin = prev.find((li) => li.tempId !== tempId && sameProductUnit(li, next));
       if (!twin) return prev.map((li) => (li.tempId === tempId ? next : li));
       return prev

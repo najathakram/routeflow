@@ -238,7 +238,13 @@ export function CartRow({
         }}
         product={product}
         tier={tier}
-        startOnDefaultUnit={line.startOnDefaultUnit}
+        // Only while the line is pristine: qty 1, no typed/operator price (Opus #2865 B2).
+        startOnDefaultUnit={
+          !!line.startOnDefaultUnit &&
+          (line.qty ?? 0) <= 1 &&
+          line.priceSource !== "operator" &&
+          line.unitPrice == null
+        }
         onChange={onChangeUnit}
         style={{ marginBottom: isBoxed ? 2 : 8 }}
       />
