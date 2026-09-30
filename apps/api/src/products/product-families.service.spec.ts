@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { plainToInstance } from "class-transformer";
 import { validate } from "class-validator";
-import { CreateFamilyDto } from "./dto/family.dto";
+import { CreateFamilyDto, UpdateFamilyVariantsDto } from "./dto/family.dto";
 import { ProductFamiliesService } from "./product-families.service";
 import { ACTOR, T, makeTx, product, row } from "./product-code-release.fake-tx";
 
@@ -460,5 +460,47 @@ describe("family DTO bounds (Decimal(10,2) price <= 8 integer digits, Decimal(10
     });
     expect(dto.family.name).toBe("Soda");
     expect(dto.variants[0]).toMatchObject({ name: "A", sku: "S1" });
+  });
+});
+
+describe("Tier 1 money: an explicit null is never a silent $0 (#2881 r3)", () => {
+  const messages = async (cls: new () => object, plain: Record<string, unknown>) => {
+    const errs = await validate(plainToInstance(cls, plain) as object, { whitelist: true });
+    const flat = (e: (typeof errs)[number]): string[] => [
+      ...Object.values(e.constraints ?? {}),
+      ...(e.children ?? []).flatMap(flat),
+    ];
+    return errs.flatMap(flat);
+  };
+  it("PATCH update row: pricePerUnit null is a readable 400 (would write $0.00 tiers)", async () => {
+    const m = await messages(UpdateFamilyVariantsDto, {
+      update: [{ id: "k1", pricePerUnit: null }],
+    });
+    expect(m.join(" ")).toMatch(/pricePerUnit/);
+  });
+  it("PATCH update row: standardCost null is a readable 400 (would write a 0.0000 cost)", async () => {
+    const m = await messages(UpdateFamilyVariantsDto, {
+      update: [{ id: "k1", standardCost: null }],
+    });
+    expect(m.join(" ")).toMatch(/standardCost/);
+  });
+  it("omitting the field stays valid; a real value stays valid", async () => {
+    expect(await messages(UpdateFamilyVariantsDto, { update: [{ id: "k1", name: "X" }] })).toEqual(
+      [],
+    );
+    expect(
+      await messages(UpdateFamilyVariantsDto, {
+        update: [{ id: "k1", pricePerUnit: "2", standardCost: "1" }],
+      }),
+    ).toEqual([]);
+  });
+  it("create: a null family price / family cost / variant cost is refused too", async () => {
+    for (const plain of [
+      { family: { name: "F", pricePerUnit: null }, variants: [{ name: "A", pricePerUnit: "1" }] },
+      { family: { name: "F", standardCost: null }, variants: [{ name: "A", pricePerUnit: "1" }] },
+      { family: { name: "F" }, variants: [{ name: "A", pricePerUnit: "1", standardCost: null }] },
+    ]) {
+      expect((await messages(CreateFamilyDto, plain)).length).toBeGreaterThan(0);
+    }
   });
 });
