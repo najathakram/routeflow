@@ -238,3 +238,43 @@ describe("OrderLineUnitPicker", () => {
     });
   });
 });
+
+describe("OrderLineUnitPicker: a NEW line starts on the default selling unit (#2784)", () => {
+  const FLAGGED: ProductUnitLevel = { ...CASE, isDefaultSelling: true };
+  const renderPicker = (line: OrderLineUnitPickerLine, extra: Record<string, unknown> = {}) => {
+    const onChange = jest.fn();
+    render(<OrderLineUnitPicker line={line} tier={1} onChange={onChange} {...extra} />);
+    return onChange;
+  };
+
+  it("with startOnDefaultUnit, a fresh pack line whose ladder flags Case is moved to Case once", () => {
+    mockUnits = [FLAGGED];
+    const onChange = renderPicker(packLine, { startOnDefaultUnit: true });
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange.mock.calls[0][0]).toMatchObject({ value: "Case", factorToBase: 288 });
+    expect(onChange.mock.calls[0][1]).toBe(false);
+  });
+
+  it("does nothing without the prop (every other row keeps today's behaviour)", () => {
+    mockUnits = [FLAGGED];
+    expect(renderPicker(packLine)).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when no level is flagged, the ladder is empty, or units_v1 is off", () => {
+    mockUnits = [CASE];
+    expect(renderPicker(packLine, { startOnDefaultUnit: true })).not.toHaveBeenCalled();
+    mockUnits = [];
+    expect(renderPicker(packLine, { startOnDefaultUnit: true })).not.toHaveBeenCalled();
+    mockUnits = [FLAGGED];
+    mockEnabled = false;
+    expect(renderPicker(packLine, { startOnDefaultUnit: true })).not.toHaveBeenCalled();
+  });
+
+  it("never overrides a unit the line already holds, or a price the operator typed", () => {
+    mockUnits = [FLAGGED];
+    expect(renderPicker(caseLine, { startOnDefaultUnit: true })).not.toHaveBeenCalled();
+    expect(
+      renderPicker({ ...packLine, priceEdited: true }, { startOnDefaultUnit: true }),
+    ).not.toHaveBeenCalled();
+  });
+});
