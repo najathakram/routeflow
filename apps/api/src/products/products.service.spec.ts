@@ -2222,6 +2222,8 @@ function makeBulkDeleteReferenceStore() {
     // #2717 M2: bulkDelete also probes the recipe tables for references.
     recipe: noopDeleteManyModel(),
     recipeComponent: noopDeleteManyModel(),
+    // SA-603a: clearAll's soft-delete releases codes (peek + ONE code-lock set) through these.
+    productBarcode: noopDeleteManyModel(),
   };
 
   const prisma = {
@@ -2235,7 +2237,13 @@ function makeBulkDeleteReferenceStore() {
     $transaction: jest.fn((arg: unknown) =>
       Array.isArray(arg) ? Promise.all(arg) : (arg as (tx: unknown) => unknown)(models),
     ),
-    tenantTransaction: jest.fn((fn: (tx: unknown) => unknown) => fn(models)),
+    tenantTransaction: jest.fn((fn: (tx: unknown) => unknown) =>
+      fn({
+        ...models,
+        $executeRaw: jest.fn().mockResolvedValue(0),
+        $queryRaw: jest.fn().mockResolvedValue([]),
+      }),
+    ),
   };
 
   return { products, orderItems, invoiceItems, prisma };

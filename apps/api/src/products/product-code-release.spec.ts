@@ -1,6 +1,7 @@
 import { ConflictException } from "@nestjs/common";
 import {
   claimCodes,
+  lockCodesOfProducts,
   releaseProductCodes,
   restoreProductCodes,
   CODE_RELEASED_ON_REUSE_ACTION,
@@ -57,6 +58,39 @@ describe("releaseProductCodes (deactivate)", () => {
     await releaseProductCodes(tx, { tenantId: T, productId: "p1" });
     expect(tx.products[1].sku).toBe("S2");
     expect(tx.barcodes[0].code).toBe("B2");
+  });
+});
+
+describe("lockCodesOfProducts (clearAll's ONE sorted lock set, capped)", () => {
+  it("peeks every product's codes and locks them in ONE call (one lock per distinct code), returning the set", async () => {
+    const tx = makeTx({
+      products: [
+        product({ id: "a", sku: "SA", barcode: "BA" }),
+        product({ id: "b", sku: "SB", barcode: "BA" }),
+      ],
+      barcodes: [row("r1", "a", "UNIT", "BA")],
+    });
+    const set = await lockCodesOfProducts(tx, T, ["a", "b"]);
+    expect([...set].sort()).toEqual(["BA", "SA", "SB"]);
+    expect(tx.calls.filter((c) => c === "lock:code")).toHaveLength(3); // distinct codes, locked once each
+    expect(tx.calls.indexOf("lock:code")).toBeGreaterThan(
+      tx.calls.lastIndexOf("productBarcode.findMany"),
+    );
+  });
+
+  it("refuses a set above the cap with a readable coded 409 and takes NO lock", async () => {
+    const tx = makeTx({
+      products: Array.from({ length: 5 }, (_, i) => product({ id: `p${i}`, sku: `S${i}` })),
+    });
+    const err = await lockCodesOfProducts(tx, T, ["p0", "p1", "p2", "p3", "p4"], 4).catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({
+      code: "CATALOG_TOO_LARGE_FOR_CLEAR_ALL",
+      codeCount: 5,
+      max: 4,
+    });
+    expect(String(err.getResponse().message)).toMatch(/smaller batches/);
+    expect(tx.calls).not.toContain("lock:code");
   });
 });
 

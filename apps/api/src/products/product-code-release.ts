@@ -207,6 +207,38 @@ export async function peekProductCodes(
   return out;
 }
 
+/** One advisory lock per code is held to COMMIT, so a whole-catalog lock set can exhaust Postgres' instance-wide lock table. */
+export const CLEAR_ALL_MAX_LOCKED_CODES = 1000;
+
+/**
+ * Peek EVERY code of `productIds` and lock them in ONE sorted `lockBarcodeCodes` call (Opus #2860 r2), refusing a set larger
+ * than `max` with a readable 409 (clearAll is not chunked yet; a chunked version is a follow-up). Returns the locked set,
+ * which the caller hands to each `releaseProductCodes(..., { lockedCodes })`.
+ */
+export async function lockCodesOfProducts(
+  tx: CatalogTx,
+  tenantId: string,
+  productIds: readonly string[],
+  max = CLEAR_ALL_MAX_LOCKED_CODES,
+): Promise<Set<string>> {
+  const all: string[] = [];
+  for (const productId of productIds) {
+    // eslint-disable-next-line no-await-in-loop -- pre-lock peek over a bounded set
+    all.push(...(await peekProductCodes(tx, tenantId, productId)));
+  }
+  const codes = new Set(all.filter((c) => c.trim().length > 0));
+  if (codes.size > max) {
+    throw new ConflictException({
+      code: API_ERROR_CODES.CATALOG_TOO_LARGE_FOR_CLEAR_ALL,
+      message: `This catalog has too many product codes to clear in one go (${codes.size}, the limit is ${max}). Delete products in smaller batches.`,
+      codeCount: codes.size,
+      max,
+    });
+  }
+  await lockBarcodeCodes(tx, tenantId, [...codes]);
+  return codes;
+}
+
 /**
  * Deactivate: release ALL of this product's live codes. Idempotent — with nothing live it writes nothing. Returns the
  * fields released. Call BEFORE the `isActive` write, never after it: it takes this product's code locks FIRST and then its row
