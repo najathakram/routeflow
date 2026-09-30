@@ -307,6 +307,32 @@ describe("Notifications page — grouped list (#1965)", () => {
     ).toBeInTheDocument();
   });
 
+  it("T18 (a11y) hint text carrying the setup link is >= 4.5:1 (text-navy/70 = 6.4:1; /50 was 3.3:1)", () => {
+    renderWithProviders(<NotificationsSettingsTab />);
+    const link = screen.getByRole("link", { name: /set up email/i });
+    const hint = link.closest("p") as HTMLElement;
+    const foot = hint.parentElement as HTMLElement;
+    expect(foot.className).toMatch(/text-navy\/70/);
+    expect(foot.className).not.toMatch(/text-navy\/(?:[0-5]\d)/);
+  });
+
+  it("T18b (a11y) the non-admin caption is also >= 4.5:1", () => {
+    mockRole = "OPERATOR";
+    renderWithProviders(<NotificationsSettingsTab />);
+    expect(screen.getByText("Only admins can change notifications").className).toMatch(
+      /text-navy\/70/,
+    );
+  });
+
+  it("T19 (a11y, WCAG 2.5.8) every switch pads its hit area to >= 44px without changing its 36x20 visual", () => {
+    renderWithProviders(<NotificationsSettingsTab />);
+    for (const sw of screen.getAllByRole("switch")) {
+      expect(sw.className).toMatch(/before:-inset-y-3/);
+      expect(sw.className).toMatch(/before:-inset-x-2/);
+      expect(sw.className).toMatch(/h-5 w-9/);
+    }
+  });
+
   it("T13 the health strip maps a reason code to a sentence + fix link and never prints the raw code", () => {
     state.health = {
       windowDays: 7,
