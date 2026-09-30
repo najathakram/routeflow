@@ -12,6 +12,7 @@ import { FEATURE_REGISTRY } from "../billing/feature-registry";
 import { FLAG_KEYS } from "../billing/plan-catalog.constants";
 import {
   POLICY_PILOT_PENDING_ALLOWLIST,
+  BUYER_OVERSELL_MODES,
   POLICY_REGISTRY,
   policyJsonSchema,
   type PolicyEntry,
@@ -27,6 +28,12 @@ const PHASE1_PILOTS = [
   "credit.approvalThreshold",
   "invoicing.priceDisclosure",
 ];
+
+/**
+ * WS9 added `orders.buyerOversell` (no production call site until its call-site PR). The ceiling
+ * grows by exactly this one key; the allow-list itself stays shrink-only from here.
+ */
+const PILOT_CEILING = [...PHASE1_PILOTS, "orders.buyerOversell"];
 
 function sourceFiles(filter: (rel: string) => boolean): string[] {
   return (fs.readdirSync(SRC_ROOT, { recursive: true }) as string[])
@@ -145,7 +152,39 @@ describe("POLICY_REGISTRY pins (SA-138 §3.1)", () => {
   it("P3: pilotPending is shrink-only — every flagged key is allow-listed, the list never grows past the phase-1 pilots, and every listed key is still flagged", () => {
     const flagged = ENTRIES.filter((e) => e.pilotPending).map((e) => e.key);
     expect(flagged.filter((k) => !POLICY_PILOT_PENDING_ALLOWLIST.includes(k))).toEqual([]);
-    expect(POLICY_PILOT_PENDING_ALLOWLIST.filter((k) => !PHASE1_PILOTS.includes(k))).toEqual([]);
+    expect(POLICY_PILOT_PENDING_ALLOWLIST.filter((k) => !PILOT_CEILING.includes(k))).toEqual([]);
     expect(POLICY_PILOT_PENDING_ALLOWLIST.filter((k) => !flagged.includes(k))).toEqual([]);
+  });
+});
+
+describe("orders.buyerOversell (WS9)", () => {
+  const e = ENTRIES.find((x) => x.key === "orders.buyerOversell");
+
+  it("is registered as an internal enum defaulting to today's hard block", () => {
+    expect(e).toBeDefined();
+    expect(e?.area).toBe("orders");
+    expect(e?.kind).toBe("enum");
+    expect(e?.default).toBe("off");
+    expect(e?.added).toBe("2026-10-01");
+    expect(BUYER_OVERSELL_MODES).toEqual(["off", "backorder"]);
+  });
+
+  it("allows exactly the TENANT and CUSTOMER scopes (a CATEGORY write is refused)", () => {
+    expect([...(e?.scopes ?? [])].sort()).toEqual(["CUSTOMER", "TENANT"]);
+  });
+
+  it("is server-side only: clientVisible is false so it never reaches `modes`", () => {
+    expect(e?.clientVisible).toBe(false);
+  });
+
+  it("accepts off/backorder and rejects everything else", () => {
+    for (const ok of ["off", "backorder"]) expect(e?.schema.safeParse(ok).success).toBe(true);
+    for (const bad of ["yes", "allow", "BACKORDER", "Off", null, 1, true, undefined, ""])
+      expect(e?.schema.safeParse(bad).success).toBe(false);
+  });
+
+  it("is pilotPending until its call site lands (and allow-listed)", () => {
+    expect(e?.pilotPending).toBe(true);
+    expect(POLICY_PILOT_PENDING_ALLOWLIST).toContain("orders.buyerOversell");
   });
 });

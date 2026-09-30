@@ -229,6 +229,67 @@ describe("settleStockForEdit — same code, lines[] added, legacy top-level fiel
   });
 });
 
+describe("settleStockForEdit — opts.allowOversell replaces the role test (WS9)", () => {
+  const order = { id: "o-1", status: "PENDING" };
+  const held = (qty: number) => ({
+    productId: "mango",
+    qty,
+    boxes: null,
+    pieces: null,
+    unitsPerBox: null,
+  });
+
+  it("a CUSTOMER edit with allowOversell=true oversells with a warning instead of the 409", async () => {
+    const products = [mango()];
+    await expect(
+      settleStockForEdit(
+        deps,
+        fakeTx(products),
+        order,
+        [held(1)],
+        [held(9)],
+        { role: UserRole.CUSTOMER } as any,
+        undefined,
+        { allowOversell: true },
+      ),
+    ).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalled();
+    expect(products[0].currentStock).toBeLessThan(0);
+  });
+
+  it("a DRIVER with allowOversell=false is refused", async () => {
+    const err = await caught(() =>
+      settleStockForEdit(
+        deps,
+        fakeTx([mango()]),
+        order,
+        [held(1)],
+        [held(9)],
+        { role: UserRole.DRIVER } as any,
+        undefined,
+        { allowOversell: false },
+      ),
+    );
+    expect((err.getResponse() as any).code).toBe("INSUFFICIENT_STOCK");
+  });
+
+  it("an OPERATOR with allowOversell=false is refused too (opts replaces the role test)", async () => {
+    const err = await caught(() =>
+      settleStockForEdit(
+        deps,
+        fakeTx([mango()]),
+        order,
+        [held(1)],
+        [held(9)],
+        { role: UserRole.OPERATOR } as any,
+        undefined,
+        { allowOversell: false },
+      ),
+    );
+    expect((err.getResponse() as any).code).toBe("INSUFFICIENT_STOCK");
+  });
+});
+
 // B920 — the buyer oversell check is per PRODUCT, not per LINE: two lines of one product that
 // each fit in stock but together exceed it must 409 once, with ONE lines[] entry for the product.
 describe("B920 — lines of the same product are summed before the oversell check", () => {
