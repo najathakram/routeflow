@@ -47,6 +47,7 @@ import { AuthorizationGuardService } from "../authorizations/authorization-guard
 import { MessagingService } from "../messaging/messaging.service";
 import { StorageService } from "../storage/storage.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { EstimatesService } from "../estimates/estimates.service";
@@ -149,6 +150,12 @@ describeDb("#2648 credit-note reissue (SA-535b)", () => {
         {
           provide: EntitlementsService,
           useValue: { hasFlag: jest.fn().mockResolvedValue(false) },
+        },
+        // InvoicesService and EstimatesService inject it (#2198/SA-397, flag.msrp); L-247: every
+        // construction site of a class lists its constructor's providers.
+        {
+          provide: EntitlementAuthority,
+          useValue: { can: jest.fn().mockResolvedValue(false) },
         },
         { provide: CommissionEngineService, useValue: mockCommissionEngine },
       ],
