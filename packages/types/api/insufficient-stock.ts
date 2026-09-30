@@ -55,12 +55,21 @@ export function insufficientStockSentence(lines: InsufficientStockLine[]): strin
   return parts.join(" ");
 }
 
-/** "10 pieces" / "1 piece" / "4 lb": stock counts pieces unless the product's own unit says
- *  otherwise, so a box buyer is never told "Only 10" with no noun. */
+/** "10 pieces" / "1 piece" / "4 lb" / "3 bags": stock counts pieces unless the product's own unit
+ *  names the piece, so a box buyer is never told "Only 10" with no noun. */
 function countWithUnit(l: InsufficientStockLine): string {
   const unit = l.unit?.trim();
-  const generic = !unit || /^(each|ea|piece|pieces|pc|pcs)$/i.test(unit);
-  return `${l.available} ${generic ? (l.available === 1 ? "piece" : "pieces") : unit}`;
+  const generic = !unit || /^(each|ea|piece|pieces|pc|pcs|unit|units)$/i.test(unit);
+  if (generic) return `${l.available} ${l.available === 1 ? "piece" : "pieces"}`;
+  return `${l.available} ${l.available === 1 ? unit : pluralize(unit)}`;
+}
+
+/** bag→bags, box→boxes, bottle→bottles; short abbreviations (lb, kg, oz, ml) and already-plural
+ *  words are left alone. */
+function pluralize(unit: string): string {
+  if (unit.length <= 2 || /s$/i.test(unit)) return unit;
+  if (/(x|z|ch|sh)$/i.test(unit)) return `${unit}es`;
+  return `${unit}s`;
 }
 
 function joinAnd(items: string[]): string {

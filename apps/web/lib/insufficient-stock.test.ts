@@ -30,13 +30,31 @@ describe("insufficientStockSentence", () => {
       "Only 4 pieces of Mango left. Lime and Fig are out of stock.",
     );
   });
-  it("uses the product's own unit label when it is not a generic piece", () => {
+  it("uses the product's own unit label when it names the piece, pluralised", () => {
     expect(insufficientStockSentence([{ ...line("Rice", 4), unit: "lb" }])).toBe(
       "Only 4 lb of Rice left.",
     );
-    expect(insufficientStockSentence([{ ...line("Mango 12ct", 10), unit: "each" }])).toBe(
-      "Only 10 pieces of Mango 12ct left.",
+    expect(insufficientStockSentence([{ ...line("Chips", 3), unit: "bag" }])).toBe(
+      "Only 3 bags of Chips left.",
     );
+    expect(insufficientStockSentence([{ ...line("Water", 6), unit: "bottle" }])).toBe(
+      "Only 6 bottles of Water left.",
+    );
+    expect(insufficientStockSentence([{ ...line("Soap", 2), unit: "box" }])).toBe(
+      "Only 2 boxes of Soap left.",
+    );
+  });
+  it("count 1 with a non-generic unit stays singular", () => {
+    expect(insufficientStockSentence([{ ...line("Chips", 1), unit: "bag" }])).toBe(
+      "Only 1 bag of Chips left.",
+    );
+  });
+  it("generic, empty, whitespace and mixed-case units all read as pieces", () => {
+    for (const unit of ["each", "Each", "EA", "piece", "unit", "units", "", "   ", undefined]) {
+      expect(insufficientStockSentence([{ ...line("Mango 12ct", 10), unit }])).toBe(
+        "Only 10 pieces of Mango 12ct left.",
+      );
+    }
   });
   it("keeps decimal quantities", () => {
     expect(insufficientStockSentence([line("Rice", 2.5)])).toBe("Only 2.5 pieces of Rice left.");

@@ -139,6 +139,32 @@ describe("decrementStockForSale (create + promotion) — coded, line-by-line 409
     });
   });
 
+  it("omits the unit for a packed product: Product.unit names the PACK, counts are pieces", async () => {
+    const boxed: P = {
+      id: "m12",
+      name: "Mango 12ct",
+      unit: "Box",
+      currentStock: 10,
+      unitsPerBox: 12,
+    };
+    const err = await caught(() =>
+      decrementStockForSale(deps, fakeTx([boxed]), [{ productId: "m12", qty: 40 }], false, event),
+    );
+    const line = (err.getResponse() as any).lines[0];
+    expect(line.unit).toBeUndefined();
+    expect([line.available, line.requested]).toEqual([10, 480]); // a box-unaware line of 40 boxes is 480 pieces;
+  });
+
+  it("keeps the unit for an unpacked product (unitsPerBox 1 or null)", async () => {
+    for (const unitsPerBox of [null, 1]) {
+      const rice: P = { id: "rice", name: "Rice", unit: "lb", currentStock: 2, unitsPerBox };
+      const err = await caught(() =>
+        decrementStockForSale(deps, fakeTx([rice]), [{ productId: "rice", qty: 5 }], false, event),
+      );
+      expect((err.getResponse() as any).lines[0].unit).toBe("lb");
+    }
+  });
+
   it("staff still oversell with a warning (regression guard)", async () => {
     const products = [mango()];
     await expect(
