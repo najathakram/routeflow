@@ -1,5 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import type { CreditNoteStatus } from "@routeflow/types";
+import type {
+  CreditNoteStatus,
+  CreditNoteVoidPreview,
+  ReissueCreditNoteInput,
+  ReissueCreditNoteResult,
+} from "@routeflow/types";
 import { apiClient } from "../api-client";
 
 // ─── Types (mirror apps/web/lib/api/credit-notes.ts) ────────────────────────────
@@ -23,6 +28,8 @@ export interface CreditNote {
   reason?: string;
   notes?: string;
   expiresAt?: string | null;
+  /** #2648: the note's split across its source invoice's lines (empty for a lump-sum credit). */
+  items?: Array<{ invoiceItemId: string | null; amount: number; qty: number }>;
   createdAt: string;
   updatedAt: string;
 }
@@ -166,5 +173,77 @@ export function useVoidCreditNote() {
   return useMutation<CreditNote, Error, string>({
     mutationFn: (id) => apiClient.post(`/credit-notes/${id}/void`).then((r) => r.data),
     onSuccess: (_, id) => invalidateCreditNote(qc, id),
+  });
+}
+
+/** #2648 / SA-535(a): reason/expiry, in place (a VOID note is not editable). */
+export function useUpdateCreditNote() {
+  const qc = useQueryClient();
+  return useMutation<CreditNote, Error, { id: string; reason?: string; expiresAt?: string | null }>(
+    {
+      mutationFn: ({ id, ...dto }) =>
+        apiClient.patch(`/credit-notes/${id}`, dto).then((r) => r.data),
+      onSuccess: (_, { id }) => invalidateCreditNote(qc, id),
+    },
+  );
+}
+
+/** What a void-with-reversal (and so a reissue) would un-apply, and any refusal. Read-only. */
+export function useVoidPreview(id: string, enabled: boolean) {
+  return useQuery<CreditNoteVoidPreview>({
+    queryKey: ["credit-notes", id, "void-preview"],
+    queryFn: () => apiClient.get(`/credit-notes/${id}/void-preview`).then((r) => r.data),
+    enabled: !!id && enabled,
+    staleTime: 0,
+  });
+}
+
+/**
+ * SA-436 PR-2 (#2402): void a credit note AFTER un-applying it everywhere (each pair is remembered
+ * so the auto-apply sweep cannot re-apply it). The optional reason (#2540) is a web-dialog field.
+ */
+export function useVoidWithReversal() {
+  const qc = useQueryClient();
+  return useMutation<
+    {
+      creditNote: CreditNote;
+      reopened: Array<{ invoiceId: string; invoiceNumber: string; amount: number }>;
+    },
+    Error,
+    { id: string; reason?: string }
+  >({
+    mutationFn: ({ id, reason }) =>
+      apiClient
+        .post(`/credit-notes/${id}/void-with-reversal`, reason ? { reason } : {})
+        .then((r) => r.data),
+    onSuccess: (_, { id }) => {
+      invalidateCreditNote(qc, id);
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+      qc.invalidateQueries({ queryKey: ["admin", "orders"] });
+    },
+  });
+}
+
+/** #2648 / SA-535(b): an amount/line edit — void-with-reversal + an unapplied replacement. */
+export function useReissueCreditNote() {
+  const qc = useQueryClient();
+  return useMutation<
+    ReissueCreditNoteResult<CreditNote>,
+    Error,
+    { id: string; idempotencyKey: string } & ReissueCreditNoteInput
+  >({
+    mutationFn: ({ id, idempotencyKey, ...dto }) =>
+      apiClient
+        .post(`/credit-notes/${id}/reissue`, dto, {
+          headers: { "Idempotency-Key": idempotencyKey },
+        })
+        .then((r) => r.data),
+    onSuccess: (_, { id }) => {
+      invalidateCreditNote(qc, id);
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+      qc.invalidateQueries({ queryKey: ["admin", "orders"] });
+    },
   });
 }
