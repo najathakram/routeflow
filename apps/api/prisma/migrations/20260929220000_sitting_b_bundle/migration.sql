@@ -23,6 +23,9 @@ BEGIN;
 SET LOCAL lock_timeout = '5s';
 
 -- CreateEnum
+CREATE TYPE "PolicyScopeType" AS ENUM ('TENANT', 'CATEGORY', 'CUSTOMER');
+
+-- CreateEnum
 CREATE TYPE "EmailDeliveryStatus" AS ENUM ('QUEUED', 'SENT', 'FAILED', 'BOUNCED', 'WOULD_SEND', 'OPTED_OUT');
 
 -- AlterTable
@@ -54,6 +57,24 @@ ALTER TABLE "ProductBarcode" ADD COLUMN     "retiredCode" TEXT,
 ALTER COLUMN "code" DROP NOT NULL;
 
 -- CreateTable
+CREATE TABLE "PolicyValue" (
+    "id" TEXT NOT NULL,
+    "tenantId" TEXT NOT NULL,
+    "key" TEXT NOT NULL,
+    "scopeType" "PolicyScopeType" NOT NULL,
+    "scopeId" TEXT,
+    "value" JSONB NOT NULL,
+    "reason" TEXT NOT NULL,
+    "setById" TEXT,
+    "setByName" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "supersededAt" TIMESTAMP(3),
+    "supersededById" TEXT,
+
+    CONSTRAINT "PolicyValue_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "EmailDelivery" (
     "id" TEXT NOT NULL,
     "tenantId" TEXT NOT NULL,
@@ -67,9 +88,16 @@ CREATE TABLE "EmailDelivery" (
     "attempts" INTEGER NOT NULL DEFAULT 0,
     "sentAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "contentFingerprint" TEXT,
 
     CONSTRAINT "EmailDelivery_pkey" PRIMARY KEY ("id")
 );
+
+-- CreateIndex
+CREATE INDEX "PolicyValue_tenantId_key_scopeType_scopeId_supersededAt_idx" ON "PolicyValue"("tenantId", "key", "scopeType", "scopeId", "supersededAt");
+
+-- CreateIndex
+CREATE INDEX "PolicyValue_tenantId_idx" ON "PolicyValue"("tenantId");
 
 -- CreateIndex
 CREATE INDEX "EmailDelivery_tenantId_createdAt_idx" ON "EmailDelivery"("tenantId", "createdAt");
@@ -79,6 +107,9 @@ CREATE INDEX "EmailDelivery_entityType_entityId_idx" ON "EmailDelivery"("entityT
 
 -- CreateIndex
 CREATE INDEX "EmailDelivery_providerMessageId_idx" ON "EmailDelivery"("providerMessageId");
+
+-- AddForeignKey
+ALTER TABLE "PolicyValue" ADD CONSTRAINT "PolicyValue_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "EmailDelivery" ADD CONSTRAINT "EmailDelivery_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE CASCADE ON UPDATE CASCADE;
