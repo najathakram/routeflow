@@ -114,7 +114,8 @@ export class ProductsExportService {
     let written = 0;
     let truncated = false;
     let failed = false;
-    let last: string | undefined;
+    // Keyset cursor on the list's order (name asc, id as the tie-break): stable across batches.
+    let last: { id: string; name: string } | undefined;
 
     yield CSV_BOM + csvRow(PRODUCTS_EXPORT_HEADER);
     try {
@@ -123,9 +124,17 @@ export class ProductsExportService {
         const take = Math.min(this.batch, remaining + 1);
         // eslint-disable-next-line no-await-in-loop
         let rows: any[] = await this.prisma.forTenant().product.findMany({
-          where: last ? { ...base, AND: [...(base.AND ?? []), { id: { gt: last } }] } : base,
+          where: last
+            ? {
+                ...base,
+                AND: [
+                  ...(base.AND ?? []),
+                  { OR: [{ name: { gt: last.name } }, { name: last.name, id: { gt: last.id } }] },
+                ],
+              }
+            : base,
           select: SELECT,
-          orderBy: { id: "asc" },
+          orderBy: [{ name: "asc" }, { id: "asc" }],
           take,
         });
         const fetched = rows.length;
@@ -174,7 +183,7 @@ export class ProductsExportService {
           }
           yield chunk;
           written += rows.length;
-          last = rows[rows.length - 1].id;
+          last = { id: rows[rows.length - 1].id, name: rows[rows.length - 1].name };
         }
         if (truncated || fetched < take) break;
       }
