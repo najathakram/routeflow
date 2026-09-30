@@ -918,6 +918,7 @@ export default function NewInvoicePage() {
         ? specialPrice
         : listPrice;
 
+    const seed = seedLineQty(upb, scanLevel);
     const lineItem: LineItemState = {
       key: Math.random().toString(36).slice(2),
       productId: product.id,
@@ -926,7 +927,7 @@ export default function NewInvoicePage() {
       // standalone — "Strawberry" by itself doesn't tell the customer
       // which product family it came from.
       description: displayProductName(product),
-      qty: seedLineQty(upb, scanLevel).qty ?? 1,
+      qty: seed.qty ?? 1,
       unitPrice: effectivePrice,
       discount: 0,
       taxable: false,
@@ -936,8 +937,8 @@ export default function NewInvoicePage() {
       avgCost: product.averageCost ? parseFloat(String(product.averageCost)) : undefined,
       category: product.category ?? undefined,
       unitsPerBox: upb,
-      boxes: seedLineQty(upb, scanLevel).boxes,
-      pieces: seedLineQty(upb, scanLevel).pieces,
+      boxes: seed.boxes,
+      pieces: seed.pieces,
     };
 
     const existing = items.find((it) => it.productId === product.id);

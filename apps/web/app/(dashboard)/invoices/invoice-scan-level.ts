@@ -1,6 +1,6 @@
 import { normalizeBoxesPieces, type SellLevel } from "@routeflow/pricing";
 import { scanLevelForHit } from "../orders/_components/scan/useScanCodeHandler";
-import { explicitBumpLevel } from "../orders/[id]/scan-level-line";
+import { explicitBumpLevel, isUnitScanOnBoxed } from "../orders/[id]/scan-level-line";
 
 // #2717 M4a-1 / SA-595c (1): the invoice screens' scan-level helpers. The LEVEL comes from the
 // shared resolver the order screens use (`scanLevelForHit` -> `resolveScanSellLevel`), never a
@@ -8,10 +8,10 @@ import { explicitBumpLevel } from "../orders/[id]/scan-level-line";
 // picker tap; only a DISTINCT unit code resolves to UNIT.
 export { scanLevelForHit };
 
-/** A UNIT scan on a boxed product (upb > 1) is ONE loose piece; anything else is today's line. */
-export function isUnitScanOnBoxed(upb: number | undefined | null, level?: SellLevel): boolean {
-  return level === "UNIT" && Number(upb ?? 0) > 1;
-}
+// A UNIT scan on a boxed product (upb > 1) is ONE loose piece; anything else is today's line.
+// One implementation: the order screen's `isUnitScanOnBoxed` (it takes the product-shaped arg).
+const unitScanOnBoxed = (upb: number | undefined | null, level?: SellLevel): boolean =>
+  isUnitScanOnBoxed({ unitsPerBox: upb }, level ?? "BOX");
 
 /**
  * The boxes/pieces/qty a NEW line starts with. `upb` is the already-guarded pack (> 1 or
@@ -22,7 +22,7 @@ export function seedLineQty(
   level?: SellLevel,
 ): { boxes?: number; pieces?: number; qty?: number } {
   if (!upb) return {};
-  return isUnitScanOnBoxed(upb, level)
+  return unitScanOnBoxed(upb, level)
     ? { boxes: 0, pieces: 1, qty: 1 }
     : { boxes: 1, pieces: 0, qty: upb };
 }
@@ -37,8 +37,8 @@ export function bumpInvoiceLine<
 >(it: T, level?: SellLevel): T {
   const upb = it.unitsPerBox;
   if (!upb) return { ...it, qty: Number(it.qty) + 1 };
-  const boxes = (it.boxes ?? 0) + (isUnitScanOnBoxed(upb, level) ? 0 : 1);
-  const pieces = (it.pieces ?? 0) + (isUnitScanOnBoxed(upb, level) ? 1 : 0);
+  const boxes = (it.boxes ?? 0) + (unitScanOnBoxed(upb, level) ? 0 : 1);
+  const pieces = (it.pieces ?? 0) + (unitScanOnBoxed(upb, level) ? 1 : 0);
   const n = normalizeBoxesPieces({ boxes, pieces, unitsPerBox: upb });
   return { ...it, boxes: n.boxes ?? 0, pieces: n.pieces ?? 0, qty: n.qty };
 }
@@ -51,6 +51,6 @@ export function bumpInvoiceLine<
 export function scanRowQty(code: string, product: any): number | undefined {
   const upb = Number(product?.unitsPerBox ?? 0);
   if (!(upb > 1)) return undefined;
-  if (isUnitScanOnBoxed(upb, scanLevelForHit(code, product))) return 1;
+  if (unitScanOnBoxed(upb, scanLevelForHit(code, product))) return 1;
   return explicitBumpLevel(code, product) === "BOX" ? upb : undefined;
 }
