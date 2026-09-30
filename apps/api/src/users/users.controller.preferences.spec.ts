@@ -10,6 +10,7 @@ import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { PREFERENCE_KEYS } from "./dto/update-preferences.dto";
 import { LOW_STOCK_DIGEST_PREF_KEY } from "../inventory/low-stock-digest.service";
 
 describe("PATCH/GET users/me/preferences — typed lowStockDigestEnabled", () => {
@@ -84,21 +85,81 @@ describe("PATCH/GET users/me/preferences — typed lowStockDigestEnabled", () =>
     },
   );
 
-  it("leaves other keys permissive (pushEnabled still stored as-is)", async () => {
+  // Every key a client sends today (web + mobile grep, SA-602a). A new client key without a DTO
+  // entry must fail here.
+  const CLIENT_KEYS: Record<string, string> = {
+    lowStockDigestEnabled: "false",
+    pushEnabled: "false",
+    locale: "es",
+    "bill.lastSupplierId": "sup-123",
+    "payment.lastMethod": "ACH",
+  };
+
+  it("DTO key list equals the client key list", () => {
+    expect([...PREFERENCE_KEYS].sort()).toEqual(Object.keys(CLIENT_KEYS).sort());
+  });
+
+  it.each(Object.entries(CLIENT_KEYS))("accepts client key %s=%s and stores it", async (k, v) => {
+    const res = await request(app.getHttpServer())
+      .patch("/users/me/preferences")
+      .send({ [k]: v })
+      .expect(200);
+    expect(res.body[k]).toBe(v);
+    expect(store.get(`caller-1|${k}`)).toBe(v);
+  });
+
+  it.each([
+    ["pushEnabled", "yes"],
+    ["pushEnabled", true],
+    ["pushEnabled", null],
+    ["locale", "fr"],
+    ["locale", 5],
+    ["bill.lastSupplierId", "x".repeat(65)],
+    ["bill.lastSupplierId", 7],
+    ["bill.lastSupplierId", null],
+    ["payment.lastMethod", "BITCOIN"],
+    ["payment.lastMethod", null],
+  ])("rejects %s=%p with 400 and writes nothing", async (k, v) => {
+    await request(app.getHttpServer())
+      .patch("/users/me/preferences")
+      .send({ [k]: v })
+      .expect(400);
+    expect(store.size).toBe(0);
+  });
+
+  it("rejects an unknown key with 400 and writes nothing (even beside valid keys)", async () => {
     await request(app.getHttpServer())
       .patch("/users/me/preferences")
       .send({ pushEnabled: "false", someFutureKey: "anything" })
-      .expect(200);
-    expect(store.get("caller-1|pushEnabled")).toBe("false");
-    expect(store.get("caller-1|someFutureKey")).toBe("anything");
+      .expect(400);
+    expect(store.size).toBe(0);
   });
 
-  it("keys the write to the JWT user, never a userId in the body", async () => {
+  it("rejects a __proto__ key and array/non-object bodies", async () => {
+    await request(app.getHttpServer())
+      .patch("/users/me/preferences")
+      .set("Content-Type", "application/json")
+      .send('{"__proto__":{"x":"y"}}')
+      .expect(400);
+    await request(app.getHttpServer()).patch("/users/me/preferences").send(["a"]).expect(400);
+    expect(store.size).toBe(0);
+  });
+
+  it("empty body is a no-op 200", async () => {
+    await request(app.getHttpServer()).patch("/users/me/preferences").send({}).expect(200);
+    expect(store.size).toBe(0);
+  });
+
+  it("keys the write to the JWT user; a userId in the body is an unknown key (400, no write)", async () => {
     await request(app.getHttpServer())
       .patch("/users/me/preferences")
       .send({ [LOW_STOCK_DIGEST_PREF_KEY]: "false", userId: "victim-9" })
+      .expect(400);
+    expect(store.size).toBe(0);
+    await request(app.getHttpServer())
+      .patch("/users/me/preferences")
+      .send({ [LOW_STOCK_DIGEST_PREF_KEY]: "false" })
       .expect(200);
     expect([...store.keys()].every((k) => k.startsWith("caller-1|"))).toBe(true);
-    expect(store.has(`victim-9|${LOW_STOCK_DIGEST_PREF_KEY}`)).toBe(false);
   });
 });
