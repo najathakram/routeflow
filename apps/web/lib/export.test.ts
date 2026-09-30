@@ -64,7 +64,7 @@ describe("downloadCsv", () => {
     downloadCsv("a.csv", ["h"], [["＝1"], ["＋1"], ["－1"], ["＠x"], ["\nx"]]);
     const text = (await readText(cap.get())).replace(/^﻿/, "");
     expect(text.split("\r\n").slice(1, 5)).toEqual(["'＝1", "'＋1", "'－1", "'＠x"]);
-    expect(text).toContain("\"'\nx\"");
+    expect(text).toContain('"\'\nx"');
   });
 
   it("still escapes commas, quotes and newlines", async () => {
