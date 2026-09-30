@@ -503,4 +503,20 @@ describe("Tier 1 money: an explicit null is never a silent $0 (#2881 r3)", () =>
       expect((await messages(CreateFamilyDto, plain)).length).toBeGreaterThan(0);
     }
   });
+  it("service level (a caller that bypasses the DTO): null price / cost on an update row is a 400 and nothing is written", async () => {
+    const famRow = { ...product({ id: "fam", name: "Soda" }), kind: "FAMILY" };
+    const k1 = {
+      ...product({ id: "k1", name: "Kid k1" }),
+      kind: "VARIANT",
+      parentProductId: "fam",
+      pricePerUnit: "5.00",
+    } as never;
+    for (const bad of [{ pricePerUnit: null }, { standardCost: null }]) {
+      const h = build({ products: [famRow, k1] }, "off");
+      await expect(
+        h.service.updateVariants("fam", { update: [{ id: "k1", ...bad }] } as never, ACTOR),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(h.tx.calls).not.toContain("product.update");
+    }
+  });
 });
