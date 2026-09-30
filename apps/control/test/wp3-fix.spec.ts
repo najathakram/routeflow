@@ -40,6 +40,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   delete process.env.CTL_GIT_TIMEOUT_MS;
+  delete process.env.CTL_GIT_CLONE_TIMEOUT_MS;
   world.cleanup();
 });
 
@@ -167,6 +168,144 @@ describe("A3 lock theft and git timeouts", () => {
   });
 });
 
+describe("N1 lock: a live same-host holder is never displaced; release is token-checked", () => {
+  const lockDir = () => path.join(world.root, ".ctl.lock");
+
+  it("a live holder's lock aged 51 minutes is still not reclaimed (waiter gets exit 5)", async () => {
+    const dir = lockDir();
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, "pid"), `${process.pid} ${os.hostname()}\n`);
+    const old = new Date(Date.now() - 51 * 60_000);
+    fs.utimesSync(dir, old, old);
+    let ran = false;
+    const err = await fail(
+      LK.withLock(dir, 300, async () => {
+        ran = true;
+      }),
+    );
+    expect(ran).toBe(false);
+    expect(codeOf(err)).toBe(5);
+    expect(fs.existsSync(path.join(dir, "pid"))).toBe(true);
+  }, 20_000);
+
+  it("release removes the dir only while the token is still ours", async () => {
+    const dir = lockDir();
+    await LK.withLock(dir, 30_000, async () => {
+      const tokenFile = path.join(dir, "token");
+      expect(fs.readFileSync(tokenFile, "utf8").trim()).toMatch(/^[0-9a-f]{32}$/);
+      fs.writeFileSync(tokenFile, "taken-over-by-b\n"); // B took the lock over
+    });
+    expect(fs.readFileSync(path.join(dir, "token"), "utf8")).toBe("taken-over-by-b\n");
+    LK.forceUnlock(dir);
+    expect(fs.existsSync(dir)).toBe(false);
+  });
+
+  it("release still removes our own lock", async () => {
+    const dir = lockDir();
+    await LK.withLock(dir, 30_000, async () => undefined);
+    expect(fs.existsSync(dir)).toBe(false);
+  });
+});
+
+describe("N2 nonces are kept by age; a parked line older than the retained window is set aside", () => {
+  it("600 appends later a restored parked line is still deduped (exactly one copy)", async () => {
+    world.seedBranch(STATE_BRANCH, baseState(4));
+    const hook = installRejectHook();
+    const env = world.env("a");
+    expect(codeOf(await fail(SB.appendAndPush(env, "lane-u", note("x"))))).toBe(5);
+    const pendingFile = path.join(env.cloneDir, "pending", "lane-u.jsonl");
+    const saved = fs.readFileSync(pendingFile, "utf8");
+    fs.rmSync(hook);
+    await SB.appendAndPush(env, "lane-u", note("y"));
+    const nonces = path.join(env.cloneDir, "nonces.txt");
+    const filler = Array.from(
+      { length: 600 },
+      (_, i) => `${i.toString(16).padStart(16, "0")} ${NOW}`,
+    );
+    fs.appendFileSync(nonces, filler.join("\n") + "\n");
+    git(env.cloneDir, ["add", "-A"]);
+    git(env.cloneDir, [
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@localhost",
+      "commit",
+      "-q",
+      "-m",
+      "fill",
+    ]);
+    git(env.cloneDir, ["push", "-q", "origin", `HEAD:refs/heads/${STATE_BRANCH}`]);
+    fs.writeFileSync(pendingFile, saved);
+    await SB.appendAndPush(env, "lane-u", note("z"));
+    fs.writeFileSync(pendingFile, saved); // and again: the nonce must survive being rewritten
+    await SB.appendAndPush(env, "lane-u", note("w"));
+    const notes = world.remoteLines("lane-u").map((l) => l.note);
+    expect(notes.filter((n) => n === "x")).toHaveLength(1);
+  }, 30_000);
+
+  it("a parked line older than the oldest retained nonce is moved to pending/rejected/ with a notice", async () => {
+    world.seedBranch(STATE_BRANCH, baseState(2));
+    const env = world.env("a");
+    await SB.appendAndPush(env, "lane-u", note("first")); // nonces.txt now holds one entry
+    const stale = JSON.stringify({
+      ...note("ancient"),
+      _nonce: "0123456789abcdef",
+      _at: "2000-01-01T00:00:00Z",
+    });
+    fs.mkdirSync(path.join(env.cloneDir, "pending"), { recursive: true });
+    fs.writeFileSync(path.join(env.cloneDir, "pending", "lane-u.jsonl"), stale + "\n");
+    const write = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      await SB.appendAndPush(env, "lane-u", note("second"));
+      expect(write.mock.calls.map((c) => String(c[0])).join("")).toMatch(/set aside/);
+    } finally {
+      write.mockRestore();
+    }
+    expect(world.remoteLines("lane-u").map((l) => l.note)).not.toContain("ancient");
+    expect(
+      fs.readFileSync(path.join(env.cloneDir, "pending", "rejected", "lane-u.jsonl"), "utf8"),
+    ).toContain("ancient");
+  });
+
+  it("nonces.txt holds `nonce ts` pairs", async () => {
+    world.seedBranch(STATE_BRANCH, baseState(2));
+    const env = world.env("a");
+    await SB.appendAndPush(env, "lane-u", note("first"));
+    const lines = fs.readFileSync(path.join(env.cloneDir, "nonces.txt"), "utf8").trim().split("\n");
+    expect(lines[lines.length - 1]).toMatch(new RegExp(`^[0-9a-f]{16} ${NOW}$`));
+  });
+});
+
+describe("N3 clone and fetch have their own, longer timeout", () => {
+  it("defaults: 120 s for clone/fetch, 10 s for everything else", () => {
+    expect(GT.GIT_CLONE_TIMEOUT_MS).toBe(120_000);
+    expect(GT.GIT_TIMEOUT_MS).toBe(10_000);
+  });
+
+  it("a slow fetch (CTL_GIT_CLONE_TIMEOUT_MS=1) ends as exit 5 with the line parked", async () => {
+    world.seedBranch(STATE_BRANCH, baseState(2));
+    const env = world.env("a");
+    await SB.appendAndPush(env, "lane-u", note("warm"));
+    process.env.CTL_GIT_CLONE_TIMEOUT_MS = "1";
+    const err = await fail(SB.appendAndPush(env, "lane-u", note("slowfetch")));
+    delete process.env.CTL_GIT_CLONE_TIMEOUT_MS;
+    expect(codeOf(err)).toBe(5);
+    expect(fs.readFileSync(path.join(env.cloneDir, "pending", "lane-u.jsonl"), "utf8")).toContain(
+      "slowfetch",
+    );
+  });
+
+  it("the short cap does not apply to fetch: CTL_GIT_TIMEOUT_MS=1 alone still fetches (push is what times out)", () => {
+    process.env.CTL_GIT_TIMEOUT_MS = "1";
+    try {
+      expect(GT.cloneTimeoutMs()).toBe(120_000);
+      expect(GT.shortTimeoutMs()).toBe(1);
+    } finally {
+      delete process.env.CTL_GIT_TIMEOUT_MS;
+    }
+  });
+});
+
 describe("A4 a corrupt existing snapshot.json is refused", () => {
   it.each([
     ["not json", "{not json"],
@@ -200,6 +339,8 @@ describe("A5 denylist normalisation (T58)", () => {
     ["hxxp scheme", "hxx" + "p://x"],
     ["zero-width inside a scheme", "ht\u200btps://x"],
     ["full-width scheme", "\uff48\uff54\uff54\uff50\uff53\uff1a\uff0f\uff0fx"],
+    ["ideographic full stop in an email", ["a", "b\u3002com"].join("@")],
+    ["half-width ideographic stop in an email", ["a", "b\uff61com"].join("@")],
   ])("flags %s", (_n, text) => {
     expect(DL.denylistHit(line(`see ${text} tail`))).not.toBeNull();
   });
