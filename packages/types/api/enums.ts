@@ -507,6 +507,11 @@ export type BarcodeSymbology = (typeof BARCODE_SYMBOLOGY_VALUES)[number];
 export const BARCODE_ORIGIN_VALUES = ["ENTERED", "COPIED"] as const;
 export type BarcodeOrigin = (typeof BARCODE_ORIGIN_VALUES)[number];
 
+// #2717 M2 (SA-574): the lifecycle of one recipe version (a fixed mix of a family's variants sold
+// as one RECIPE product). DRAFT is editable; ACTIVE and RETIRED are immutable (I3).
+export const RECIPE_STATUS_VALUES = ["DRAFT", "ACTIVE", "RETIRED"] as const;
+export type RecipeStatus = (typeof RECIPE_STATUS_VALUES)[number];
+
 /** #2653 (SA-542b): which realm minted a sign-in handoff code (Prisma `HandoffRealm`). */
 export const HANDOFF_REALM_VALUES = ["STAFF", "BUYER"] as const;
 export type HandoffRealm = (typeof HANDOFF_REALM_VALUES)[number];

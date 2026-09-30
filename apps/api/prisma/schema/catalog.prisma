@@ -145,6 +145,9 @@ model Product {
   flexEnabled Boolean     @default(false)
   flexStep    Int?
 
+  // #2717 M2 (Q3): FIXED-recipe products may keep their own tiers while the family propagates.
+  familyPriceOverride Boolean @default(false)
+
   tenant                Tenant?                @relation(fields: [tenantId], references: [id])
   orderItems            OrderItem[]
   deliveryMutations     DeliveryMutation[]
@@ -175,6 +178,9 @@ model Product {
   sellingRestrictions   SellingRestriction[]
   barcodes              ProductBarcode[]
   images                ProductImage[]
+  recipesAsProduct      Recipe[]               @relation("RecipeProduct")
+  recipesAsFamily       Recipe[]               @relation("RecipeFamily")
+  recipeComponents      RecipeComponent[]
 
   @@unique([tenantId, sku])
   @@unique([tenantId, barcode])
@@ -443,6 +449,57 @@ model ProductImage {
 
   @@unique([tenantId, storageKey])
   @@index([productId, sortOrder])
+}
+
+enum RecipeStatus {
+  DRAFT
+  ACTIVE
+  RETIRED
+}
+
+/// #2717 M2 (SA-572 A4): a versioned fixed mix of a family's variants sold as one RECIPE product.
+/// One ACTIVE recipe per recipe product = nullable-unique activeFor (set to productId while ACTIVE,
+/// NULL otherwise) — no partial index. Documents never JOIN this table (I11).
+model Recipe {
+  id              String       @id @default(uuid())
+  tenantId        String
+  productId       String
+  familyProductId String
+  version         Int
+  unitsPerPack    Int
+  status          RecipeStatus @default(DRAFT)
+  activeFor       String?
+  effectiveFrom   DateTime?
+  retiredAt       DateTime?
+  createdById     String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  product    Product           @relation("RecipeProduct", fields: [productId], references: [id], onDelete: Restrict)
+  family     Product           @relation("RecipeFamily", fields: [familyProductId], references: [id], onDelete: Restrict)
+  components RecipeComponent[]
+
+  @@unique([productId, version])
+  @@unique([activeFor])
+  @@index([tenantId])
+  @@index([familyProductId])
+}
+
+model RecipeComponent {
+  id                 String   @id @default(uuid())
+  tenantId           String
+  recipeId           String
+  componentProductId String
+  qty                Int
+  position           Int      @default(0)
+  createdAt          DateTime @default(now())
+
+  recipe           Recipe  @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  componentProduct Product @relation(fields: [componentProductId], references: [id], onDelete: Restrict)
+
+  @@unique([recipeId, componentProductId])
+  @@index([componentProductId])
+  @@index([tenantId])
 }
 
 // Learned (supplier, product) purchasing facts — their SKU, their pack size,
