@@ -176,6 +176,17 @@ describe("EmailService — sentinel recipients refused at the choke point (#2854
     expect(res.error).toMatch(/placeholder address/i);
   });
 
+  it("sendSetPasswordEmail to a sentinel is refused too — sendPlatform carries its own guard (Opus r2: admin resetPassword of an imported user)", async () => {
+    const svc = makeService({ resendKey: "re_test_key" });
+    const res = await svc.sendSetPasswordEmail({
+      to: "acme_store@imported.local",
+      username: "acme_store",
+      setPasswordUrl: "https://app.routeflow.info/reset-password?token=abc123",
+      expiryHours: 72,
+    });
+    expect(res).toMatchObject({ delivered: false, transport: "none" });
+  });
+
   it("a real recipient still flows past the guard (unconfigured here → honest R5 refusal, not the placeholder error)", async () => {
     const res = await makeService().send({
       to: "owner@acme.example",
