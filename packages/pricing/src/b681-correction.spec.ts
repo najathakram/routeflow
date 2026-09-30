@@ -1,3 +1,4 @@
+import { B661_CUTOFF } from "./legacy-box-axis";
 import { computeLineCorrection, deriveLinePack } from "./b681-correction";
 
 /**
@@ -468,5 +469,43 @@ describe("computeLineCorrection", () => {
     ]);
     expect(res.category).toBe("clean");
     expect(res.corrections).toEqual([]);
+  });
+
+  // SA-609 / #2052: on a snapshot-less line whose product is un-boxed NOW, a ratio-1 SALE row is a box
+  // count or a never-boxed quantity — only its WRITE time (createdAt vs B661_CUTOFF) says which.
+  // Pre-cutoff = unknown => REPORTED (parked), NEVER corrected; post-cutoff = already pieces => clean.
+  describe("SA-609 writtenAt — snapshot-less row, product un-boxed now (pack 1)", () => {
+    const sale = (writtenAt: Date | string | null) => [
+      {
+        id: "s1",
+        entryType: "SALE" as const,
+        qty: 3,
+        unitBasisQty: 3,
+        netSales: 30,
+        categoryTax: 0,
+        writtenAt,
+      },
+    ];
+    const BEFORE = new Date(B661_CUTOFF.getTime() - 24 * 3600 * 1000);
+    const AFTER = new Date(B661_CUTOFF.getTime() + 24 * 3600 * 1000);
+
+    it("written BEFORE the cutoff: unknown-basis, reported with its reason, NOTHING corrected", () => {
+      const res = computeLineCorrection(sale(BEFORE), boxUnaware, null, 1);
+      expect(res.category).toBe("unknown-basis");
+      expect(res.corrections).toEqual([]);
+      expect(res.reason).toMatch(/un-boxed|can't be told|unknown/i);
+    });
+
+    it("written AFTER the cutoff: already pieces (B661 expands boxed rows) -> clean, nothing to do", () => {
+      const res = computeLineCorrection(sale(AFTER), boxUnaware, null, 1);
+      expect(res.category).toBe("clean");
+      expect(res.corrections).toEqual([]);
+    });
+
+    it("a row with no known write time is treated as pre-cutoff: reported, never corrected", () => {
+      const res = computeLineCorrection(sale(null), boxUnaware, null, 1);
+      expect(res.category).toBe("unknown-basis");
+      expect(res.corrections).toEqual([]);
+    });
   });
 });

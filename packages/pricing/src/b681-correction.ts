@@ -156,6 +156,10 @@ export interface B681Row {
   unitBasisQty: unknown;
   netSales: unknown;
   categoryTax: unknown;
+  /** SA-609 (#2052): the ledger row's `createdAt` -- WHEN it was written, never `soldAt` (a back-datable
+   *  business date). `classifySaleAxis` needs it to tell a box count from a never-boxed quantity on a
+   *  snapshot-less line whose product is un-boxed now. Optional only until the fix commit. */
+  writtenAt?: Date | string | null;
   /** Only for a REVERSAL row whose own `returnId` is set. */
   returnEvidence?: B681ReturnEvidence;
 }
