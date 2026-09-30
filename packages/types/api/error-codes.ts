@@ -24,6 +24,8 @@
 //   CODE_TAKEN     — `body.code` of the 409 when a product sku / unit code (a barcode answers
 //                    BARCODE_TAKEN) is held by another ACTIVE product of the tenant (SA-603a); body
 //                    carries `field` (sku | unitSku), `value`, the holder's `productId` and `productName`.
+//   HOLDERS_CHANGED — `body.code` of the 409 when `deactivateHolderIds` on a reactivation is not EXACTLY the set of
+//                    active products blocking it; body carries `holders: [{ productId, productName }]`.
 //   NAME_TAKEN     — `body.code` of the 409 when reactivating a product whose name an ACTIVE product of
 //                    the same scope now holds (SA-603a/b); body carries the holder's `productId`/`productName`.
 //   RECIPE_IMMUTABLE — `body.code` of the 409 when a recipe that is ACTIVE or RETIRED is edited
@@ -63,6 +65,7 @@ export const API_ERROR_CODES = {
   BARCODE_TAKEN: "BARCODE_TAKEN",
   CODE_TAKEN: "CODE_TAKEN",
   NAME_TAKEN: "NAME_TAKEN",
+  HOLDERS_CHANGED: "HOLDERS_CHANGED",
   RECIPE_IMMUTABLE: "RECIPE_IMMUTABLE",
   RECIPE_CATEGORY_LOCKED: "RECIPE_CATEGORY_LOCKED",
   RECIPE_FAMILY_LOCKED: "RECIPE_FAMILY_LOCKED",

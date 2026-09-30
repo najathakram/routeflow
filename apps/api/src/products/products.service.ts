@@ -55,6 +55,7 @@ import {
   restoreProductCodes,
 } from "./product-code-release";
 import { assertNameFree, mapNameUniqueViolation } from "./product-name-rules";
+import { deactivateReactivationHolders } from "./product-reactivation-holders";
 import { recipeReferenceGroupers } from "./recipe-references";
 import { lockAndAssertRecipeGuards } from "./recipe-update-guard";
 import {
@@ -1009,6 +1010,14 @@ export class ProductsService {
       await this.assertReorderAllowed();
     }
     const existing = await this.findOne(id);
+    if (
+      dto.deactivateHolderIds?.length &&
+      !(existing.isActive === false && dto.isActive === true)
+    ) {
+      throw new BadRequestException(
+        "deactivateHolderIds only applies when reactivating an inactive product",
+      );
+    }
     // #2533: a PATCH may only reorder/drop this product's own images (400 before any write).
     if (dto.imageKeys !== undefined) assertImageKeysReorder(id, existing.imageKeys, dto.imageKeys);
     // The product's effective parent is the dto value if provided (could be null to promote a
@@ -1135,6 +1144,8 @@ export class ProductsService {
     // `where: any` Prisma clauses elsewhere in this file.
     const data: any =
       dto.name !== undefined && effectiveParentId ? { ...dto, variantName: dto.name } : { ...dto };
+    // Not a column: the one-tx reactivation door reads it from `dto` (see deactivateReactivationHolders).
+    delete data.deactivateHolderIds;
     // Force the (possibly auto-cleared) subcategory into the write when the section
     // was cleared but the client didn't also clear the subcategory.
     if (effectiveCategoryId == null && existing.trackedSubcategoryId != null) {
@@ -1236,6 +1247,19 @@ export class ProductsService {
       const claims = codeClaims(dto, existing);
       const reactivating = existing.isActive === false && data.isActive === true;
       const deactivating = existing.isActive !== false && data.isActive === false;
+      if (reactivating && dto.deactivateHolderIds?.length) {
+        // One tx: deactivate exactly the products blocking this reactivation (409 HOLDERS_CHANGED otherwise).
+        await deactivateReactivationHolders(tx, {
+          tenantId,
+          productId: id,
+          name: dto.name ?? existing.name,
+          parentProductId:
+            dto.parentProductId !== undefined ? dto.parentProductId : existing.parentProductId,
+          skip: claims.map((c) => c.field),
+          holderIds: dto.deactivateHolderIds,
+          actorId: options?.actorId ?? null,
+        });
+      }
       if (reactivating) {
         await restoreProductCodes(tx, {
           tenantId,

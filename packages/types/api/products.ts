@@ -255,3 +255,32 @@ export interface RecipeDto {
   retiredAt: string | null;
   components: RecipeComponentDto[];
 }
+
+// ─── Reuse API 409 bodies (SA-603a; flat, one shape for codes and names) ───────────────────────────────
+/** 409 when a sku / barcode / unit code is held by another ACTIVE product. `productId`/`productName` = the holder. */
+export interface ProductCodeTakenError {
+  /** BARCODE_TAKEN keeps its pre-existing code for a barcode; CODE_TAKEN for sku and unitSku. */
+  code: "CODE_TAKEN" | "BARCODE_TAKEN";
+  message: string;
+  field: "sku" | "barcode" | "unitSku";
+  value: string;
+  productId: string;
+  productName: string;
+}
+
+/** 409 when a name is held by another ACTIVE product of the same scope (reactivate, create, rename). */
+export interface ProductNameTakenError {
+  code: "NAME_TAKEN";
+  message: string;
+  field: "name";
+  value: string;
+  productId: string;
+  productName: string;
+}
+
+/** 409 when `deactivateHolderIds` is not EXACTLY the active products blocking the reactivation. */
+export interface ProductHoldersChangedError {
+  code: "HOLDERS_CHANGED";
+  message: string;
+  holders: Array<{ productId: string; productName: string }>;
+}

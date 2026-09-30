@@ -123,6 +123,47 @@ async function releaseLive(
 }
 
 /**
+ * Every OTHER product of the tenant holding `value` in `field`'s namespace (legacy columns per the legacy rules, plus
+ * the level rows for a barcode), active or not. The caller has taken the code lock. `productId` null = a product being
+ * created (nothing is "itself").
+ */
+export async function findCodeHolders(
+  tx: CatalogTx,
+  tenantId: string,
+  productId: string | null,
+  field: CodeField,
+  value: string,
+): Promise<ProductCodes[]> {
+  const legacy: ProductCodes[] = await tx.product.findMany({
+    where: {
+      tenantId,
+      ...(productId ? { id: { not: productId } } : {}),
+      OR: collidingColumns(field, value),
+    },
+    select: CODE_SELECT,
+  });
+  const holders = [...legacy];
+  if (field === "barcode") {
+    const rows: Array<{ productId: string }> = await tx.productBarcode.findMany({
+      where: { tenantId, code: value, ...(productId ? { productId: { not: productId } } : {}) },
+      select: { productId: true },
+    });
+    const ids = [...new Set(rows.map((r) => r.productId))].filter(
+      (id) => !holders.some((h) => h.id === id),
+    );
+    if (ids.length > 0) {
+      holders.push(
+        ...(await tx.product.findMany({
+          where: { tenantId, id: { in: ids } },
+          select: CODE_SELECT,
+        })),
+      );
+    }
+  }
+  return holders;
+}
+
+/**
  * Deactivate: release ALL of this product's live codes. Idempotent — with nothing live it writes nothing. Returns the
  * fields released. Call inside the same tx that flips `isActive`.
  */
@@ -184,38 +225,7 @@ export async function claimCodes(
   >();
   for (const c of codes) {
     // eslint-disable-next-line no-await-in-loop -- a handful of codes, each resolved under its own lock
-    const legacy: ProductCodes[] = await tx.product.findMany({
-      where: {
-        tenantId,
-        ...(productId ? { id: { not: productId } } : {}),
-        OR: collidingColumns(c.field, c.value),
-      },
-      select: CODE_SELECT,
-    });
-    const holders = [...legacy];
-    if (c.field === "barcode") {
-      // eslint-disable-next-line no-await-in-loop
-      const rows: Array<{ productId: string }> = await tx.productBarcode.findMany({
-        where: {
-          tenantId,
-          code: c.value,
-          ...(productId ? { productId: { not: productId } } : {}),
-        },
-        select: { productId: true },
-      });
-      const ids = [...new Set(rows.map((r) => r.productId))].filter(
-        (id) => !holders.some((h) => h.id === id),
-      );
-      if (ids.length > 0) {
-        // eslint-disable-next-line no-await-in-loop
-        holders.push(
-          ...(await tx.product.findMany({
-            where: { tenantId, id: { in: ids } },
-            select: CODE_SELECT,
-          })),
-        );
-      }
-    }
+    const holders = await findCodeHolders(tx, tenantId, productId, c.field, c.value);
     const active = holders.find((h) => h.isActive);
     if (active) taken(c.field, c.value, active);
     for (const h of holders) {
