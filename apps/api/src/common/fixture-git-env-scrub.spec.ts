@@ -341,6 +341,33 @@ describe("fixture git repos scrub git's repo-scoped env", () => {
     });
   });
 
+  describe("scanner mutant pins (private filter copies, real misses on master)", () => {
+    it("(j) a private GIT_* filter (`cleanEnv()` / a const) instead of the shared helper is flagged", () => {
+      const fn = `
+        function cleanEnv() {
+          return Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^GIT_/.test(k)));
+        }
+        spawnSync("git", ["init"], { cwd: d, env: cleanEnv() });
+      `;
+      const konst = `
+        const CLEAN_ENV = Object.fromEntries(
+          Object.entries(process.env).filter(([k]) => !/^GIT_/.test(k)),
+        );
+        spawnSync("git", ["init"], { cwd: d, env: CLEAN_ENV });
+      `;
+      expect(fixtureOffences(fn)).not.toBeNull();
+      expect(fixtureOffences(konst)).not.toBeNull();
+    });
+    it("(k) the same spawns through the shared helper are clean", () => {
+      const src = `
+        const { scrubbedGitEnv } = require("../../../../scripts/lib/scrubbed-git-env.cjs");
+        spawnSync("git", ["init"], { cwd: d, env: scrubbedGitEnv() });
+        spawnSync(process.execPath, [script], { cwd: d, env: { ...scrubbedGitEnv(), LOG: "x" } });
+      `;
+      expect(fixtureOffences(src)).toBeNull();
+    });
+  });
+
   describe("scanner mutant pins (real misses)", () => {
     const sh = (env: string) => `
       import { execFileSync } from "node:child_process";
