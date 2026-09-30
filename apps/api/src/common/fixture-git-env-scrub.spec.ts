@@ -118,18 +118,59 @@ function balanced(src: string, open: number): string {
   return src.slice(open + 1);
 }
 
-// A fixture repo is created: `["init", ...]`, `git("init", ...)` / `git(repo, "init", ...)` /
-// `g(main, "init", ...)`, or the string form `execSync("git init ...")`.
-const FIXTURE_INIT_RE =
-  /\[\s*["']init["']\s*[,\]]|\b(?:\w*git\w*|g)\(\s*(?:[\w.]+\s*,\s*)?["']init["']|exec(?:Sync)?\(\s*["'`]git\s+init\b/i;
+/** Same length as `code`, every string/template literal body blanked (quotes kept). */
+function blankStrings(code: string): string {
+  let out = "";
+  let lastSig = "";
+  for (let i = 0; i < code.length; i++) {
+    const c = code[i];
+    if (c === '"' || c === "'" || c === "`") {
+      let j = i + 1;
+      while (j < code.length && code[j] !== c) {
+        if (code[j] === "\\") j++;
+        j++;
+      }
+      out += c + " ".repeat(Math.max(0, j - i - 1)) + (j < code.length ? c : "");
+      i = j;
+      lastSig = c;
+    } else if (c === "/" && (lastSig === "" || "(,=:[!&|?{};".includes(lastSig))) {
+      // regex literal: copy verbatim (its quotes are not string delimiters)
+      let j = i + 1;
+      let inClass = false;
+      while (j < code.length && code[j] !== "\n") {
+        if (code[j] === "\\") j++;
+        else if (code[j] === "[") inClass = true;
+        else if (code[j] === "]") inClass = false;
+        else if (code[j] === "/" && !inClass) break;
+        j++;
+      }
+      out += code.slice(i, j + 1);
+      i = j;
+      lastSig = "/";
+    } else {
+      out += c;
+      if (!/\s/.test(c)) lastSig = c;
+    }
+  }
+  return out.slice(0, code.length);
+}
+
+// A file is in scope when it spawns git (see unscrubbedGitSpawns) AND names a repo init anywhere:
+// an `"init"` string literal in ANY argument position (`sh(dir, "init")`,
+// `git(path.join(t, "r"), "init")`, `["init", ...]`) or the string form `git init`. Helper names
+// and first-argument shapes are irrelevant.
+const INIT_RE = /["'`]init["'`]|["'`]git\s+init\b/;
 const SPAWNERS = /\b(spawnSync|execFileSync|execSync|spawn|execFile|exec)\s*\(/g;
 const SCRUB_ROOT = "scrubbedGitEnv";
 
 /** Names in this file provably derived from the shared helper (assignments, functions, imports). */
 function derivedNames(code: string): Set<string> {
   const names = new Set<string>([SCRUB_ROOT]);
+  // The root only counts as a CALL; a derived name counts as any mention of it.
   const mention = (text: string) =>
-    [...names].some((n) => new RegExp(String.raw`\b${n}\b`).test(text));
+    [...names].some((n) =>
+      new RegExp(n === SCRUB_ROOT ? String.raw`\b${n}\s*\(` : String.raw`\b${n}\b`).test(text),
+    );
   for (let changed = true; changed;) {
     changed = false;
     const add = (n: string, text: string) => {
@@ -149,7 +190,7 @@ function derivedNames(code: string): Set<string> {
       }
       add(m[1], code.slice(open, k));
     }
-    for (const m of code.matchAll(/\b(\w+)\s+as\s+(\w+)\b/g)) {
+    for (const m of code.matchAll(/b(\w+)\s+as\s+(\w+)b/g)) {
       if (names.has(m[1]) && !names.has(m[2])) {
         names.add(m[2]);
         changed = true;
@@ -162,14 +203,18 @@ function derivedNames(code: string): Set<string> {
 /** Every git spawn site in `src` whose options do not pass a scrub derived from the helper. */
 function unscrubbedGitSpawns(src: string): { sites: number; bad: string[] } {
   const code = stripComments(src);
-  const derived = derivedNames(code);
+  // Same length as `code`: string bodies blanked so a "scrubbedGitEnv" literal is never a use.
+  const bare = blankStrings(code);
+  const derived = derivedNames(bare);
   const gitAliases = new Set<string>();
   for (const m of code.matchAll(/\b(?:const|let|var)\s+(\w+)\s*=\s*["']git["']/g))
     gitAliases.add(m[1]);
   let sites = 0;
   const bad: string[] = [];
   for (const m of code.matchAll(SPAWNERS)) {
-    const args = balanced(code, m.index! + m[0].length - 1);
+    const open = m.index! + m[0].length - 1;
+    const args = balanced(code, open);
+    const bareArgs = balanced(bare, open);
     const first = args.trimStart();
     const isGit =
       /^["'`]git["'`]\s*[,)]/.test(first) ||
@@ -178,25 +223,38 @@ function unscrubbedGitSpawns(src: string): { sites: number; bad: string[] } {
     if (!isGit) continue;
     sites++;
     const passes = [...derived].some((n) =>
-      new RegExp(String.raw`\benv\s*:[^;]*?\b${n}\b`).test(args),
+      new RegExp(
+        n === SCRUB_ROOT
+          ? String.raw`\benv\s*:[^;]*?\b${n}\s*\(`
+          : String.raw`\benv\s*:[^;]*?\b${n}\b`,
+      ).test(bareArgs),
     );
     // `{ ..., env }` shorthand: accepted only when a derived name is assigned to `env` in the file.
     const shorthand =
-      /\benv\s*[,}]/.test(args) &&
-      [...code.matchAll(/\b(?:const|let|var)\s+env\s*=\s*([^;]*)/g)].some((e) =>
-        [...derived].some((n) => new RegExp(String.raw`\b${n}\b`).test(e[1])),
+      /\benv\s*[,}]/.test(bareArgs) &&
+      [...bare.matchAll(/\b(?:const|let|var)\s+env\s*=\s*([^;]*)/g)].some((e) =>
+        [...derived].some((n) =>
+          new RegExp(n === SCRUB_ROOT ? String.raw`\b${n}\s*\(` : String.raw`\b${n}\b`).test(e[1]),
+        ),
       );
     if (!passes && !shorthand) bad.push(args.replace(/\s+/g, " ").slice(0, 70));
   }
   return { sites, bad };
 }
 
+/** In scope = names a repo init (any arg position, any helper) AND has a git spawn site. */
+function isFixtureFile(src: string): boolean {
+  const code = stripComments(src);
+  return INIT_RE.test(code) && unscrubbedGitSpawns(src).sites > 0;
+}
+
 /** null = not a fixture file, or clean; otherwise the reasons it is flagged. */
 function fixtureOffences(src: string): string[] | null {
-  if (!FIXTURE_INIT_RE.test(stripComments(src))) return null;
+  const code = stripComments(src);
+  if (!INIT_RE.test(code)) return null;
   const { sites, bad } = unscrubbedGitSpawns(src);
+  if (sites === 0) return null;
   const out = bad.map((b) => `unscrubbed git spawn: ${b}`);
-  if (sites === 0) out.push("fixture init but no scannable git spawn site");
   return out.length ? out : null;
 }
 
@@ -224,10 +282,10 @@ describe("fixture git repos scrub git's repo-scoped env", () => {
     const offenders: string[] = [];
     let fixtureFiles = 0;
     for (const f of files) {
-      const found = fixtureOffences(fs.readFileSync(f, "utf8"));
-      if (found === null && !FIXTURE_INIT_RE.test(stripComments(fs.readFileSync(f, "utf8"))))
-        continue;
+      const text = fs.readFileSync(f, "utf8");
+      if (!isFixtureFile(text)) continue;
       fixtureFiles++;
+      const found = fixtureOffences(text);
       if (found) {
         const rel = path.relative(REPO_ROOT, f).split(path.sep).join("/");
         offenders.push(...found.map((o) => `${rel}: ${o}`));
@@ -280,6 +338,41 @@ describe("fixture git repos scrub git's repo-scoped env", () => {
       expect(
         fixtureOffences('execSync("git init -q", { cwd: d, env: scrubbedGitEnv() });'),
       ).toBeNull();
+    });
+  });
+
+  describe("scanner mutant pins (real misses)", () => {
+    const sh = (env: string) => `
+      import { execFileSync } from "node:child_process";
+      import { scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
+      const sh = (cwd, ...args) =>
+        execFileSync("git", args, { cwd, stdio: "pipe", encoding: "utf8"${env} });
+      sh(dir, "init");
+    `;
+    it('(f) check-git-hooks.self-test-shaped `sh(dir, "init")` without env is flagged', () => {
+      expect(fixtureOffences(sh(""))).not.toBeNull();
+      expect(fixtureOffences(sh(", env: scrubbedGitEnv()"))).toBeNull();
+    });
+    it('(g) non-identifier first arg `git(path.join(t, "r"), "init")` is flagged', () => {
+      const src = (env: string) => `
+        const git = (cwd, ...a) => spawnSync("git", a, { cwd${env} });
+        git(path.join(tmp, "r"), "init");
+      `;
+      expect(fixtureOffences(src(""))).not.toBeNull();
+      expect(fixtureOffences(src(", env: scrubbedGitEnv()"))).toBeNull();
+    });
+    it("(h) scrubbedGitEnv named only inside a string literal is flagged", () => {
+      const src = `
+        const note = "use scrubbedGitEnv() please";
+        spawnSync("git", ["init"], { cwd: d, env: "scrubbedGitEnv()" });
+        spawnSync("git", ["init"], { cwd: d, env: process.env, label: 'env: scrubbedGitEnv()' });
+      `;
+      expect(fixtureOffences(src)).toHaveLength(2);
+    });
+    it("(i) an uncalled reference `env: scrubbedGitEnv` is flagged", () => {
+      expect(
+        fixtureOffences('spawnSync("git", ["init"], { env: scrubbedGitEnv });'),
+      ).not.toBeNull();
     });
   });
 
