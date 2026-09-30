@@ -263,6 +263,53 @@ export class VendorBillsService {
       : new Prisma.Decimal(0);
   }
 
+  /**
+   * B285: serialise every writer of ONE bill's receipt (receive, revertToDraft, voidBill). Their
+   * guards and plans are computed from a read taken OUTSIDE the transaction, so two concurrent
+   * writers both passed them and both posted (a double receive doubled the stock; a revert racing
+   * a top-up left stock counted twice). Lock the bill row, then refuse, readably, if the receipt
+   * state the caller planned from is no longer the bill's.
+   */
+  private async lockBillAndAssertReceiptState(
+    tx: Prisma.TransactionClient,
+    bill: {
+      id: string;
+      status: string;
+      receivedDate: Date | null;
+      items: { id: string; qtyReceived: Prisma.Decimal | null }[];
+    },
+  ) {
+    const tenantId = this.prisma.getTenantId();
+    await tx.$executeRaw`SELECT id FROM "VendorBill" WHERE id = ${bill.id} AND "tenantId" = ${tenantId} FOR UPDATE`;
+    const fresh = await tx.vendorBill.findUnique({
+      where: { id: bill.id },
+      select: {
+        status: true,
+        receivedDate: true,
+        items: { select: { id: true, qtyReceived: true } },
+      },
+    });
+    const state = (b: {
+      status: string;
+      receivedDate: Date | null;
+      items: { id: string; qtyReceived: Prisma.Decimal | null }[];
+    }) =>
+      JSON.stringify([
+        b.status,
+        b.receivedDate?.getTime() ?? null,
+        b.items.map((i) => [i.id, i.qtyReceived == null ? null : String(i.qtyReceived)]).sort(),
+      ]);
+    if (!fresh || state(fresh) !== state(bill)) {
+      throw new ConflictException(
+        "This bill was just changed by someone else (received, reverted or voided) — reload it and try again.",
+      );
+    }
+  }
+
+  private productIdsOf(items: { productId: string | null }[]): string[] {
+    return items.flatMap((i) => (i.productId ? [i.productId] : []));
+  }
+
   private async nextBillNumber() {
     const year = new Date().getFullYear();
     const prefix = `BILL-${year}-`;
@@ -997,6 +1044,10 @@ export class VendorBillsService {
       },
     });
     if (!bill) throw new NotFoundException("Bill not found");
+    // A voided bill is closed: receiving it would silently un-void it and post its stock.
+    if (bill.status === "VOID") {
+      throw new ConflictException("This bill is void and cannot be received.");
+    }
     // RF-084: idempotency guard — prevent double-receive doubling stock.
     // Guarded on receivedDate + per-line qtyReceived, NOT status: recordPayment
     // overwrites status to PAID/PARTIAL, so a status-only check let a paid bill
@@ -1123,12 +1174,21 @@ export class VendorBillsService {
     });
 
     const updated = await this.prisma.tenantTransaction(async (tx) => {
+      await this.lockBillAndAssertReceiptState(tx, bill);
       // Sync inventory for each line in the plan. The whole block works in
       // INVENTORY denomination: lineInventoryDelta converts a case-priced line
       // (packSize > 1) to pieces + per-piece cost so Product.averageCost keeps
       // its per-PIECE contract (margins previously inflated by unitsPerBox²).
       const effectiveDate = bill.billDate ?? new Date();
       const restockedIds: string[] = [];
+      // B285: row-lock the products BEFORE the per-line read below. currentStock is written as
+      // an increment, but averageCost and the movement's stockAfter are derived from that read,
+      // so without the lock a concurrent PO receive (which takes the same locks, sorted) is a
+      // lost update on the average. Sorted ids inside lockProducts keep two writers deadlock-free.
+      await this.inventory.lockProducts(
+        tx,
+        plan.flatMap((p) => (p.item.productId ? [p.item.productId] : [])),
+      );
       // B562 follow-up: a bill is received in ONE transaction across every
       // line. If one product's ledger has a gap (see recomputeProductInTx),
       // that must not abort lines that are perfectly fine — receiving stock
@@ -1303,6 +1363,9 @@ export class VendorBillsService {
     const movesStock = bill.purchaseOrderId == null;
 
     return this.prisma.tenantTransaction(async (tx) => {
+      await this.lockBillAndAssertReceiptState(tx, bill);
+      // B285: the reversal below read-modify-writes the product's average — lock it first.
+      await this.inventory.lockProducts(tx, this.productIdsOf(bill.items));
       // Reverse inventory for each product-linked item — in the SAME
       // inventory denomination receive() applied (case lines converted to
       // pieces + per-piece cost), and only the quantity ACTUALLY received
@@ -1419,6 +1482,8 @@ export class VendorBillsService {
       bill.purchaseOrderId == null;
     if (needsReversal) {
       return this.prisma.tenantTransaction(async (tx) => {
+        await this.lockBillAndAssertReceiptState(tx, bill);
+        await this.inventory.lockProducts(tx, this.productIdsOf(bill.items));
         for (const item of bill.items) {
           if (!item.productId || !item.product) continue;
           // Same inventory denomination receive() applied — see
@@ -1489,6 +1554,9 @@ export class VendorBillsService {
     // void land together — a void that took the credit back but failed to void
     // would be worse than either alone.
     return this.prisma.tenantTransaction(async (tx) => {
+      // B285: a first receive committing between our pre-read and this write would leave its
+      // stock on a VOID bill (nothing here reverses it) — lock and re-check like the branch above.
+      await this.lockBillAndAssertReceiptState(tx, bill);
       const refunded = await this.refundDrawnSupplierCredits(tx, id);
       return tx.vendorBill.update({
         where: { id },

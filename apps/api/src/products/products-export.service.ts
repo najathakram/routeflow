@@ -1,7 +1,11 @@
 import { BadRequestException, Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { roundMoney } from "@routeflow/pricing";
 import { AuditService } from "../audit/audit.service";
-import { addCalendarDays, InsightWindowError, resolveInsightRange } from "../analytics/demand-range";
+import {
+  addCalendarDays,
+  InsightWindowError,
+  resolveInsightRange,
+} from "../analytics/demand-range";
 import { CSV_BOM, csvRow } from "../common/csv";
 import { roundQty } from "../common/invoiced-sales";
 import { PrismaService } from "../prisma/prisma.service";
@@ -73,7 +77,9 @@ export class ProductsExportService {
     private readonly prisma: PrismaService,
     private readonly facts: SalesFactsService,
     private readonly audit: AuditService,
-    @Optional() @Inject(PRODUCTS_EXPORT_CAP) private readonly cap: number = PRODUCTS_EXPORT_MAX_ROWS,
+    @Optional()
+    @Inject(PRODUCTS_EXPORT_CAP)
+    private readonly cap: number = PRODUCTS_EXPORT_MAX_ROWS,
     @Optional() @Inject(PRODUCTS_EXPORT_BATCH) private readonly batch: number = DEFAULT_BATCH,
   ) {}
 
