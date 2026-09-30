@@ -1323,6 +1323,7 @@ export class ImportService {
         const line = money.lines.get(row)!;
         const unitPrice = line.unitPrice;
         const itemDiscount = line.discount;
+        // scan-ok: money-rederive — an imported CSV line has no case pack: the file's Item Total wins; the plain qty x price fallback is what the row states (unchanged by #2190).
         const sub = roundMoney(line.itemTotal || qty * unitPrice - itemDiscount);
         const sku = (row["SKU"] || "").trim();
 
