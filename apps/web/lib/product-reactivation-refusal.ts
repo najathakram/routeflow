@@ -40,7 +40,7 @@ const WHAT: Record<"sku" | "unitSku" | "barcode", { noun: string; fix: string }>
 
 function holderLine(h: ProductReactivationHolder): string {
   if (h.code === API_ERROR_CODES.NAME_TAKEN || h.field === "name") {
-    return `Can't reactivate: an active product is already named "${h.value}". Rename one of them first.`;
+    return `Can't reactivate: an active product is already named "${h.value || h.productName}". Rename one of them first.`;
   }
   const w = WHAT[h.field as "sku" | "unitSku" | "barcode"] ?? WHAT.sku;
   return `Can't reactivate: ${w.noun} "${h.value}" is now used by ${h.productName}. Change it on that product, or give this one ${w.fix}.`;
@@ -106,6 +106,14 @@ const DEACTIVATE_CONFLICT_LINES: Record<string, string> = {
  * cap) each get one fixed sentence; anything else is the bare `title` — the server message is never
  * shown.
  */
+/** READ_ONLY's 403 already gets the global "workspace is read-only" toast: a caller must not add a second. */
+export function isReadOnlyRefusal(err: unknown): boolean {
+  return (
+    (err as { response?: { data?: { code?: unknown } } } | null)?.response?.data?.code ===
+    "READ_ONLY"
+  );
+}
+
 export function deactivateFailureToast(
   err: unknown,
   title: string,

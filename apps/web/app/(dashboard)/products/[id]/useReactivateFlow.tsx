@@ -2,14 +2,19 @@
 
 import * as React from "react";
 import { useToast } from "@routeflow/ui/web";
-import { useReactivateProduct, useUpdateProduct } from "@/lib/api/products";
+import { useDeactivateProduct, useReactivateProduct } from "@/lib/api/products";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
   deactivateFailureToast,
   getReactivationRefusal,
+  isReadOnlyRefusal,
   type ReactivationRefusal,
 } from "@/lib/product-reactivation-refusal";
 import { ReactivateConflictDialog } from "./ReactivateConflictDialog";
+
+export type ProductKind = "product" | "variant";
+const noun = (k: ProductKind) => (k === "variant" ? "variant" : "product");
+const Noun = (k: ProductKind) => (k === "variant" ? "Variant" : "Product");
 
 /**
  * WS7: one reactivation flow for the product header and the variant rows. `start(id)` tries the plain
@@ -19,29 +24,37 @@ import { ReactivateConflictDialog } from "./ReactivateConflictDialog";
 export function useReactivateFlow(opts?: { onReactivated?: (id: string) => void }) {
   const { toast } = useToast();
   const reactivate = useReactivateProduct();
-  const update = useUpdateProduct();
-  const [deactivating, setDeactivating] = React.useState<{ id: string; name: string } | null>(null);
+  const deactivate = useDeactivateProduct();
+  const [deactivating, setDeactivating] = React.useState<{
+    id: string;
+    name: string;
+    kind: ProductKind;
+  } | null>(null);
   const [pending, setPending] = React.useState<{
     id: string;
+    kind: ProductKind;
     refusal: ReactivationRefusal;
   } | null>(null);
 
   const run = React.useCallback(
-    (id: string, deactivateHolderIds?: string[]) => {
+    (id: string, kind: ProductKind, deactivateHolderIds?: string[]) => {
       reactivate.mutate(
         { id, deactivateHolderIds },
         {
           onSuccess: () => {
             setPending(null);
-            toast({ title: "Product reactivated", variant: "success" });
+            toast({ title: `${Noun(kind)} reactivated`, variant: "success" });
             opts?.onReactivated?.(id);
           },
           onError: (err) => {
             const refusal = getReactivationRefusal(err);
-            if (refusal) setPending({ id, refusal });
+            if (refusal) setPending({ id, kind, refusal });
             else {
               setPending(null);
-              toast({ title: "Couldn't reactivate this product", variant: "error" });
+              // READ_ONLY already got the global "workspace is read-only" toast: no second one.
+              if (!isReadOnlyRefusal(err)) {
+                toast({ title: `Couldn't reactivate this ${noun(kind)}`, variant: "error" });
+              }
             }
           },
         },
@@ -53,15 +66,15 @@ export function useReactivateFlow(opts?: { onReactivated?: (id: string) => void 
 
   const confirmDeactivate = () => {
     if (!deactivating) return;
-    const { id } = deactivating;
+    const { id, kind } = deactivating;
     setDeactivating(null);
-    update.mutate(
-      { id, isActive: false },
-      {
-        onSuccess: () => toast({ title: "Product deactivated", variant: "success" }),
-        onError: (err) => toast(deactivateFailureToast(err, "Couldn't deactivate this product")),
+    deactivate.mutate(id, {
+      onSuccess: () => toast({ title: `${Noun(kind)} deactivated`, variant: "success" }),
+      onError: (err) => {
+        if (isReadOnlyRefusal(err)) return;
+        toast(deactivateFailureToast(err, `Couldn't deactivate this ${noun(kind)}`));
       },
-    );
+    });
   };
 
   const dialog = (
@@ -70,27 +83,28 @@ export function useReactivateFlow(opts?: { onReactivated?: (id: string) => void 
         open={deactivating !== null}
         onClose={() => setDeactivating(null)}
         onConfirm={confirmDeactivate}
-        title="Deactivate product?"
-        description={`${deactivating?.name ?? "This product"} will be hidden from the catalog and its SKU and barcodes are released for other products. You can reactivate it later if they are still free.`}
+        title={`Deactivate ${noun(deactivating?.kind ?? "product")}?`}
+        description={`${deactivating?.name ?? "This"} will be hidden from the catalog and its SKU, barcodes and unit code are released for other products. You can reactivate it later if they are still free.`}
         confirmLabel="Deactivate"
         variant="danger"
-        loading={update.isPending}
+        loading={deactivate.isPending}
       />
       <ReactivateConflictDialog
         refusal={pending?.refusal ?? null}
         loading={reactivate.isPending}
         onClose={() => setPending(null)}
-        onResolve={(ids) => pending && run(pending.id, ids)}
-        onRetry={() => pending && run(pending.id)}
+        onResolve={(ids) => pending && run(pending.id, pending.kind, ids)}
+        onRetry={() => pending && run(pending.id, pending.kind)}
       />
     </>
   );
 
   return {
-    start: (id: string) => run(id),
+    start: (id: string, kind: ProductKind = "product") => run(id, kind),
     /** Ask before deactivating: it releases the product's codes. */
-    askDeactivate: (id: string, name: string) => setDeactivating({ id, name }),
+    askDeactivate: (id: string, name: string, kind: ProductKind = "product") =>
+      setDeactivating({ id, name, kind }),
     dialog,
-    isPending: reactivate.isPending || update.isPending,
+    isPending: reactivate.isPending || deactivate.isPending,
   };
 }

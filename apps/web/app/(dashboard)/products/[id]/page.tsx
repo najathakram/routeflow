@@ -67,7 +67,7 @@ import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
 import { MSRP_ADDON } from "@/lib/api/addons";
 import { CropModal } from "./CropModal";
 import { useReactivateFlow } from "./useReactivateFlow";
-import { deactivateFailureToast } from "@/lib/product-reactivation-refusal";
+import { deactivateFailureToast, isReadOnlyRefusal } from "@/lib/product-reactivation-refusal";
 import { DemandCard } from "./DemandCard";
 import { SalesHistoryCard } from "./SalesHistoryCard";
 import { ProductInsightsExport } from "./ProductInsightsExport";
@@ -600,8 +600,8 @@ export default function ProductDetailPage() {
       toast({ title: "Product deleted", variant: "success" });
       router.push("/products");
     } catch (err: any) {
-      const t = deactivateFailureToast(err, "Failed to delete product");
-      toast({ ...t, description: t.description ?? err?.response?.data?.message });
+      // READ_ONLY already got the global "workspace is read-only" toast.
+      if (!isReadOnlyRefusal(err)) toast(deactivateFailureToast(err, "Failed to delete product"));
     } finally {
       setShowDeleteConfirm(false);
     }
@@ -795,16 +795,9 @@ export default function ProductDetailPage() {
 
   const handleToggleVariantActive = (variant: ApiProduct) => {
     if (variant.isActive) {
-      if (!window.confirm("Deactivate this variant?")) return;
-      updateProduct.mutate(
-        { id: variant.id, isActive: false },
-        {
-          onSuccess: () => toast({ title: "Variant deactivated", variant: "success" }),
-          onError: (err) => toast(deactivateFailureToast(err, "Couldn't deactivate this variant")),
-        },
-      );
+      reactivateFlow.askDeactivate(variant.id, variant.variantName ?? variant.name, "variant");
     } else {
-      reactivateFlow.start(variant.id);
+      reactivateFlow.start(variant.id, "variant");
     }
   };
 

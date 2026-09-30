@@ -91,6 +91,9 @@ export function useUpdateProduct() {
 export function useReactivateProduct() {
   const qc = useQueryClient();
   return useMutation({
+    // The flow renders its own fixed-sentence error UI (dialog / toast): opt out of the global
+    // handler's raw `data.message` toast (lib/mutation-error-toast.ts).
+    meta: { localErrorToast: true },
     mutationFn: ({ id, deactivateHolderIds }: { id: string; deactivateHolderIds?: string[] }) =>
       apiClient
         .patch(`/products/${id}`, {
@@ -105,9 +108,28 @@ export function useReactivateProduct() {
   });
 }
 
+/**
+ * Deactivate a product (`PATCH { isActive: false }`). Its 409 CODES_CHANGED gets a fixed sentence from
+ * the caller (`deactivateFailureToast`), so the global raw-message toast is opted out.
+ */
+export function useDeactivateProduct() {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { localErrorToast: true },
+    mutationFn: (id: string) =>
+      apiClient.patch(`/products/${id}`, { isActive: false }).then((r) => r.data),
+    onSuccess: (_d, id) => {
+      qc.invalidateQueries({ queryKey: ["products", id] });
+      qc.invalidateQueries({ queryKey: ["products"] });
+    },
+  });
+}
+
 export function useDeleteProduct() {
   const qc = useQueryClient();
   return useMutation({
+    // Its only caller toasts a fixed sentence itself (deactivateFailureToast).
+    meta: { localErrorToast: true },
     mutationFn: (id: string) => apiClient.delete(`/products/${id}`).then((r) => r.data),
     onSuccess: () => invalidateProductSet(qc),
   });
@@ -224,6 +246,8 @@ export interface BulkDeleteProductsResult {
 export function useBulkDeleteProducts() {
   const qc = useQueryClient();
   return useMutation({
+    // Its only caller toasts a fixed sentence itself (deactivateFailureToast).
+    meta: { localErrorToast: true },
     // The server caps each request at 500 ids (F9-009 DTO). Chunk large selections
     // ("Show all → Select all → Delete" on a >500-product tenant) into sequential
     // batches so a wholesale delete still succeeds instead of 400-ing on the cap.
