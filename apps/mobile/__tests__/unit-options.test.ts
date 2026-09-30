@@ -2,6 +2,7 @@ import type { ProductUnitLevel } from "@routeflow/types";
 import { resolveUnitPrice } from "@routeflow/pricing";
 import {
   buildUnitOptions,
+  defaultUnitValue,
   marginFactorFor,
   unitLineSubtotal,
   unitOptionText,
@@ -158,5 +159,34 @@ describe("unitPriceBase — the price-comparison-baseline fix (same shape as B46
 
   it("falls back to catalogPrice when unitBasePrice is unset (a line loaded already unit-aware this session hasn't touched) — documented, unchanged pre-existing behaviour", () => {
     expect(unitPriceBase({ unitLabel: "Case", unitBasePrice: undefined }, 42)).toBe(42);
+  });
+});
+
+describe("defaultUnitValue (#2784) — mirrors web's, both on @routeflow/pricing's defaultSellingLabel", () => {
+  it("is the level flagged isDefaultSelling, else the pack", () => {
+    expect(defaultUnitValue(product, [CASE, PALLET])).toBe("");
+    expect(defaultUnitValue(product, [CASE, { ...PALLET, isDefaultSelling: true }])).toBe("Pallet");
+  });
+
+  it("never names a label the picker does not offer", () => {
+    expect(
+      defaultUnitValue(product, [
+        level({ label: "box", factorToBase: 12, isDefaultSelling: true }),
+      ]),
+    ).toBe("");
+    expect(
+      defaultUnitValue(product, [
+        level({ label: "Piece", factorToBase: 1, isDefaultSelling: true }),
+      ]),
+    ).toBe("Piece");
+  });
+
+  it("skips a corrupt flagged row and takes the next valid one", () => {
+    expect(
+      defaultUnitValue(product, [
+        level({ label: "Bad", factorToBase: 0, isDefaultSelling: true }),
+        { ...PALLET, isDefaultSelling: true },
+      ]),
+    ).toBe("Pallet");
   });
 });
