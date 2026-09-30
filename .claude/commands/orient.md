@@ -32,3 +32,7 @@ open any file the brief didn't name; that's what the rest of the session is for.
    and print any `FAIL`/`WARN` lines (structural self-check of the Plane harness: knobs, denylist, hooks,
    scripts, scheduled task). A FAIL means the harness is mis-installed on this machine — fix before relying
    on the brief.
+
+9. **Control brief:** if `apps/control/bin/ctl.mjs` exists and a lane is set (`$CTL_LANE` or
+   `.claude/control/.lane`), run `npm run ctl -- next --lane <lane>` and print it verbatim (max
+   30 lines). Skip silently if `apps/control` isn't built or no lane is set.

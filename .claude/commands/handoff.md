@@ -24,11 +24,14 @@ Card format (all sections required, one line each unless stated):
 - Open for owner: <questions only the owner can answer, or none>
 - Do not: <anything the next session must not redo or touch>
 - Areas touched: <`.claude/code-map` area names the touched files belong to, or `none — no code map`>
+- Control: <lane> · current <id> · next <id> (from `npm run ctl -- next`)
 ```
 
 Redact secrets from every section (tokens, keys, connection strings, credentials) — cite artifacts by
 path, never restate their content: point at the file, don't paste it. The **Areas touched** line is what
 a PreCompact pass pins as a fact a generic summary would otherwise drop.
+
+If `apps/control/bin/ctl.mjs` exists, run `npm run ctl -- handoff --card <path>` (skip silently if it fails).
 
 Then print the card's path and its byte size. Do not edit CLAUDE.md. Do not commit unless the user
 asked for a commit in this session.

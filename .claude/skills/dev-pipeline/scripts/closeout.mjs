@@ -24,7 +24,7 @@
 //   node closeout.mjs <runDir> [--project <dir>] [--session <id> | --latest]
 //       [--dry] [--no-usage --reason "<why>"] [--branch <name>] [--pr <n>]
 //       [--ledger <file>] [--runlog <file>]
-//       [--light [--scale small|major] [--findings <json>]]
+//       [--light [--scale small|major] [--findings <json>]] [--task <RF-id>]
 //   node closeout.mjs selftest
 //
 // --project   Project root. Resolved via `git -C <runDir> rev-parse
@@ -1641,6 +1641,10 @@ function runMain(argv) {
   };
 
   printReport(summary);
+  if (typeof flags.task === "string" && /^[A-Za-z0-9._-]+$/.test(flags.task)) {
+    // Control system: operator line only -- never executed here.
+    console.log(`MANUAL: npm run ctl -- done ${flags.task}`);
+  }
   return summary;
 }
 
@@ -1652,6 +1656,7 @@ Usage:
       [--dry] [--no-usage --reason "<why>"] [--branch <name>] [--pr <n>]
       [--ledger <file>] [--runlog <file>]
       [--light [--scale small|major] [--findings <json>]]
+      [--task <RF-id>]   (prints the \`npm run ctl -- done <RF-id>\` line for the operator; not run)
 
   node closeout.mjs selftest
 
