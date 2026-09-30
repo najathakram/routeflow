@@ -16,8 +16,8 @@ export const NOTIFICATION_TRIGGERS: ReadonlySet<NotificationEvent> = new Set<Not
   NotificationEvent.LICENSE_EXPIRING,
 ]);
 
-/** Who receives each event's message. The five INTERNAL-only alerts go to staff; every other
- *  event emails the buyer (customer). Exhaustive over `NotificationEvent` (compile-time). */
+/** Who receives each event's message. The five INTERNAL-only alerts and the three SA-603c
+ *  buyer-order events go to staff; every other event emails the buyer (customer). Exhaustive over `NotificationEvent` (compile-time). */
 export const NOTIFICATION_AUDIENCE: Record<NotificationEvent, NotificationAudience> = {
   [NotificationEvent.ORDER_CONFIRMED]: "CUSTOMER",
   [NotificationEvent.OUT_FOR_DELIVERY]: "CUSTOMER",
@@ -32,6 +32,10 @@ export const NOTIFICATION_AUDIENCE: Record<NotificationEvent, NotificationAudien
   [NotificationEvent.FAILED_DELIVERY]: "STAFF",
   [NotificationEvent.PAYMENT_FAILED_NSF]: "STAFF",
   [NotificationEvent.CHECK_RETURNED]: "STAFF",
+  // SA-603c / SA-606 WS4: a buyer-placed, -edited or -cancelled order emails the tenant's STAFF admins (no firing site yet).
+  [NotificationEvent.STAFF_NEW_ORDER]: "STAFF",
+  [NotificationEvent.BUYER_ORDER_EDITED]: "STAFF",
+  [NotificationEvent.BUYER_ORDER_CANCELLED]: "STAFF",
 };
 
 export function notificationAudience(eventKey: NotificationEvent): NotificationAudience {
