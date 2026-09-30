@@ -5,8 +5,8 @@
  * OrderCreditNote intents not yet applied to any of them. The old panel listed intents only, so
  * a credit auto-applied on send never showed on the order.
  *
- * Label (SA-436 review, the owner's incident): "automatic" when the payment says so, OR when its
- * note was auto-applied (note-level flag) and the order has no intent for it — payments the
+ * Label (SA-436 review, the owner's incident): "automatic" when the payment says so, OR when it
+ * predates the flag (AUTO_APPLIED_FLAG_SINCE, SA-551a) and its note was auto-applied (note-level flag) and the order has no intent for it — payments the
  * pre-#2423 sweep wrote carry autoApplied=false, and calling those "manual" would mislabel the
  * incident's credits. Everything else is a neutral "applied"; there is no "manual" label.
  *
@@ -14,6 +14,17 @@
  * confirm's figure — the server's unapply reverses every payment of that note on that invoice)
  * is summed in integer cents, display only.
  */
+
+/**
+ * SA-551a: the note-level "Automatic" fallback below may fire only for payments created BEFORE the
+ * per-payment flag existed. CreditNote.autoApplied stays true through later MANUAL applications
+ * (which write autoApplied=false, no intent), so an unbounded fallback mislabels them. Cutoff =
+ * commit 471a7670b (#2401/#2494 squash), which landed the flag-writing sweep and the migration
+ * folder below together at 2026-09-27T12:13:37-05:00.
+ */
+export const AUTO_APPLIED_FLAG_SINCE = "2026-09-27T17:13:37.000Z";
+/** Documentation only: the migration that added InvoicePayment.autoApplied. */
+export const AUTO_APPLIED_FLAG_MIGRATION = "20260927043000_sa436_credit_auto_apply_off";
 
 export interface AppliedCreditNoteRef {
   id: string;
@@ -34,6 +45,8 @@ export interface AppliedCreditPaymentInput {
   status?: string;
   /** SA-436 PR-1: true when the auto-apply sweep wrote this payment (existing rows: false). */
   autoApplied: boolean;
+  /** When the payment was written; an undated payment never takes the legacy fallback. */
+  createdAt?: string | Date | null;
   creditNote?: AppliedCreditNoteRef | null;
 }
 
@@ -103,7 +116,11 @@ export function orderAppliedCredits(order: OrderAppliedCreditsInput): OrderAppli
     for (const p of inv.payments ?? []) {
       if (!counted(inv, p) || !p.creditNoteId) continue;
       applied.add(p.creditNoteId);
-      const oldSweep = !!p.creditNote?.autoApplied && !intents.has(p.creditNoteId);
+      const at = p.createdAt == null ? NaN : new Date(p.createdAt).getTime();
+      const oldSweep =
+        !!p.creditNote?.autoApplied &&
+        !intents.has(p.creditNoteId) &&
+        at < Date.parse(AUTO_APPLIED_FLAG_SINCE);
       rows.push({
         kind: "applied",
         key: `payment:${p.id}`,
