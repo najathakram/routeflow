@@ -33,6 +33,7 @@ import {
 import { cn } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
 import { apiClient } from "@/lib/api-client";
+import { displayEmail } from "@/lib/formatting";
 import { useI18n } from "@/lib/i18n";
 import { useRoutesAccess, useDeliveryAccess } from "@/lib/api/addons";
 
@@ -346,7 +347,7 @@ function useSearchResults(
             items.push({
               id: `customer-${c.id}`,
               label: c.businessName ?? c.contactName ?? "Unknown",
-              sublabel: c.email ?? c.phone ?? "",
+              sublabel: displayEmail(c.email) ?? c.phone ?? "",
               href: `/customers/${c.id}`,
               icon: Users,
               group: "results",
