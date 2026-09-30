@@ -1882,13 +1882,13 @@ export default function InventoryPage() {
       )}
 
       <Tabs.Root value={activeTab} onValueChange={selectTab}>
-        <Tabs.List className="flex gap-1 border-b border-surface-border">
+        <Tabs.List className="flex gap-1 overflow-x-auto border-b border-surface-border">
           {tabs.map((tab) =>
             tab.href ? (
               <Link
                 key={tab.value}
                 href={tab.href}
-                className="-mb-px border-b-2 border-transparent px-4 py-2.5 text-sm font-medium text-navy/70 transition-colors hover:text-navy"
+                className="-mb-px shrink-0 whitespace-nowrap border-b-2 border-transparent px-4 py-2.5 text-sm font-medium text-navy/70 transition-colors hover:text-navy"
               >
                 {tab.label}
               </Link>
@@ -1897,7 +1897,7 @@ export default function InventoryPage() {
                 key={tab.value}
                 value={tab.value}
                 className={cn(
-                  "-mb-px border-b-2 border-transparent px-4 py-2.5 text-sm font-medium transition-colors",
+                  "-mb-px shrink-0 whitespace-nowrap border-b-2 border-transparent px-4 py-2.5 text-sm font-medium transition-colors",
                   "text-navy/70 hover:text-navy",
                   "data-[state=active]:border-brand-500 data-[state=active]:text-navy",
                 )}
