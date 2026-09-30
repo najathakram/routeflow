@@ -96,9 +96,10 @@ function makeTx(
             })),
         );
       }),
-      deleteMany: jest.fn(({ where }: { where: { id: { in: string[] } } }) => {
+      deleteMany: jest.fn(({ where }: { where: { id?: { in: string[] } } }) => {
         calls.push({ op: "productBarcode.deleteMany", args: { where } });
-        const ids = new Set(where.id.in);
+        // SA-603a: the stale-released-row purge (`code: null`) carries no id list — nothing released in the mock.
+        const ids = new Set(where.id?.in ?? []);
         barcodeRows = barcodeRows.filter((r) => !ids.has(r.id));
         return Promise.resolve({ count: ids.size });
       }),

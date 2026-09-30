@@ -27,6 +27,21 @@ const RETIRED_COLUMN = {
 
 const FIELDS: readonly CodeField[] = ["sku", "barcode", "unitSku"];
 
+/** The codes a create/update DTO sets that differ from what the product already holds. */
+export function codeClaims(
+  dto: Partial<Record<CodeField, string | null | undefined>>,
+  existing: Partial<Record<CodeField, string | null>> | null,
+): Array<{ field: CodeField; value: string }> {
+  const out: Array<{ field: CodeField; value: string }> = [];
+  for (const field of FIELDS) {
+    const value = dto[field];
+    if (typeof value !== "string" || value.trim().length === 0) continue;
+    if (existing && existing[field] === value) continue;
+    out.push({ field, value });
+  }
+  return out;
+}
+
 interface ProductCodes {
   id: string;
   name: string;
@@ -60,8 +75,10 @@ function collidingColumns(field: CodeField, value: string): Array<Record<string,
 
 function taken(field: CodeField, value: string, holder: { id: string; name: string }): never {
   const label = CODE_FIELD_LABEL[field];
+  // A barcode keeps today's BARCODE_TAKEN body (clients already map it); sku / unitSku use CODE_TAKEN.
   throw new ConflictException({
-    code: API_ERROR_CODES.CODE_TAKEN,
+    code: field === "barcode" ? API_ERROR_CODES.BARCODE_TAKEN : API_ERROR_CODES.CODE_TAKEN,
+    ...(field === "barcode" ? { barcode: value } : {}),
     message: `${label[0].toUpperCase()}${label.slice(1)} "${value}" is already used by ${holder.name}.`,
     field,
     value,
@@ -246,9 +263,16 @@ export async function claimCodes(
  */
 export async function restoreProductCodes(
   tx: CatalogTx,
-  input: { tenantId: string; productId: string; actorId: string | null },
+  input: {
+    tenantId: string;
+    productId: string;
+    actorId: string | null;
+    /** Fields the same write sets explicitly: their retired value is dropped, never restored over them. */
+    skip?: readonly CodeField[];
+  },
 ): Promise<void> {
   const { tenantId, productId, actorId } = input;
+  const skip = new Set(input.skip ?? []);
   const p: ProductCodes | null = await tx.product.findFirst({
     where: { id: productId, tenantId },
     select: CODE_SELECT,
@@ -262,11 +286,12 @@ export async function restoreProductCodes(
   const wanted: Array<{ field: CodeField; value: string }> = [];
   for (const field of FIELDS) {
     const retired = p[RETIRED_COLUMN[field]];
-    if (retired != null && p[field] == null) wanted.push({ field, value: retired });
+    if (retired != null && p[field] == null && !skip.has(field))
+      wanted.push({ field, value: retired });
   }
   if (retiredRows.length === 0 && FIELDS.every((f) => p[RETIRED_COLUMN[f]] == null)) return;
   const claimed = [...wanted];
-  for (const r of retiredRows) {
+  for (const r of skip.has("barcode") ? [] : retiredRows) {
     const code = r.retiredCode!;
     if (!claimed.some((c) => c.field === "barcode" && c.value === code)) {
       claimed.push({ field: "barcode", value: code });
@@ -280,9 +305,19 @@ export async function restoreProductCodes(
     const retired = p[RETIRED_COLUMN[field]];
     if (retired == null) continue;
     data[RETIRED_COLUMN[field]] = null;
-    if (p[field] == null) data[field] = retired;
+    if (p[field] == null && !skip.has(field)) data[field] = retired;
   }
   if (Object.keys(data).length > 0) await tx.product.update({ where: { id: productId }, data });
+  if (skip.has("barcode")) {
+    // The operator re-set the barcode while inactive: the stale released rows are dropped (the sync writes the new
+    // ones) — left in place they would hold the (productId, primaryFor) unique.
+    if (retiredRows.length > 0) {
+      await tx.productBarcode.deleteMany({
+        where: { tenantId, productId, id: { in: retiredRows.map((r) => r.id) } },
+      });
+    }
+    return;
+  }
   for (const r of retiredRows) {
     // eslint-disable-next-line no-await-in-loop
     await tx.productBarcode.update({

@@ -48,6 +48,12 @@ import {
   syncProductBarcodesFromLegacy,
   syncProductImagesFromLegacy,
 } from "./product-catalog-sync";
+import {
+  claimCodes,
+  codeClaims,
+  releaseProductCodes,
+  restoreProductCodes,
+} from "./product-code-release";
 import { recipeReferenceGroupers } from "./recipe-references";
 import { lockAndAssertRecipeGuards } from "./recipe-update-guard";
 import {
@@ -704,6 +710,8 @@ export class ProductsService {
       const nameTaken = await db.findFirst({
         where: {
           name: { equals: p.name, mode: "insensitive" },
+          // SA-603a: an INACTIVE product never holds a name or a code (released in the write tx).
+          isActive: true,
           ...notSelf,
           parentProductId: p.parentProductId ?? null,
         },
@@ -719,13 +727,17 @@ export class ProductsService {
     }
     if (p.sku) {
       const clash = await db.findFirst({
-        where: { OR: [{ sku: p.sku }, { unitSku: p.sku }], ...notSelf },
+        where: { OR: [{ sku: p.sku }, { unitSku: p.sku }], isActive: true, ...notSelf },
       });
       if (clash) throw new BadRequestException("SKU already exists");
     }
     if (p.barcode) {
       const clash = await db.findFirst({
-        where: { OR: [{ barcode: p.barcode }, { unitSku: p.barcode }], ...notSelf },
+        where: {
+          OR: [{ barcode: p.barcode }, { unitSku: p.barcode }],
+          isActive: true,
+          ...notSelf,
+        },
       });
       if (clash) throw new BadRequestException("Barcode already exists");
     }
@@ -733,6 +745,7 @@ export class ProductsService {
       const clash = await db.findFirst({
         where: {
           OR: [{ unitSku: p.unitSku }, { sku: p.unitSku }, { barcode: p.unitSku }],
+          isActive: true,
           ...notSelf,
         },
         select: { id: true },
@@ -745,7 +758,10 @@ export class ProductsService {
     }
   }
 
-  async create(dto: CreateProductDto, options?: { suppressEmit?: boolean }) {
+  async create(
+    dto: CreateProductDto,
+    options?: { suppressEmit?: boolean; actorId?: string | null },
+  ) {
     await this.assertCanFlagTobacco(dto.isTobacco);
     if (dto.msrp !== undefined) await this.assertMsrpAllowed();
     if (dto.reorderPoint !== undefined || dto.reorderQty !== undefined) {
@@ -890,6 +906,12 @@ export class ProductsService {
     const created = await this.prisma.tenantTransaction(async (tx: any) => {
       // SA-572b Q4/SA-572c: lock the code BEFORE the create — otherwise a concurrent create of the
       // same code races on the legacy unique index and surfaces a raw P2002 instead of a 409.
+      await claimCodes(tx, {
+        tenantId,
+        productId: null,
+        actorId: options?.actorId ?? null,
+        codes: codeClaims(dto, null),
+      });
       if (dto.barcode) {
         await lockBarcodeCodes(tx, tenantId, [dto.barcode]);
         await assertBarcodeAvailable(tx, { tenantId, productId: null, code: dto.barcode });
@@ -964,7 +986,11 @@ export class ProductsService {
     return created;
   }
 
-  async update(id: string, dto: UpdateProductDto, options?: { suppressEmit?: boolean }) {
+  async update(
+    id: string,
+    dto: UpdateProductDto,
+    options?: { suppressEmit?: boolean; actorId?: string | null },
+  ) {
     await this.assertCanFlagTobacco(dto.isTobacco);
     if (dto.msrp !== undefined) await this.assertMsrpAllowed();
     if (dto.reorderPoint !== undefined || dto.reorderQty !== undefined) {
@@ -1193,6 +1219,25 @@ export class ProductsService {
     const updated = await this.prisma.tenantTransaction(async (tx: any) => {
       // Source-order pin: lock [new, old] before the update's own product.findFirst-style reads.
       await lockBarcodeCodes(tx, tenantId, [effectiveBarcode, existing.barcode]);
+      // SA-603a: reactivate restores the retired codes still free; a code this PATCH sets is claimed (an inactive
+      // holder is released + audited, an active one is a 409). Deactivate releases after the write, below.
+      const claims = codeClaims(dto, existing);
+      const reactivating = existing.isActive === false && data.isActive === true;
+      const deactivating = existing.isActive !== false && data.isActive === false;
+      if (reactivating) {
+        await restoreProductCodes(tx, {
+          tenantId,
+          productId: id,
+          actorId: options?.actorId ?? null,
+          skip: claims.map((c) => c.field),
+        });
+      }
+      await claimCodes(tx, {
+        tenantId,
+        productId: id,
+        actorId: options?.actorId ?? null,
+        codes: claims,
+      });
       if (effectiveBarcode) {
         await assertBarcodeAvailable(tx, { tenantId, productId: id, code: effectiveBarcode });
       }
@@ -1218,6 +1263,10 @@ export class ProductsService {
         row = await tx.product.update({ where: { id }, data });
       } catch (e) {
         mapBarcodeUniqueViolation(e, effectiveBarcode ?? "");
+      }
+      if (deactivating) {
+        await releaseProductCodes(tx, { tenantId, productId: id });
+        row = await tx.product.findFirst({ where: { id } });
       }
       // Sync from the row the UPDATE returned (the post-write values, under its row lock), not from
       // `existing`: a concurrent image upload between the read and this write would otherwise be
@@ -1439,9 +1488,14 @@ export class ProductsService {
     if (activeItems > 0) {
       throw new BadRequestException("Cannot delete product with active order items");
     }
-    const archived = await this.prisma
-      .forTenant()
-      .product.update({ where: { id }, data: { isActive: false } });
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) throw new BadRequestException("No tenant context");
+    const archived = await this.prisma.tenantTransaction(async (tx: any) => {
+      const row = await tx.product.update({ where: { id }, data: { isActive: false } });
+      // SA-603a: archiving releases the codes, so a new product can reuse them.
+      await releaseProductCodes(tx, { tenantId, productId: id });
+      return row;
+    });
     this.emitProductChanged(id, "archived");
     return archived;
   }
@@ -1566,9 +1620,19 @@ export class ProductsService {
     const hardDeleteIds = remaining.filter((id) => !referencedIds.has(id));
 
     if (softDeleteIds.length > 0) {
-      await this.prisma
-        .forTenant()
-        .product.updateMany({ where: { id: { in: softDeleteIds } }, data: { isActive: false } });
+      const clearTenantId = this.prisma.getTenantId();
+      if (!clearTenantId) throw new BadRequestException("No tenant context");
+      await this.prisma.tenantTransaction(async (tx: any) => {
+        await tx.product.updateMany({
+          where: { id: { in: softDeleteIds } },
+          data: { isActive: false },
+        });
+        // SA-603a: an archived product releases its codes (same rule as remove()).
+        for (const productId of softDeleteIds) {
+          // eslint-disable-next-line no-await-in-loop
+          await releaseProductCodes(tx, { tenantId: clearTenantId, productId });
+        }
+      });
     }
 
     if (hardDeleteIds.length > 0) {
@@ -1656,7 +1720,7 @@ export class ProductsService {
         if (item.sku) {
           const existing = await this.prisma
             .forTenant()
-            .product.findFirst({ where: { sku: item.sku } });
+            .product.findFirst({ where: { sku: item.sku, isActive: true } });
           if (existing) {
             skipped++;
             continue;
@@ -1666,7 +1730,7 @@ export class ProductsService {
         // Check for duplicate barcode
         if (item.barcode) {
           const existing = await this.prisma.forTenant().product.findFirst({
-            where: { barcode: item.barcode },
+            where: { barcode: item.barcode, isActive: true },
           });
           if (existing) {
             // If no SKU collision but barcode exists, skip
@@ -1690,6 +1754,12 @@ export class ProductsService {
         if (!tenantIdForBulk) throw new BadRequestException("No tenant context");
         await this.prisma.tenantTransaction(async (tx: any) => {
           // #2717 M1 (SA-572b Q4/Q6): lock+check BEFORE the create, same as the single-row create().
+          await claimCodes(tx, {
+            tenantId: tenantIdForBulk,
+            productId: null,
+            actorId: null,
+            codes: codeClaims(item, null),
+          });
           if (item.barcode) {
             await lockBarcodeCodes(tx, tenantIdForBulk, [item.barcode]);
             await assertBarcodeAvailable(tx, {
