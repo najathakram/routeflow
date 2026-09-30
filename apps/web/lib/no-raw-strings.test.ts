@@ -9,6 +9,13 @@
  * Scope is deliberately the RAW CARRIERS below, not "any identifier ending in error": a page's own
  * form-validation state (`nameError`, `apiError` already mapped by the page) is app-authored copy and
  * would drown the rule in false positives. Each justified exception lives in ALLOWLIST with a reason.
+ *
+ * NOT covered (follow-up ticket): the global mutation toast in `app/providers.tsx` (shows the raw
+ * server message unless a mutation opts out with `meta.localErrorToast`), and the ~100 toast
+ * descriptions built from `err.response.data.message` through anything other than a plain chain or
+ * a one-step `const` alias (e.g. `msg || "fallback"` inside an object literal, a helper that returns
+ * the message, props forwarded through a component). This is a literal-shape scan with planted
+ * fixtures, not a data-flow analysis.
  */
 import * as fs from "fs";
 import * as path from "path";
@@ -34,11 +41,23 @@ export interface RawHit {
 
 /** Every `{chain}` / `${chain}` in `text` whose chain is a raw carrier (comment lines skipped). */
 export function findRawStringSites(text: string): RawHit[] {
+  // Variable aliases: `const x = <expr naming a raw carrier>;` (multi-line ok), later interpolated.
+  const aliases = new Set<string>();
+  for (const m of text.matchAll(/\b(?:const|let|var)\s+(\w+)\s*(?::[^=;]+)?=([^;]*);/g)) {
+    const expr = m[2].replace(/\s+/g, "");
+    if (
+      /response\??\.data\??\.(message|error)/.test(expr) ||
+      /(^|[.?])lastError\b/.test(expr) ||
+      /\b(err|error|e|ex|exception)\??\.message\b/.test(expr)
+    )
+      aliases.add(m[1]);
+  }
   const hits: RawHit[] = [];
   text.split("\n").forEach((l, i) => {
     if (/^\s*(\/\/|\*|\/\*)/.test(l)) return;
     for (const m of l.matchAll(/\$?\{\s*([\w$?.]+)\s*\}/g)) {
-      if (RAW_CARRIERS.some((r) => r.test(m[1]))) hits.push({ line: i + 1, chain: m[1] });
+      if (RAW_CARRIERS.some((r) => r.test(m[1])) || aliases.has(m[1]))
+        hits.push({ line: i + 1, chain: m[1] });
     }
   });
   return hits;
@@ -83,6 +102,33 @@ describe("findRawStringSites — planted-fixture pins (#1965)", () => {
     expect(findRawStringSites("x {success.welcomeEmail.error} y")).toHaveLength(1);
   });
 
+  it("flags the variable-alias shape: a const assigned from a raw carrier, then interpolated (review B2)", () => {
+    const src = [
+      "const rmsg =",
+      "  (receiveErr as { response?: { data?: { message?: string } } })?.response?.data",
+      "    ?.message ?? 'fallback';",
+      "notes.push(`Vendor bill ${rmsg}`);",
+    ].join("\n");
+    expect(findRawStringSites(src).map((h) => h.chain)).toEqual(["rmsg"]);
+    expect(
+      findRawStringSites("const m = err.message;\nreturn <p>{m}</p>;").map((h) => h.chain),
+    ).toEqual(["m"]);
+  });
+
+  it("does not flag an alias that is only tested or logged, never interpolated", () => {
+    const src =
+      'const msg: string = err?.response?.data?.message ?? "";\nconst bad = /api key/i.test(msg);';
+    expect(findRawStringSites(src)).toHaveLength(0);
+  });
+
+  it("flags the realtime payload reason and the scan-modal active.error shapes", () => {
+    expect(findRawStringSites("description: `${data.customerName} - ${data.reason}`")).toHaveLength(
+      1,
+    );
+    expect(findRawStringSites("<p>{data.reason}</p>")).toHaveLength(1);
+    expect(findRawStringSites('<p className="x">{active.error}</p>')).toHaveLength(1);
+  });
+
   it("does not flag mapped copy, function calls, comments, or app-authored validation state", () => {
     expect(findRawStringSites("<p>{describeRunFailure(ri.lastError).text}</p>")).toHaveLength(0);
     expect(findRawStringSites("<p>{nameError}</p><p>{errors.slug.message}</p>")).toHaveLength(0);
@@ -112,7 +158,9 @@ describe("no raw API/provider strings in the UI (#1965)", () => {
       expect(a.reason.length).toBeGreaterThan(40);
       const file = path.join(WEB_ROOT, a.file);
       expect(fs.existsSync(file)).toBe(true);
-      const hit = findRawStringSites(fs.readFileSync(file, "utf8")).some((h) => h.chain === a.chain);
+      const hit = findRawStringSites(fs.readFileSync(file, "utf8")).some(
+        (h) => h.chain === a.chain,
+      );
       expect(hit).toBe(true);
     }
   });

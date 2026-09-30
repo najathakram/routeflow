@@ -1,4 +1,5 @@
 import * as fs from "fs";
+import { RUN_UNFINALIZED_PREFIX } from "./api/invoices";
 import * as path from "path";
 import {
   DELIVERY_FIX_LINK_VALUES,
@@ -63,10 +64,16 @@ describe("reason-copy: run failures, return reasons, save errors (#1965)", () =>
     expect(r.text).not.toMatch(/ECONN|10\.0/);
   });
 
-  it("describeRunFailure: a selling-restriction suspension keeps a readable fixed sentence", () => {
-    const r = describeRunFailure("Suspended: a line is under a selling restriction (Acme Widget).");
-    expect(r.text).toMatch(/selling restriction/i);
-    expect(r.text).not.toMatch(/Acme Widget/);
+  it("describeRunFailure: a suspension keeps naming the restricted lines (tenant data, not provider text)", () => {
+    const r = describeRunFailure(
+      "Suspended: a line is under a selling restriction (Acme Widget, Acme Gadget). Fix the template and reactivate it; the skipped cycle is not billed.",
+    );
+    expect(r.text).toMatch(/selling restriction \(Acme Widget, Acme Gadget\)/);
+    expect(r.text).not.toMatch(/is not billed/); // our own fixed wording, not the server's
+  });
+
+  it("describeRunFailure keys off the shared RUN_UNFINALIZED_PREFIX constant (REG-B106, no copied string)", () => {
+    expect(describeRunFailure(`${RUN_UNFINALIZED_PREFIX} (invoice 1): x`).retryable).toBe(false);
   });
 
   it("describeReturnReason: every ReturnReason has copy; an unknown value never echoes", () => {
@@ -85,6 +92,15 @@ describe("reason-copy: run failures, return reasons, save errors (#1965)", () =>
       expect(t.length).toBeGreaterThan(10);
     }
     expect(describeSaveError(axiosErr(409))).toMatch(/already/i);
+    // users.service.ts answers a duplicate with 400 + "Email/Username already in use" (review)
+    const dup = (message: string) => ({ response: { status: 400, data: { message } } });
+    expect(describeSaveError(dup("Email already in use"))).toBe("That email is already in use.");
+    expect(describeSaveError(dup("Username already in use"))).toBe(
+      "That username is already in use.",
+    );
+    expect(describeSaveError(dup("role must be a valid enum value"))).toBe(
+      "Check the details and try again.",
+    );
     expect(describeSaveError(new Error("boom"))).not.toMatch(/boom/);
   });
 
