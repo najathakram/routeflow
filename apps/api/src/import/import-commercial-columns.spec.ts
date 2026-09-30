@@ -37,6 +37,8 @@ import { AuditService } from "../audit/audit.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PRODUCT_COLUMNS, CUSTOMER_COLUMNS } from "./import-columns";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { IMPORT_CODE_TAKEN_REASON } from "./import-reasons";
 
 describe("ImportService — commercial columns (B858/B859)", () => {
   let service: ImportService;
@@ -901,7 +903,11 @@ describe("ImportService — commercial columns (B858/B859)", () => {
 
     it("W3: the preview asks the service's identity check, and its refusal is the row's skip reason in both modes", async () => {
       prisma.product.findFirst.mockResolvedValue(null);
-      const clash = new BadRequestException("SKU already exists");
+      const clash = new BadRequestException({
+        code: API_ERROR_CODES.CODE_TAKEN,
+        field: "sku",
+        message: "SKU already exists",
+      });
       productsService.assertIdentityAvailable.mockRejectedValue(clash);
       productsService.create.mockRejectedValue(clash);
       const csv = "Item Name,SKU,Rate\nWidget,UNIT-CODE-1,10\n";
@@ -915,7 +921,9 @@ describe("ImportService — commercial columns (B858/B859)", () => {
         sku: "UNIT-CODE-1",
         barcode: undefined,
       });
-      const expected = [{ row: 1, label: "Widget", action: "skip", reason: "SKU already exists" }];
+      const expected = [
+        { row: 1, label: "Widget", action: "skip", reason: IMPORT_CODE_TAKEN_REASON.sku },
+      ];
       expect(preview.rows).toEqual(expected);
       expect(real.rows).toEqual(expected);
       expect(preview.created).toBe(0);
