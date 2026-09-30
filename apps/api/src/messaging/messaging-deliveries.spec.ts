@@ -95,6 +95,12 @@ describe("MessagingDeliveriesService", () => {
       expect(out.items[0].toAddress).toBe("j***@example.com");
     });
 
+    it("the raw error text is TENANT_ADMIN only: an OPERATOR gets null", async () => {
+      const { svc } = make([dbRow({ status: "FAILED", error: "boom" })]);
+      expect((await svc.list("TENANT_ADMIN", {})).items[0].error).toBe("boom");
+      expect((await svc.list("OPERATOR", {})).items[0].error).toBeNull();
+    });
+
     it("serialises dates as ISO strings and keeps the row shape", async () => {
       const { svc } = make();
       const out = await svc.list("TENANT_ADMIN", {});

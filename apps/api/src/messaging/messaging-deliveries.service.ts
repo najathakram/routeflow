@@ -78,7 +78,9 @@ export class MessagingDeliveriesService {
         kind: r.kind,
         toAddress: full ? r.toAddress : maskEmail(r.toAddress),
         status: r.status as EmailDeliveryStatus,
-        error: r.error,
+        // Raw (redacted, ≤500) provider text: TENANT_ADMIN only — an OPERATOR sees the status and the
+        // closed fixKey (health), never the text.
+        error: full ? r.error : null,
         entityType: r.entityType,
         entityId: r.entityId,
         createdAt: r.createdAt.toISOString(),
