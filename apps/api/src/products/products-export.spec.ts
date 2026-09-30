@@ -226,8 +226,22 @@ describe("products export.csv", () => {
         }),
       ],
       lines: [
-        line({ productId: "p1", tenantId: TENANT_A, status: "SENT", issueDate: "2026-09-10", qty: 5, subtotal: 50 }),
-        line({ productId: "p1", tenantId: TENANT_A, status: "PAID", issueDate: "2026-09-20", qty: 3, subtotal: 30 }),
+        line({
+          productId: "p1",
+          tenantId: TENANT_A,
+          status: "SENT",
+          issueDate: "2026-09-10",
+          qty: 5,
+          subtotal: 50,
+        }),
+        line({
+          productId: "p1",
+          tenantId: TENANT_A,
+          status: "PAID",
+          issueDate: "2026-09-20",
+          qty: 3,
+          subtotal: 30,
+        }),
       ],
     });
     const { out } = await run(svc, WINDOW);
@@ -240,13 +254,62 @@ describe("products export.csv", () => {
     const { svc, itemCalls, scoped } = build({
       products: [product({ id: "p1", tenantId: TENANT_A, name: "Cola" })],
       lines: [
-        line({ productId: "p1", tenantId: TENANT_A, status: "SENT", issueDate: "2026-09-10", qty: 2, subtotal: 20 }),
-        line({ productId: "p1", tenantId: TENANT_A, status: "PAID", issueDate: "2026-09-11", qty: 1, subtotal: 10.005 }),
-        line({ productId: "p1", tenantId: TENANT_A, status: "WRITTEN_OFF", issueDate: "2026-09-12", qty: 1, subtotal: 5 }),
-        line({ productId: "p1", tenantId: TENANT_A, status: "DRAFT", issueDate: "2026-09-13", qty: 100, subtotal: 1000 }),
-        line({ productId: "p1", tenantId: TENANT_A, status: "VOID", issueDate: "2026-09-14", qty: 50, subtotal: 500 }),
-        line({ productId: "p1", tenantId: TENANT_A, status: "SENT", issueDate: "2026-08-01", qty: 9, subtotal: 90 }),
-        line({ productId: "p1", tenantId: TENANT_B, status: "SENT", issueDate: "2026-09-15", qty: 7, subtotal: 70 }),
+        line({
+          productId: "p1",
+          tenantId: TENANT_A,
+          status: "SENT",
+          issueDate: "2026-09-10",
+          qty: 2,
+          subtotal: 20,
+        }),
+        line({
+          productId: "p1",
+          tenantId: TENANT_A,
+          status: "PAID",
+          issueDate: "2026-09-11",
+          qty: 1,
+          subtotal: 10.005,
+        }),
+        line({
+          productId: "p1",
+          tenantId: TENANT_A,
+          status: "WRITTEN_OFF",
+          issueDate: "2026-09-12",
+          qty: 1,
+          subtotal: 5,
+        }),
+        line({
+          productId: "p1",
+          tenantId: TENANT_A,
+          status: "DRAFT",
+          issueDate: "2026-09-13",
+          qty: 100,
+          subtotal: 1000,
+        }),
+        line({
+          productId: "p1",
+          tenantId: TENANT_A,
+          status: "VOID",
+          issueDate: "2026-09-14",
+          qty: 50,
+          subtotal: 500,
+        }),
+        line({
+          productId: "p1",
+          tenantId: TENANT_A,
+          status: "SENT",
+          issueDate: "2026-08-01",
+          qty: 9,
+          subtotal: 90,
+        }),
+        line({
+          productId: "p1",
+          tenantId: TENANT_B,
+          status: "SENT",
+          issueDate: "2026-09-15",
+          qty: 7,
+          subtotal: 70,
+        }),
       ],
     });
     const { out } = await run(svc, WINDOW);
@@ -266,18 +329,42 @@ describe("products export.csv", () => {
         product({ id: "p2", tenantId: TENANT_A, name: "Diet" }),
       ],
       lines: [
-        line({ productId: "p1", tenantId: TENANT_A, status: "SENT", issueDate: "2026-09-10", qty: 10, subtotal: 100 }),
+        line({
+          productId: "p1",
+          tenantId: TENANT_A,
+          status: "SENT",
+          issueDate: "2026-09-10",
+          qty: 10,
+          subtotal: 100,
+        }),
       ],
       // A 30.00 note pointing at p1's invoice line, and a 12.50 note on p2's (sold before the window).
       creditNotes: [
-        { id: "cn1", amount: 30, status: "APPLIED", createdAt: day("2026-09-12"), items: [{ invoiceItemId: "li1", amount: 30 }] },
-        { id: "cn2", amount: 12.5, status: "ISSUED", createdAt: day("2026-09-13"), items: [{ invoiceItemId: "li2", amount: 12.5 }] },
+        {
+          id: "cn1",
+          amount: 30,
+          status: "APPLIED",
+          createdAt: day("2026-09-12"),
+          items: [{ invoiceItemId: "li1", amount: 30 }],
+        },
+        {
+          id: "cn2",
+          amount: 12.5,
+          status: "ISSUED",
+          createdAt: day("2026-09-13"),
+          items: [{ invoiceItemId: "li2", amount: 12.5 }],
+        },
       ],
-      lineOwners: [{ items: [{ id: "li1", productId: "p1" }, { id: "li2", productId: "p2" }] }],
+      lineOwners: [
+        {
+          items: [
+            { id: "li1", productId: "p1" },
+            { id: "li2", productId: "p2" },
+          ],
+        },
+      ],
       // An inline external refund of 5.00 on p1 (5.40 with tax: the 0.40 stays unattributed).
-      refunds: [
-        { kind: "INLINE", refundAmount: 5.4, items: [{ productId: "p1", subtotal: 5 }] },
-      ],
+      refunds: [{ kind: "INLINE", refundAmount: 5.4, items: [{ productId: "p1", subtotal: 5 }] }],
     });
     const { out } = await run(svc, WINDOW);
     const [, cola, diet] = rows(out);
@@ -301,7 +388,7 @@ describe("products export.csv", () => {
 
   it("neutralises a formula-leading name and keeps the file UTF-8", async () => {
     const { svc } = build({
-      products: [product({ id: "p1", tenantId: TENANT_A, name: "=HYPERLINK(\"x\")" })],
+      products: [product({ id: "p1", tenantId: TENANT_A, name: '=HYPERLINK("x")' })],
     });
     const { out } = await run(svc, WINDOW);
     expect(rows(out)[1].startsWith("\"'=HYPERLINK(")).toBe(true);
@@ -346,7 +433,14 @@ describe("products export.csv", () => {
     const seen = rows(out)
       .slice(1)
       .map((r) => r.split(",").slice(0, 2).join("/"));
-    expect(seen).toEqual(["Apple/p3", "Apple/p4", "Banana/p2", "Banana/p5", "Banana/p6", "Cherry/p1"]);
+    expect(seen).toEqual([
+      "Apple/p3",
+      "Apple/p4",
+      "Banana/p2",
+      "Banana/p5",
+      "Banana/p6",
+      "Cherry/p1",
+    ]);
     expect(productCalls[0].orderBy).toEqual([{ name: "asc" }, { id: "asc" }]);
     expect(itemCalls).toHaveLength(Math.ceil(6 / 2)); // still one grouped stats read per batch
   });
@@ -409,7 +503,10 @@ describe("products export.csv", () => {
   });
 
   it("defaults to the last 30 days (inclusive) and dates the file by today", async () => {
-    jest.useFakeTimers({ now: new Date("2026-09-29T12:00:00Z"), doNotFake: ["nextTick", "setImmediate"] });
+    jest.useFakeTimers({
+      now: new Date("2026-09-29T12:00:00Z"),
+      doNotFake: ["nextTick", "setImmediate"],
+    });
     const { svc, itemCalls } = build({
       products: [product({ id: "p1", tenantId: TENANT_A, name: "Cola" })],
     });
@@ -422,7 +519,9 @@ describe("products export.csv", () => {
 
   it("rejects an impossible window with a 400", async () => {
     const { svc } = build({ products: [] });
-    await expect(svc.prepare({ from: "2026-13-40", to: "2026-09-29" }, { userId: "u1" })).rejects.toMatchObject({
+    await expect(
+      svc.prepare({ from: "2026-13-40", to: "2026-09-29" }, { userId: "u1" }),
+    ).rejects.toMatchObject({
       status: 400,
     });
   });
@@ -484,10 +583,20 @@ describe("ProductsController.exportCsv — route contract", () => {
       once: jest.fn(),
       off: jest.fn(),
     };
-    await ctl.exportCsv({ category: "a" } as any, { sub: "u1" } as any, { ip: "9.9.9.9" } as any, res);
-    expect(exporter.prepare).toHaveBeenCalledWith({ category: "a" }, { userId: "u1", ip: "9.9.9.9" });
+    await ctl.exportCsv(
+      { category: "a" } as any,
+      { sub: "u1" } as any,
+      { ip: "9.9.9.9" } as any,
+      res,
+    );
+    expect(exporter.prepare).toHaveBeenCalledWith(
+      { category: "a" },
+      { userId: "u1", ip: "9.9.9.9" },
+    );
     expect(res.headers["content-type"]).toBe("text/csv; charset=utf-8");
-    expect(res.headers["content-disposition"]).toBe('attachment; filename="products-2026-09-29.csv"');
+    expect(res.headers["content-disposition"]).toBe(
+      'attachment; filename="products-2026-09-29.csv"',
+    );
     expect(res.headers["cache-control"]).toBe("no-store");
     expect(res.body.startsWith(CSV_BOM)).toBe(true);
     expect(res.end).toHaveBeenCalled();
