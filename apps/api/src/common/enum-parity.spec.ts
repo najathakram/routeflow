@@ -146,6 +146,8 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["BARCODE_ORIGIN_VALUES", "BarcodeOrigin"],
   // #2717 M2 (SA-574): RecipeStatus, mirrored immediately — see the triage tripwire below.
   ["RECIPE_STATUS_VALUES", "RecipeStatus"],
+  // #2717 M3 (SA-572): CompositionMode, mirrored immediately — see the triage tripwire below.
+  ["COMPOSITION_MODE_VALUES", "CompositionMode"],
 ];
 
 describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {

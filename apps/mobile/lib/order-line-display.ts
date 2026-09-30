@@ -5,6 +5,8 @@ import {
   normalizeBoxesPieces,
 } from "@routeflow/pricing";
 import { freeUnitsLabel } from "./buyer-cart-logic";
+import type { LineComponentView } from "@routeflow/types";
+import { componentSubLineTexts } from "./line-components";
 
 /**
  * Pure display logic for the operator order-detail line CARD (order-ui-redesign-spec §3, T8 — the
@@ -144,6 +146,8 @@ export interface OrderLineCardModel {
   tag: (LinePriceTag & { originalText: string | null }) | null;
   freeLabel: string | null;
   note: string | null;
+  /** #2717 M3: sub-lines of a composed (mixed-pack) line; the key is absent on a plain line. */
+  subLines?: string[];
   /** Formatted line total, or null for a cancelled line (rendered as "—"). */
   total: string | null;
   cancelled: boolean;
@@ -201,6 +205,8 @@ interface LineInput {
   status: string;
   notes?: string | null;
   deliveredQty?: number | null;
+  /** #2717 M3: frozen components of a composed (mixed-pack) line. */
+  components?: ReadonlyArray<LineComponentView> | null;
 }
 
 /** Everything the card renders for one order line. Pure — the view only lays it out. */
@@ -304,6 +310,7 @@ export function orderLineCardModel(li: LineInput, orderStatus: string): OrderLin
       : null,
     freeLabel: freeUnitsLabel(li.promoFreeUnits),
     note: li.notes?.trim() ? li.notes.trim() : null,
+    ...(li.components?.length ? { subLines: componentSubLineTexts(li.components) } : {}),
     total: totalText,
     cancelled,
     status,
