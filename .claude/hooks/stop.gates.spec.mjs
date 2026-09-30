@@ -20,8 +20,16 @@ import { spawnSync } from "node:child_process";
 
 const STOP_HOOK = fileURLToPath(new URL("./stop.mjs", import.meta.url));
 
+// Run inside a git hook (the pre-push `npm run verify`), git exports GIT_DIR /
+// GIT_INDEX_FILE / GIT_WORK_TREE etc., which would point every child git — the
+// scenario repos' AND the spawned stop.mjs's — back at the real repository
+// (B420). Strip them so each child resolves its own cwd's repo.
+const CLEAN_ENV = Object.fromEntries(
+  Object.entries(process.env).filter(([k]) => !/^GIT_/i.test(k)),
+);
+
 function git(cwd, args) {
-  const res = spawnSync("git", args, { cwd, encoding: "utf8" });
+  const res = spawnSync("git", args, { cwd, encoding: "utf8", env: CLEAN_ENV });
   if (res.status !== 0) {
     throw new Error(`git ${args.join(" ")} failed in ${cwd}:\n${res.stdout}${res.stderr}`);
   }
@@ -98,7 +106,7 @@ function makeHistoryRepo({ withMap, withLessons, commits }) {
 }
 
 function runStopHook(dir) {
-  return spawnSync(process.execPath, [STOP_HOOK], { cwd: dir, encoding: "utf8" });
+  return spawnSync(process.execPath, [STOP_HOOK], { cwd: dir, encoding: "utf8", env: CLEAN_ENV });
 }
 
 const cases = [
