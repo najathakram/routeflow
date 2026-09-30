@@ -276,6 +276,8 @@ export class VendorBillsService {
       id: string;
       status: string;
       receivedDate: Date | null;
+      totalPaid?: unknown;
+      totalOwed?: unknown;
       items: { id: string; qtyReceived: Prisma.Decimal | null }[];
     },
   ) {
@@ -286,23 +288,36 @@ export class VendorBillsService {
       select: {
         status: true,
         receivedDate: true,
+        totalPaid: true,
+        totalOwed: true,
         items: { select: { id: true, qtyReceived: true } },
       },
     });
+    // The fingerprint of everything a bill writer plans from: status, receipt state, the money
+    // columns (a void or edit writes totalPaid/totalOwed back from its pre-tx read), and the lines.
+    const num = (v: unknown) => String(Number(v ?? 0));
     const state = (b: {
       status: string;
       receivedDate: Date | null;
+      totalPaid?: unknown;
+      totalOwed?: unknown;
       items: { id: string; qtyReceived: Prisma.Decimal | null }[];
     }) =>
       JSON.stringify([
         b.status,
         b.receivedDate?.getTime() ?? null,
-        b.items.map((i) => [i.id, i.qtyReceived == null ? null : String(i.qtyReceived)]).sort(),
+        num(b.totalPaid),
+        num(b.totalOwed),
+        (b.items ?? [])
+          .map((i) => [i.id, i.qtyReceived == null ? null : String(i.qtyReceived)])
+          .sort(),
       ]);
     if (!fresh || state(fresh) !== state(bill)) {
-      throw new ConflictException(
-        "This bill was just changed by someone else (received, reverted or voided) — reload it and try again.",
-      );
+      throw new ConflictException({
+        code: "BILL_STATE_CHANGED",
+        message:
+          "This bill was just changed by someone else (received, reverted, voided, paid or edited) — reload it and try again.",
+      });
     }
   }
 
@@ -902,7 +917,10 @@ export class VendorBillsService {
   async update(id: string, dto: any) {
     // #2488: 400 (naming the field) before any read or write.
     const dueDate = dto.dueDate ? calendarFieldStamp(dto.dueDate, "dueDate") : null;
-    const bill = await this.prisma.forTenant().vendorBill.findUnique({ where: { id } });
+    const bill = await this.prisma.forTenant().vendorBill.findUnique({
+      where: { id },
+      include: { items: { select: { id: true, qtyReceived: true } } },
+    });
     if (!bill) throw new NotFoundException("Bill not found");
     if (bill.status !== "DRAFT") {
       throw new BadRequestException("Only DRAFT bills can be edited. Revert to draft first.");
@@ -947,6 +965,9 @@ export class VendorBillsService {
     };
 
     return this.prisma.tenantTransaction(async (tx) => {
+      // B285: the DRAFT check above ran outside this tx. Lock the bill first (the order receive,
+      // revert and void use) and refuse if it changed since we read it.
+      await this.lockBillAndAssertReceiptState(tx, bill);
       // A bill linked to a purchase order can't be edited past what the PO
       // authorised (checked before anything is deleted).
       if (bill.purchaseOrderId && Array.isArray(dto.items)) {
@@ -1046,7 +1067,10 @@ export class VendorBillsService {
     if (!bill) throw new NotFoundException("Bill not found");
     // A voided bill is closed: receiving it would silently un-void it and post its stock.
     if (bill.status === "VOID") {
-      throw new ConflictException("This bill is void and cannot be received.");
+      throw new ConflictException({
+        code: "BILL_VOID",
+        message: "This bill is void and cannot be received.",
+      });
     }
     // RF-084: idempotency guard — prevent double-receive doubling stock.
     // Guarded on receivedDate + per-line qtyReceived, NOT status: recordPayment
@@ -2307,8 +2331,19 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       throw new BadRequestException("Payment amount must be greater than zero.");
     }
     return this.prisma.tenantTransaction(async (tx) => {
+      // B285: lock the bill BEFORE reading its payments — two concurrent payments both read the
+      // same alreadyPaid, both passed the remaining-balance check, and one overwrote totalPaid;
+      // a void racing a payment un-voided the bill. Everything below reads fresh under the lock.
+      const tenantId = this.prisma.getTenantId();
+      await tx.$executeRaw`SELECT id FROM "VendorBill" WHERE id = ${id} AND "tenantId" = ${tenantId} FOR UPDATE`;
       const bill = await tx.vendorBill.findUnique({ where: { id }, include: { payments: true } });
       if (!bill) throw new NotFoundException("Bill not found");
+      if (bill.status === "VOID") {
+        throw new ConflictException({
+          code: "BILL_VOID",
+          message: "This bill is void and can't take a payment.",
+        });
+      }
       const alreadyPaid = roundMoney(bill.payments.reduce((s, p) => s + Number(p.amount), 0));
       const remaining = roundMoney(Number(bill.totalOwed) - alreadyPaid);
       if (remaining <= 0) throw new BadRequestException("Bill already fully paid");
@@ -2589,7 +2624,10 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
   }
 
   async delete(id: string) {
-    const bill = await this.prisma.forTenant().vendorBill.findUnique({ where: { id } });
+    const bill = await this.prisma.forTenant().vendorBill.findUnique({
+      where: { id },
+      include: { items: { select: { id: true, qtyReceived: true } } },
+    });
     if (!bill) throw new NotFoundException("Bill not found");
     if (bill.status === "RECEIVED" || bill.status === "PAID" || bill.status === "PARTIAL") {
       throw new BadRequestException(
@@ -2597,6 +2635,9 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       );
     }
     await this.prisma.tenantTransaction(async (tx) => {
+      // B285: same lock + re-check as receive — a receive committing after our DRAFT check would
+      // otherwise leave its stock behind a deleted bill.
+      await this.lockBillAndAssertReceiptState(tx, bill);
       // A DRAFT bill can legitimately carry auto-applied credit draws — give
       // that money back before its payment rows are destroyed with the bill.
       await this.refundDrawnSupplierCredits(tx, id);
