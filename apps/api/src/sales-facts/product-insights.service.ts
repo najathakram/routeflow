@@ -9,6 +9,7 @@ import type {
   ProductSalesPage,
 } from "@routeflow/types";
 import { roundQty } from "../common/invoiced-sales";
+import { CSV_BOM, csvRow } from "../common/csv";
 import {
   type DemandRange,
   type InsightGrain,
@@ -21,7 +22,6 @@ import { type LineNetting, type ProductRow, SalesFactsService } from "./sales-fa
 import { aggregateProductInsights } from "./product-insights.aggregate";
 import {
   type LineKey,
-  csvCell,
   decodeLineCursor,
   encodeLineCursor,
   lineKeyOf,
@@ -69,9 +69,6 @@ const CSV_HEADER = [
   "Credited",
   "Returned (pieces)",
 ];
-
-const csvRow = (cells: (string | number | boolean | null | undefined)[]) =>
-  `${cells.map(csvCell).join(",")}\r\n`;
 
 function toProductDto(p: ProductRow): ProductInsightsProduct {
   return {
@@ -279,7 +276,7 @@ export class ProductInsightsService {
   ): AsyncGenerator<string> {
     const productId = product.id;
     const packNow = product.unitsPerBox ?? null;
-    yield csvRow(CSV_HEADER);
+    yield CSV_BOM + csvRow(CSV_HEADER);
     const issueWindow = this.facts.issueWindow(range.fromDay, range.toDay);
     let after: LineKey | undefined;
     let written = 0;

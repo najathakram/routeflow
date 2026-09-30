@@ -7,6 +7,7 @@ import { ArrowLeft, Plus, Trash2, Search, Loader2 } from "lucide-react";
 import { Button, Card, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useInvoice, useUpdateInvoice, type UpdateInvoiceItem } from "@/lib/api/invoices";
+import { isPendingMirrorInvoice } from "@/lib/invoice-pending-mirror";
 import { hasUnitLine, unitLabelsOf } from "@/lib/invoice-line-unit";
 import {
   useCustomers,
@@ -368,6 +369,24 @@ export default function EditInvoicePage() {
   const { data: invoice, isLoading, isError } = useInvoice(id);
   const updateInvoice = useUpdateInvoice();
 
+  // #2791: a pending-mirror draft can't be edited here (the API refuses by design — the order is the
+  // source of truth until delivery). Send the user to the order instead of showing a form that can only fail.
+  const pendingMirrorOrderId =
+    invoice && isPendingMirrorInvoice(invoice) ? (invoice.orderId ?? null) : null;
+  const pendingMirrorOrderNo = invoice?.order?.orderNumber ?? "";
+  React.useEffect(() => {
+    if (!pendingMirrorOrderId) return;
+    // The toast provider lives in the dashboard layout, so it survives the navigation and the order
+    // page shows the reason. Fixed copy only — nothing from the URL is ever echoed.
+    toast({
+      title: `This invoice mirrors order ${pendingMirrorOrderNo}`,
+      description: "It can't be edited until the order is delivered — edit the order instead.",
+      duration: 8000,
+    });
+    router.replace(`/orders/${pendingMirrorOrderId}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- toast identity is unstable; fire once per mirror
+  }, [pendingMirrorOrderId, pendingMirrorOrderNo, router]);
+
   // Customer tier pricing (mirrors invoices/new): every product-selection path
   // below should price at this customer's tier, not the raw catalog price.
   const customerQuery = useCustomer(invoice?.customerId ?? "");
@@ -630,6 +649,20 @@ export default function EditInvoicePage() {
         <p className="text-base font-medium text-navy">Invoice not found.</p>
         <Button variant="secondary" href="/invoices">
           Back to Invoices
+        </Button>
+      </div>
+    );
+  }
+
+  if (pendingMirrorOrderId) {
+    const orderNo = pendingMirrorOrderNo;
+    return (
+      <div className="mx-auto flex max-w-xl flex-col items-center gap-4 p-12 text-center">
+        <p className="text-base font-medium text-navy">
+          This invoice mirrors order #{orderNo} until it&apos;s delivered — edit the order instead.
+        </p>
+        <Button variant="secondary" href={`/orders/${pendingMirrorOrderId}`}>
+          Open order #{orderNo}
         </Button>
       </div>
     );

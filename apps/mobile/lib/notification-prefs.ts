@@ -10,9 +10,10 @@
  * can't re-enable delivery — this module is what lets the mobile client
  * itself avoid the round-trip when it already knows the answer.
  */
+import { PREF } from "@routeflow/types";
 import { apiClient } from "./api-client";
 
-const PUSH_ENABLED_KEY = "pushEnabled" as const;
+const PUSH_ENABLED_KEY = PREF.pushEnabled;
 
 /** Missing row (never toggled) reads as ENABLED — this is an opt-out. */
 export async function getPushEnabled(): Promise<boolean> {

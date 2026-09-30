@@ -511,3 +511,9 @@ export type BarcodeOrigin = (typeof BARCODE_ORIGIN_VALUES)[number];
 // as one RECIPE product). DRAFT is editable; ACTIVE and RETIRED are immutable (I3).
 export const RECIPE_STATUS_VALUES = ["DRAFT", "ACTIVE", "RETIRED"] as const;
 export type RecipeStatus = (typeof RECIPE_STATUS_VALUES)[number];
+
+// #2717 M3 (SA-572): how a document line was composed. NULL on the row = a plain single line
+// (SINGLE is never materialised); FIXED = a RECIPE product with frozen component snapshots; FLEX is
+// reserved for M3b.
+export const COMPOSITION_MODE_VALUES = ["SINGLE", "FIXED", "FLEX"] as const;
+export type CompositionMode = (typeof COMPOSITION_MODE_VALUES)[number];
