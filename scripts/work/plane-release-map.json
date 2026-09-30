@@ -38,6 +38,21 @@
       "key": "F-07",
       "note": "Money integrity for boxed units == '1a. Money-bug family (boxes/pieces/units math) — release gate'"
     },
+    "1374": {
+      "road": "ROAD-96",
+      "key": "F-08",
+      "note": "Release 1 ship gate == the Release 1 tracking item"
+    },
+    "2009": {
+      "road": "ROAD-100",
+      "key": "F-03",
+      "note": "poor-signal retry queue (scanner/driver offline) == scanner redesign item"
+    },
+    "2012": {
+      "road": "ROAD-103",
+      "key": "F-06",
+      "note": "config-snapshot admin UI (A2c gap 2) == backoffice/entitlements"
+    },
     "2090": {
       "road": "ROAD-109",
       "key": "-",
