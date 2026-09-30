@@ -440,6 +440,129 @@ describeDb("#2648 credit-note reissue (SA-535b)", () => {
     expect(successors).toHaveLength(1);
     expect((await prisma.creditNote.findUnique({ where: { id: old.id } }))?.status).toBe("VOID");
   }, 60_000);
+
+  describe("SA-608c: a note with no source invoice", () => {
+    const orphan = async (label: string, amount: number, withLines = false) => {
+      const { tenantId, customerId } = await seedTenant(label);
+      const invSrc = await seedSentInvoice(tenantId, customerId, 600);
+      const lineId = withLines
+        ? (await prisma.invoiceItem.findFirst({ where: { invoiceId: invSrc } }))!.id
+        : null;
+      const cn = await tenantCtx.run(tenantId, () =>
+        creditNotes.create({
+          customerId,
+          invoiceId: invSrc,
+          amount,
+          reason: "Damaged case",
+          ...(lineId ? { items: [{ invoiceItemId: lineId, amount }] } : {}),
+        } as any),
+      );
+      // What deleteInvoice does to a closed note: the link is nulled (items, if any, survive).
+      await prisma.creditNote.update({ where: { id: cn.id }, data: { invoiceId: null } });
+      return { tenantId, customerId, id: cn.id as string, number: cn.creditNoteNumber as string };
+    };
+
+    it("12: (a) a deleted source then an edit up to $500 is a 409 with zero writes; down to <= $50 passes", async () => {
+      const o = await orphan("orph-a", 50);
+      const before = await counter(o.tenantId);
+
+      await expect(run(o.tenantId, o.id, { amount: 500 }, "k-12a")).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+      expect((await prisma.creditNote.findUnique({ where: { id: o.id } }))?.status).toBe("ISSUED");
+      expect(await audits(o.tenantId, o.id)).toHaveLength(0);
+      expect((await counter(o.tenantId))?.nextNumber).toBe(before?.nextNumber);
+
+      const ok = await run(o.tenantId, o.id, { amount: 50 }, "k-12b");
+      expect(Number(ok.creditNote.amount)).toBe(50); // net value created: zero
+      expect((await prisma.creditNote.findUnique({ where: { id: o.id } }))?.status).toBe("VOID");
+    }, 60_000);
+
+    it("13: (b) a line-bearing orphan is a 409 'source invoice was deleted', zero writes", async () => {
+      const o = await orphan("orph-b", 50, true);
+      const before = await counter(o.tenantId);
+
+      await expect(run(o.tenantId, o.id, { amount: 10 }, "k-13")).rejects.toThrow(
+        /source invoice was deleted/,
+      );
+      expect((await prisma.creditNote.findUnique({ where: { id: o.id } }))?.status).toBe("ISSUED");
+      expect((await counter(o.tenantId))?.nextNumber).toBe(before?.nextNumber);
+    }, 60_000);
+
+    it("14: a born-standalone note: down passes, up is a 409", async () => {
+      const { tenantId, customerId } = await seedTenant("born");
+      const cn = await tenantCtx.run(tenantId, () =>
+        creditNotes.create({ customerId, amount: 40, reason: "Goodwill" } as any),
+      );
+      await expect(run(tenantId, cn.id, { amount: 41 }, "k-14a")).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+      const ok = await run(tenantId, cn.id, { amount: 25 }, "k-14b");
+      expect(Number(ok.creditNote.amount)).toBe(25);
+    }, 60_000);
+  });
+
+  it("9: two concurrent reissues, SAME key + SAME body: both return the same note, exactly one minted", async () => {
+    const { tenantId, customerId } = await seedTenant("samekey");
+    const invSrc = await seedSentInvoice(tenantId, customerId, 50);
+    const old = await seedSourcedCredit(tenantId, customerId, invSrc, 30);
+
+    const [a, b] = await Promise.all([
+      run(tenantId, old.id, { amount: 20 }, "k-9"),
+      run(tenantId, old.id, { amount: 20 }, "k-9"),
+    ]);
+
+    expect(a.creditNote.id).toBe(b.creditNote.id);
+    const minted = await prisma.creditNote.findMany({
+      where: { tenantId, reason: { startsWith: `Replaces ${old.creditNoteNumber}` } },
+    });
+    expect(minted).toHaveLength(1);
+  }, 60_000);
+
+  it("10: the race-loser of two different keys is a READABLE 409 (a message, never a 500)", async () => {
+    const { tenantId, customerId } = await seedTenant("loser");
+    const invSrc = await seedSentInvoice(tenantId, customerId, 50);
+    const old = await seedSourcedCredit(tenantId, customerId, invSrc, 30);
+
+    const results = await Promise.allSettled([
+      run(tenantId, old.id, { amount: 20 }, "k-10a"),
+      run(tenantId, old.id, { amount: 25 }, "k-10b"),
+    ]);
+
+    const failed = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+    expect(failed).toHaveLength(1);
+    expect(failed[0].reason).toBeInstanceOf(ConflictException);
+    expect((failed[0].reason as ConflictException).getStatus()).toBe(409);
+    expect(String((failed[0].reason as ConflictException).message).length).toBeGreaterThan(10);
+  }, 60_000);
+
+  it("11: a reissue racing create() on the same source invoice never pushes total credit past the invoice total", async () => {
+    const { tenantId, customerId } = await seedTenant("vscreate");
+    const invSrc = await seedSentInvoice(tenantId, customerId, 50);
+    const old = await seedSourcedCredit(tenantId, customerId, invSrc, 30);
+
+    // Sequentially either order leaves one of these refused (35 + 20 > 50): only a write-skew
+    // would let both commit.
+    const results = await Promise.allSettled([
+      run(tenantId, old.id, { amount: 35 }, "k-11"),
+      tenantCtx.run(tenantId, () =>
+        creditNotes.create({ customerId, invoiceId: invSrc, amount: 20, reason: "Race" } as any),
+      ),
+    ]);
+
+    for (const r of results)
+      if (r.status === "rejected") {
+        // A refusal is a readable 4xx, never an unhandled 500.
+        const status = (r.reason as { getStatus?: () => number }).getStatus?.();
+        expect(status).toBeGreaterThanOrEqual(400);
+        expect(status).toBeLessThan(500);
+      }
+    const live = await prisma.creditNote.findMany({
+      where: { tenantId, invoiceId: invSrc, status: { not: "VOID" } },
+    });
+    const total = live.reduce((t, c) => t + Number(c.amount), 0);
+    expect(total).toBeLessThanOrEqual(50);
+  }, 60_000);
 });
 
 /**
