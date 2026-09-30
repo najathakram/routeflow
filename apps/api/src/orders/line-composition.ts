@@ -7,6 +7,7 @@ import {
 import type { Prisma } from "@prisma/client";
 import { componentUnitPrice4, roundMoney } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { resolveLineUnits, type LineUnitsProduct } from "../products/line-units";
 import { printableUnitBarcode, synthesizeLegacyBarcodes } from "../products/product-barcode-rules";
 
 /**
@@ -259,7 +260,7 @@ export async function syncLineCompositions(
       compositionMode: true,
       recipeId: true,
       recipeVersion: true,
-      product: { select: { id: true, kind: true, unitsPerBox: true } },
+      product: { select: { id: true, kind: true, unit: true, unitsPerBox: true } },
       components: {
         select: { componentProductId: true, qty: true },
         orderBy: { position: "asc" },
@@ -275,8 +276,14 @@ export async function syncLineCompositions(
       qty: l.qty == null ? null : Number(l.qty),
     });
     const ownUpb = l.unitsPerBox == null ? null : Number(l.unitsPerBox);
-    const productUpb = l.product.unitsPerBox == null ? null : Number(l.product.unitsPerBox);
-    const unitsPerBox = ownUpb ?? (l.boxes == null ? productUpb : null);
+    // A qty-only line snapshots no factor of its own: take the PACK factor through the one sanctioned
+    // resolver (never a direct live-product read, line-units-callsites ratchet).
+    const packUpb =
+      l.boxes == null
+        ? resolveLineUnits(l.product as unknown as LineUnitsProduct, [], { unitLabel: null }, null)
+            .unitsPerBox
+        : 0;
+    const unitsPerBox = ownUpb ?? (packUpb > 0 ? packUpb : null);
     // A qty-only UNIT-AWARE line (unitLabel set, no box split) counts units of that label, not
     // packs: it stays plain, exactly as before (only boxed lines refuse a unit label).
     if (
