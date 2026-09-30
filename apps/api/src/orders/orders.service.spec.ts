@@ -4022,7 +4022,7 @@ describe("OrdersService", () => {
       ],
     };
 
-    it("flags a lowered unit price as a MANUAL override and records audit fields", async () => {
+    it("flags a lowered unit price as a DISCOUNTED override (below list) and records audit fields", async () => {
       prisma.order.findUnique.mockResolvedValue(draftOrder);
       prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 12, status: "PENDING" }]);
 
@@ -4043,7 +4043,7 @@ describe("OrdersService", () => {
           data: expect.objectContaining({
             unitPrice: 4,
             subtotal: 12,
-            priceType: "MANUAL",
+            priceType: "DISCOUNTED",
             originalPrice: 4.99,
             overrideReason: "promo",
             overriddenBy: "user-op",
@@ -4335,7 +4335,7 @@ describe("OrdersService", () => {
           data: expect.objectContaining({
             unitPrice: 3,
             subtotal: 9,
-            priceType: "MANUAL",
+            priceType: "DISCOUNTED",
             originalPrice: 4.99,
             overrideReason: "loyalty",
             overriddenBy: "user-op",
@@ -5380,7 +5380,7 @@ describe("OrdersService", () => {
       );
     });
 
-    it("(b) operator supplies an explicit different price on a new line — that price, MANUAL (not tier-resolved)", async () => {
+    it("(b) operator supplies an explicit different price on a new line — that price, DISCOUNTED below list (not tier-resolved)", async () => {
       prisma.order.findUnique.mockResolvedValue({
         ...MOCK_ORDER,
         status: "DRAFT" as const,
@@ -5407,7 +5407,7 @@ describe("OrdersService", () => {
             productId: "prod-1",
             unitPrice: 6,
             originalPrice: 10,
-            priceType: "MANUAL",
+            priceType: "DISCOUNTED",
             overrideReason: "loyalty",
             overriddenBy: "user-op",
             subtotal: 12,
@@ -5571,7 +5571,7 @@ describe("OrdersService", () => {
             productId: "prod-1",
             unitPrice: 6,
             originalPrice: 10,
-            priceType: "MANUAL",
+            priceType: "DISCOUNTED",
             overrideReason: "manager approved",
             overriddenBy: "user-op",
             subtotal: 12,
@@ -5794,7 +5794,7 @@ describe("OrdersService", () => {
           data: expect.objectContaining({
             productId: "prod-1",
             unitPrice: 6,
-            priceType: "MANUAL",
+            priceType: "DISCOUNTED",
             overrideReason: "manager approved",
             subtotal: 12,
           }),

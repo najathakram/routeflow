@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -341,7 +342,7 @@ export class GoogleOAuthService {
       data: { googleId, forcePasswordChange: false },
     });
 
-    this.logger.log(`Google account linked for user ${linkUserId} (${email})`);
+    this.logger.log(`Google account linked for user ${linkUserId}`);
 
     // Fire-and-forget security notification
     if (user.email) {
@@ -502,6 +503,91 @@ export class GoogleOAuthService {
     }
   }
 
+  // ─── Lookup order (#2495) ───────────────────────────────────────────────────
+  // Shared by handlePlatformAuth, handleTenantAuth's staff lookup and
+  // handleBuyerPortalAuth. The old `findFirst({ OR: [{ googleId }, { email }] })`
+  // was nondeterministic when two rows matched (one bound to this Google sub,
+  // another merely sharing the email) — Postgres gives no ordering guarantee over
+  // an OR with no ORDER BY, so which row "won" could vary. Resolve by the Google
+  // sub FIRST (a bound identity is unambiguous); only fall back to email when no
+  // sub match exists. If the email match is already bound to a DIFFERENT Google
+  // sub, refuse outright — signing in must never silently re-target someone
+  // else's linked account.
+  //
+  // Callers only ever receive a `GoogleProfile` from `verifyCallback`, which
+  // rejects `email_verified === false` before ever constructing one (see
+  // `google-oauth.email-verified.security.spec.ts`) — so an unverified email
+  // can never reach this lookup or the auto-link branches below it. Pinned,
+  // not re-checked here, to avoid duplicating that gate.
+  private async resolveBySubThenEmail<T extends { googleId: string | null }>(
+    findFirst: (args: Record<string, unknown>) => Promise<T | null>,
+    baseWhere: Record<string, unknown>,
+    profile: GoogleProfile,
+  ): Promise<T | null> {
+    // #2664: fail closed before touching the DB at all — a falsy sub or email means
+    // `verifyCallback`'s profile is malformed (should never happen downstream of a real
+    // Google ID token), and querying with an undefined/empty filter would turn `where`
+    // into an unscoped match instead of refusing outright.
+    if (!profile.googleId || !profile.email) {
+      throw new ForbiddenException("unauthorized");
+    }
+
+    const bySub = await findFirst({ where: { ...baseWhere, googleId: profile.googleId } });
+    if (bySub) return bySub;
+
+    // #2664: SUPER_ADMIN rows are scoped by `tenantId: null`, and Postgres treats every
+    // NULL as distinct under `@@unique([tenantId, email])` — two platform admins CAN share
+    // an email. `findFirst` with no `orderBy` has no defined row order, so pin one:
+    // oldest-created row wins, `id` as the final tiebreak for rows created in the same tick.
+    const byEmail = await findFirst({
+      where: { ...baseWhere, email: profile.email },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    });
+    if (byEmail && byEmail.googleId && byEmail.googleId !== profile.googleId) {
+      // A different Google account is already bound to this email — no sign-in,
+      // no update. The caller must resolve the conflict out-of-band.
+      throw new ConflictException("google_account_mismatch");
+    }
+    return byEmail;
+  }
+
+  // ─── Link race guard (#2495 LOW) ────────────────────────────────────────────
+  // The googleId-NULL email-match auto-link (handlePlatformAuth, handleTenantAuth's
+  // staff link, handleBuyerPortalAuth's first-link branch) used to be check-then-update:
+  // read the row with googleId:null, then unconditionally write the sub. Two concurrent
+  // sign-ins for the same email (one with the rightful sub, one with an attacker's) could
+  // both pass the read before either wrote, and the writer that lost the race would still
+  // overwrite whatever the winner just set. Guard the write itself with a compare-and-set
+  // (`updateMany` scoped to `googleId: null`) so only the first writer succeeds; a losing
+  // writer re-reads and either finds itself already linked (a harmless duplicate — same
+  // sub) or a DIFFERENT sub now bound, which is refused exactly like the read-time check.
+  private async casLinkGoogleId<T extends { id: string; googleId: string | null }>(
+    updateMany: (args: {
+      where: Record<string, unknown>;
+      data: Record<string, unknown>;
+    }) => Promise<{ count: number }>,
+    findUnique: (id: string) => Promise<T | null>,
+    row: T,
+    profile: GoogleProfile,
+    data: Record<string, unknown>,
+  ): Promise<{ row: T; linked: boolean }> {
+    const result = await updateMany({ where: { id: row.id, googleId: null }, data });
+    if (result.count === 1) {
+      return { row: { ...row, ...data } as T, linked: true };
+    }
+
+    // Lost the race — someone else wrote googleId on this row between our read and
+    // our write. Re-read and decide who won.
+    const fresh = await findUnique(row.id);
+    if (!fresh) throw new ForbiddenException("unauthorized");
+    if (fresh.googleId && fresh.googleId !== profile.googleId) {
+      throw new ConflictException("google_account_mismatch");
+    }
+    // Already linked to THIS same sub (a duplicate concurrent request) — proceed
+    // with the row as it now stands; no side effect to repeat.
+    return { row: fresh, linked: false };
+  }
+
   /** Find or create the appropriate user record and return a token pair. */
   async findOrCreateUser(
     profile: GoogleProfile,
@@ -518,14 +604,11 @@ export class GoogleOAuthService {
     profile: GoogleProfile,
     deviceInfo?: DeviceInfo,
   ): Promise<GoogleAuthResult> {
-    const user = await this.prisma.user.findFirst({
-      where: {
-        tenantId: null,
-        role: "SUPER_ADMIN",
-        deletedAt: null,
-        OR: [{ googleId: profile.googleId }, { email: profile.email }],
-      },
-    });
+    const user = await this.resolveBySubThenEmail(
+      (args: any) => this.prisma.user.findFirst(args),
+      { tenantId: null, role: "SUPER_ADMIN", deletedAt: null },
+      profile,
+    );
 
     if (!user || user.status !== "ACTIVE") {
       throw new ForbiddenException("unauthorized");
@@ -535,10 +618,13 @@ export class GoogleOAuthService {
     // Also clear forcePasswordChange — Google-authenticated users cannot set a
     // password via the change-password form, so the flag must not block them.
     if (!user.googleId) {
-      await this.prisma.user.update({
-        where: { id: user.id },
-        data: { googleId: profile.googleId, forcePasswordChange: false },
-      });
+      await this.casLinkGoogleId(
+        (args) => this.prisma.user.updateMany(args),
+        (id) => this.prisma.user.findUnique({ where: { id } }),
+        user,
+        profile,
+        { googleId: profile.googleId, forcePasswordChange: false },
+      );
     }
 
     const tokens = await this.issueUserTokenPair(user, null, deviceInfo);
@@ -576,14 +662,15 @@ export class GoogleOAuthService {
     }
 
     // Check for a matching staff user in this tenant first
-    let staffUser = await this.prisma.user.findFirst({
-      where: {
+    let staffUser = await this.resolveBySubThenEmail(
+      (args: any) => this.prisma.user.findFirst(args),
+      {
         tenantId: tenant.id,
         deletedAt: null,
         role: { in: ["OPERATOR", "DRIVER", "TENANT_ADMIN"] },
-        OR: [{ googleId: profile.googleId }, { email: profile.email }],
       },
-    });
+      profile,
+    );
 
     if (staffUser) {
       if (staffUser.status !== "ACTIVE") throw new ForbiddenException("unauthorized");
@@ -592,12 +679,16 @@ export class GoogleOAuthService {
       if (profile.context === "portal") throw new ForbiddenException("google_email_is_staff");
 
       if (!staffUser.googleId) {
-        staffUser = await this.prisma.user.update({
-          where: { id: staffUser.id },
+        const { row } = await this.casLinkGoogleId(
+          (args) => this.prisma.user.updateMany(args),
+          (id) => this.prisma.user.findUnique({ where: { id } }),
+          staffUser,
+          profile,
           // Clear forcePasswordChange — Google users cannot use the password
           // change form, so the flag must not redirect them to /change-password.
-          data: { googleId: profile.googleId, forcePasswordChange: false },
-        });
+          { googleId: profile.googleId, forcePasswordChange: false },
+        );
+        staffUser = row;
       }
       const tokens = await this.issueUserTokenPair(staffUser, tenant.slug, deviceInfo);
       return {
@@ -618,12 +709,11 @@ export class GoogleOAuthService {
   }
 
   private async handleBuyerPortalAuth(profile: GoogleProfile): Promise<GoogleAuthResult> {
-    let buyer = await this.prisma.buyerAccount.findFirst({
-      where: {
-        deletedAt: null,
-        OR: [{ googleId: profile.googleId }, { email: profile.email }],
-      },
-    });
+    let buyer = await this.resolveBySubThenEmail(
+      (args: any) => this.prisma.buyerAccount.findFirst(args),
+      { deletedAt: null },
+      profile,
+    );
 
     if (buyer) {
       if (buyer.status === "SUSPENDED") throw new ForbiddenException("unauthorized");
@@ -646,42 +736,59 @@ export class GoogleOAuthService {
       const squattedPassword = googleAttestsMailbox && buyer.passwordSet && !buyer.emailVerified;
 
       if (!buyer.googleId) {
+        let linked: boolean;
         if (squattedPassword) {
           const placeholderHash = await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 10);
-          buyer = await this.prisma.buyerAccount.update({
-            where: { id: buyer.id },
-            data: {
+          const casResult = await this.casLinkGoogleId(
+            (args) => this.prisma.buyerAccount.updateMany(args),
+            (id) => this.prisma.buyerAccount.findUnique({ where: { id } }),
+            buyer,
+            profile,
+            {
               googleId: profile.googleId,
               emailVerified: true,
               passwordHash: placeholderHash,
               passwordSet: false,
             },
-          });
-          await this.prisma.buyerRefreshToken.deleteMany({
-            where: { buyerAccountId: buyer.id },
-          });
-          this.logger.warn(
-            `Buyer ${buyer.id} had an unverified password neutralized on first Google link ` +
-              `(mailbox now attested by Google; prior sessions revoked)`,
           );
+          buyer = casResult.row;
+          linked = casResult.linked;
+          if (linked) {
+            await this.prisma.buyerRefreshToken.deleteMany({
+              where: { buyerAccountId: buyer.id },
+            });
+            this.logger.warn(
+              `Buyer ${buyer.id} had an unverified password neutralized on first Google link ` +
+                `(mailbox now attested by Google; prior sessions revoked)`,
+            );
+          }
         } else {
-          buyer = await this.prisma.buyerAccount.update({
-            where: { id: buyer.id },
-            data: {
+          const casResult = await this.casLinkGoogleId(
+            (args) => this.prisma.buyerAccount.updateMany(args),
+            (id) => this.prisma.buyerAccount.findUnique({ where: { id } }),
+            buyer,
+            profile,
+            {
               googleId: profile.googleId,
               ...(googleAttestsMailbox ? { emailVerified: true } : {}),
             },
-          });
+          );
+          buyer = casResult.row;
+          linked = casResult.linked;
         }
-        void this.emailService
-          .send({
-            to: buyer.email,
-            subject: "Google Sign-In linked to your RouteFlow account",
-            html: `<p>Your Google account (<strong>${escapeHtml(profile.email)}</strong>) has been linked to your RouteFlow portal account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
-            // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
-            senderClass: "platform",
-          })
-          .catch((e: Error) => this.logger.warn(`Google link notification failed: ${e.message}`));
+        // Only notify when THIS request actually performed the link — a request
+        // that lost the race to an identical concurrent one must not re-send it.
+        if (linked) {
+          void this.emailService
+            .send({
+              to: buyer.email,
+              subject: "Google Sign-In linked to your RouteFlow account",
+              html: `<p>Your Google account (<strong>${escapeHtml(profile.email)}</strong>) has been linked to your RouteFlow portal account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
+              // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
+              senderClass: "platform",
+            })
+            .catch((e: Error) => this.logger.warn(`Google link notification failed: ${e.message}`));
+        }
       } else if (googleAttestsMailbox && !buyer.emailVerified) {
         // Already-linked account whose mailbox was never verified (e.g. password
         // registration followed by Google linking before this gate existed). Same
@@ -727,7 +834,7 @@ export class GoogleOAuthService {
           emailVerified: true,
         },
       });
-      this.logger.log(`BuyerAccount created via Google: ${profile.email}`);
+      this.logger.log(`BuyerAccount created via Google: ${buyer.id}`);
     }
 
     // Process an invite token embedded in the OAuth state
@@ -826,6 +933,9 @@ export class GoogleOAuthService {
       tenantId: user.tenantId ?? null,
       tenantSlug: tenantSlug ?? null,
       hasPassword: !!user.password,
+      // #2495: mirror AuthService.login()'s claims exactly — a Google-authenticated
+      // staff token must carry the same isAdmin claim a password login would.
+      isAdmin: user.isAdmin || user.role === "TENANT_ADMIN",
       // #1534: the same capability claim password login and refresh mint (auth.service) — the
       // staff socket re-check compares it with the user row.
       canActAsDriver: user.canActAsDriver ?? false,

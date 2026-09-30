@@ -61,6 +61,24 @@ export async function lockBarcodeCodes(
 }
 
 /**
+ * HOUSE LOCK ORDER for every Product-row writer of the #2717 M2/M3 catalog (SA-584, binding):
+ * FAMILY row -> recipe-product row -> variant/component rows (id order). In detail:
+ *
+ *   1. the FAMILY row            (`lockFamilyRow` / `lockProductRow` on the family, FOR UPDATE)
+ *   2. the recipe-product row    (`lockProductRow` on the recipe Product, FOR UPDATE)
+ *   3. variant/component rows    (id order: `lockProductRowsShared` FOR SHARE for a reader that only
+ *                                 needs them unchanged, plain row writes / FOR UPDATE for a writer)
+ *
+ * Barcode advisory locks (`lockBarcodeCodes`) are taken before any of these. A writer that holds a
+ * variant row and then asks for the family (V -> F) deadlocks against a family price edit
+ * (F -> V): take the family FIRST, then decide on what is read after the lock (L-239). Writers
+ * audited against this order: ProductsService create/update (family price, recipe guards),
+ * propagateFamilyPrice (recipe products before variants), RecipesService
+ * create/update/activate (family, recipe product, components), InventoryService.assignToVariants
+ * (family before the target loop) and createVariant.
+ */
+
+/**
  * #2728 M1 follow-up (F2/F3, pre-merge BLOCK): row lock on `Product`, used by the backfill script
  * so it can take locks in the SAME ORDER the app's own writers do (code lock via lockBarcodeCodes
  * first, then this row lock) before re-reading fresh values under both locks. Lives here — not in
@@ -395,5 +413,27 @@ export async function syncProductImagesFromLegacy(
         },
       });
     }
+  }
+}
+
+/**
+ * `SELECT … FOR SHARE` on each of `productIds`, one statement per id in ascending id order (so two
+ * callers can never take the same rows in opposite orders). The component step of the house lock
+ * order: a recipe write holds its components unchanged while it re-validates them, and a concurrent
+ * writer of one of those rows (a re-parent, a deactivation) waits until the recipe tx commits.
+ */
+export async function lockProductRowsShared(
+  tx: CatalogTx,
+  tenantId: string,
+  productIds: Array<string | null | undefined>,
+): Promise<void> {
+  if (!tenantId) throw new Error("lockProductRowsShared: tenantId is required");
+  const ids = Array.from(
+    new Set(productIds.filter((id): id is string => typeof id === "string" && id.length > 0)),
+  ).sort();
+  for (const productId of ids) {
+    // Serial by design: each lock statement completes before the next is issued (id order).
+    // eslint-disable-next-line no-await-in-loop
+    await tx.$queryRaw`SELECT "id" FROM "Product" WHERE "id" = ${productId} AND "tenantId" = ${tenantId} FOR SHARE`;
   }
 }
