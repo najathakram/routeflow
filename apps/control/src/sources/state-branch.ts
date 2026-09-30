@@ -222,6 +222,34 @@ function checkEnv(env: Env): void {
 }
 
 const CLONE_MARKER = "ctl-clone-complete";
+const OWNER_FILE = "ctl-owned";
+
+const notOurs = (dir: string): CtlError =>
+  new CtlError(5, `state dir ${dir} is not a ctl clone; move it or set CONTROL_STATE_DIR`);
+
+/** `remote get-url origin` of a clone, probed against its own .git only (never a parent repo). */
+function originOf(dir: string): string | null {
+  const r = gitTry(dir, ["--git-dir", path.join(dir, ".git"), "remote", "get-url", "origin"]);
+  return r.ok ? r.out.trim() : null;
+}
+
+function ownerFileMatches(dir: string, origin: string): boolean {
+  try {
+    return fs.readFileSync(path.join(dir, ".git", OWNER_FILE), "utf8").trim() === origin;
+  } catch {
+    return false;
+  }
+}
+
+/** True only for a clone this tool made (ctl-owned names the origin) that still points there. */
+export function isOwned(env: Env, dir: string): boolean {
+  return ownerFileMatches(dir, env.origin) && originOf(dir) === env.origin;
+}
+
+/** Refuse (touching nothing) unless `dir` is our clone: the gate before any reset/clean/remove. */
+export function assertOwned(env: Env, dir: string): void {
+  if (!isOwned(env, dir)) throw notOurs(dir);
+}
 
 /** A clone dir with usable refs and no leftover lock files (probed against its own .git only). */
 function cloneUsable(dir: string, branch: string): boolean {
@@ -234,29 +262,50 @@ function cloneUsable(dir: string, branch: string): boolean {
   return probe("HEAD") && probe(`refs/remotes/origin/${branch}`);
 }
 
+const markOurs = (dir: string, origin: string): void => {
+  fs.writeFileSync(path.join(dir, ".git", OWNER_FILE), origin + "\n");
+  fs.writeFileSync(path.join(dir, ".git", CLONE_MARKER), "ok\n");
+};
+
 /**
  * Clone the state branch on first use (single branch, depth 50). The whole check-and-clone runs
- * under the clone lock and ends by writing a completion marker, so a sibling process can never
- * mistake a half-made clone for a finished one. An unmarked dir is a crashed clone (removed and
- * redone) unless it is a complete clone from before the marker existed (kept, then marked).
+ * under the clone lock. The clone is made in a private sibling dir and renamed into place after
+ * its ownership file (.git/ctl-owned = the origin) and completion marker are written, so a dir
+ * that is not ours is never removed, reset or cleaned: it is refused (exit 5) untouched. An
+ * existing dir is adopted only when its origin matches; our own broken half-clone (ctl-owned but
+ * unusable) is removed and redone.
  */
 export async function ensureClone(env: Env): Promise<string> {
   checkEnv(env);
   const dir = path.resolve(env.cloneDir);
   const marker = path.join(dir, ".git", CLONE_MARKER);
-  if (!fs.existsSync(marker)) {
+  if (!(fs.existsSync(marker) && isOwned(env, dir))) {
     await withLock(`${dir}.clone.lock`, LOCK_STALE_MS, () => {
-      if (fs.existsSync(marker)) return;
+      if (fs.existsSync(marker) && isOwned(env, dir)) return;
       if (fs.existsSync(dir)) {
-        if (fs.existsSync(path.join(dir, ".git")) && cloneUsable(dir, env.stateBranch)) {
-          fs.writeFileSync(marker, "ok\n");
-          return;
+        const entries = fs.readdirSync(dir);
+        if (entries.length > 0) {
+          if (!fs.existsSync(path.join(dir, ".git"))) throw notOurs(dir);
+          const originOk = originOf(dir) === env.origin;
+          const usable = cloneUsable(dir, env.stateBranch);
+          if (originOk && usable) {
+            markOurs(dir, env.origin); // complete clone of this origin (incl. pre-marker ones)
+            return;
+          }
+          if (!ownerFileMatches(dir, env.origin)) throw notOurs(dir);
+          fs.rmSync(dir, { recursive: true, force: true }); // our own crashed half-clone
+        } else {
+          fs.rmdirSync(dir);
         }
-        if (fs.readdirSync(dir).length > 0 && !fs.existsSync(path.join(dir, ".git"))) {
-          throw new CtlError(5, `clone dir exists and is not a ctl clone: ${dir}`);
-        }
-        fs.rmSync(dir, { recursive: true, force: true });
       }
+      const parent = path.dirname(dir);
+      fs.mkdirSync(parent, { recursive: true });
+      const tmpPrefix = `${path.basename(dir)}.ctl-tmp-`;
+      for (const n of fs.readdirSync(parent)) {
+        if (n.startsWith(tmpPrefix))
+          fs.rmSync(path.join(parent, n), { recursive: true, force: true });
+      }
+      const tmp = path.join(parent, tmpPrefix + randomBytes(4).toString("hex"));
       const r = gitAnywhere(
         [
           "clone",
@@ -270,15 +319,16 @@ export async function ensureClone(env: Env): Promise<string> {
           "50",
           "--",
           env.origin,
-          dir,
+          tmp,
         ],
         { timeoutMs: cloneTimeoutMs() },
       );
       if (!r.ok) {
-        fs.rmSync(dir, { recursive: true, force: true });
+        fs.rmSync(tmp, { recursive: true, force: true });
         throw new CtlError(5, `clone failed: ${r.err.trim()}`);
       }
-      fs.writeFileSync(marker, "ok\n");
+      markOurs(tmp, env.origin);
+      fs.renameSync(tmp, dir);
     });
   }
   // keep our lock/parking files out of `git add -A`
@@ -303,6 +353,7 @@ export async function ensureClone(env: Env): Promise<string> {
 
 /** Fetch the state branch and hard-reset the checkout to it (never merge, never stash). */
 export function syncClone(env: Env, clone: string): void {
+  assertOwned(env, clone);
   const b = env.stateBranch;
   // a git call killed by its timeout can leave the index lock behind; we hold the clone lock
   fs.rmSync(path.join(clone, ".git", "index.lock"), { force: true });
@@ -693,6 +744,7 @@ export async function appendAndPush(
 
 /** Drop our unpushed local commit so the checkout is back at origin. */
 function resetQuiet(env: Env, clone: string): void {
+  if (!isOwned(env, clone)) return;
   fs.rmSync(path.join(clone, ".git", "index.lock"), { force: true });
   gitTry(clone, ["reset", "-q", "--hard", `refs/remotes/origin/${env.stateBranch}`]);
   gitTry(clone, ["clean", "-fdq"]);

@@ -15,6 +15,7 @@ import {
   NONCES_FILE,
   appendRetrySleep,
   ensureClone,
+  isOwned,
   lastSeq,
   liveEvents,
   formatNonces,
@@ -32,6 +33,8 @@ const REJECTED_PUSH = /non-fast-forward|fetch first|rejected/;
 export interface CompactResult {
   compacted: boolean;
   archived: string[];
+  /** Set when snapshot.json is over 1 MB; callers should surface it. */
+  snapshotWarning: string | null;
 }
 
 interface ArchiveView {
@@ -78,6 +81,7 @@ function alreadyArchived(view: ArchiveView, lane: string, first: number, last: n
 /** Compaction trigger: the WHOLE tip (events/ + snapshot.json + nonces.txt) over 384 KB. */
 export const COMPACT_TRIGGER_BYTES = 384 * 1024;
 
+/** Whole-tip size (events/ + snapshot.json + nonces.txt): a metric, not a trigger. */
 export function tipBytes(dir: string): number {
   const size = (p: string): number => {
     try {
@@ -96,9 +100,40 @@ export function tipBytes(dir: string): number {
   return total;
 }
 
-/** True when a checkout's whole tip is over the trigger (events alone would miss a fat snapshot). */
+/** events/ bytes of a checkout: the only thing that triggers compaction (a fat snapshot cannot loop it). */
+export function eventsBytes(dir: string): number {
+  let total = 0;
+  try {
+    for (const n of fs.readdirSync(path.join(dir, "events"))) {
+      try {
+        total += fs.statSync(path.join(dir, "events", n)).size;
+      } catch {
+        /* vanished */
+      }
+    }
+  } catch {
+    /* no events dir yet */
+  }
+  return total;
+}
+
+/** True when events/ is over the trigger. */
 export function compactDue(dir: string, limit = COMPACT_TRIGGER_BYTES): boolean {
-  return tipBytes(dir) > limit;
+  return eventsBytes(dir) > limit;
+}
+
+export const SNAPSHOT_WARN_BYTES = 1024 * 1024;
+
+/** A human-readable warning when snapshot.json has outgrown 1 MB, else null. */
+export function snapshotWarning(dir: string, limit = SNAPSHOT_WARN_BYTES): string | null {
+  try {
+    const size = fs.statSync(path.join(dir, "snapshot.json")).size;
+    return size > limit
+      ? `snapshot.json is ${Math.round(size / 1024)} KB (> ${Math.round(limit / 1024)} KB): the tip is outgrowing its budget`
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Compact the state branch from `env.cloneDir`. Safe to re-run; never rewrites history. */
@@ -145,7 +180,7 @@ export async function compact(env: Env): Promise<CompactResult> {
           });
         }
       }
-      if (!any) return { compacted: false, archived: [] };
+      if (!any) return { compacted: false, archived: [], snapshotWarning: snapshotWarning(clone) };
 
       const base = { tasks: env.registers.tasks, releases: env.registers.releases };
       const acc = foldEvents(tree.snap?.acc ?? null, base, liveEvents(tree));
@@ -176,8 +211,16 @@ export async function compact(env: Env): Promise<CompactResult> {
         `ctl(compact): snapshot at ${sha.slice(0, 12)}`,
       ]);
       const pushed = gitTry(clone, ["push", "-q", "origin", `HEAD:refs/heads/${env.stateBranch}`]);
-      if (pushed.ok) return { compacted: true, archived: archives.map((a) => a.file) };
-      gitTry(clone, ["reset", "-q", "--hard", `refs/remotes/origin/${env.stateBranch}`]);
+      if (pushed.ok) {
+        return {
+          compacted: true,
+          archived: archives.map((a) => a.file),
+          snapshotWarning: snapshotWarning(clone),
+        };
+      }
+      if (isOwned(env, clone)) {
+        gitTry(clone, ["reset", "-q", "--hard", `refs/remotes/origin/${env.stateBranch}`]);
+      }
       if (!REJECTED_PUSH.test(pushed.err)) throw new CtlError(5, pushed.err.trim());
       if (attempt < MAX_ATTEMPTS) await sleep(appendRetrySleep(attempt));
     }
@@ -211,10 +254,13 @@ function pushArchive(env: Env, clone: string, files: { file: string; text: strin
       );
       const parent = fetched.ok ? git(clone, ["rev-parse", tracking]).trim() : null;
       fs.rmSync(idxEnv.GIT_INDEX_FILE, { force: true });
-      if (parent) git(clone, ["read-tree", parent], { env: idxEnv });
+      if (parent) git(clone, ["read-tree", parent], { env: idxEnv, timeoutMs: cloneTimeoutMs() });
       let changed = false;
       for (const f of files) {
-        const blob = git(clone, ["hash-object", "-w", "--stdin"], { input: f.text }).trim();
+        const blob = git(clone, ["hash-object", "-w", "--stdin"], {
+          input: f.text,
+          timeoutMs: cloneTimeoutMs(),
+        }).trim();
         if (parent) {
           const have = gitTry(clone, ["rev-parse", "--verify", "-q", `${parent}:${f.file}`]);
           if (have.ok) {
@@ -230,7 +276,7 @@ function pushArchive(env: Env, clone: string, files: { file: string; text: strin
         changed = true;
       }
       if (!changed) return;
-      const tree = git(clone, ["write-tree"], { env: idxEnv }).trim();
+      const tree = git(clone, ["write-tree"], { env: idxEnv, timeoutMs: cloneTimeoutMs() }).trim();
       const args = [
         ...CTL_IDENTITY,
         "commit-tree",
