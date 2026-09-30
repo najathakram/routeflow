@@ -83,6 +83,28 @@ export function useUpdateProduct() {
   });
 }
 
+/**
+ * Reactivate a product (WS7): `PATCH /products/:id { isActive: true }`. The 409 refusal names the
+ * ACTIVE holders of its codes/name (see `getReactivationRefusal`); resending with `deactivateHolderIds`
+ * = exactly those ids deactivates them and reactivates this product in one transaction.
+ */
+export function useReactivateProduct() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, deactivateHolderIds }: { id: string; deactivateHolderIds?: string[] }) =>
+      apiClient
+        .patch(`/products/${id}`, {
+          isActive: true,
+          ...(deactivateHolderIds?.length ? { deactivateHolderIds } : {}),
+        })
+        .then((r) => r.data),
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: ["products", vars.id] });
+      qc.invalidateQueries({ queryKey: ["products"] });
+    },
+  });
+}
+
 export function useDeleteProduct() {
   const qc = useQueryClient();
   return useMutation({

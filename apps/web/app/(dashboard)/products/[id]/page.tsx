@@ -66,6 +66,7 @@ import { useAuth } from "@/lib/auth-context";
 import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
 import { MSRP_ADDON } from "@/lib/api/addons";
 import { CropModal } from "./CropModal";
+import { useReactivateFlow } from "./useReactivateFlow";
 import { DemandCard } from "./DemandCard";
 import { SalesHistoryCard } from "./SalesHistoryCard";
 import { ProductLabelsCard } from "./ProductLabelsCard";
@@ -319,6 +320,8 @@ export default function ProductDetailPage() {
   const { data: allProductsResult } = useProducts({ limit: 0 });
   const { data: tierLabels } = useTierLabels();
   const updateProduct = useUpdateProduct();
+  const reactivateFlow = useReactivateFlow();
+  const [showDeactivateConfirm, setShowDeactivateConfirm] = React.useState(false);
   const createProduct = useCreateProduct();
   const deleteProduct = useDeleteProduct();
   const uploadImages = useUploadProductImages(id);
@@ -800,10 +803,7 @@ export default function ProductDetailPage() {
         { onSuccess: () => toast({ title: "Variant deactivated", variant: "success" }) },
       );
     } else {
-      updateProduct.mutate(
-        { id: variant.id, isActive: true },
-        { onSuccess: () => toast({ title: "Variant reactivated", variant: "success" }) },
-      );
+      reactivateFlow.start(variant.id);
     }
   };
 
@@ -1044,6 +1044,23 @@ export default function ProductDetailPage() {
           onSuccess={() => setShowVariantSplit(false)}
         />
       )}
+      {reactivateFlow.dialog}
+      <ConfirmDialog
+        open={showDeactivateConfirm}
+        onClose={() => setShowDeactivateConfirm(false)}
+        onConfirm={() => {
+          setShowDeactivateConfirm(false);
+          updateProduct.mutate(
+            { id, isActive: false },
+            { onSuccess: () => toast({ title: "Product deactivated", variant: "success" }) },
+          );
+        }}
+        title="Deactivate product?"
+        description={`${product.name} will be hidden from the catalog and its SKU and barcodes are released for other products. You can reactivate it later if they are still free.`}
+        confirmLabel="Deactivate"
+        variant="danger"
+        loading={updateProduct.isPending}
+      />
       <ConfirmDialog
         open={showDeleteConfirm}
         onClose={() => setShowDeleteConfirm(false)}
@@ -1559,9 +1576,9 @@ export default function ProductDetailPage() {
                         size="sm"
                         variant="secondary"
                         onClick={() =>
-                          updateProduct.mutate({ id: id, isActive: !product.isActive })
+                          product.isActive ? setShowDeactivateConfirm(true) : reactivateFlow.start(id)
                         }
-                        loading={updateProduct.isPending}
+                        loading={updateProduct.isPending || reactivateFlow.isPending}
                       >
                         {product.isActive ? "Deactivate" : "Activate"}
                       </Button>
