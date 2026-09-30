@@ -32,14 +32,16 @@ describe("ProductsService.findAll portalVisible filter", () => {
 
   const whereOf = () => (prisma.product.findMany.mock.calls[0][0] as { where: object }).where;
 
-  it("portalVisible=false puts portalVisible:false in the where", async () => {
+  const HIDDEN = { OR: [{ portalVisible: false }, { parent: { portalVisible: false } }] };
+
+  it("portalVisible=false = hidden by its OWN flag or through a hidden PARENT (what the badge shows)", async () => {
     await service.findAll({ portalVisible: false } as never);
-    expect(whereOf()).toMatchObject({ portalVisible: false });
+    expect((whereOf() as { AND: unknown[] }).AND).toContainEqual(HIDDEN);
   });
 
-  it("portalVisible=true puts portalVisible:true in the where", async () => {
+  it("portalVisible=true = the complement (visible and not under a hidden parent)", async () => {
     await service.findAll({ portalVisible: true } as never);
-    expect(whereOf()).toMatchObject({ portalVisible: true });
+    expect((whereOf() as { AND: unknown[] }).AND).toContainEqual({ NOT: HIDDEN });
   });
 
   it("absent = no portalVisible key at all", async () => {

@@ -334,7 +334,11 @@ export class ProductsService {
     if (query.category) where.category = query.category;
     if (query.isActive !== undefined) where.isActive = query.isActive;
     if (query.isTobacco !== undefined) where.isTobacco = query.isTobacco;
-    if (query.portalVisible !== undefined) where.portalVisible = query.portalVisible;
+    if (query.portalVisible !== undefined) {
+      // What the list badge shows: hidden by its OWN flag OR through a hidden parent (Opus #2856 m2).
+      const hidden = { OR: [{ portalVisible: false }, { parent: { portalVisible: false } }] };
+      where.AND = [...(where.AND ?? []), query.portalVisible ? { NOT: hidden } : hidden];
+    }
     // W7 buyer gate: exclude regulated categories the buyer isn't licensed for (set
     // internally by BuyerCatalogService — never from buyer input). In the query so
     // pagination counts stay correct.
