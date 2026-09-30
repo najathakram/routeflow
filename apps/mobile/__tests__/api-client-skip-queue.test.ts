@@ -21,8 +21,10 @@ const netErr = (extra: Record<string, unknown>) => ({
 
 beforeEach(() => mockEnqueue.mockClear());
 
-it("a normal offline POST is still queued", async () => {
-  await expect(rejected()(netErr({}))).rejects.toMatchObject({ isOfflineQueued: true });
+it("a normal offline POST to an allow-listed endpoint is still queued", async () => {
+  await expect(rejected()(netErr({ url: "/returns" }))).rejects.toMatchObject({
+    isOfflineQueued: true,
+  });
   expect(mockEnqueue).toHaveBeenCalledTimes(1);
 });
 
