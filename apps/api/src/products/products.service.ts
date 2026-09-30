@@ -6,6 +6,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 import { CostingMethod, MovementType, Prisma, StockAlertStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
@@ -16,6 +17,7 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
+import { FeatureConfigService } from "../billing/feature-config.service";
 import { buildPlanGateBody } from "../billing/plan-gate";
 import { CreateProductDto } from "./dto/create-product.dto";
 import {
@@ -42,6 +44,15 @@ import {
   syncProductBarcodesFromLegacy,
   syncProductImagesFromLegacy,
 } from "./product-catalog-sync";
+import { recipeReferenceGroupers } from "./recipe-references";
+import { lockAndAssertRecipeGuards } from "./recipe-update-guard";
+import {
+  applyFamilyPriceBeforeUpdate,
+  familyPricesForNewVariant,
+  hasPriceColumns,
+  propagateFamilyPrice,
+  readFamilyPriceMode,
+} from "./family-price";
 import {
   barcodeRowsToView,
   mirrorableImageKeys,
@@ -101,6 +112,9 @@ export class ProductsService {
     private readonly authority: EntitlementAuthority,
     private readonly planCatalog: PlanCatalogService,
     private readonly gateway: RouteFlowGateway,
+    // #2717 M2 (SA-574 Q5): the `mixed_packs` mode read. Optional on purpose — FeatureConfigModule is
+    // global, so production always has it; a missing provider reads as mode "off" (no authority).
+    @Optional() private readonly featureConfig?: FeatureConfigService,
   ) {}
 
   /**
@@ -786,6 +800,10 @@ export class ProductsService {
     const resolvedUnitsPerBox = dto.unitsPerBox ?? parent?.unitsPerBox ?? undefined;
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) throw new BadRequestException("No tenant context");
+    // #2717 M2 (SA-574 Q2): a variant of a family takes the family's ladder while the mode is on.
+    const familyMode = dto.parentProductId
+      ? await readFamilyPriceMode(this.featureConfig, tenantId)
+      : "off";
     const created = await this.prisma.tenantTransaction(async (tx: any) => {
       // SA-572b Q4/SA-572c: lock the code BEFORE the create — otherwise a concurrent create of the
       // same code races on the legacy unique index and surfaces a raw P2002 instead of a 409.
@@ -793,6 +811,25 @@ export class ProductsService {
         await lockBarcodeCodes(tx, tenantId, [dto.barcode]);
         await assertBarcodeAvailable(tx, { tenantId, productId: null, code: dto.barcode });
       }
+      // The family's five columns, read under its row lock (family-price.ts), or today's inheritance.
+      const priceColumns =
+        dto.parentProductId && familyMode === "on"
+          ? await familyPricesForNewVariant(tx, {
+              tenantId,
+              familyId: dto.parentProductId,
+              dto,
+            })
+          : {
+              pricePerUnit: dto.pricePerUnit,
+              priceTier2:
+                dto.priceTier2 ?? (parent ? parent.priceTier2.toString() : dto.pricePerUnit),
+              priceTier3:
+                dto.priceTier3 ?? (parent ? parent.priceTier3.toString() : dto.pricePerUnit),
+              priceTier4:
+                dto.priceTier4 ?? (parent ? parent.priceTier4.toString() : dto.pricePerUnit),
+              priceTier5:
+                dto.priceTier5 ?? (parent ? parent.priceTier5.toString() : dto.pricePerUnit),
+            };
       let row;
       try {
         row = await tx.product.create({
@@ -802,15 +839,7 @@ export class ProductsService {
             barcode: dto.barcode,
             unitSku: dto.unitSku,
             unit: dto.unit,
-            pricePerUnit: dto.pricePerUnit,
-            priceTier2:
-              dto.priceTier2 ?? (parent ? parent.priceTier2.toString() : dto.pricePerUnit),
-            priceTier3:
-              dto.priceTier3 ?? (parent ? parent.priceTier3.toString() : dto.pricePerUnit),
-            priceTier4:
-              dto.priceTier4 ?? (parent ? parent.priceTier4.toString() : dto.pricePerUnit),
-            priceTier5:
-              dto.priceTier5 ?? (parent ? parent.priceTier5.toString() : dto.pricePerUnit),
+            ...priceColumns,
             category: syncedCategory ?? dto.category ?? parent?.category ?? undefined,
             description: dto.description,
             isActive: dto.isActive,
@@ -967,6 +996,7 @@ export class ProductsService {
         : dto.trackedSubcategoryId !== undefined
           ? dto.trackedSubcategoryId
           : existing.trackedSubcategoryId;
+    // #2717 M2 (I6, SA-584 B2): the recipe guards run inside the update tx, after the row locks.
     await this.assertSubcategoryInSection(effectiveCategoryId, effectiveSubcategoryId);
     // Clearing the section clears the regulatory trio with it — gated on the
     // section actually TRANSITIONING to null, so editing a product that already
@@ -1113,12 +1143,35 @@ export class ProductsService {
       data.barcode !== undefined ? data.barcode : existing.barcode;
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) throw new BadRequestException("No tenant context");
+    // #2717 M2 (SA-574 Q2): only a price write or an adoption into a family consults the mode.
+    const familyMode =
+      hasPriceColumns(dto) || dto.parentProductId
+        ? await readFamilyPriceMode(this.featureConfig, tenantId)
+        : "off";
+    let propagatedRows = 0;
     const updated = await this.prisma.tenantTransaction(async (tx: any) => {
       // Source-order pin: lock [new, old] before the update's own product.findFirst-style reads.
       await lockBarcodeCodes(tx, tenantId, [effectiveBarcode, existing.barcode]);
       if (effectiveBarcode) {
         await assertBarcodeAvailable(tx, { tenantId, productId: id, code: effectiveBarcode });
       }
+      // SA-584 B2: family rows, then this row, then the open-recipe checks (I6/I2/Q1/Q10).
+      await lockAndAssertRecipeGuards(tx, {
+        tenantId,
+        id,
+        existing,
+        dto,
+        effective: {
+          trackedCategoryId: effectiveCategoryId ?? null,
+          trackedSubcategoryId: effectiveSubcategoryId ?? null,
+        },
+      });
+      // Family price authority: may refuse (409), rewrite `data`'s price columns, or ask for a
+      // propagation to this row's children after the write. Off = nothing runs.
+      const family =
+        familyMode === "on"
+          ? await applyFamilyPriceBeforeUpdate(tx, { tenantId, id, existing, dto, data })
+          : { propagate: false };
       let row;
       try {
         row = await tx.product.update({ where: { id }, data });
@@ -1140,11 +1193,17 @@ export class ProductsService {
         productId: id,
         imageKeys: row.imageKeys,
       });
+      if (family.propagate) {
+        const moved = await propagateFamilyPrice(tx, { tenantId, familyId: id });
+        propagatedRows = moved.variants + moved.recipes;
+      }
       return row;
     });
     // suppressEmit lets a caller that loops this method (bulkAssignParent) emit
     // ONE coalesced event after the loop instead of one per row.
     if (!options?.suppressEmit) this.emitProductChanged(id, "updated");
+    // The family edit moved its children's prices: ONE coalesced event, after the commit (L-237).
+    if (propagatedRows > 0) this.emitProductChanged(null, "bulk");
     return updated;
   }
 
@@ -1448,6 +1507,8 @@ export class ProductsService {
       this.prisma.forTenant().orderTemplateItem,
       this.prisma.forTenant().deliveryMutation,
       this.prisma.forTenant().stockLot,
+      // #2717 M2: a product a recipe names (RESTRICT FKs) is referenced — soft-delete, never P2003.
+      ...recipeReferenceGroupers(this.prisma.forTenant()),
     ];
     for (const model of dependentModels) {
       const groups = await model.groupBy({
