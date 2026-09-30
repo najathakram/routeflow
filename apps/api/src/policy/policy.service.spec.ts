@@ -195,6 +195,11 @@ describe("PolicyService.set / clear validation (400s never reach the lock)", () 
       { scopeType: "CATEGORY", scopeId: "cat-1" },
       "POLICY_SCOPE_NOT_ALLOWED",
     ],
+    [
+      "a CATEGORY scope for orders.buyerOversell",
+      { key: "orders.buyerOversell", value: "backorder", scopeType: "CATEGORY", scopeId: "cat-1" },
+      "POLICY_SCOPE_NOT_ALLOWED",
+    ],
     ["a TENANT scope with a scopeId", { scopeId: "x" }, "POLICY_SCOPE_ID_INVALID"],
     ["a CUSTOMER scope without a scopeId", { scopeType: "CUSTOMER" }, "POLICY_SCOPE_ID_INVALID"],
     ["a blank reason", { reason: "   " }, "POLICY_REASON_REQUIRED"],
