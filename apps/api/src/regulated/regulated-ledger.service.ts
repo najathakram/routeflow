@@ -553,7 +553,12 @@ export class RegulatedLedgerService {
       const shape = lineShapeBySaleId.get(s.id) ?? { line: null, productId: null };
       const productPackNow = shape.productId ? packNowByProduct.get(shape.productId) : undefined;
       const verdict = classifySaleAxis(
-        { entryType: s.entryType, qty: s.qty, unitBasisQty: s.unitBasisQty },
+        {
+          entryType: s.entryType,
+          qty: s.qty,
+          unitBasisQty: s.unitBasisQty,
+          writtenAt: s.createdAt ?? null,
+        },
         shape.line,
         ownCorrections,
         productPackNow,
@@ -1273,7 +1278,12 @@ export class RegulatedLedgerService {
     let correctionsBySaleId = await this.loadCorrectionsBySaleId(db, [saleRow.id]);
     const classify = () =>
       classifySaleAxis(
-        { entryType: saleRow.entryType, qty: saleRow.qty, unitBasisQty: saleRow.unitBasisQty },
+        {
+          entryType: saleRow.entryType,
+          qty: saleRow.qty,
+          unitBasisQty: saleRow.unitBasisQty,
+          writtenAt: saleRow.createdAt ?? null,
+        },
         lineWithSuppliedPack,
         correctionsBySaleId.get(saleRow.id) ?? [],
         pack,

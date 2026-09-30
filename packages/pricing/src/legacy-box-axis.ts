@@ -25,8 +25,10 @@
  *   3. `line.boxes` or `line.pieces` non-null → piece-axis (a split line's qty is pieces by the
  *      OrderItem/InvoiceItem invariant, whatever the ledger row says).
  *   4. `line.unitLabel` non-blank → piece-axis (a unit-sold line's qty is base units).
- *   5. Boxed gate: `line.unitsPerBox > 1` when that snapshot exists, else `productPackNow > 1`
- *      when the caller supplied one (a GATE only, never a multiplier — same convention as
+ *   5. Boxed gate: `line.unitsPerBox > 1` when that snapshot exists (SA-609: a snapshot-less line
+ *      never short-circuits on the live pack — it goes on to 6, which adds the row's WRITE time to
+ *      the ratio test for `productPackNow` <= 1/null; a product un-boxed since the sale is not a
+ *      never-boxed product). Else `productPackNow` when the caller supplied one (a GATE only, never a multiplier — same convention as
  *      `legacyLinePieces`/`line-pack-factors.ts`: `null` means "product exists, no box size",
  *      OMITTING the argument means "caller doesn't know / product not found", and only the
  *      OMITTED case with no line-level snapshot is `unknown`; an explicit `null` still decides
@@ -55,6 +57,9 @@ export interface SaleAxisRow {
   entryType: string;
   qty: unknown;
   unitBasisQty: unknown;
+  /** The row's `createdAt` — when it was WRITTEN (SA-609), never `soldAt` (a back-datable business
+   *  date). REQUIRED so tsc flags every caller; `null` = unknown, read as pre-cutoff (parks). */
+  writtenAt: Date | string | null;
 }
 
 /**
@@ -80,6 +85,23 @@ export interface SaleAxisCorrection {
 }
 
 const EPS = 0.0005;
+
+/**
+ * SA-609 (#2052): when the api that WROTE a SALE row stopped writing box-axis rows — the
+ * `@routeflow/api` Railway deployment of B661 (f45eaf52, #1207) reaching SUCCESS on 2026-09-22T06:43:26Z
+ * (GitHub deployment 6584912245 statuses), plus 24 h of replica-overlap margin. No rollback to a
+ * pre-B661 image followed (every later production deployment descends from f45eaf52). A row written
+ * before this is judged on its WRITE time (`createdAt`), never `soldAt` (a business date that can be
+ * back-dated or imported).
+ */
+export const B661_CUTOFF = new Date("2026-09-23T06:43:26Z");
+
+/** A row's write time in ms; `null` when absent or unparseable (treated as pre-cutoff: parks). */
+function writtenAtMs(v: Date | string | null | undefined): number | null {
+  if (v == null) return null;
+  const ms = v instanceof Date ? v.getTime() : Date.parse(v);
+  return Number.isFinite(ms) ? ms : null;
+}
 
 /** `Number()` with a finite check — `null` for anything that isn't a real, usable number
  *  (including a non-numeric string, `null`, `undefined`, `NaN`, `Infinity`). Prisma's `Decimal`
@@ -115,22 +137,35 @@ export function classifySaleAxis(
   }
   // (5)
   const unitsPerBox = finiteOrNull(line.unitsPerBox);
-  let boxed: boolean;
+  // SA-609 (#2052): a line WITH a pack snapshot decides "boxed" on it. A snapshot-less line may not
+  // let the LIVE pack short-circuit to piece-axis — a product un-boxed AFTER the sale reads "not
+  // boxed" though the row sold N boxes — so it falls through to the ratio test (6), which reads the
+  // row's own figures and its write time.
+  let packNow: number | null = null;
+  let snapshotless = false;
   if (unitsPerBox != null) {
-    boxed = unitsPerBox > 1;
+    if (!(unitsPerBox > 1)) {
+      return { state: "piece-axis", reason: "not boxed — qty is already pieces" };
+    }
   } else if (productPackNow !== undefined) {
-    const packNow = finiteOrNull(productPackNow);
-    boxed = packNow != null && packNow > 1;
+    snapshotless = true;
+    packNow = finiteOrNull(productPackNow);
   } else {
     return { state: "unknown", reason: "no snapshot and no product to gate on" };
   }
-  if (!boxed) {
-    return { state: "piece-axis", reason: "not boxed — qty is already pieces" };
-  }
   // (6)
+  // Snapshot-less and not boxed now: ONLY the ratio-1 case below changes (SA-609); every other
+  // outcome keeps today's "not boxed — piece-axis" (a zeroed row, a malformed figure — the ratio
+  // test says nothing about them, and parking them would strand returns on rows that book nothing).
+  const notBoxedNow = snapshotless && !(packNow != null && packNow > 1);
+  const notBoxed: SaleAxisResult = {
+    state: "piece-axis",
+    reason: "not boxed — qty is already pieces",
+  };
   const rowQty = finiteOrNull(row.qty);
   const rowUbq = finiteOrNull(row.unitBasisQty);
   if (rowQty == null || rowUbq == null) {
+    if (notBoxedNow) return notBoxed;
     return { state: "unknown", reason: "row qty/unitBasisQty is not a usable number" };
   }
   let effQty = rowQty;
@@ -145,13 +180,26 @@ export function classifySaleAxis(
     if (cUbq != null) effUbq += cUbq;
   }
   if (effQty <= 0) {
+    if (notBoxedNow) return notBoxed;
     return { state: "unknown", reason: "corrected qty is not positive" };
   }
   if (Math.abs(effUbq - effQty) < EPS) {
+    if (notBoxedNow) {
+      // Ratio 1, no snapshot, pack now <= 1: box axis (un-boxed since) or never boxed. Only the
+      // row's WRITE time tells them apart — B661 writes boxed rows expanded, so ratio 1 after the
+      // cutoff proves pack 1; before it, it cannot be told: park for the operator's attested pack.
+      const written = writtenAtMs(row.writtenAt);
+      if (written != null && written >= B661_CUTOFF.getTime()) return notBoxed;
+      return {
+        state: "unknown",
+        reason: "box or piece axis can't be told — product un-boxed since",
+      };
+    }
     return { state: "legacy", reason: "box axis" };
   }
   if (effUbq > effQty) {
-    return { state: "piece-axis", reason: "pieces axis" };
+    return notBoxedNow ? notBoxed : { state: "piece-axis", reason: "pieces axis" };
   }
+  if (notBoxedNow) return notBoxed;
   return { state: "unknown", reason: "malformed — unitBasisQty is less than qty" };
 }
