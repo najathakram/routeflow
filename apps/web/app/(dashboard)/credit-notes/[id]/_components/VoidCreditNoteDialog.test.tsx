@@ -7,11 +7,13 @@ import { CREDIT_NOTE_ERROR_COPY } from "@/lib/credit-note-error-copy";
 
 const voidMutate = jest.fn();
 let previewData: any;
+let previewError = false;
 jest.mock("@/lib/api/credit-notes", () => ({
   ...jest.requireActual("@/lib/api/credit-notes"),
   useVoidPreview: (_id: string, enabled: boolean) => ({
     data: enabled ? previewData : undefined,
     isLoading: false,
+    isError: enabled && previewError,
   }),
   useVoidWithReversal: () => ({ mutate: voidMutate, isPending: false }),
 }));
@@ -59,6 +61,15 @@ describe("VoidCreditNoteDialog (#2418 U1)", () => {
       { id: "cn-1", reason: "duplicate of CN-0042" },
       expect.anything(),
     );
+  });
+
+  it("the void button is disabled, with a fixed-copy notice, when the preview failed to load", async () => {
+    previewData = undefined;
+    previewError = true;
+    openDialog();
+    expect(await screen.findByTestId("void-preview-error")).toHaveAttribute("role", "alert");
+    expect(screen.getByRole("button", { name: "Void credit note" })).toBeDisabled();
+    previewError = false;
   });
 
   it("sends no reason when the field is empty", async () => {

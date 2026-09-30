@@ -69,7 +69,7 @@ export function VoidCreditNoteDialog({
             variant="danger"
             onClick={confirm}
             loading={voidIt.isPending}
-            disabled={preview.isLoading || refused}
+            disabled={preview.isLoading || preview.isError || refused}
           >
             Void credit note
           </Button>
@@ -93,8 +93,19 @@ export function VoidCreditNoteDialog({
             </>
           )}
         </p>
+        {preview.isError && (
+          <p
+            role="alert"
+            data-testid="void-preview-error"
+            className="flex items-start gap-2 rounded-lg bg-danger/10 px-3 py-2 text-danger"
+          >
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            We couldn't check what this void affects. Close this window and try again.
+          </p>
+        )}
         {refused && (
           <p
+            role="alert"
             data-testid="void-refusal"
             className="flex items-start gap-2 rounded-lg bg-danger/10 px-3 py-2 text-danger"
           >

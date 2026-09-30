@@ -9,6 +9,7 @@ import { CREDIT_NOTE_ERROR_COPY } from "@/lib/credit-note-error-copy";
 const push = jest.fn();
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
 
+let previewError = false;
 const updateMutate = jest.fn();
 const reissueMutate = jest.fn();
 let previewData: any = {
@@ -32,6 +33,7 @@ jest.mock("@/lib/api/credit-notes", () => ({
   useVoidPreview: (_id: string, enabled: boolean) => ({
     data: enabled ? previewData : undefined,
     isLoading: false,
+    isError: enabled && previewError,
   }),
 }));
 jest.mock("@/lib/api/invoices", () => ({
@@ -155,6 +157,60 @@ describe("EditCreditNoteModal (#2648 / SA-535(c))", () => {
     expect(expiry).toBeEnabled(); // still editable, so it can be put back
     await user.clear(expiry);
     expect(expiry).toBeDisabled(); // restored => locked again
+  });
+
+  it("a changed expiry on a non-ISSUED note (no amount change) or a past date blocks Save with fixed copy", async () => {
+    const user = userEvent.setup();
+    open(note({ status: "APPLIED" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    // the field is locked on an APPLIED note; change the amount to unlock it, set an expiry, put the amount back
+    await user.clear(dialog.getByLabelText("Credit amount"));
+    await user.type(dialog.getByLabelText("Credit amount"), "10");
+    await user.type(dialog.getByLabelText(/Expires/), "2999-01-01");
+    await user.clear(dialog.getByLabelText("Credit amount"));
+    await user.type(dialog.getByLabelText("Credit amount"), "30");
+    expect(dialog.getByTestId("cn-edit-expiry-hint")).toHaveTextContent(
+      CREDIT_NOTE_ERROR_COPY[API_ERROR_CODES.CREDIT_NOTE_EXPIRY_NOT_EDITABLE],
+    );
+    expect(dialog.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
+  it("a past expiry on an ISSUED note blocks Save with the EXPIRY_PAST copy", async () => {
+    const user = userEvent.setup();
+    open(note({ status: "ISSUED" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.type(dialog.getByLabelText(/Expires/), "2001-01-01");
+    expect(dialog.getByTestId("cn-edit-expiry-hint")).toHaveTextContent(
+      CREDIT_NOTE_ERROR_COPY[API_ERROR_CODES.CREDIT_NOTE_EXPIRY_PAST],
+    );
+    expect(dialog.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
+  it("the reason-required hint is announced (role=alert) and wired to the textarea", async () => {
+    const user = userEvent.setup();
+    open(note());
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.clear(dialog.getByLabelText("Reason"));
+    expect(dialog.getByTestId("cn-edit-reason-required")).toHaveAttribute("role", "alert");
+    expect(dialog.getByLabelText("Reason")).toHaveAttribute("aria-invalid", "true");
+    expect(dialog.getByLabelText("Reason")).toHaveAttribute(
+      "aria-describedby",
+      "cn-edit-reason-hint",
+    );
+  });
+
+  it("the reissue confirm is blocked while the void-preview failed to load", async () => {
+    previewData = undefined;
+    previewError = true;
+    const user = userEvent.setup();
+    open(note());
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.clear(dialog.getByLabelText("Credit amount"));
+    await user.type(dialog.getByLabelText("Credit amount"), "10");
+    await user.click(dialog.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByTestId("reissue-preview-error")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Void and issue new" })).toBeDisabled();
+    previewError = false;
   });
 
   it("a note that never had a reason can still be saved (only blanking a set reason is blocked)", async () => {

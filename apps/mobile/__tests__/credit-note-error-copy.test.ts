@@ -1,6 +1,7 @@
 import { API_ERROR_CODES } from "@routeflow/types";
 import {
   CREDIT_NOTE_ERROR_COPY,
+  UNCONFIRMED_COPY,
   creditNoteErrorCopy,
   refusalCopy,
 } from "../lib/credit-note-error-copy";
@@ -46,6 +47,17 @@ describe("credit-note error copy (#2418 U1: no raw server strings)", () => {
       CREDIT_NOTE_ERROR_COPY[API_ERROR_CODES.CREDIT_NOTE_RETURN_BACKED],
     );
     expect(refusalCopy(null)).toMatch(/Nothing was changed/);
+  });
+});
+
+describe("unconfirmed writes (timeout / network error)", () => {
+  it("says it could not be confirmed instead of 'nothing was changed'", () => {
+    for (const err of [
+      { code: "ECONNABORTED", message: "timeout" },
+      { message: "Network Error", request: {} },
+    ])
+      expect(creditNoteErrorCopy(err, "Nothing was changed.")).toBe(UNCONFIRMED_COPY);
+    expect(creditNoteErrorCopy({ response: { data: {} } }, "generic")).toBe("generic");
   });
 });
 

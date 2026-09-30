@@ -7,7 +7,12 @@ import { Button, Modal, useToast } from "@routeflow/ui/web";
 import { roundMoney } from "@routeflow/pricing";
 import { MoneyInput } from "@/components/MoneyInput";
 import { fmt } from "@/lib/formatting";
-import { creditNoteErrorCopy, refusalCopy } from "@/lib/credit-note-error-copy";
+import { API_ERROR_CODES } from "@routeflow/types";
+import {
+  CREDIT_NOTE_ERROR_COPY,
+  creditNoteErrorCopy,
+  refusalCopy,
+} from "@/lib/credit-note-error-copy";
 import { useInvoice } from "@/lib/api/invoices";
 import {
   type CreditNote,
@@ -90,6 +95,10 @@ export function EditCreditNoteModal({
   const reasonChanged = reason.trim() !== (note.reason ?? "").trim();
   const expiryChanged = expiry !== toDateInput(note.expiresAt);
   // A reason that was set can be changed but not blanked (the pre-edit UI always required one).
+  // The same guards as mobile: a changed expiry on a non-ISSUED note (when the amount is not changing) or
+  // a past date would only be refused by the server, so block it here with the fixed copy.
+  const expiryLocked = expiryChanged && !moneyChanged && note.status !== "ISSUED";
+  const expiryPast = expiryChanged && !!expiry && new Date(expiry).getTime() <= Date.now();
   const reasonBlanked = reasonChanged && reason.trim() === "" && (note.reason ?? "").trim() !== "";
   // Same convention as the create form (credit-notes/page.tsx): the picked calendar date, as ISO.
   const expiryIso = expiry ? new Date(expiry).toISOString() : null;
@@ -180,7 +189,12 @@ export function EditCreditNoteModal({
               variant="danger"
               onClick={doReissue}
               loading={reissue.isPending}
-              disabled={preview.isLoading || !!preview.data?.refusal || !!preview.data?.refusalCode}
+              disabled={
+                preview.isLoading ||
+                preview.isError ||
+                !!preview.data?.refusal ||
+                !!preview.data?.refusalCode
+              }
             >
               Void and issue new
             </Button>
@@ -208,8 +222,14 @@ export function EditCreditNoteModal({
           <p className="text-navy/70">
             The new credit note starts unapplied. Apply it again where it belongs.
           </p>
+          {preview.isError && (
+            <p role="alert" data-testid="reissue-preview-error" className="text-danger">
+              We couldn't check what this change affects. Go back and try again.
+            </p>
+          )}
           {(preview.data?.refusalCode || preview.data?.refusal) && (
             <p
+              role="alert"
               data-testid="reissue-refusal"
               className="flex items-start gap-2 rounded-lg bg-danger/10 px-3 py-2 text-danger"
             >
@@ -235,7 +255,7 @@ export function EditCreditNoteModal({
           <Button
             onClick={onSave}
             loading={update.isPending}
-            disabled={invalidAmount || reasonBlanked || busy}
+            disabled={invalidAmount || reasonBlanked || expiryLocked || expiryPast || busy}
           >
             {moneyChanged ? "Continue" : "Save"}
           </Button>
@@ -286,6 +306,8 @@ export function EditCreditNoteModal({
           </label>
           <textarea
             id="cn-edit-reason"
+            aria-invalid={reasonBlanked || undefined}
+            aria-describedby={reasonBlanked ? "cn-edit-reason-hint" : undefined}
             rows={2}
             value={reason}
             maxLength={450}
@@ -293,7 +315,12 @@ export function EditCreditNoteModal({
             className="w-full resize-none rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
           {reasonBlanked && (
-            <p className="text-xs text-danger" data-testid="cn-edit-reason-required">
+            <p
+              id="cn-edit-reason-hint"
+              role="alert"
+              className="text-xs text-danger"
+              data-testid="cn-edit-reason-required"
+            >
               A reason is required.
             </p>
           )}
@@ -311,6 +338,17 @@ export function EditCreditNoteModal({
             className="w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-surface-raised disabled:text-navy/50"
           />
           <p className="text-xs text-navy/60">Leave empty for no expiry.</p>
+          {(expiryLocked || expiryPast) && (
+            <p role="alert" className="text-xs text-danger" data-testid="cn-edit-expiry-hint">
+              {
+                CREDIT_NOTE_ERROR_COPY[
+                  expiryLocked
+                    ? API_ERROR_CODES.CREDIT_NOTE_EXPIRY_NOT_EDITABLE
+                    : API_ERROR_CODES.CREDIT_NOTE_EXPIRY_PAST
+                ]
+              }
+            </p>
+          )}
         </div>
       </div>
     </Modal>

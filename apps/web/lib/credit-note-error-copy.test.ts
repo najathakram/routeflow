@@ -1,5 +1,9 @@
 import { CREDIT_NOTE_ERROR_CODES } from "@routeflow/types";
-import { CREDIT_NOTE_ERROR_COPY, creditNoteErrorCopy } from "./credit-note-error-copy";
+import {
+  CREDIT_NOTE_ERROR_COPY,
+  UNCONFIRMED_COPY,
+  creditNoteErrorCopy,
+} from "./credit-note-error-copy";
 
 const apiError = (data: Record<string, unknown>) => ({ response: { data } });
 
@@ -37,5 +41,18 @@ describe("creditNoteErrorCopy (#2418 U1: no raw server strings)", () => {
   it("does not treat inherited object keys as codes", () => {
     expect(creditNoteErrorCopy(apiError({ code: "toString" }), "generic")).toBe("generic");
     expect(creditNoteErrorCopy(apiError({ code: "constructor" }), "generic")).toBe("generic");
+  });
+
+  it("a timeout / dropped connection (no response) says it could not be confirmed, never 'nothing was changed'", () => {
+    for (const err of [
+      { code: "ECONNABORTED", message: "timeout of 10000ms exceeded" },
+      { message: "Network Error", request: {} },
+      { request: {}, message: "boom" },
+    ])
+      expect(creditNoteErrorCopy(err, "Nothing was changed.")).toBe(UNCONFIRMED_COPY);
+    // a real HTTP response without a known code keeps the caller's fallback
+    expect(creditNoteErrorCopy({ response: { data: { message: "x" } } }, "generic")).toBe(
+      "generic",
+    );
   });
 });

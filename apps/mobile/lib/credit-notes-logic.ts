@@ -209,6 +209,23 @@ export function planCreditNoteEdit(
   };
 }
 
+/**
+ * Whether the expiry field is editable: an ISSUED note's always; otherwise only while the amount is
+ * changing (a reissue) or while the expiry differs from the note's, so a change can be put back
+ * (amount -> expiry -> amount back is not a trap).
+ */
+export function creditNoteExpiryEditable(
+  note: { status?: string; expiresAt?: string | null },
+  draftExpiry: string,
+  planKind: CreditNoteEditPlan["kind"],
+): boolean {
+  return (
+    note.status === "ISSUED" ||
+    planKind === "reissue" ||
+    draftExpiry !== (note.expiresAt ? note.expiresAt.slice(0, 10) : "")
+  );
+}
+
 /** The money path's confirm copy (SA-535(c)); `unapplied` comes from void-preview. */
 export function reissueConfirmMessage(
   creditNoteNumber: string,

@@ -8,6 +8,7 @@ import { join } from "path";
 import {
   type CreditNoteEditDraft,
   creditNoteDraftAmount,
+  creditNoteExpiryEditable,
   CREDIT_NOTE_REASON_MAX,
   planCreditNoteEdit,
   reissueConfirmMessage,
@@ -110,6 +111,20 @@ describe("reissueConfirmMessage", () => {
   });
 });
 
+describe("creditNoteExpiryEditable (amount -> expiry -> amount back is not a trap)", () => {
+  const applied = { status: "APPLIED", expiresAt: null as string | null };
+  it("an ISSUED note is always editable; an APPLIED one only while reissuing or once the expiry differs", () => {
+    expect(creditNoteExpiryEditable({ status: "ISSUED", expiresAt: null }, "", "none")).toBe(true);
+    expect(creditNoteExpiryEditable(applied, "", "none")).toBe(false);
+    expect(creditNoteExpiryEditable(applied, "", "reissue")).toBe(true);
+    expect(creditNoteExpiryEditable(applied, "2999-01-01", "reissue")).toBe(true);
+    // amount put back (plan no longer a reissue) but the expiry still differs => stays editable
+    expect(creditNoteExpiryEditable(applied, "2999-01-01", "invalid")).toBe(true);
+    // the expiry restored => locked again
+    expect(creditNoteExpiryEditable(applied, "", "none")).toBe(false);
+  });
+});
+
 describe("planCreditNoteEdit guards mirror web (#2418 U1)", () => {
   it("a set reason can be changed but not blanked; a never-set reason is fine", () => {
     expect(planCreditNoteEdit(note, draft({ reason: "   " }))).toEqual({
@@ -195,10 +210,9 @@ describe("Edit credit note wiring (#2648)", () => {
     expect(api).toMatch(/const ONLINE_ONLY = \{ _skipOfflineQueue: true \}/);
   });
 
-  it("the expiry field stays editable while it differs from the note's (amount -> expiry -> amount back)", () => {
-    expect(edit).toMatch(
-      /const expiryEditable =\s*cn\.status === "ISSUED" \|\|\s*plan\.kind === "reissue" \|\|\s*draft\.expiry !== \(cn\.expiresAt \? cn\.expiresAt\.slice\(0, 10\) : ""\)/,
-    );
+  it("the edit screen takes the expiry lock from the tested helper, and the void waits for a loaded preview", () => {
+    expect(edit).toContain("creditNoteExpiryEditable(cn, draft.expiry, plan.kind)");
+    expect(detail).toMatch(/voidPreview\.isLoading \|\| voidPreview\.isError/);
   });
 
   it("the unused plain void hook is gone (the UI voids through void-with-reversal only)", () => {

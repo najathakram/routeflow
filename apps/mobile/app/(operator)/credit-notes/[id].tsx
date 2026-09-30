@@ -99,6 +99,9 @@ export default function CreditNoteDetailScreen() {
 
   const handleVoid = () => {
     if (!id) return;
+    // The confirm lists what the void reopens, so it waits for a loaded preview (never a blind void).
+    if (voidPreview.isLoading || voidPreview.isError)
+      return showToast("Checking what this void affects. Try again in a moment.");
     if (voidPreview.data?.refusalCode || voidPreview.data?.refusal)
       return showToast(refusalCopy(voidPreview.data.refusalCode));
     confirm(

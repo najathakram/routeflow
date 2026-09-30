@@ -35,14 +35,35 @@ export const CREDIT_NOTE_ERROR_COPY: Record<CreditNoteErrorCode, string> = {
     "One of the credit lines isn't valid. Check each line amount.",
 };
 
-/** The fixed copy for an error's `response.data.code`, else `fallback`. Never the server message. */
+/** Shown when the request got no response at all (a timeout or a dropped connection): it may have committed. */
+export const UNCONFIRMED_COPY =
+  "We couldn't confirm whether this went through. Refresh and check before trying again.";
+
+/** A request that left but got no HTTP response (timeout / network error): the server may have committed. */
+function noResponse(err: unknown): boolean {
+  const e = err as {
+    response?: unknown;
+    request?: unknown;
+    code?: unknown;
+    message?: unknown;
+  } | null;
+  if (!e || typeof e !== "object" || e.response !== undefined) return false;
+  return e.request !== undefined || e.code === "ECONNABORTED" || e.message === "Network Error";
+}
+
+/**
+ * The fixed copy for an error's `response.data.code`; a timeout / network error (no response, the write
+ * may have gone through) is the "couldn't confirm" line; anything else is `fallback`. Never the server message.
+ */
 export function creditNoteErrorCopy(err: unknown, fallback: string): string {
   const code = (err as { response?: { data?: { code?: unknown } } } | null | undefined)?.response
     ?.data?.code;
-  return typeof code === "string" &&
+  if (
+    typeof code === "string" &&
     Object.prototype.hasOwnProperty.call(CREDIT_NOTE_ERROR_COPY, code)
-    ? CREDIT_NOTE_ERROR_COPY[code as CreditNoteErrorCode]
-    : fallback;
+  )
+    return CREDIT_NOTE_ERROR_COPY[code as CreditNoteErrorCode];
+  return noResponse(err) ? UNCONFIRMED_COPY : fallback;
 }
 
 /** The fixed copy for a void-preview `refusalCode`; a missing/unknown code is the generic refusal line. */
