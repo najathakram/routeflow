@@ -201,4 +201,34 @@ describe("ProductsService — code release wiring (SA-603a)", () => {
     const nameCheck = prisma.product.findFirst.mock.calls.find(([a]: any) => a?.where?.name);
     expect(nameCheck?.[0].where).toMatchObject({ isActive: true });
   });
+
+  it("deactivateHolderIds without a reactivation is a 400 (the door only opens for isActive false -> true)", async () => {
+    const self = { ...BASE, isActive: true, sku: "S1" };
+    prisma.product.findUnique.mockResolvedValue(self as any);
+    await expect(
+      service.update("prod-1", { isActive: true, deactivateHolderIds: ["x"] } as any),
+    ).rejects.toMatchObject({ status: 400 });
+    await expect(
+      service.update("prod-1", { deactivateHolderIds: ["x"] } as any),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(prisma.product.update).not.toHaveBeenCalled();
+  });
+
+  it("the door is not a column: deactivateHolderIds never reaches the product write", async () => {
+    const self = { ...BASE, isActive: false, retiredSku: "S1" };
+    prisma.product.findUnique.mockResolvedValue(self as any);
+    prisma.product.update.mockResolvedValue({ ...self, isActive: true } as any);
+    prisma.product.findFirst.mockImplementation((args: any) =>
+      Promise.resolve(args?.where?.id === "prod-1" && args?.where?.tenantId ? self : null),
+    );
+    prisma.product.findMany.mockResolvedValue([]);
+    prisma.productBarcode.findMany.mockResolvedValue([]);
+    // No active holder exists, so the exact set is EMPTY: a non-empty request is refused (HOLDERS_CHANGED).
+    await expect(
+      service.update("prod-1", { isActive: true, deactivateHolderIds: ["nobody"] } as any),
+    ).rejects.toMatchObject({ response: { code: "HOLDERS_CHANGED" } });
+    for (const [args] of prisma.product.update.mock.calls as any[]) {
+      expect(args.data).not.toHaveProperty("deactivateHolderIds");
+    }
+  });
 });

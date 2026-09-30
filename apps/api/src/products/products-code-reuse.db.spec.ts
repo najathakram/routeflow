@@ -289,4 +289,66 @@ describeDb("SA-603a code release, lazy reuse, restore and name rule — real Pos
     const bad = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
     expect(bad.reason.getResponse()).toMatchObject({ code: "NAME_TAKEN" });
   });
+
+  it("DOOR: PATCH {isActive:true, deactivateHolderIds:[holder]} deactivates exactly the blocking holder and reactivates, in one tx, with an audit row", async () => {
+    const tenantId = await seedTenant("door");
+    const a = await mk(tenantId, "Door A", { sku: "DR-1" });
+    await inTenant(tenantId, () => service.update(a.id, { isActive: false } as any));
+    const holder = await mk(tenantId, "Door Holder", { sku: "DR-1" });
+    const bystander = await mk(tenantId, "Bystander", { sku: "DR-9" });
+
+    // The wrong set is refused and nothing moves.
+    const bad = await inTenant(tenantId, () =>
+      service.update(a.id, { isActive: true, deactivateHolderIds: [bystander.id] } as any),
+    ).catch((e) => e);
+    expect(bad.getResponse()).toMatchObject({
+      code: "HOLDERS_CHANGED",
+      holders: [{ productId: holder.id }],
+    });
+    expect(await fresh(holder.id)).toMatchObject({ isActive: true, sku: "DR-1" });
+    expect(await fresh(a.id)).toMatchObject({ isActive: false, retiredSku: "DR-1" });
+
+    // The exact set succeeds: holder off (codes released), A on with its sku back.
+    await inTenant(tenantId, () =>
+      service.update(a.id, { isActive: true, deactivateHolderIds: [holder.id] } as any),
+    );
+    expect(await fresh(holder.id)).toMatchObject({
+      isActive: false,
+      sku: null,
+      retiredSku: "DR-1",
+    });
+    expect(await fresh(a.id)).toMatchObject({ isActive: true, sku: "DR-1", retiredSku: null });
+    expect(await fresh(bystander.id)).toMatchObject({ isActive: true });
+    const log = await prisma.auditLog.findMany({
+      where: { tenantId, action: "product.deactivated_for_reactivation" },
+    });
+    expect(log.map((l) => l.entityId)).toEqual([holder.id]);
+  });
+
+  it("DOOR RACE: two products that both retired one code are reactivated at once, each naming the other as holder -> exactly one ends active, none lost", async () => {
+    const tenantId = await seedTenant("door-race");
+    const a = await mk(tenantId, "Race A", { sku: "DRR-1" });
+    await inTenant(tenantId, () => service.update(a.id, { isActive: false } as any));
+    const b = await mk(tenantId, "Race B", { sku: "DRR-1" });
+    await inTenant(tenantId, () => service.update(b.id, { isActive: false } as any));
+    const c = await mk(tenantId, "Race C", { sku: "DRR-1" }); // the active holder both contend with
+
+    const results = await Promise.allSettled([
+      inTenant(tenantId, () =>
+        service.update(a.id, { isActive: true, deactivateHolderIds: [c.id] } as any),
+      ),
+      inTenant(tenantId, () =>
+        service.update(b.id, { isActive: true, deactivateHolderIds: [c.id] } as any),
+      ),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const bad = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
+    expect(["HOLDERS_CHANGED", "CODE_TAKEN"]).toContain(bad.reason.getResponse().code);
+    const all = await Promise.all([fresh(a.id), fresh(b.id), fresh(c.id)]);
+    expect(all.filter((p) => p.sku === "DRR-1")).toHaveLength(1); // exactly one holder of the code
+    expect(all.filter((p) => p.isActive && p.sku === "DRR-1")).toHaveLength(1);
+    // The loser keeps its retired value (no orphan).
+    const loser = all.find((p) => p.sku == null && p.id !== c.id)!;
+    expect(loser.retiredSku === "DRR-1" || loser.isActive === false).toBe(true);
+  });
 });
