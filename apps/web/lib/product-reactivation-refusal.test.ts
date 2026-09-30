@@ -71,6 +71,17 @@ describe("getReactivationRefusal — maps the 409 by code+field, never by the se
     });
   });
 
+  it('an empty-string productId is never a holder: no resolve button can carry [""]', () => {
+    const r = getReactivationRefusal(
+      err({ ...holder({ productId: "" }), holders: [holder({ productId: "" })] }),
+    );
+    expect(r).toBeNull(); // a CODE_TAKEN with nothing to name
+    const name = getReactivationRefusal(
+      err({ code: "NAME_TAKEN", field: "name", value: "Cola", productId: "", productName: "Cola" }),
+    );
+    expect(name).toMatchObject({ kind: "HOLDERS", holderIds: [], canResolve: false });
+  });
+
   it("a code clash with no productId stays null (nothing to name, generic toast)", () => {
     expect(
       getReactivationRefusal(err({ code: "CODE_TAKEN", field: "sku", value: "x" })),

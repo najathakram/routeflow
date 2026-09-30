@@ -48,7 +48,12 @@ function holderLine(h: ProductReactivationHolder): string {
 
 const isHolder = (h: unknown): h is ProductReactivationHolder => {
   const x = h as Partial<ProductReactivationHolder> | null;
-  return !!x && typeof x.productId === "string" && typeof x.productName === "string";
+  return (
+    !!x &&
+    typeof x.productId === "string" &&
+    x.productId.length > 0 &&
+    typeof x.productName === "string"
+  );
 };
 
 /** The refusal to show in the dialog, or null when `err` is anything else (the caller toasts it). */
