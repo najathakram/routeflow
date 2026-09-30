@@ -1,5 +1,9 @@
-import { DELIVERY_FIX_LINK_VALUES, DELIVERY_REASON_CODE_VALUES } from "@routeflow/types";
-import { deliveryFixTarget, describeDeliveryReason } from "./reason-copy";
+import {
+  DELIVERY_FIX_LINK_VALUES,
+  DELIVERY_REASON_CODE_VALUES,
+  deliveryFixTarget,
+  describeDeliveryReason,
+} from "./reason-copy";
 
 describe("reason-copy (#1965)", () => {
   it("T15 every closed reason code has a sentence that does not echo the code", () => {

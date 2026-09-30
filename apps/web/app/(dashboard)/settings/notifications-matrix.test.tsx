@@ -9,7 +9,10 @@ import { NotificationsSettingsTab } from "./_components/NotificationsSettingsTab
  */
 
 let mockRole = "TENANT_ADMIN";
-jest.mock("@/lib/auth-context", () => ({ useAuth: () => ({ user: { role: mockRole } }) }));
+jest.mock("@/lib/auth-context", () => ({
+  ...jest.requireActual("@/lib/auth-context"),
+  useAuth: () => ({ user: { role: mockRole } }),
+}));
 
 jest.mock("@/lib/api/notifications", () => ({
   useNotificationsStatus: () => ({ data: { configured: false, deviceCount: 0 } }),

@@ -1,19 +1,20 @@
 "use client";
 
 import * as React from "react";
-import { Bell, Loader2, Lock, Pencil } from "lucide-react";
+import { Bell } from "lucide-react";
 import { Badge, Button, Card, Input, Modal, Textarea, cn, useToast } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
 import { useNotificationsStatus, useSendTestNotification } from "@/lib/api/notifications";
+import { MiniSwitch } from "./MiniSwitch";
+import { NotificationRulesCard } from "./NotificationRulesCard";
+import { DeliveryHealthStrip } from "./DeliveryHealthStrip";
 import {
   useMessagingConfig,
-  useToggleRule,
   useUpdateTemplate,
   usePreviewTemplate,
   useUpdateMessagingSettings,
   extractTemplateVars,
   type MessageChannel,
-  type MatrixCell,
   type MatrixEvent,
   type MessagingSettings,
   type WaApprovalStatus,
@@ -25,20 +26,12 @@ import {
  * genuine push-status card (device registration + send-test) is kept as-is.
  */
 
-const CHANNELS: MessageChannel[] = ["INTERNAL", "WHATSAPP", "SMS", "EMAIL", "PORTAL"];
-
 const CHANNEL_LABELS: Record<MessageChannel, string> = {
   INTERNAL: "Internal",
   WHATSAPP: "WhatsApp",
   SMS: "SMS",
   EMAIL: "Email",
   PORTAL: "Portal",
-};
-
-const UNAVAILABLE_COPY: Record<NonNullable<MatrixCell["unavailable"]>, string> = {
-  NO_TRANSPORT: "Not available: no transport configured",
-  NO_CONSENT_WRITER: "Not available: needs customer consent",
-  NO_TRIGGER: "Not available: no trigger yet",
 };
 
 const WA_STATUS_BADGE: Record<
@@ -72,50 +65,12 @@ const SAMPLE_VARS: Record<string, string> = {
   amount: "$85.00",
 };
 
-// ─── Mini switch (MerchFlagToggle's role="switch" idiom, compact) ─────────────
-
-function MiniSwitch({
-  checked,
-  disabled,
-  onToggle,
-  ariaLabel,
-}: {
-  checked: boolean;
-  disabled?: boolean;
-  onToggle: () => void;
-  ariaLabel: string;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={ariaLabel}
-      disabled={disabled}
-      onClick={onToggle}
-      className={cn(
-        "relative inline-flex h-5 w-9 flex-none items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50",
-        checked ? "bg-brand-500" : "bg-navy/20",
-      )}
-    >
-      <span
-        className={cn(
-          "inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform",
-          checked ? "translate-x-4" : "translate-x-0.5",
-        )}
-      />
-    </button>
-  );
-}
-
 // ─── Main tab ───────────────────────────────────────────────────────────────
 
 export function NotificationsSettingsTab() {
   const { user } = useAuth();
   const isAdmin = user?.role === "TENANT_ADMIN";
-  const { toast } = useToast();
-  const { data, isLoading } = useMessagingConfig();
-  const toggle = useToggleRule();
+  const { data, isLoading, isError, refetch } = useMessagingConfig();
 
   const [openEventKey, setOpenEventKey] = React.useState<string | null>(null);
   const [selectedChannel, setSelectedChannel] = React.useState<MessageChannel | null>(null);
@@ -132,136 +87,36 @@ export function NotificationsSettingsTab() {
     setSelectedChannel(null);
   };
 
-  const handleToggle = (cell: MatrixCell) => {
-    if (!cell.ruleId) return;
-    toggle.mutate(
-      { ruleId: cell.ruleId, enabled: !cell.enabled },
-      {
-        onError: (err: any) =>
-          toast({
-            title: "Failed to update",
-            description: err?.response?.data?.message ?? "Could not update the rule",
-            variant: "error",
-          }),
-      },
+  if (isError) {
+    return (
+      <Card title="Notification rules">
+        <div className="flex flex-wrap items-center gap-3">
+          <p className="text-sm text-navy">Couldn&apos;t load notification settings.</p>
+          <Button variant="secondary" size="sm" onClick={() => refetch()}>
+            Retry
+          </Button>
+        </div>
+      </Card>
     );
-  };
+  }
 
   if (isLoading || !data) {
     return (
-      <div className="flex items-center justify-center py-10">
-        <Loader2 className="h-6 w-6 animate-spin text-navy/50" />
-      </div>
+      <Card title="Notification rules">
+        <div className="space-y-3" aria-busy="true" aria-label="Loading notification settings">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="h-8 animate-pulse rounded bg-navy/10" />
+          ))}
+        </div>
+      </Card>
     );
   }
 
   return (
     <div className="space-y-5">
-      <Card title="Notification rules">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-          <p className="text-xs text-navy/70">
-            Toggle which channels fire for each event. Locked cells are blocked by policy and
-            can&apos;t be enabled.
-          </p>
-          {data.msgsMeter && (
-            <p className="whitespace-nowrap text-xs font-medium text-navy/70">
-              {data.msgsMeter.used}
-              {data.msgsMeter.included != null ? ` / ${data.msgsMeter.included}` : ""} messages used
-              this period
-            </p>
-          )}
-        </div>
-        {!isAdmin && (
-          <p className="mb-3 text-xs text-navy/50">
-            Only Tenant Admins can change notification rules and templates.
-          </p>
-        )}
+      <DeliveryHealthStrip />
 
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[640px] text-sm">
-            <thead>
-              <tr className="border-b border-surface-border text-left text-xs font-semibold uppercase tracking-wide text-navy/60">
-                <th className="py-2 pr-2">Event</th>
-                {CHANNELS.map((channel) => (
-                  <th key={channel} className="px-2 py-2 text-center">
-                    {CHANNEL_LABELS[channel]}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {data.events.map((event) => (
-                <tr key={event.eventKey} className="border-b border-surface-border last:border-0">
-                  <td className="py-2 pr-2">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-navy">{event.label}</span>
-                      <button
-                        type="button"
-                        onClick={() => openEditor(event)}
-                        aria-label={`Edit ${event.label} template`}
-                        className="rounded p-1 text-navy/50 hover:bg-surface-raised hover:text-navy"
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </td>
-                  {CHANNELS.map((channel) => {
-                    const cell = event.channels.find((c) => c.channel === channel);
-                    if (!cell) {
-                      return (
-                        <td key={channel} className="px-2 py-2 text-center text-navy/30">
-                          —
-                        </td>
-                      );
-                    }
-                    if (cell.locked) {
-                      return (
-                        <td key={channel} className="px-2 py-2 text-center">
-                          <span
-                            title="Invoices can't be sent over WhatsApp or SMS"
-                            aria-label="Locked: invoices can't be sent over WhatsApp or SMS"
-                            className="inline-flex text-navy/40"
-                          >
-                            <Lock className="h-4 w-4" aria-hidden="true" />
-                          </span>
-                        </td>
-                      );
-                    }
-                    if (cell.unavailable) {
-                      return (
-                        <td key={channel} className="px-2 py-2 text-center align-top">
-                          <span className="text-[11px] leading-tight text-navy/50">
-                            {UNAVAILABLE_COPY[cell.unavailable]}
-                          </span>
-                        </td>
-                      );
-                    }
-                    return (
-                      <td key={channel} className="px-2 py-2 text-center align-top">
-                        <div className="flex flex-col items-center gap-1">
-                          <MiniSwitch
-                            checked={cell.enabled}
-                            disabled={!isAdmin || toggle.isPending}
-                            ariaLabel={`${cell.enabled ? "Disable" : "Enable"} ${event.label} via ${CHANNEL_LABELS[channel]}`}
-                            onToggle={() => handleToggle(cell)}
-                          />
-                          {channel === "WHATSAPP" && cell.template && (
-                            <Badge
-                              variant={WA_STATUS_BADGE[cell.template.waApprovalStatus].variant}
-                              label={WA_STATUS_BADGE[cell.template.waApprovalStatus].label}
-                              className="whitespace-nowrap"
-                            />
-                          )}
-                        </div>
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+      <NotificationRulesCard data={data} isAdmin={isAdmin} onEdit={openEditor} />
 
       <QuietHoursCard settings={data.settings} isAdmin={isAdmin} />
 
@@ -368,12 +223,7 @@ function TemplateEditorModal({
           toast({ title: "Template saved", variant: "success" });
           onClose();
         },
-        onError: (err: any) =>
-          toast({
-            title: "Failed to save",
-            description: err?.response?.data?.message ?? "Could not save the template",
-            variant: "error",
-          }),
+        onError: () => toast({ title: "Couldn't save, please try again", variant: "error" }),
       },
     );
   };
@@ -518,12 +368,7 @@ function QuietHoursCard({ settings, isAdmin }: { settings: MessagingSettings; is
       { quietHoursEnabled: enabled, quietHoursStart: start, quietHoursEnd: end },
       {
         onSuccess: () => toast({ title: "Quiet hours updated", variant: "success" }),
-        onError: (err: any) =>
-          toast({
-            title: "Failed to update quiet hours",
-            description: err?.response?.data?.message,
-            variant: "error",
-          }),
+        onError: () => toast({ title: "Couldn't save, please try again", variant: "error" }),
       },
     );
   };
@@ -592,7 +437,7 @@ function PushStatusCard() {
           description: `Sent to ${result.sent} of ${result.deviceCount} device(s).`,
           variant: "success",
         }),
-      onError: (err: any) => toast({ title: "Failed", description: err.message, variant: "error" }),
+      onError: () => toast({ title: "Couldn't send the test notification", variant: "error" }),
     });
   };
 
