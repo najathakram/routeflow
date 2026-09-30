@@ -379,8 +379,9 @@ export default function EditInvoicePage() {
     // The toast provider lives in the dashboard layout, so it survives the navigation and the order
     // page shows the reason. Fixed copy only — nothing from the URL is ever echoed.
     toast({
-      title: `This invoice mirrors order #${pendingMirrorOrderNo}`,
+      title: `This invoice mirrors order ${pendingMirrorOrderNo}`,
       description: "It can't be edited until the order is delivered — edit the order instead.",
+      duration: 8000,
     });
     router.replace(`/orders/${pendingMirrorOrderId}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- toast identity is unstable; fire once per mirror

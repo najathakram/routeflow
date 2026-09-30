@@ -77,7 +77,7 @@ describe("invoice edit page — pending-mirror draft (#2791)", () => {
     expect(screen.getByText(/mirrors order #1042/i)).toBeInTheDocument();
     expect(screen.getByText(/edit the order instead/i)).toBeInTheDocument();
     expect(toastMock).toHaveBeenCalledWith(
-      expect.objectContaining({ title: "This invoice mirrors order #1042" }),
+      expect.objectContaining({ title: "This invoice mirrors order 1042", duration: 8000 }),
     );
     expect(replace.mock.invocationCallOrder[0]).toBeGreaterThan(
       toastMock.mock.invocationCallOrder[0],

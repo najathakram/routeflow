@@ -88,7 +88,7 @@ test.describe("Invoice edit route — pending-mirror draft (#2791)", () => {
         timeout: 15_000,
       });
       // ... and the reason is on screen (the toast survives the navigation).
-      await expect(page.getByText(/This invoice mirrors order #/i).first()).toBeVisible();
+      await expect(page.getByText(/This invoice mirrors order ORD-/i).first()).toBeVisible();
       await expect(page.getByText(/edit the order instead/i).first()).toBeVisible();
       await expect(page.getByRole("button", { name: /save changes/i })).toHaveCount(0);
       if (proofDir && vp) await page.screenshot({ path: `${proofDir}/order-page-${vp[1]}.png` });
