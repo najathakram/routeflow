@@ -1,9 +1,13 @@
 /**
- * Bill-state locks — update(), delete(), recordPayment() and voidBill() against a concurrent
- * writer of the SAME bill, on real concurrency (separate DB connections + a barrier that lets both
- * callers pass their pre-transaction reads before either opens a transaction). Follow-ups to the
- * B285 bill-lock work: update()/delete() used to check DRAFT outside their tx, recordPayment read
- * the payments unlocked, and the receipt fingerprint ignored totalPaid.
+ * Bill-state locks — every writer of a vendor bill's money or receipt state against a concurrent
+ * writer of the SAME bill, on real concurrency: separate DB connections, and the FIRST writer is
+ * parked INSIDE its transaction (after all its work, holding its locks, before commit) while the
+ * second writer is started. A writer that takes no lock proceeds straight through and commits on
+ * top of the parked one, so each case is red on code without the lock and green with it — by
+ * construction, not by timing luck.
+ *
+ * Writers covered: update, delete, bulkDelete, receive, void, recordPayment,
+ * recordSupplierPayment, bookkeeping bulk mark-paid (payBillFully), supplier statement apply.
  *
  * Collected only by `jest.db.config.js` (`.db.spec.ts$`). Throwaway `qa-b285-*` tenants.
  */
@@ -11,6 +15,8 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { randomUUID } from "crypto";
 import { InventoryService } from "../inventory/inventory.service";
 import { VendorBillsService } from "./vendor-bills.service";
+import { BookkeepingService } from "../bookkeeping/bookkeeping.service";
+import { StatementApplyService } from "../supplier-statements/statement-apply.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
@@ -28,47 +34,23 @@ const RUN_SUFFIX = randomUUID().slice(0, 8);
 let tenantSeq = 0;
 const freshTenantSlug = (label: string): string => {
   tenantSeq += 1;
-  return assertTestTenant(`qa-b285-${RUN_SUFFIX}-${tenantSeq}-${label}`, "b285-po-receive-race");
+  return assertTestTenant(`qa-b285-${RUN_SUFFIX}-${tenantSeq}-${label}`, "bill-state-locks");
 };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-/** Holds callers until `parties` have arrived, or `timeoutMs` passes (a caller blocked behind a
- *  lock never arrives — the timeout is what lets the lock holder carry on). */
-class Barrier {
-  private arrived = 0;
-  private waiters: Array<() => void> = [];
-  private markParked!: () => void;
-  /** Resolves when the first caller has arrived, i.e. is parked inside its transaction. */
-  readonly parked = new Promise<void>((resolve) => {
-    this.markParked = resolve;
-  });
-  constructor(
-    private readonly parties: number,
-    private readonly timeoutMs: number,
-  ) {}
-  async arrive(): Promise<void> {
-    this.arrived += 1;
-    this.markParked();
-    if (this.arrived >= this.parties) {
-      this.waiters.forEach((w) => w());
-      return;
-    }
-    await new Promise<void>((resolve) => {
-      this.waiters.push(resolve);
-      setTimeout(resolve, this.timeoutMs);
-    });
-  }
-}
+/** How long the parked writer holds its locks (well under Prisma's 5 s interactive-tx timeout). */
+const HOLD_MS = 1500;
 
 interface Services {
   prisma: PrismaService;
   tenantCtx: TenantContextService;
   inventory: InventoryService;
   bills: VendorBillsService;
+  bookkeeping: BookkeepingService;
+  statements: StatementApplyService;
 }
 
-describeDb("Bill-state locks — real Postgres, separate connections", () => {
+describeDb("Bill-state locks — real Postgres, parked first writer", () => {
   const services: Services[] = [];
   const createdTenantIds: string[] = [];
 
@@ -108,24 +90,34 @@ describeDb("Bill-state locks — real Postgres, separate connections", () => {
         },
       ],
     }).compile();
-    const s = {
+    const bills = module.get(VendorBillsService);
+    const s: Services = {
       prisma,
       tenantCtx,
       inventory: module.get(InventoryService),
-      bills: module.get(VendorBillsService),
+      bills,
+      // payBillFully only needs prisma; the rest of the constructor is unused on that path
+      bookkeeping: new BookkeepingService(
+        prisma,
+        {} as never,
+        {} as never,
+        bills,
+        {} as never,
+        {} as never,
+        {} as never,
+      ),
+      statements: new StatementApplyService(prisma),
     };
     services.push(s);
     return s;
   }
 
-  let A: Services; // the receive + all seeding
-  let B: Services; // the competing writer, on its own connection pool
-  let C: Services; // a second receiver for case (b)
+  let A: Services; // seeding + the PARKED first writer
+  let C: Services; // the second writer, on its own connection
 
   beforeAll(async () => {
     requireLocalDatabaseUrl();
     A = await build();
-    B = await build();
     C = await build();
   });
 
@@ -134,22 +126,12 @@ describeDb("Bill-state locks — real Postgres, separate connections", () => {
     for (const tenantId of createdTenantIds) {
       // eslint-disable-next-line no-await-in-loop
       await (async () => {
-        const pos = await prisma.purchaseOrder.findMany({
-          where: { tenantId },
-          select: { id: true },
-        });
-        await prisma.purchaseOrderItem.deleteMany({
-          where: { poId: { in: pos.map((p) => p.id) } },
-        });
-        await prisma.purchaseOrder.deleteMany({ where: { tenantId } });
         const vb = await prisma.vendorBill.findMany({ where: { tenantId }, select: { id: true } });
-        await prisma.billPayment.deleteMany({
-          where: { vendorBillId: { in: vb.map((b) => b.id) } },
-        });
-        await prisma.vendorBillItem.deleteMany({
-          where: { vendorBillId: { in: vb.map((b) => b.id) } },
-        });
+        const billIds = vb.map((b) => b.id);
+        await prisma.billPayment.deleteMany({ where: { vendorBillId: { in: billIds } } });
+        await prisma.vendorBillItem.deleteMany({ where: { vendorBillId: { in: billIds } } });
         await prisma.vendorBill.deleteMany({ where: { tenantId } });
+        await prisma.supplierStatementScan.deleteMany({ where: { tenantId } });
         await prisma.stockLot.deleteMany({ where: { tenantId } });
         await prisma.stockMovement.deleteMany({ where: { tenantId } });
         await prisma.product.deleteMany({ where: { tenantId } });
@@ -159,11 +141,13 @@ describeDb("Bill-state locks — real Postgres, separate connections", () => {
       })().catch((e: unknown) => {
         // Never mask a test's own result, but never hide a leaked tenant either.
         // eslint-disable-next-line no-console
-        console.error(`B285 spec cleanup failed for tenant ${tenantId}:`, e);
+        console.error(`bill-state-locks cleanup failed for tenant ${tenantId}:`, e);
       });
     }
     await Promise.all(services.map((s) => s.prisma.$disconnect()));
   });
+
+  afterEach(() => jest.restoreAllMocks());
 
   interface World {
     tenantId: string;
@@ -172,9 +156,9 @@ describeDb("Bill-state locks — real Postgres, separate connections", () => {
     productId: string;
   }
 
-  async function seedWorld(label: string, stock: number, avg: number): Promise<World> {
+  async function seedWorld(label: string): Promise<World> {
     const slug = freshTenantSlug(label);
-    const tenant = await A.prisma.tenant.create({ data: { slug, name: `B285 ${slug}` } });
+    const tenant = await A.prisma.tenant.create({ data: { slug, name: `Bill locks ${slug}` } });
     createdTenantIds.push(tenant.id);
     const user = await A.prisma.user.create({
       data: {
@@ -192,8 +176,8 @@ describeDb("Bill-state locks — real Postgres, separate connections", () => {
         name: `Widget ${slug}`,
         unit: "ea",
         pricePerUnit: 10,
-        currentStock: stock,
-        averageCost: avg,
+        currentStock: 50,
+        averageCost: 2,
         costingMethod: "AVCO",
         tenantId: tenant.id,
       },
@@ -206,168 +190,272 @@ describeDb("Bill-state locks — real Postgres, separate connections", () => {
   const productOf = (w: World) =>
     A.prisma.product.findUniqueOrThrow({ where: { id: w.productId } });
 
-  async function sentPo(w: World, qty: number, cost: number) {
-    const po = await inTenant(A, w, () =>
-      A.inventory.createPurchaseOrder(
-        { supplierId: w.supplierId, items: [{ productId: w.productId, qty, unitCost: cost }] },
-        w.userId,
-      ),
-    );
-    await inTenant(A, w, () => A.inventory.sendPurchaseOrder(po.id));
-    return po;
-  }
-
-  /** Make `svc`'s receive pause at the barrier AFTER it has read the product and BEFORE it
-   *  writes — the window in which an unlocked writer can slip in. */
-  function holdReceiveAt(svc: Services, barrier: Barrier) {
-    const inv = svc.inventory as unknown as {
-      postPoReceipt: (...a: unknown[]) => Promise<unknown>;
-    };
-    const original = inv.postPoReceipt.bind(inv);
-    jest.spyOn(inv, "postPoReceipt").mockImplementation(async (...args: unknown[]) => {
-      await barrier.arrive();
-      return original(...args);
-    });
-  }
-
-  /** True once some backend is waiting on a lock (polled, never assumed). */
-  async function sawLockWait(withinMs: number): Promise<boolean> {
-    const deadline = Date.now() + withinMs;
-    while (Date.now() < deadline) {
-      // eslint-disable-next-line no-await-in-loop
-      const rows = await A.prisma.$queryRaw<Array<{ n: bigint }>>`
-        SELECT count(*)::bigint AS n FROM pg_stat_activity
-         WHERE datname = current_database() AND wait_event_type = 'Lock'`;
-      if (Number(rows[0]?.n ?? 0) > 0) return true;
-      // eslint-disable-next-line no-await-in-loop
-      await sleep(50);
-    }
-    return false;
-  }
-
-  afterEach(() => jest.restoreAllMocks());
-
-  /** Both callers pass their pre-transaction reads before either opens its transaction. */
-  function holdBothBeforeTx(barrier: Barrier) {
-    for (const svc of [A, C]) {
-      const prismaSvc = svc.prisma as unknown as {
-        tenantTransaction: (...a: unknown[]) => Promise<unknown>;
-      };
-      const original = prismaSvc.tenantTransaction.bind(prismaSvc);
-      jest.spyOn(prismaSvc, "tenantTransaction").mockImplementation(async (...args: unknown[]) => {
-        await barrier.arrive();
-        return original(...args);
-      });
-    }
-  }
-
-  async function draftBill(w: World, qty = 10, unitCost = 6) {
+  /** A DRAFT unlinked bill: 10 x 6 = 60 owed. */
+  async function draftBill(w: World) {
     return inTenant(A, w, () =>
       A.bills.create({
         supplierId: w.supplierId,
         billDate: "2026-09-01",
-        items: [{ productId: w.productId, description: "Widget", qty, unitCost }],
+        items: [{ productId: w.productId, description: "Widget", qty: 10, unitCost: 6 }],
       } as never),
     ) as Promise<any>;
   }
 
-  const readable = (r: PromiseRejectedResult) => r.reason?.getResponse?.() ?? {};
+  /**
+   * Park the NEXT transaction `svc` opens: its callback runs to completion (all writes done, all
+   * locks held), then it waits HOLD_MS before committing. Resolves once it is parked.
+   */
+  function parkNextTx(svc: Services): Promise<void> {
+    let markParked!: () => void;
+    const parked = new Promise<void>((resolve) => {
+      markParked = resolve;
+    });
+    const p = svc.prisma as unknown as {
+      tenantTransaction: (fn: (tx: unknown) => Promise<unknown>, ...rest: unknown[]) => unknown;
+    };
+    const original = p.tenantTransaction.bind(p);
+    jest.spyOn(p, "tenantTransaction").mockImplementation(((
+      fn: (tx: unknown) => Promise<unknown>,
+      ...rest: unknown[]
+    ) =>
+      original(
+        async (tx: unknown) => {
+          const out = await fn(tx);
+          markParked();
+          await sleep(HOLD_MS);
+          return out;
+        },
+        ...rest,
+      )) as never);
+    return parked;
+  }
 
-  it("(h) update() racing a receive of the same DRAFT bill: one wins, the other gets BILL_STATE_CHANGED", async () => {
-    const w = await seedWorld("h", 50, 2);
+  /** Run `first` parked inside its tx, start `second` once it is parked, return both outcomes. */
+  async function race<T1, T2>(
+    first: () => Promise<T1>,
+    second: () => Promise<T2>,
+  ): Promise<[PromiseSettledResult<T1>, PromiseSettledResult<T2>]> {
+    const parked = parkNextTx(A);
+    const firstRun = first();
+    await parked;
+    const secondRun = second();
+    return [
+      (await Promise.allSettled([firstRun]))[0],
+      (await Promise.allSettled([secondRun]))[0],
+    ] as [PromiseSettledResult<T1>, PromiseSettledResult<T2>];
+  }
+
+  const codeOf = (r: PromiseSettledResult<unknown>) =>
+    r.status === "rejected" ? (r.reason?.getResponse?.()?.code ?? r.reason?.message) : undefined;
+  const pay = (svc: Services, w: World, id: string, amount: number) =>
+    inTenant(svc, w, () => svc.bills.recordPayment(id, { amount, method: "CASH" } as never));
+
+  it("(h) update() vs a parked receive: the edit is refused, the received bill is untouched", async () => {
+    const w = await seedWorld("h");
     const bill = await draftBill(w);
-    holdBothBeforeTx(new Barrier(2, 1500));
-    const settled = await Promise.allSettled([
-      inTenant(A, w, () => A.bills.receive(bill.id, undefined, w.userId)),
-      inTenant(C, w, () =>
-        C.bills.update(bill.id, {
-          items: [{ productId: w.productId, description: "Widget", qty: 4, unitCost: 6 }],
-        }),
-      ),
-    ]);
-    const p = await productOf(w);
-    const rejected = settled.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+    const [first, second] = await race(
+      () => inTenant(A, w, () => A.bills.receive(bill.id, undefined, w.userId)),
+      () =>
+        inTenant(C, w, () =>
+          C.bills.update(bill.id, {
+            items: [{ productId: w.productId, description: "Widget", qty: 4, unitCost: 6 }],
+          }),
+        ),
+    );
     const finalBill = await A.prisma.vendorBill.findUniqueOrThrow({
       where: { id: bill.id },
       include: { items: true },
     });
     console.log(
-      `B285(h) observed: rejected=${rejected.length} code=${rejected.map((r) => readable(r).code)} ` +
-        `stock=${p.currentStock} status=${finalBill.status} qty=${finalBill.items.map((i) => i.qty)}`,
+      `B285(h) observed: first=${first.status} second=${second.status}/${codeOf(second)} ` +
+        `stock=${(await productOf(w)).currentStock} status=${finalBill.status} ` +
+        `qty=${finalBill.items.map((i) => i.qty)}`,
     );
-    expect(rejected).toHaveLength(1);
-    expect(readable(rejected[0]).code).toBe("BILL_STATE_CHANGED");
-    // receive won: stock +10 and the lines are untouched (update refused); update won: nothing was
-    // received and the edit's 4-piece line is on the bill. (update() replaces lines with a
-    // tenant-scoped deleteMany that cannot see null-tenant nested items, so the old line can stay
-    // beside the new one — a separate filed bug; this case asserts only what the lock decides.)
-    const stock = Number(p.currentStock);
-    const qtys = finalBill.items.map((i) => Number(i.qty));
-    expect(
-      (stock === 60 && qtys.every((q) => q === 10) && finalBill.status === "RECEIVED") ||
-        (stock === 50 && qtys.includes(4) && finalBill.status === "DRAFT"),
-    ).toBe(true);
+    expect(first.status).toBe("fulfilled");
+    expect(codeOf(second)).toBe("BILL_STATE_CHANGED");
+    expect(Number((await productOf(w)).currentStock)).toBe(60);
+    expect(finalBill.status).toBe("RECEIVED");
+    expect(finalBill.items.map((i) => Number(i.qty))).toEqual([10]);
   });
 
-  it("(i) delete() racing a receive of the same DRAFT bill: never stock with no bill", async () => {
-    const w = await seedWorld("i", 50, 2);
+  it("(i) delete() vs a parked receive: the delete is refused, no stock without a bill", async () => {
+    const w = await seedWorld("i");
     const bill = await draftBill(w);
-    holdBothBeforeTx(new Barrier(2, 1500));
-    const settled = await Promise.allSettled([
-      inTenant(A, w, () => A.bills.receive(bill.id, undefined, w.userId)),
-      inTenant(C, w, () => C.bills.delete(bill.id)),
-    ]);
-    const p = await productOf(w);
-    const rejected = settled.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+    const [first, second] = await race(
+      () => inTenant(A, w, () => A.bills.receive(bill.id, undefined, w.userId)),
+      () => inTenant(C, w, () => C.bills.delete(bill.id)),
+    );
     const still = await A.prisma.vendorBill.findUnique({ where: { id: bill.id } });
     console.log(
-      `B285(i) observed: rejected=${rejected.length} code=${rejected.map((r) => readable(r).code)} ` +
-        `stock=${p.currentStock} billExists=${!!still}`,
+      `B285(i) observed: first=${first.status} second=${second.status}/${codeOf(second)} ` +
+        `stock=${(await productOf(w)).currentStock} billExists=${!!still}`,
     );
-    expect(rejected).toHaveLength(1);
-    expect(readable(rejected[0]).code).toBe("BILL_STATE_CHANGED");
-    const stock = Number(p.currentStock);
-    expect((stock === 60 && !!still) || (stock === 50 && !still)).toBe(true);
+    expect(first.status).toBe("fulfilled");
+    expect(codeOf(second)).toBe("BILL_STATE_CHANGED");
+    expect(Number((await productOf(w)).currentStock)).toBe(60);
+    expect(still).not.toBeNull();
   });
 
-  it("(j) two payments racing on one bill: the second is refused, totalPaid = the payments", async () => {
-    const w = await seedWorld("j", 50, 2);
-    const bill = await draftBill(w); // 10 x 6 = 60 owed
-    holdBothBeforeTx(new Barrier(2, 1500));
-    const pay = (svc: Services) =>
-      inTenant(svc, w, () =>
-        svc.bills.recordPayment(bill.id, { amount: 40, method: "CASH" } as never),
-      );
-    const settled = await Promise.allSettled([pay(A), pay(C)]);
+  it("(l) bulkDelete() vs a parked receive: the received bill is skipped, not deleted", async () => {
+    const w = await seedWorld("l");
+    const bill = await draftBill(w);
+    const [first, second] = await race(
+      () => inTenant(A, w, () => A.bills.receive(bill.id, undefined, w.userId)),
+      () => inTenant(C, w, () => C.bills.bulkDelete([bill.id])),
+    );
+    const still = await A.prisma.vendorBill.findUnique({ where: { id: bill.id } });
+    const result = second.status === "fulfilled" ? second.value : null;
+    console.log(
+      `B285(l) observed: first=${first.status} deleted=${result?.deleted} skipped=${result?.skipped.length} ` +
+        `stock=${(await productOf(w)).currentStock} billExists=${!!still}`,
+    );
+    expect(first.status).toBe("fulfilled");
+    expect(result?.deleted).toBe(0);
+    expect(result?.skipped).toHaveLength(1);
+    expect(Number((await productOf(w)).currentStock)).toBe(60);
+    expect(still).not.toBeNull();
+  });
+
+  it("(j) two payments: the second waits, sees the first, and is refused", async () => {
+    const w = await seedWorld("j");
+    const bill = await draftBill(w); // 60 owed
+    const [first, second] = await race(
+      () => pay(A, w, bill.id, 40),
+      () => pay(C, w, bill.id, 40),
+    );
     const rows = await A.prisma.billPayment.findMany({ where: { vendorBillId: bill.id } });
     const finalBill = await A.prisma.vendorBill.findUniqueOrThrow({ where: { id: bill.id } });
     console.log(
-      `B285(j) observed: fulfilled=${settled.filter((r) => r.status === "fulfilled").length} ` +
-        `payments=${rows.length} totalPaid=${finalBill.totalPaid}`,
+      `B285(j) observed: first=${first.status} second=${second.status} payments=${rows.length} ` +
+        `totalPaid=${finalBill.totalPaid}`,
     );
-    expect(settled.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(first.status).toBe("fulfilled");
+    expect(second.status).toBe("rejected");
     expect(rows).toHaveLength(1);
     expect(Number(finalBill.totalPaid)).toBe(40);
   });
 
-  it("(k) voidBill racing a payment: one wins; a void never overwrites the payment's totalPaid, a VOID bill takes no payment", async () => {
-    const w = await seedWorld("k", 50, 2);
+  it("(k) voidBill() vs a parked payment: the void is refused, totalPaid is not overwritten", async () => {
+    const w = await seedWorld("k");
     const bill = await draftBill(w);
-    holdBothBeforeTx(new Barrier(2, 1500));
-    const settled = await Promise.allSettled([
-      inTenant(A, w, () => A.bills.recordPayment(bill.id, { amount: 20, method: "CASH" } as never)),
-      inTenant(C, w, () => C.bills.voidBill(bill.id, w.userId)),
-    ]);
+    const [first, second] = await race(
+      () => pay(A, w, bill.id, 20),
+      () => inTenant(C, w, () => C.bills.voidBill(bill.id, w.userId)),
+    );
     const rows = await A.prisma.billPayment.findMany({ where: { vendorBillId: bill.id } });
     const finalBill = await A.prisma.vendorBill.findUniqueOrThrow({ where: { id: bill.id } });
-    const rejected = settled.filter((r): r is PromiseRejectedResult => r.status === "rejected");
     console.log(
-      `B285(k) observed: rejected=${rejected.length} code=${rejected.map((r) => readable(r).code)} ` +
+      `B285(k) observed: first=${first.status} second=${second.status}/${codeOf(second)} ` +
         `status=${finalBill.status} payments=${rows.length} totalPaid=${finalBill.totalPaid}`,
     );
-    expect(rejected).toHaveLength(1);
-    expect(["BILL_STATE_CHANGED", "BILL_VOID"]).toContain(readable(rejected[0]).code);
-    // the bill's running total always equals the payment rows that exist
-    expect(Number(finalBill.totalPaid)).toBe(rows.reduce((t, r) => t + Number(r.amount), 0));
+    expect(first.status).toBe("fulfilled");
+    expect(codeOf(second)).toBe("BILL_STATE_CHANGED");
+    expect(Number(finalBill.totalPaid)).toBe(20);
+    expect(rows).toHaveLength(1);
+    expect(finalBill.status).not.toBe("VOID");
+  });
+
+  it("(k2) a payment vs a parked void: the payment is refused with BILL_VOID", async () => {
+    const w = await seedWorld("k2");
+    const bill = await draftBill(w);
+    const [first, second] = await race(
+      () => inTenant(A, w, () => A.bills.voidBill(bill.id, w.userId)),
+      () => pay(C, w, bill.id, 20),
+    );
+    const rows = await A.prisma.billPayment.findMany({ where: { vendorBillId: bill.id } });
+    const finalBill = await A.prisma.vendorBill.findUniqueOrThrow({ where: { id: bill.id } });
+    console.log(
+      `B285(k2) observed: first=${first.status} second=${second.status}/${codeOf(second)} ` +
+        `status=${finalBill.status} payments=${rows.length}`,
+    );
+    expect(first.status).toBe("fulfilled");
+    expect(codeOf(second)).toBe("BILL_VOID");
+    expect(rows).toHaveLength(0);
+    expect(finalBill.status).toBe("VOID");
+  });
+
+  it("(m) recordSupplierPayment vs a parked payment: it pays only what is really outstanding", async () => {
+    const w = await seedWorld("m");
+    const bill = await draftBill(w);
+    const [first, second] = await race(
+      () => pay(A, w, bill.id, 40),
+      () =>
+        inTenant(C, w, () =>
+          C.bills.recordSupplierPayment({
+            supplierId: w.supplierId,
+            totalAmount: 40,
+            method: "CASH",
+            allocations: [{ vendorBillId: bill.id, amount: 40 }],
+          } as never),
+        ),
+    );
+    const rows = await A.prisma.billPayment.findMany({ where: { vendorBillId: bill.id } });
+    const finalBill = await A.prisma.vendorBill.findUniqueOrThrow({ where: { id: bill.id } });
+    console.log(
+      `B285(m) observed: first=${first.status} second=${second.status} payments=${rows.length} ` +
+        `totalPaid=${finalBill.totalPaid}`,
+    );
+    expect(first.status).toBe("fulfilled");
+    expect(second.status).toBe("rejected"); // 40 > the 20 still outstanding
+    expect(rows).toHaveLength(1);
+    expect(Number(finalBill.totalPaid)).toBe(40);
+  });
+
+  it("(n) bulk mark-paid vs a parked payment: it pays the real remainder (20), never 60", async () => {
+    const w = await seedWorld("n");
+    const bill = await draftBill(w);
+    const [first, second] = await race(
+      () => pay(A, w, bill.id, 40),
+      () =>
+        inTenant(C, w, () =>
+          C.bookkeeping.bulkMarkPaid({ ids: [bill.id], method: "CASH" } as never),
+        ),
+    );
+    const rows = await A.prisma.billPayment.findMany({ where: { vendorBillId: bill.id } });
+    const sum = rows.reduce((t, r) => t + Number(r.amount), 0);
+    const finalBill = await A.prisma.vendorBill.findUniqueOrThrow({ where: { id: bill.id } });
+    console.log(
+      `B285(n) observed: first=${first.status} second=${second.status} payments=${rows.length} ` +
+        `sum=${sum} totalPaid=${finalBill.totalPaid}`,
+    );
+    expect(first.status).toBe("fulfilled");
+    expect(sum).toBe(60);
+    expect(Number(finalBill.totalPaid)).toBe(60);
+  });
+
+  it("(o) statement apply (implied paid) vs a parked payment: no bill is paid past its total", async () => {
+    const w = await seedWorld("o");
+    const bill = await draftBill(w);
+    await inTenant(A, w, () => A.bills.receive(bill.id, undefined, w.userId)); // not a draft
+    const scan = await A.prisma.supplierStatementScan.create({
+      data: {
+        tenantId: w.tenantId,
+        supplierId: w.supplierId,
+        fileHash: randomUUID(),
+        extractedPayload: { lines: [] },
+      },
+    });
+    const [first, second] = await race(
+      () => pay(A, w, bill.id, 40),
+      () =>
+        inTenant(C, w, () =>
+          C.statements.applyStatement(
+            scan.id,
+            { confirmed: [], impliedPaid: { billIds: [bill.id] } } as never,
+            { sub: w.userId },
+          ),
+        ),
+    );
+    const rows = await A.prisma.billPayment.findMany({ where: { vendorBillId: bill.id } });
+    const sum = rows.reduce((t, r) => t + Number(r.amount), 0);
+    const finalBill = await A.prisma.vendorBill.findUniqueOrThrow({ where: { id: bill.id } });
+    console.log(
+      `B285(o) observed: first=${first.status} second=${second.status} payments=${rows.length} ` +
+        `sum=${sum} totalPaid=${finalBill.totalPaid}`,
+    );
+    expect(first.status).toBe("fulfilled");
+    expect(second.status).toBe("fulfilled");
+    expect(sum).toBe(60);
+    expect(Number(finalBill.totalPaid)).toBe(60);
   });
 });

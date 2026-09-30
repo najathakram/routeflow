@@ -7,6 +7,7 @@ import {
   ServiceUnavailableException,
   UnprocessableEntityException,
 } from "@nestjs/common";
+import { lockBillRows } from "./bill-locks";
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -281,8 +282,7 @@ export class VendorBillsService {
       items: { id: string; qtyReceived: Prisma.Decimal | null }[];
     },
   ) {
-    const tenantId = this.prisma.getTenantId();
-    await tx.$executeRaw`SELECT id FROM "VendorBill" WHERE id = ${bill.id} AND "tenantId" = ${tenantId} FOR UPDATE`;
+    await lockBillRows(tx, this.prisma.getTenantId(), [bill.id]);
     const fresh = await tx.vendorBill.findUnique({
       where: { id: bill.id },
       select: {
@@ -314,7 +314,7 @@ export class VendorBillsService {
       ]);
     if (!fresh || state(fresh) !== state(bill)) {
       throw new ConflictException({
-        code: "BILL_STATE_CHANGED",
+        code: API_ERROR_CODES.BILL_STATE_CHANGED,
         message:
           "This bill was just changed by someone else (received, reverted, voided, paid or edited) — reload it and try again.",
       });
@@ -1068,7 +1068,7 @@ export class VendorBillsService {
     // A voided bill is closed: receiving it would silently un-void it and post its stock.
     if (bill.status === "VOID") {
       throw new ConflictException({
-        code: "BILL_VOID",
+        code: API_ERROR_CODES.BILL_VOID,
         message: "This bill is void and cannot be received.",
       });
     }
@@ -2334,20 +2334,20 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       // B285: lock the bill BEFORE reading its payments — two concurrent payments both read the
       // same alreadyPaid, both passed the remaining-balance check, and one overwrote totalPaid;
       // a void racing a payment un-voided the bill. Everything below reads fresh under the lock.
-      const tenantId = this.prisma.getTenantId();
-      await tx.$executeRaw`SELECT id FROM "VendorBill" WHERE id = ${id} AND "tenantId" = ${tenantId} FOR UPDATE`;
+      await lockBillRows(tx, this.prisma.getTenantId(), [id]);
       const bill = await tx.vendorBill.findUnique({ where: { id }, include: { payments: true } });
       if (!bill) throw new NotFoundException("Bill not found");
       if (bill.status === "VOID") {
         throw new ConflictException({
-          code: "BILL_VOID",
+          code: API_ERROR_CODES.BILL_VOID,
           message: "This bill is void and can't take a payment.",
         });
       }
       const alreadyPaid = roundMoney(bill.payments.reduce((s, p) => s + Number(p.amount), 0));
       const remaining = roundMoney(Number(bill.totalOwed) - alreadyPaid);
       if (remaining <= 0) throw new BadRequestException("Bill already fully paid");
-      if (Number(dto.amount) > remaining + 0.001) {
+      const amount = roundMoney(Number(dto.amount));
+      if (amount > remaining + 0.001) {
         throw new BadRequestException(
           `Payment amount exceeds the remaining balance of ${remaining.toFixed(2)}.`,
         );
@@ -2355,7 +2355,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       await tx.billPayment.create({
         data: {
           vendorBillId: id,
-          amount: dto.amount,
+          amount,
           method: dto.method as any,
           reference: dto.reference,
           // Was silently discarded here — the DTO accepted it but this create()
@@ -2363,7 +2363,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
           notes: dto.notes ?? null,
         },
       });
-      const newPaid = roundMoney(alreadyPaid + Number(dto.amount));
+      const newPaid = roundMoney(alreadyPaid + amount);
       const newStatus = newPaid >= Number(bill.totalOwed) - 0.001 ? "PAID" : "PARTIAL";
       return tx.vendorBill.update({
         where: { id },
@@ -2417,6 +2417,13 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
     const paidAt = dto.paidAt ? new Date(dto.paidAt) : new Date();
 
     return this.prisma.tenantTransaction(async (tx) => {
+      // B285: lock EVERY allocated bill (sorted) before reading any payments, so a recordPayment /
+      // voidBill racing this apply can't leave a stale alreadyPaid or a payment on a void bill.
+      await lockBillRows(
+        tx,
+        this.prisma.getTenantId(),
+        dto.allocations.map((a) => a.vendorBillId),
+      );
       const payments: any[] = [];
       const bills: { id: string; status: string; totalPaid: number }[] = [];
       let allocatedTotal = 0;
@@ -2650,16 +2657,19 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
 
   async bulkDelete(ids: string[]) {
     if (!ids || ids.length === 0) throw new BadRequestException("No IDs provided");
-    // Only delete DRAFT or VOID bills
-    const bills = await this.prisma.forTenant().vendorBill.findMany({
-      where: { id: { in: ids } },
-      select: { id: true, status: true, billNumber: true },
-    });
-    const deletable = bills.filter((b) => b.status === "DRAFT" || b.status === "VOID");
-    const skipped = bills.filter((b) => b.status !== "DRAFT" && b.status !== "VOID");
-    if (deletable.length > 0) {
-      const deletableIds = deletable.map((b) => b.id);
-      await this.prisma.tenantTransaction(async (tx) => {
+    // Only DRAFT or VOID bills go. B285: decided INSIDE the tx, behind the bill row locks — a
+    // receive committing after a pre-tx status read would otherwise leave its stock behind a
+    // deleted bill.
+    return this.prisma.tenantTransaction(async (tx) => {
+      await lockBillRows(tx, this.prisma.getTenantId(), ids);
+      const bills = await tx.vendorBill.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, status: true, billNumber: true },
+      });
+      const deletable = bills.filter((b) => b.status === "DRAFT" || b.status === "VOID");
+      const skipped = bills.filter((b) => b.status !== "DRAFT" && b.status !== "VOID");
+      if (deletable.length > 0) {
+        const deletableIds = deletable.map((b) => b.id);
         // Same reason as delete(): auto-applied credit goes back before the
         // draw rows are destroyed. Already-VOID bills refunded nothing left.
         for (const billId of deletableIds) {
@@ -2668,15 +2678,15 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
         await tx.billPayment.deleteMany({ where: { vendorBillId: { in: deletableIds } } });
         await tx.vendorBillItem.deleteMany({ where: { vendorBillId: { in: deletableIds } } });
         await tx.vendorBill.deleteMany({ where: { id: { in: deletableIds } } });
-      });
-    }
-    return {
-      deleted: deletable.length,
-      skipped: skipped.map((b) => ({
-        id: b.id,
-        billNumber: b.billNumber,
-        reason: "Cannot delete received/paid/partial bills",
-      })),
-    };
+      }
+      return {
+        deleted: deletable.length,
+        skipped: skipped.map((b) => ({
+          id: b.id,
+          billNumber: b.billNumber,
+          reason: "Cannot delete received/paid/partial bills",
+        })),
+      };
+    });
   }
 }
