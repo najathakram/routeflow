@@ -10,6 +10,7 @@ import {
   Optional,
   ServiceUnavailableException,
 } from "@nestjs/common";
+import { isBuyerVisibleProduct } from "../buyer/buyer-product-visibility";
 import { randomUUID } from "crypto";
 import { LeaderCron } from "../common/cron-lock";
 import { withAfterCommit } from "../common/after-commit";
@@ -1583,6 +1584,8 @@ export class OrdersService implements OnApplicationBootstrap {
       catalogIds.length > 0
         ? await this.prisma.forTenant().product.findMany({
             where: { id: { in: catalogIds } },
+            // portal hiding: a hidden parent hides its variants — buyer-only check below.
+            include: { parent: { select: { portalVisible: true } } },
           })
         : [];
 
@@ -1606,7 +1609,13 @@ export class OrdersService implements OnApplicationBootstrap {
     // archived) line; every other caller — staff create, buyer createOrder —
     // still rejects a new archived line (REG-B142-E/F).
     if (!options.allowArchived) {
-      const archivedCreate = products.find((p: any) => p.isActive === false);
+      // A portal-hidden product (own flag or hidden parent) is refused to a BUYER exactly like
+      // an archived one; staff are unaffected.
+      const archivedCreate = products.find(
+        (p: any) =>
+          p.isActive === false ||
+          (user.role === UserRole.CUSTOMER && !isBuyerVisibleProduct({ ...p, isActive: true })),
+      );
       if (archivedCreate) {
         throw new BadRequestException(
           `Product ${archivedCreate.sku ?? archivedCreate.name} is archived`,
@@ -3614,7 +3623,10 @@ export class OrdersService implements OnApplicationBootstrap {
             ];
             const addProducts =
               addProductIds.length > 0
-                ? await tx.product.findMany({ where: { id: { in: addProductIds } } })
+                ? await tx.product.findMany({
+                    where: { id: { in: addProductIds } },
+                    include: { parent: { select: { portalVisible: true } } },
+                  })
                 : [];
             const addProductMap = new Map<string, any>(addProducts.map((p: any) => [p.id, p]));
             // B297 (SA-098a): `uctx.categoryMap` only covers unit-aware `unitCtx.products` —
@@ -3630,7 +3642,12 @@ export class OrdersService implements OnApplicationBootstrap {
             // product at this interactive edge only — a qty/price edit or removal
             // of a line that already exists never reaches `addProductIds` (it has
             // an `item.id`), so archived lines already on the order keep working.
-            const archivedAdd = addProducts.find((p: any) => p.isActive === false);
+            const archivedAdd = addProducts.find(
+              (p: any) =>
+                p.isActive === false ||
+                (user?.role === UserRole.CUSTOMER &&
+                  !isBuyerVisibleProduct({ ...p, isActive: true })),
+            );
             if (archivedAdd) {
               throw new BadRequestException(
                 `Product ${archivedAdd.sku ?? archivedAdd.name} is archived`,

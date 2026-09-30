@@ -3,6 +3,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { RegulatedVisibilityService } from "./regulated-visibility.service";
 import { getTierPrice } from "@routeflow/pricing";
+import { buyerVisibleProductWhere } from "./buyer-product-visibility";
 import { firstSignableImageKey } from "../products/product-image-keys";
 
 @Injectable()
@@ -116,14 +117,14 @@ export class BuyerDashboardService {
 
       // New products (last 30 days)
       this.prisma.forTenant().product.findMany({
-        where: { isActive: true, createdAt: { gte: thirtyDaysAgo }, ...gateWhere },
+        where: buyerVisibleProductWhere({ createdAt: { gte: thirtyDaysAgo }, ...gateWhere }),
         orderBy: { createdAt: "desc" },
         take: 10,
       }),
 
       // Featured products
       this.prisma.forTenant().product.findMany({
-        where: { isActive: true, isFeatured: true, ...gateWhere },
+        where: buyerVisibleProductWhere({ isFeatured: true, ...gateWhere }),
         orderBy: { name: "asc" },
         take: 10,
       }),
@@ -175,7 +176,7 @@ export class BuyerDashboardService {
     const freqProducts =
       freqProductIds.length > 0
         ? await this.prisma.forTenant().product.findMany({
-            where: { id: { in: freqProductIds }, isActive: true, ...gateWhere },
+            where: buyerVisibleProductWhere({ id: { in: freqProductIds }, ...gateWhere }),
           })
         : [];
     const freqProductMap = new Map(freqProducts.map((p) => [p.id, p]));
@@ -298,12 +299,11 @@ export class BuyerDashboardService {
     const suggestedProducts =
       orderedCategories.length > 0
         ? await this.prisma.forTenant().product.findMany({
-            where: {
-              isActive: true,
+            where: buyerVisibleProductWhere({
               category: { in: orderedCategories },
               id: { notIn: orderedProductIds },
               ...gateWhere,
-            },
+            }),
             orderBy: { createdAt: "desc" },
             take: 8,
           })

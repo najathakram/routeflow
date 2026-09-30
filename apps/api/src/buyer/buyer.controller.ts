@@ -63,6 +63,7 @@ import {
   isMergeContention,
   mapLockError,
 } from "../orders/merge-contention";
+import { buyerVisibleProductWhere } from "./buyer-product-visibility";
 
 /** Upper bound on `GET /buyer/products?ids=` — a cart is far smaller than this. */
 const MAX_PRODUCT_IDS = 200;
@@ -466,24 +467,24 @@ export class BuyerController {
     const db = this.prisma.forTenant();
     // Tier 1 — exact (mirrors ProductsService.findByBarcode).
     let matches = await db.product.findMany({
-      where: {
+      where: buyerVisibleProductWhere({
         OR: [
           { barcode: { in: candidates } },
           { sku: { in: candidates } },
           { unitSku: { in: candidates } },
         ],
-      },
+      }),
     });
     // Tier 2 — case-insensitive, MISS ONLY (typed/lowercased alpha SKUs).
     if (matches.length === 0) {
       matches = await db.product.findMany({
-        where: {
+        where: buyerVisibleProductWhere({
           OR: candidates.flatMap((c) => [
             { barcode: { equals: c, mode: "insensitive" as const } },
             { sku: { equals: c, mode: "insensitive" as const } },
             { unitSku: { equals: c, mode: "insensitive" as const } },
           ]),
-        },
+        }),
         take: 25,
       });
     }

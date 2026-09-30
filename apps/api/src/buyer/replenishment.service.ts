@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { normalizeBoxesPieces } from "@routeflow/pricing";
 import { firstSignableImageKey } from "../products/product-image-keys";
+import { isBuyerVisibleProduct } from "./buyer-product-visibility";
 
 /** Where a product sits against its inferred reorder cadence. */
 export type ReplenishmentState = "low" | "due-soon" | "ok";
@@ -39,6 +40,8 @@ interface EstProduct {
   unitsPerBox: number | null;
   imageKeys: string[];
   isActive: boolean;
+  portalVisible?: boolean;
+  parent?: { portalVisible: boolean } | null;
 }
 
 /**
@@ -80,6 +83,8 @@ export class ReplenishmentService {
                 unitsPerBox: true,
                 imageKeys: true,
                 isActive: true,
+                portalVisible: true,
+                parent: { select: { portalVisible: true } },
               },
             },
           },
@@ -102,7 +107,7 @@ export class ReplenishmentService {
       const perOrder = new Map<string, { product: EstProduct; qty: number }>();
       for (const li of o.lineItems) {
         const product = li.product as EstProduct | null;
-        if (!li.productId || !product || !product.isActive) continue;
+        if (!li.productId || !product || !isBuyerVisibleProduct(product)) continue;
         const prev = perOrder.get(li.productId);
         perOrder.set(li.productId, { product, qty: (prev?.qty ?? 0) + Number(li.qty) });
       }

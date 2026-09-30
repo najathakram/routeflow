@@ -9,6 +9,7 @@ import { ReplenishmentService } from "./replenishment.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { signableImageKeys } from "../products/product-image-keys";
 import type { BuyerProduct } from "@routeflow/types";
+import { buyerVisibleProductWhere, isBuyerVisibleProduct } from "./buyer-product-visibility";
 
 /** Max images presigned per product for the tile's dot-pager (P5-02). */
 const MAX_TILE_IMAGES = 4;
@@ -137,19 +138,17 @@ export class BuyerCatalogService {
       andWhere.push({ id: { in: favs.map((f) => f.productId) } });
     }
 
-    const opts =
-      hiddenIds.size > 0 || andWhere.length > 0
-        ? {
-            ...(hiddenIds.size > 0 ? { excludeTrackedCategoryIds: [...hiddenIds] } : {}),
-            ...(andWhere.length > 0 ? { andWhere } : {}),
-          }
-        : undefined;
+    // One shared buyer-visibility predicate (active + portal-visible + parent visible).
+    andWhere.push(buyerVisibleProductWhere() as Record<string, unknown>);
+    const opts = {
+      ...(hiddenIds.size > 0 ? { excludeTrackedCategoryIds: [...hiddenIds] } : {}),
+      andWhere,
+    };
 
     const result = await this.productsService.findAll(
       {
         search: query.search,
         category: query.category,
-        isActive: true,
         page: fetchAll ? 1 : page,
         limit: fetchAll ? 0 : limit,
       },
@@ -267,16 +266,14 @@ export class BuyerCatalogService {
    */
   async getCatalogCounts(customerId: string, buyerAccountId: string) {
     const { hiddenIds, locked } = await this.visibility.computeGate(customerId);
-    const baseWhere: Record<string, unknown> = { isActive: true };
+    const gateOr: Record<string, unknown>[] = [];
     // Same NULL trap as products.service.findAll: `notIn` never matches NULL,
     // so keying this on trackedCategoryId zeroed every rail count for
     // untracked products whenever a license-gated category existed.
     if (hiddenIds.size > 0) {
-      baseWhere.OR = [
-        { trackedCategoryId: null },
-        { trackedCategoryId: { notIn: [...hiddenIds] } },
-      ];
+      gateOr.push({ trackedCategoryId: null }, { trackedCategoryId: { notIn: [...hiddenIds] } });
     }
+    const baseWhere = buyerVisibleProductWhere(gateOr.length > 0 ? { OR: gateOr } : undefined);
 
     const [total, byCategory, newCount, favRows, estimates, promos] = await Promise.all([
       this.prisma.forTenant().product.count({ where: baseWhere }),
@@ -326,7 +323,7 @@ export class BuyerCatalogService {
     const product = await this.productsService.findOne(productId);
 
     // Buyers must not see inactive/discontinued products
-    if (!(product as any).isActive) {
+    if (!isBuyerVisibleProduct(product as any)) {
       throw new NotFoundException("Product not found");
     }
 
@@ -348,7 +345,7 @@ export class BuyerCatalogService {
     // only, and such a row would quote a price whose link dead-ends on this
     // endpoint's own isActive 404.
     const activeVariants: any[] = ((product as any).variants ?? []).filter(
-      (v: any) => v.isActive !== false,
+      (v: any) => v.isActive !== false && v.portalVisible !== false,
     );
     // Tier overrides for the parent AND every variant row in one query: a variant
     // carrying its own CustomerPrice must price identically here and on its own
@@ -413,7 +410,7 @@ export class BuyerCatalogService {
    */
   async getCategories() {
     const products = await this.prisma.forTenant().product.findMany({
-      where: { isActive: true, category: { not: null } },
+      where: buyerVisibleProductWhere({ category: { not: null } }),
       select: { category: true },
       distinct: ["category"],
       orderBy: { category: "asc" },
@@ -428,7 +425,7 @@ export class BuyerCatalogService {
    */
   async getFavorites(buyerAccountId: string, customerId: string) {
     const favorites = await this.prisma.forTenant().buyerFavorite.findMany({
-      where: { buyerAccountId, customerId },
+      where: { buyerAccountId, customerId, product: buyerVisibleProductWhere() },
       include: {
         product: true,
       },
@@ -496,7 +493,7 @@ export class BuyerCatalogService {
     // Verify the product exists and is active
     const product = await this.prisma
       .forTenant()
-      .product.findFirst({ where: { id: productId, isActive: true } });
+      .product.findFirst({ where: buyerVisibleProductWhere({ id: productId }) });
     if (!product) throw new NotFoundException("Product not found");
 
     try {
