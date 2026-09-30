@@ -8,6 +8,11 @@ interface Rule {
 }
 
 const URL_RULE: Rule = { name: "url", re: /https?:\/\//i };
+/** Built-in patterns applied alongside the shared file's (which misses `sk_live_...` shapes). */
+const SUPPLEMENTAL: Rule[] = [
+  { name: "api-key-live-test", re: /\b(sk|pk|rk)_(live|test)_[A-Za-z0-9]{8,}/ },
+  { name: "webhook-secret", re: /\bwhsec_[A-Za-z0-9]{16,}/ },
+];
 const UNAVAILABLE = "denylist-unavailable";
 
 const cache = new Map<string, Rule[] | null>();
@@ -76,6 +81,7 @@ export function denylistHit(line: string): string | null {
   }
   for (const text of views) {
     for (const r of rules) if (r.re.test(text)) return r.name;
+    for (const r of SUPPLEMENTAL) if (r.re.test(text)) return r.name;
     if (URL_RULE.re.test(text)) return URL_RULE.name;
   }
   return null;

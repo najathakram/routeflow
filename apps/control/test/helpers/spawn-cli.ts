@@ -6,14 +6,69 @@
  * CONTROL_STATE_DIR = the state clone directory, CTL_LANE = lane. The process cwd is a small
  * "working repo" (one commit) so `sha` = short HEAD of the working repo is checkable.
  */
-import { spawn } from "child_process";
+import { execFileSync, spawn } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { git } from "./temp-repo";
 import type { World } from "./temp-repo";
 
-export const CTL_BIN = path.resolve(__dirname, "..", "..", "bin", "ctl.mjs");
+const APP_ROOT = path.resolve(__dirname, "..", "..");
+export const CTL_BIN = path.resolve(APP_ROOT, "bin", "ctl.mjs");
+const DIST_CTL = path.join(APP_ROOT, "dist", "cli", "ctl.js");
+const STAMP = path.join(APP_ROOT, "dist", ".ctl-build-stamp");
+const BUILD_LOCK = path.join(os.tmpdir(), "routeflow-ctl-test-build.lock");
+
+function newestMtime(dir: string): number {
+  let newest = 0;
+  if (!fs.existsSync(dir)) return newest;
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name);
+    newest = Math.max(newest, e.isDirectory() ? newestMtime(p) : fs.statSync(p).mtimeMs);
+  }
+  return newest;
+}
+
+const fresh = (): boolean =>
+  fs.existsSync(DIST_CTL) &&
+  fs.existsSync(STAMP) &&
+  fs.statSync(STAMP).mtimeMs >= newestMtime(path.join(APP_ROOT, "src"));
+
+let built: Promise<void> | null = null;
+
+/** Build dist once per jest run (module promise) and once across workers (tmpdir lock dir). */
+function ensureBuilt(): Promise<void> {
+  built ??= (async () => {
+    const deadline = Date.now() + 240_000;
+    while (!fresh()) {
+      try {
+        fs.mkdirSync(BUILD_LOCK);
+      } catch {
+        try {
+          if (Date.now() - fs.statSync(BUILD_LOCK).mtimeMs > 180_000) fs.rmdirSync(BUILD_LOCK);
+        } catch {
+          /* holder just finished */
+        }
+        if (Date.now() > deadline) throw new Error("timed out waiting for the ctl build");
+        await new Promise((r) => setTimeout(r, 200));
+        continue;
+      }
+      try {
+        if (!fresh()) {
+          const tsc = require.resolve("typescript/bin/tsc");
+          execFileSync(process.execPath, [tsc, "-p", path.join(APP_ROOT, "tsconfig.build.json")], {
+            cwd: APP_ROOT,
+            stdio: "pipe",
+          });
+          fs.writeFileSync(STAMP, String(Date.now()));
+        }
+      } finally {
+        fs.rmdirSync(BUILD_LOCK);
+      }
+    }
+  })();
+  return built;
+}
 
 export interface CliResult {
   code: number | null;
@@ -33,7 +88,7 @@ export function makeWorkRepo(world: World, name = "work"): WorkRepo {
   git(dir, ["init", "-q", "--initial-branch=main"]);
   fs.writeFileSync(path.join(dir, "README.md"), "working repo (synthetic)\n");
   git(dir, ["add", "-A"]);
-  git(dir, ["commit", "-q", "-m", "init"]);
+  git(dir, ["commit", "-q", "--allow-empty", "-m", "init"]);
   return { dir, shortSha: git(dir, ["rev-parse", "--short", "HEAD"]).trim() };
 }
 
@@ -46,7 +101,11 @@ export interface SpawnOpts {
   timeoutMs?: number;
 }
 
-export function runCli(world: World, args: string[], opts: SpawnOpts = {}): Promise<CliResult> {
+export async function runCli(
+  world: World,
+  args: string[],
+  opts: SpawnOpts = {},
+): Promise<CliResult> {
   const machine = opts.machine ?? "a";
   const cwd = opts.cwd ?? makeWorkRepo(world, `w-${machine}`).dir;
   const env: Record<string, string | undefined> = {
@@ -59,8 +118,14 @@ export function runCli(world: World, args: string[], opts: SpawnOpts = {}): Prom
   delete env.CTL_LANE;
   if (opts.lane) env.CTL_LANE = opts.lane;
   if (opts.lane === undefined) env.CTL_LANE = "lane-u";
+  await ensureBuilt();
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [CTL_BIN, ...args], { cwd, env: env as any });
+    // run dist directly: bin/ctl.mjs could trigger its own rebuild mid-run
+    const child = spawn(
+      process.execPath,
+      ["-e", "require(process.env.CTL_DIST).main(process.argv.slice(1))", "--", ...args],
+      { cwd, env: { ...env, CTL_DIST: DIST_CTL } as any },
+    );
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (d) => (stdout += d));

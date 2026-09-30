@@ -79,6 +79,15 @@ describe("denylistHit", () => {
     expect(denylistHit(line(`see ${url}`))).not.toBeNull();
   });
 
+  it.each([
+    ["stripe live key", "sk" + "_" + "live" + "_" + "a".repeat(24)],
+    ["stripe test key", "pk" + "_" + "test" + "_" + "B".repeat(12)],
+    ["webhook secret", "whsec" + "_" + "A1b2C3d4E5f6G7h8"],
+  ])("built-in supplemental patterns flag a %s", (_n, sample) => {
+    const { denylistHit } = need(DL, "src/sources/denylist");
+    expect(denylistHit(line(`key ${sample} tail`))).not.toBeNull();
+  });
+
   it("returns null for a clean event line", () => {
     const { denylistHit } = need(DL, "src/sources/denylist");
     expect(denylistHit(line("phase1 done, see RF-12 and PR 2801 sha abc1234"))).toBeNull();
