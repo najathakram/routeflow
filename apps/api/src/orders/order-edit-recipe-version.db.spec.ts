@@ -200,7 +200,12 @@ describeDb("#2717 M3 SA-591(b) — an edit keeps a v1 line on v1, real Postgres"
     tenantId = (await raw.tenant.create({ data: { slug, name: `2717 ${slug}` } })).id;
     userId = (
       await raw.user.create({
-        data: { email: `op-${run}@example.test`, username: `op-${run}`, role: "OPERATOR", tenantId },
+        data: {
+          email: `op-${run}@example.test`,
+          username: `op-${run}`,
+          role: "OPERATOR",
+          tenantId,
+        },
       })
     ).id;
     customerUserId = (
