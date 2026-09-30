@@ -29,6 +29,18 @@ describe("handleMutationError (#1965)", () => {
     expect(toast).not.toHaveBeenCalled();
   });
 
+  it("a read-only tenant still gets 'Choose a plan' even from an opted-out mutation (review a)", () => {
+    const { toast, router } = setup();
+    handleMutationError(
+      axiosErr({ code: "READ_ONLY", message: "x" }),
+      { meta: { localErrorToast: true } },
+      toast,
+      router,
+    );
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(toast.mock.calls[0][0].title).toBe("Your workspace is read-only");
+  });
+
   it("still swallows HANDLED_CODES and still turns READ_ONLY into the read-only toast", () => {
     const { toast, router } = setup();
     handleMutationError(axiosErr({ code: "MERGE_CHOICE_REQUIRED" }), {}, toast, router);

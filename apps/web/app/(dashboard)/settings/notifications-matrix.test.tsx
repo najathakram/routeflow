@@ -229,6 +229,28 @@ describe("Notifications page — grouped list (#1965)", () => {
     expect(screen.getByText(/invoices are emailed when you press send/i)).toBeInTheDocument();
   });
 
+  it("T2b (review c) an event whose only visible cell is policy-locked is not listed either", () => {
+    state.config = makeConfig({
+      channelStatus: {
+        EMAIL: "NOT_BUILT",
+        WHATSAPP: "LIVE",
+        SMS: "NOT_BUILT",
+        PORTAL: "NOT_BUILT",
+      },
+      events: [
+        {
+          eventKey: "INVOICE_SENT",
+          label: "Invoice sent",
+          audience: "CUSTOMER",
+          hasTrigger: true,
+          channels: [{ ...cell("WHATSAPP", { enabled: false, ruleId: null }), locked: true }],
+        },
+      ],
+    });
+    renderWithProviders(<NotificationsSettingsTab />);
+    expect(screen.queryByText("Invoice sent")).not.toBeInTheDocument();
+  });
+
   it("T3 (review F3) the template editor shows only live channels and opens on Email", () => {
     renderWithProviders(<NotificationsSettingsTab />);
     fireEvent.click(screen.getByRole("button", { name: /edit order confirmed template/i }));
@@ -277,7 +299,7 @@ describe("Notifications page — grouped list (#1965)", () => {
     expect(screen.getByText(/your team isn't emailed about orders yet/i)).toBeInTheDocument();
   });
 
-  it("T17 (review) the recipient chip is a design-system Badge and the loading state uses skeleton rows", () => {
+  it("T17 the loading state is an accessible status region", () => {
     state.isLoading = true;
     renderWithProviders(<NotificationsSettingsTab />);
     expect(
