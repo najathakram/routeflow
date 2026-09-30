@@ -3175,7 +3175,7 @@ export class OrdersService implements OnApplicationBootstrap {
             include: { parent: { select: { portalVisible: true } } },
           });
           if (user.role === UserRole.CUSTOMER)
-            assertBuyerMayOrder(products, new Set(order.lineItems.map((l) => l.productId!)));
+            assertBuyerMayOrder(products, new Set(heldItems.map((l: any) => l.productId!))); // the LOCKED heldItems (n1)
           const productMap = new Map<string, any>(products.map((p: any) => [p.id, p]));
           // B297 (SA-098a): this pack-line create() is disconnected from `uctx.categoryMap`
           // (which only covers unit-aware `unitCtx.products`) — its own scoped load.
