@@ -219,6 +219,7 @@ export interface AdminOrder {
       amount: number | string;
       creditNoteId?: string | null;
       autoApplied: boolean;
+      createdAt?: string | null;
       creditNote?: {
         id: string;
         creditNoteNumber: string;
