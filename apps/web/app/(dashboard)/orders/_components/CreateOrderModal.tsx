@@ -140,6 +140,8 @@ interface LineItem {
   sellBy?: "case" | "unit";
   /** units_v1: the non-pack unit this line sells by (`undefined` = the pack); see LineItemRowItem. */
   unitLabel?: string;
+  /** #2784 UI-only: a NEW line from the picker tap / a shared-code scan starts on the default selling unit. */
+  startOnDefaultUnit?: boolean;
   /** UI-only: the pack fields a unit switch overwrote (restored when the pack is chosen again). */
   packBase?: PackBase;
   /**
@@ -371,12 +373,12 @@ export function CreateOrderModal({
   // ./scan/useScanCodeHandler so the redesigned scan screen can reuse it.
   const barcodeScanHandlerRef = useScanCodeHandler({
     // A thunk: addLineItem is declared further down and is read only when a code is scanned.
-    addLineItem: (product, level) => {
+    addLineItem: (product, level, opts) => {
       // SA-090/Opus item 1: `created` comes from addLineItem's OWN return value now — it is
       // decided inside the setLineItems updater, against the true latest state, never from a
       // closure-captured `lineItems` read here beforehand (which a same-tick retry-plus-live-scan
       // race of the same product could make stale — see addLineItem's own comment).
-      const { created } = addLineItem(product, level);
+      const { created } = addLineItem(product, level, opts);
       return { created };
     },
     onUnknownCode: (code) => {
@@ -560,7 +562,11 @@ export function CreateOrderModal({
     return { ...li, qty: Math.max(1, li.qty + dir) };
   };
 
-  const addLineItem = (product: any, level: SellLevel = "BOX"): { created: boolean } => {
+  const addLineItem = (
+    product: any,
+    level: SellLevel = "BOX",
+    opts?: { startOnDefaultUnit?: boolean },
+  ): { created: boolean } => {
     const n = 1; // #2696: every pick / scan adds one (the quick-add Qty field is gone)
     // #2717 M4a-1 (SA-580 R1/R4): a UNIT scan on a boxed product adds one loose PIECE, never a
     // case; a picker click (no level) and every BOX/shared scan keep today's whole-case add. For
@@ -575,10 +581,10 @@ export function CreateOrderModal({
       unitScan
         ? mergePieceIntoLine(li, n)
         : orderUiV2
-        ? mergeQtyIntoLine(li, n)
-        : scanV2
-          ? stepLineUnit(li, 1)
-          : { ...li, qty: li.qty + 1 };
+          ? mergeQtyIntoLine(li, n)
+          : scanV2
+            ? stepLineUnit(li, 1)
+            : { ...li, qty: li.qty + 1 };
     // Built once, outside the updater — none of it depends on `prev`, only on `product`/the
     // customer/pricing context, so there is nothing here a race could make stale.
     const newTempId = product.id + "-" + Date.now();
@@ -619,6 +625,7 @@ export function CreateOrderModal({
           : priceType,
       ...newLineQtyForLevel(upb, level, n),
       unitsPerBox: upb,
+      startOnDefaultUnit: opts?.startOnDefaultUnit,
       unitCost: product.averageCost != null ? Number(product.averageCost) : undefined,
       category: product.category ?? undefined,
       trackedCategoryId: product.trackedCategoryId ?? null,
@@ -707,7 +714,8 @@ export function CreateOrderModal({
 
   /** A pick from the search dropdown: +1 (#2696 — no typed quick-add qty). */
   const addPicked = (product: any) => {
-    addLineItem(product);
+    // #2784: the picker tap starts a NEW line on the product's default selling unit (OrderLineUnitPicker applies it).
+    addLineItem(product, undefined, { startOnDefaultUnit: true });
   };
 
   const removeLineItem = (tempId: string) => {
@@ -1337,6 +1345,7 @@ export function CreateOrderModal({
         <OrderLineUnitPicker
           line={li}
           tier={tierForProduct(li.productId)}
+          startOnDefaultUnit={li.startOnDefaultUnit}
           onChange={(option, refresh) => setLineUnit(li.tempId, option, refresh)}
         />
       }
