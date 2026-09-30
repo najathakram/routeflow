@@ -306,6 +306,10 @@ export class VendorBillsService {
     }
   }
 
+  private productIdsOf(items: { productId: string | null }[]): string[] {
+    return items.flatMap((i) => (i.productId ? [i.productId] : []));
+  }
+
   private async nextBillNumber() {
     const year = new Date().getFullYear();
     const prefix = `BILL-${year}-`;
@@ -1356,6 +1360,8 @@ export class VendorBillsService {
 
     return this.prisma.tenantTransaction(async (tx) => {
       await this.lockBillAndAssertReceiptState(tx, bill);
+      // B285: the reversal below read-modify-writes the product's average — lock it first.
+      await this.inventory.lockProducts(tx, this.productIdsOf(bill.items));
       // Reverse inventory for each product-linked item — in the SAME
       // inventory denomination receive() applied (case lines converted to
       // pieces + per-piece cost), and only the quantity ACTUALLY received
@@ -1473,6 +1479,7 @@ export class VendorBillsService {
     if (needsReversal) {
       return this.prisma.tenantTransaction(async (tx) => {
         await this.lockBillAndAssertReceiptState(tx, bill);
+        await this.inventory.lockProducts(tx, this.productIdsOf(bill.items));
         for (const item of bill.items) {
           if (!item.productId || !item.product) continue;
           // Same inventory denomination receive() applied — see

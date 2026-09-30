@@ -491,4 +491,44 @@ describeDb("B285 — PO receive vs concurrent writers — real Postgres, separat
       });
     },
   );
+
+  // (f) revert/void read-modify-write the product average too: racing a PO receive of the same
+  // product must land on the exact serial result (50 + 20 = 70 at (100+80)/70 = 2.5714).
+  describe.each(["revertToDraft", "voidBill"] as const)(
+    "(f) %s of a received bill racing a PO receive of the same product",
+    (undo) => {
+      it("ends at stock 70, average 2.5714 under either serial order", async () => {
+        const w = await seedWorld(`f-${undo}`, 50, 2);
+        const po = await sentPo(w, 20, 4);
+        const bill: any = await inTenant(A, w, () =>
+          A.bills.create({
+            supplierId: w.supplierId,
+            billDate: "2026-09-01",
+            items: [{ productId: w.productId, description: "Widget", qty: 10, unitCost: 6 }],
+          } as never),
+        );
+        await inTenant(A, w, () => A.bills.receive(bill.id, undefined, w.userId));
+        expect(Number((await productOf(w)).currentStock)).toBe(60);
+
+        const barrier = new Barrier(2, 2500);
+        holdReceiveAt(A, barrier);
+        const receive = inTenant(A, w, () =>
+          A.inventory.receivePurchaseOrder(
+            po.id,
+            { items: [{ itemId: po.items[0].id, receivedQty: 20 }] },
+            w.userId,
+          ),
+        );
+        await barrier.parked;
+        const reversal = inTenant(B, w, () => (B.bills as any)[undo](bill.id, w.userId));
+        await sawLockWait(1500);
+        await Promise.all([receive, reversal]);
+
+        const p = await productOf(w);
+        console.log(`B285(f/${undo}) observed: stock=${p.currentStock} avg=${p.averageCost}`);
+        expect(Number(p.currentStock)).toBe(70);
+        expect(Math.abs(Number(p.averageCost) - 2.5714)).toBeLessThan(0.001);
+      });
+    },
+  );
 });
