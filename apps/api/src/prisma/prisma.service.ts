@@ -1,8 +1,41 @@
-import { Injectable, OnModuleInit, OnModuleDestroy, Optional } from "@nestjs/common";
+import { Injectable, Logger, OnModuleInit, OnModuleDestroy, Optional } from "@nestjs/common";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { TenantContextService } from "../tenant/tenant-context.service";
+import {
+  TenantContextGuard,
+  readEnforceFlag,
+  superAdminCreateExtension,
+  wrapTxWithCreateCheck,
+} from "../tenant/tenant-context-guard";
+
+/** SA-619: the models that carry a tenantId column (from the generated data model), built once. */
+let tenantOwnedModels: Set<string> | null = null;
+export function isTenantOwnedModel(model: string): boolean {
+  if (!tenantOwnedModels) {
+    tenantOwnedModels = new Set(
+      (Prisma as any).dmmf?.datamodel?.models
+        ?.filter((m: { fields: Array<{ name: string }> }) =>
+          m.fields.some((f) => f.name === "tenantId"),
+        )
+        .map((m: { name: string }) => m.name) ?? [],
+    );
+    // An empty set would make every create check pass silently (e.g. a generator without `Prisma.dmmf`).
+    if (tenantOwnedModels.size === 0)
+      new Logger("TenantContext").error(
+        "Prisma.dmmf exposes no tenant-owned models: the SA-619 create check is INACTIVE",
+      );
+  }
+  return tenantOwnedModels.has(model);
+}
+
+/** The first stack frame outside this file and the guard: where a context-less call came from. */
+function callSite(): string {
+  const frames = (new Error().stack ?? "").split("\n").slice(2);
+  const f = frames.find((l) => !/prisma\.service|tenant-context-guard/.test(l));
+  return (f ?? "unknown").trim().replace(/^at\s+/, "");
+}
 
 /**
  * The exact error Prisma's own `*OrThrow` operations raise when no row matches
@@ -32,10 +65,19 @@ export function isTxClient(db: unknown): boolean {
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
-  constructor(@Optional() private readonly tenantCtx?: TenantContextService) {
+  /** SA-619: warn (dark) / throw (enforced) on a missing tenant context. Injected in tests. */
+  private readonly tenantGuard: TenantContextGuard;
+
+  constructor(
+    @Optional() private readonly tenantCtx?: TenantContextService,
+    @Optional() tenantGuard?: TenantContextGuard,
+  ) {
     const pool = new Pool({ connectionString: process.env.DATABASE_URL });
     const adapter = new PrismaPg(pool);
     super({ adapter });
+    this.tenantGuard =
+      tenantGuard ??
+      new TenantContextGuard({ enforce: readEnforceFlag(), log: new Logger("TenantContext") });
   }
 
   async onModuleInit() {
@@ -64,6 +106,9 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     options?: Parameters<PrismaClient["$transaction"]>[1],
   ): Promise<T> {
     const tenantId = this.getTenantId();
+    // SA-619: a transaction with no tenant scope is reported like a forTenant() with none (a
+    // SUPER_ADMIN's unscoped transaction is deliberate and stays silent).
+    if (!tenantId) this.assertTenantContext();
     return this.$transaction(async (rawTx: any) => {
       // Layer 3: set PostgreSQL session variable for RLS policies
       if (tenantId) {
@@ -71,7 +116,18 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       } else {
         await rawTx.$executeRaw`SELECT set_config('app.current_tenant_id', '', true)`;
       }
-      if (!tenantId) return fn(rawTx);
+      // SA-619a: every non-TENANT kind gets the create check on tenant-owned writes (reads unscoped).
+      if (!tenantId)
+        return fn(
+          wrapTxWithCreateCheck(
+            rawTx,
+            this.tenantGuard,
+            isTenantOwnedModel,
+            this.tenantCtx?.getKind() === "NONE" || !this.tenantCtx
+              ? "NONE"
+              : this.tenantCtx.getKind(),
+          ),
+        );
       return fn(this._wrapTxWithTenant(rawTx, tenantId));
     }, options as any);
   }
@@ -309,7 +365,29 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
    */
   forTenant() {
     const tenantId = this.tenantCtx?.getOrNull() ?? null;
-    if (!tenantId) return this;
-    return this.$extends(this._tenantExtension(tenantId)) as unknown as this;
+    if (tenantId) return this.$extends(this._tenantExtension(tenantId)) as unknown as this;
+    // SA-619: SUPER_ADMIN reads stay unscoped, but a tenant-owned create without a tenantId is
+    // reported; ANONYMOUS / NONE / SYSTEM are reported as a missing tenant context.
+    if (this.tenantCtx?.getKind() === "SUPER_ADMIN")
+      return this.$extends(
+        superAdminCreateExtension(this.tenantGuard, isTenantOwnedModel),
+      ) as unknown as this;
+    this.assertTenantContext();
+    return this;
+  }
+
+  /**
+   * SA-619: the ONE explicit unscoped door, for legitimate cross-tenant work (billing crons,
+   * webhooks resolving a tenant from an external id, public lookups by token, platform-admin
+   * reads). `reason` must be a string literal; a source-scan spec allow-lists every call site.
+   */
+  forSystem(reason: string): this {
+    this.tenantGuard.system(reason);
+    return this;
+  }
+
+  private assertTenantContext(): void {
+    const kind = this.tenantCtx?.getKind() ?? "NONE";
+    if (kind !== "SUPER_ADMIN") this.tenantGuard.missingContext(kind, callSite());
   }
 }

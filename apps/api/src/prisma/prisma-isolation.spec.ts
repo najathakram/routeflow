@@ -1,4 +1,5 @@
 import { PrismaService } from "./prisma.service";
+import { TenantContextGuard } from "../tenant/tenant-context-guard";
 
 // T-G8a (test-plan.md, F02b/G8) — the FIRST specs apps/api/src/prisma/ has ever had. They pin
 // the tenant-isolation engine every other module leans on: `_wrapTxWithTenant` (the proxy
@@ -616,6 +617,11 @@ describe("REG-G8a PrismaService#tenantTransaction — RLS session hand-off (T-G8
   function makeHost(tenantId: string | null, rawTx: Record<string, unknown>) {
     return {
       getTenantId: jest.fn().mockReturnValue(tenantId),
+      // SA-619: tenantTransaction reports a context-less transaction through these (dark: warn only).
+      tenantCtx: undefined,
+      tenantGuard: new TenantContextGuard({ enforce: false, log: { warn: jest.fn() } }),
+      assertTenantContext: (PrismaService.prototype as unknown as { assertTenantContext(): void })
+        .assertTenantContext,
       _wrapTxWithTenant: (
         PrismaService.prototype as unknown as {
           _wrapTxWithTenant(rawTx: unknown, tenantId: string): unknown;
