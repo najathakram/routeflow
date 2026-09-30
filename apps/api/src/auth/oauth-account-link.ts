@@ -1,4 +1,5 @@
 import { ConflictException, ForbiddenException } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 
 /**
  * SA-598 P1 / #2495: the ONE resolve-then-link rule for provider sign-in (Google, Apple), derived
@@ -84,4 +85,34 @@ export async function casLinkProviderId<
   const bound = fresh[column];
   if (bound && bound !== sub) throw new ConflictException(MISMATCH_CODE[column]);
   return { row: fresh, linked: false };
+}
+
+const PROVIDER_ID_INDEXES: Record<OAuthProviderColumn, ReadonlySet<string>> = {
+  googleId: new Set(["User_tenantId_googleId_key", "BuyerAccount_googleId_key"]),
+  appleId: new Set(["User_tenantId_appleId_key", "BuyerAccount_appleId_key"]),
+};
+
+/**
+ * True only for a Prisma P2002 raised by the provider-id unique constraint itself (another row
+ * already owns this sub). Prisma 7's pg driver adapter has no `meta.target`: the constraint rides
+ * in `meta.driverAdapterError.cause.constraint` as `{ index }` or `{ fields }`. Every other unique
+ * violation (email, ...) and every non-P2002 error is false, so callers re-throw it unchanged.
+ */
+export function isProviderIdUniqueViolation(err: unknown, column: OAuthProviderColumn): boolean {
+  if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== "P2002") return false;
+  const constraint = (
+    err.meta as
+      | { driverAdapterError?: { cause?: { constraint?: { index?: unknown; fields?: unknown } } } }
+      | undefined
+  )?.driverAdapterError?.cause?.constraint;
+  if (typeof constraint?.index === "string")
+    return PROVIDER_ID_INDEXES[column].has(constraint.index);
+  if (Array.isArray(constraint?.fields)) {
+    const fields = constraint.fields.map(String).sort();
+    return (
+      (fields.length === 1 && fields[0] === column) ||
+      (fields.length === 2 && fields[0] === column && fields[1] === "tenantId")
+    );
+  }
+  return false;
 }

@@ -20,7 +20,11 @@ import type { BuyerJwtPayload } from "../buyer/interfaces/buyer-jwt-payload.inte
 import { EntitlementsService } from "../billing/entitlements.service";
 import type { DeviceInfo } from "./auth.service";
 import { escapeHtml } from "../common/html-escape";
-import { casLinkProviderId, resolveBySubThenEmail } from "./oauth-account-link";
+import {
+  casLinkProviderId,
+  isProviderIdUniqueViolation,
+  resolveBySubThenEmail,
+} from "./oauth-account-link";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -316,6 +320,18 @@ export class GoogleOAuthService {
     });
   }
 
+  /** A googleId unique violation means another row owns this sub: same outcome as the pre-check. */
+  private async guardGoogleIdTaken<T>(write: Promise<T>): Promise<T> {
+    try {
+      return await write;
+    } catch (e) {
+      if (isProviderIdUniqueViolation(e, "googleId")) {
+        throw new ForbiddenException("google_id_taken");
+      }
+      throw e;
+    }
+  }
+
   /**
    * Link a Google account to an existing user (identified by `profile.linkUserId`).
    * Throws if:
@@ -342,7 +358,7 @@ export class GoogleOAuthService {
     // SA-599b: CAS link (tenantId + id + googleId:null), mirroring linkAppleAccount; a lost race
     // to a different sub is a 409, and only the winning call logs/notifies.
     const cas = await casLinkProviderId({
-      updateMany: (args) => this.prisma.user.updateMany(args),
+      updateMany: (args) => this.guardGoogleIdTaken(this.prisma.user.updateMany(args)),
       findUnique: (id) => this.prisma.user.findUnique({ where: { id } }),
       row: user,
       column: "googleId",
@@ -572,7 +588,7 @@ export class GoogleOAuthService {
     // password via the change-password form, so the flag must not block them.
     if (!user.googleId) {
       await casLinkProviderId({
-        updateMany: (args) => this.prisma.user.updateMany(args),
+        updateMany: (args) => this.guardGoogleIdTaken(this.prisma.user.updateMany(args)),
         findUnique: (id) => this.prisma.user.findUnique({ where: { id } }),
         row: user,
         column: "googleId",
@@ -636,7 +652,7 @@ export class GoogleOAuthService {
 
       if (!staffUser.googleId) {
         const { row } = await casLinkProviderId({
-          updateMany: (args) => this.prisma.user.updateMany(args),
+          updateMany: (args) => this.guardGoogleIdTaken(this.prisma.user.updateMany(args)),
           findUnique: (id) => this.prisma.user.findUnique({ where: { id } }),
           row: staffUser,
           column: "googleId",
@@ -701,7 +717,8 @@ export class GoogleOAuthService {
         if (squattedPassword) {
           const placeholderHash = await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 10);
           const casResult = await casLinkProviderId({
-            updateMany: (args) => this.prisma.buyerAccount.updateMany(args),
+            updateMany: (args) =>
+              this.guardGoogleIdTaken(this.prisma.buyerAccount.updateMany(args)),
             findUnique: (id) => this.prisma.buyerAccount.findUnique({ where: { id } }),
             row: buyer,
             column: "googleId",
@@ -725,7 +742,8 @@ export class GoogleOAuthService {
           }
         } else {
           const casResult = await casLinkProviderId({
-            updateMany: (args) => this.prisma.buyerAccount.updateMany(args),
+            updateMany: (args) =>
+              this.guardGoogleIdTaken(this.prisma.buyerAccount.updateMany(args)),
             findUnique: (id) => this.prisma.buyerAccount.findUnique({ where: { id } }),
             row: buyer,
             column: "googleId",
@@ -782,17 +800,19 @@ export class GoogleOAuthService {
       // claim a real password via /buyer/auth/set-password without knowing it.
       const randomBytes = crypto.randomBytes(32).toString("hex");
       const passwordHash = await bcrypt.hash(randomBytes, 10);
-      buyer = await this.prisma.buyerAccount.create({
-        data: {
-          email: profile.email,
-          passwordHash,
-          passwordSet: false,
-          name: profile.name,
-          googleId: profile.googleId,
-          status: "ACTIVE",
-          emailVerified: true,
-        },
-      });
+      buyer = await this.guardGoogleIdTaken(
+        this.prisma.buyerAccount.create({
+          data: {
+            email: profile.email,
+            passwordHash,
+            passwordSet: false,
+            name: profile.name,
+            googleId: profile.googleId,
+            status: "ACTIVE",
+            emailVerified: true,
+          },
+        }),
+      );
       this.logger.log(`BuyerAccount created via Google: ${buyer.id}`);
     }
 

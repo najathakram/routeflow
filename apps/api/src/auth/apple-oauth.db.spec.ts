@@ -208,12 +208,20 @@ describeDb("#2309 (SA-418 §5) — Apple sign-in unique constraints on real Post
       arrived += 1;
       if (arrived > 2) return;
       if (arrived === 2) release();
-      await Promise.race([
-        both,
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("barrier: the second caller never arrived")), 3000),
-        ),
-      ]);
+      let timer: NodeJS.Timeout | undefined;
+      try {
+        await Promise.race([
+          both,
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error("barrier: the second caller never arrived")),
+              3000,
+            );
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
     };
     const prismaShim = {
       user: {

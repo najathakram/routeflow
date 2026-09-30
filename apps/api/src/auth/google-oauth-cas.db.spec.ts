@@ -73,12 +73,20 @@ describeDb("#2775 (SA-598 P1) — Google link CAS on real Postgres", () => {
       arrived += 1;
       if (arrived > 2) return;
       if (arrived === 2) release();
-      await Promise.race([
-        both,
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("barrier: the second caller never arrived")), 3000),
-        ),
-      ]);
+      let timer: NodeJS.Timeout | undefined;
+      try {
+        await Promise.race([
+          both,
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error("barrier: the second caller never arrived")),
+              3000,
+            );
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
     };
     const prismaShim = {
       user: {
@@ -173,12 +181,20 @@ describeDb("#2775 (SA-598 P1) — Google link CAS on real Postgres", () => {
       arrived += 1;
       if (arrived > 2) return;
       if (arrived === 2) release();
-      await Promise.race([
-        both,
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("barrier: the second caller never arrived")), 3000),
-        ),
-      ]);
+      let timer: NodeJS.Timeout | undefined;
+      try {
+        await Promise.race([
+          both,
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error("barrier: the second caller never arrived")),
+              3000,
+            );
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
     };
     const prismaShim = {
       user: {
