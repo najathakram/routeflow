@@ -34,6 +34,8 @@ const CHANNEL_LABELS: Record<MessageChannel, string> = {
 };
 
 // Where "Set up →" goes once a channel ships a setup page (none is configurable today).
+// TODO(channel ships): the whatsapp/sms/portal keys are NOT settings SECTIONS yet, so they would land
+// on the hub; point each at its real section in the same PR that makes that channel NOT_CONFIGURED.
 const CHANNEL_SETUP_HREF: Partial<Record<MessageChannel, string>> = {
   EMAIL: "/settings?tab=email",
   WHATSAPP: "/settings?tab=whatsapp",
@@ -61,6 +63,12 @@ const WA_STATUS_BADGE: Record<
   REJECTED: { variant: "danger", label: "Rejected" },
 };
 
+const COMING_SOON_LABEL: Partial<Record<MessageChannel, string>> = {
+  WHATSAPP: "WhatsApp",
+  SMS: "SMS",
+  PORTAL: "customer portal messages",
+};
+
 function joinList(items: string[]): string {
   if (items.length <= 1) return items.join("");
   return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
@@ -79,14 +87,17 @@ export function NotificationRulesCard({
   const toggle = useToggleRule();
   const status = data.channelStatus;
 
-  const live = data.events.filter((e) => e.hasTrigger);
+  const triggered = data.events.filter((e) => e.hasTrigger);
   const comingSoon = data.events.filter((e) => !e.hasTrigger);
-  const hasInternal = live.some((e) => e.channels.some((c) => c.channel === "INTERNAL"));
+  const hasInternal = triggered.some((e) => e.channels.some((c) => c.channel === "INTERNAL"));
 
   const columns: MessageChannel[] = [
     ...CHANNEL_ORDER.filter((c) => status[c as keyof typeof status] !== "NOT_BUILT"),
     ...(hasInternal ? (["INTERNAL"] as MessageChannel[]) : []),
   ];
+  // An event with no cell in any visible column (e.g. Invoice sent: portal-only) would render a
+  // dead row; the footnote explains invoices instead.
+  const live = triggered.filter((e) => e.channels.some((c) => columns.includes(c.channel)));
   const notBuilt = CHANNEL_ORDER.filter((c) => status[c as keyof typeof status] === "NOT_BUILT");
   const metered = status.WHATSAPP === "LIVE" || status.SMS === "LIVE";
 
@@ -106,9 +117,11 @@ export function NotificationRulesCard({
     if (cell.locked) {
       return (
         <span
+          role="img"
+          tabIndex={0}
           title="Invoices are sent by email or the buyer portal only"
           aria-label="Invoices are sent by email or the buyer portal only"
-          className="inline-flex text-navy/40"
+          className="inline-flex rounded text-navy/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500"
         >
           <Info className="h-4 w-4" aria-hidden="true" />
         </span>
@@ -121,6 +134,7 @@ export function NotificationRulesCard({
           checked={false}
           ariaDisabled
           title={`Set up ${label} to use this`}
+          description={`Set up ${label} to use this`}
           ariaLabel={`${event.label} via ${label} (not set up)`}
           onToggle={() => undefined}
         />
@@ -132,7 +146,7 @@ export function NotificationRulesCard({
         <MiniSwitch
           checked={cell.enabled}
           disabled={!isAdmin || toggle.isPending}
-          ariaLabel={`${cell.enabled ? "Disable" : "Enable"} ${event.label} via ${label}`}
+          ariaLabel={`${event.label} via ${label}`}
           onToggle={() => handleToggle(cell)}
         />
         {channel === "WHATSAPP" && cell.template && (
@@ -234,9 +248,11 @@ export function NotificationRulesCard({
                     </div>
                   </td>
                   <td className="px-2 py-2">
-                    <span className="whitespace-nowrap rounded-full bg-surface-raised px-2 py-0.5 text-[11px] font-medium text-navy/70">
-                      {AUDIENCE_LABEL[event.audience]}
-                    </span>
+                    <Badge
+                      variant="neutral"
+                      label={AUDIENCE_LABEL[event.audience]}
+                      className="whitespace-nowrap"
+                    />
                   </td>
                   {columns.map((channel) => (
                     <td key={channel} className="px-2 py-2 text-center align-middle">
@@ -250,14 +266,22 @@ export function NotificationRulesCard({
         </table>
       </div>
 
-      <p className="mt-3 text-xs text-navy/50">
-        Invoices are emailed when you press Send on an invoice.
-      </p>
-      {notBuilt.length > 0 && (
-        <p className="mt-1 text-xs text-navy/50">
-          {`${joinList(notBuilt.map((c) => CHANNEL_LABELS[c]))}: coming soon`}
+      <div className="mt-3 space-y-1 text-xs text-navy/50">
+        <p>Invoices are emailed when you press Send on an invoice.</p>
+        <p>
+          Emails send from your connected mailbox, then your SMTP setup, then RouteFlow&apos;s
+          address.{" "}
+          <Link href="/settings?tab=email" className="font-medium text-brand-700 hover:underline">
+            Set up email
+          </Link>
         </p>
-      )}
+        {!groups.some((g) => g.audience === "STAFF") && (
+          <p>Your team isn&apos;t emailed about orders yet. Team emails are coming soon.</p>
+        )}
+        {notBuilt.length > 0 && (
+          <p>{`${joinList(notBuilt.map((c) => COMING_SOON_LABEL[c] ?? CHANNEL_LABELS[c]))}: coming soon`}</p>
+        )}
+      </div>
 
       {comingSoon.length > 0 && (
         <details className="mt-4 rounded-lg border border-surface-border px-3 py-2">

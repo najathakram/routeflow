@@ -68,7 +68,7 @@ const DELIVERY_FIX_TARGET: Record<DeliveryFixLink, { label: string; href: string
     label: "Review notification settings",
     href: "/settings?tab=notifications",
   },
-  MY_ACCOUNT: { label: "Open my account", href: "/settings?tab=profile" },
+  MY_ACCOUNT: { label: "Open my account", href: "/settings?tab=account" },
   NONE: null,
 };
 

@@ -96,6 +96,8 @@ export function useDeliveryHealth() {
 export function useToggleRule() {
   const qc = useQueryClient();
   return useMutation({
+    // The page renders its own fixed error sentence; opt out of the global raw-message toast.
+    meta: { localErrorToast: true },
     mutationFn: ({ ruleId, enabled }: { ruleId: string; enabled: boolean }) =>
       apiClient.patch(`/messaging/rules/${ruleId}`, { enabled }).then((r) => r.data),
     onMutate: async ({ ruleId, enabled }) => {
@@ -124,6 +126,7 @@ export function useToggleRule() {
 export function useUpdateTemplate() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { localErrorToast: true },
     mutationFn: ({
       id,
       dto,
@@ -147,6 +150,7 @@ export function usePreviewTemplate() {
 export function useUpdateMessagingSettings() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { localErrorToast: true },
     mutationFn: (dto: Partial<MessagingSettings>) =>
       apiClient.patch("/messaging/settings", dto).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["messaging-config"] }),

@@ -12,15 +12,20 @@ import { deliveryFixTarget, describeDeliveryReason } from "@/lib/reason-copy";
 export function DeliveryHealthStrip() {
   const { data } = useDeliveryHealth();
   // A missing or malformed payload (e.g. an older API) renders nothing rather than crashing the page.
-  if (!data || typeof data.sent !== "number" || !Array.isArray(data.byReason)) return null;
+  if (
+    !data ||
+    [data.windowDays, data.sent, data.failed, data.skipped].some((n) => typeof n !== "number") ||
+    !Array.isArray(data.byReason)
+  )
+    return null;
 
   return (
     <section
-      aria-label="Email delivery, last 7 days"
+      aria-label={`Email delivery, last ${data.windowDays} days`}
       className="rounded-lg border border-surface-border bg-surface-raised/40 p-3"
     >
       <p className="text-sm font-medium text-navy">
-        {`Last 7 days: ${data.sent} sent · ${data.failed} failed · ${data.skipped} skipped`}
+        {`Last ${data.windowDays} days: ${data.sent} sent · ${data.failed} failed · ${data.skipped} skipped`}
       </p>
       {data.byReason.length > 0 && (
         <ul className="mt-2 space-y-1">

@@ -296,7 +296,8 @@ describe("Notifications page — grouped list (#1965)", () => {
     renderWithProviders(<NotificationsSettingsTab />);
     expect(screen.getByText(/40 sent/i)).toBeInTheDocument();
     expect(screen.getByText(/no sending email address is set up/i)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /set up email/i })).toHaveAttribute(
+    const strip = screen.getByRole("region", { name: /email delivery, last 7 days/i });
+    expect(within(strip).getByRole("link", { name: /set up email/i })).toHaveAttribute(
       "href",
       expect.stringContaining("tab=email"),
     );
