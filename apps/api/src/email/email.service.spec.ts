@@ -1,6 +1,20 @@
 import { EmailService } from "./email.service";
 
 jest.mock("nodemailer", () => ({ createTransport: jest.fn() }));
+// B909: never let a unit test reach the real Resend client — a spec that goes
+// red (e.g. a guard regression) must fail on its assertions, not attempt the
+// network. The mocked client REFUSES by default (SDK {data, error} shape);
+// tests that need a delivery result override `(svc as any).resend.emails.send`.
+jest.mock("resend", () => ({
+  Resend: jest.fn().mockImplementation(() => ({
+    emails: {
+      send: jest.fn().mockResolvedValue({
+        data: null,
+        error: { message: "resend is mocked in unit tests (B909)" },
+      }),
+    },
+  })),
+}));
 import * as nodemailer from "nodemailer";
 
 /**
@@ -195,6 +209,15 @@ describe("EmailService — sentinel recipients refused at the choke point (#2854
     });
     expect(res.delivered).toBe(false);
     expect(res.error ?? "").not.toMatch(/placeholder address/i);
+  });
+
+  it("B911: platform-send logs carry the recipient DOMAIN only, never the full address", async () => {
+    const svc = makeService();
+    const warnSpy = jest.spyOn((svc as any).logger, "warn");
+    await svc.sendPlatform({ to: "owner@acme.example", subject: "x", html: "<p>x</p>" });
+    const logged = warnSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(logged).toContain("@acme.example");
+    expect(logged).not.toContain("owner@");
   });
 });
 

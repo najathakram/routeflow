@@ -1098,13 +1098,18 @@ export class EmailService {
    * refusing is treated exactly like "no email on file". Honest result (R5).
    * The warn log carries the sentinel DOMAIN only, never the full address.
    */
+  /** B911: the log form of a recipient — the domain only, never the full address. */
+  private logRecipient(to: string): string {
+    const at = to.lastIndexOf("@");
+    return at >= 0 ? to.slice(at) : "<no-domain>";
+  }
+
   private refuseSentinel(
     to: string,
   ): { delivered: false; transport: "none"; error: string } | null {
     if (!isInternalEmail(to)) return null;
-    const domain = to.slice(to.lastIndexOf("@"));
     this.logger.warn(
-      `send refused: recipient is at the internal sentinel domain ${domain} (no real email on file)`,
+      `send refused: recipient is at the internal sentinel domain ${this.logRecipient(to)} (no real email on file)`,
     );
     return {
       delivered: false,
@@ -1449,7 +1454,7 @@ export class EmailService {
           replyTo: params.replyTo,
         });
         this.logger.log(
-          `Platform email sent via platform SMTP to ${params.to} — messageId: ${info.messageId}`,
+          `Platform email sent via platform SMTP to ${this.logRecipient(params.to)} — messageId: ${info.messageId}`,
         );
         return { delivered: true, transport: "smtp", id: info.messageId };
       } catch (err: any) {
@@ -1474,15 +1479,19 @@ export class EmailService {
         });
         if ((result as any)?.error) {
           const msg = (result as any).error?.message ?? "Resend rejected the message";
-          this.logger.error(`Resend rejected platform email to ${params.to}: ${msg}`);
+          this.logger.error(
+            `Resend rejected platform email to ${this.logRecipient(params.to)}: ${msg}`,
+          );
           return { delivered: false, transport: "resend", error: msg };
         }
         this.logger.log(
-          `Platform email sent via Resend to ${params.to} — id: ${(result.data as any)?.id}`,
+          `Platform email sent via Resend to ${this.logRecipient(params.to)} — id: ${(result.data as any)?.id}`,
         );
         return { delivered: true, transport: "resend", id: (result.data as any)?.id };
       } catch (err: any) {
-        this.logger.error(`Failed to send platform email to ${params.to}: ${err?.message}`);
+        this.logger.error(
+          `Failed to send platform email to ${this.logRecipient(params.to)}: ${err?.message}`,
+        );
         return {
           delivered: false,
           transport: "resend",
@@ -1493,7 +1502,7 @@ export class EmailService {
 
     // 3. No platform transport configured.
     this.logger.warn(
-      `[PLATFORM EMAIL NOT SENT] To: ${params.to} | Subject: ${params.subject} — no platform SMTP or Resend configured.`,
+      `[PLATFORM EMAIL NOT SENT] To: ${this.logRecipient(params.to)} | Subject: ${params.subject} — no platform SMTP or Resend configured.`,
     );
     return { delivered: false, transport: "none" };
   }
