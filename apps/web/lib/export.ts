@@ -7,14 +7,17 @@ type CsvCell = string | number | boolean | null | undefined;
 /** UTF-8 byte-order mark so Excel opens the file as UTF-8. */
 const CSV_BOM = "\uFEFF";
 
-/** Text a spreadsheet may run as a formula: = + - @ tab CR (OWASP CSV injection). */
-const FORMULA_LEAD = /^[=+\-@\t\r]/;
+/** Text a spreadsheet may run as a formula: = + - @ tab CR LF and the full-width forms
+ *  (OWASP CSV injection). Same set as the server's `csvCell`. */
+const FORMULA_LEAD = /^[=+\-@\t\r\n＝＋－＠]/;
+/** A plain number written as a string (`toFixed(2)` money): safe, and must stay numeric. */
+const PLAIN_NUMBER = /^[+-]?\d+(\.\d+)?$/;
 
 function escapeCsvCell(v: CsvCell): string {
   if (v == null) return "";
   // Numbers/booleans are never text a user typed, so a negative amount stays numeric.
   let s = String(v);
-  if (typeof v === "string" && FORMULA_LEAD.test(s)) s = `'${s}`;
+  if (typeof v === "string" && FORMULA_LEAD.test(s) && !PLAIN_NUMBER.test(s)) s = `'${s}`;
   // Quote if contains comma, newline, or double-quote
   if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
   return s;
