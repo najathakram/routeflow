@@ -14,6 +14,7 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 describe("ImportService — CUSTOMERS soft cap", () => {
   let service: ImportService;
@@ -47,6 +48,12 @@ describe("ImportService — CUSTOMERS soft cap", () => {
           useValue: {
             findLocalId: jest.fn().mockResolvedValue(null),
             record: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
           },
         },
       ],

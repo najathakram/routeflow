@@ -21,8 +21,18 @@ import { useCreateDraft, useUpdateDraft, useDeleteDraft, useDraft } from "@/lib/
 import { draftDeviceLabel, type OrderDraftPayload } from "@/lib/drafts";
 import { apiClient } from "@/lib/api-client";
 import { orderCreatedToast } from "./order-created-toast";
-import { mergeQtyIntoLine, mergedLineMessage, newLineQty, parseAddQty } from "./add-line-merge";
-import { getTierPrice, computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
+import { mergeQtyIntoLine, mergedLineMessage, newLineQty } from "./add-line-merge";
+import {
+  isSpecialTier,
+  getTierPrice,
+  computeLineSubtotal,
+  normalizeBoxesPieces,
+} from "@routeflow/pricing";
+import {
+  applyTypedPrice,
+  lineNeedsReason,
+  reasonRequiredMessage,
+} from "@/lib/staff-price-override";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MoneyInput, DecimalInput } from "@/components/MoneyInput";
 import { displayProductName } from "@/lib/product-display";
@@ -101,6 +111,7 @@ interface LineItem {
   listPrice: number; // standard pricePerUnit from product catalog
   specialPrice?: number; // permanent customer-specific price (from CustomerPrice)
   discountedPrice?: number; // one-time ad-hoc override (below list = discount, above = upsell)
+  overrideReason?: string; // #2696(c): required when the price moves off a special price
   unitPrice: number; // effective price used for display totals
   priceType: "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL";
   qty: number; // total pieces (authoritative)
@@ -213,24 +224,16 @@ export function CreateOrderModal({
   const [customQty, setCustomQty] = React.useState("1");
   const [customError, setCustomError] = React.useState("");
   const productSearchRef = React.useRef<HTMLInputElement>(null);
-  // Quick-order "Qty" field next to the product search: how many of the NEXT picked product to
-  // add (cases for a case-packed product). Resets to 1 after every add.
-  const [addQtyRaw, setAddQtyRaw] = React.useState("1");
-  // Enter resolves the typed code through the scan handler (async, and it calls back through the
-  // `addLineItem` thunk), so the typed qty rides a short-lived ref; a camera scan never sets it
-  // and therefore stays +1 per scan.
-  const typedQtyRef = React.useRef<{ qty: number; at: number } | null>(null);
+  // #2696 (owner): the quick-order "Qty" box beside the search is gone — every pick / scan adds 1
+  // (one case for a case-packed product) and a repeat merges +1; the line's own qty is tap-to-type.
   // SA-090/Opus item 1: written INSIDE addLineItem's setLineItems updater (the only place the
   // add-vs-merge decision is made against the true latest state), read immediately after —
   // never a value computed before that decision, which a same-tick retry+live-scan race of the
   // same product could make stale (both calls would otherwise decide "new line" from the same
   // pre-commit snapshot and append two rows for one product).
   const lastAddResultRef = React.useRef<{ created: boolean; mergedInto?: LineItem } | null>(null);
-  /** Back to a clean quick-add: the field to 1 and no pending Enter qty. */
-  const resetAddQty = () => {
-    setAddQtyRaw("1");
-    typedQtyRef.current = null;
-  };
+  // #2696 (b): the line whose price/qty sheet (the scan screen's PriceEditor) is open, if any.
+  const [editingLineId, setEditingLineId] = React.useState<string | null>(null);
   // Scroll the just-scanned line into view so rapid scanning stays visible.
   const rowRefs = React.useRef<Map<string, HTMLLIElement>>(new Map());
   const [scrollToId, setScrollToId] = React.useState<string | null>(null);
@@ -363,15 +366,11 @@ export function CreateOrderModal({
   const barcodeScanHandlerRef = useScanCodeHandler({
     // A thunk: addLineItem is declared further down and is read only when a code is scanned.
     addLineItem: (product) => {
-      const typed = typedQtyRef.current;
-      typedQtyRef.current = null;
-      const fresh = !!typed && Date.now() - typed.at < 5000;
       // SA-090/Opus item 1: `created` comes from addLineItem's OWN return value now — it is
       // decided inside the setLineItems updater, against the true latest state, never from a
       // closure-captured `lineItems` read here beforehand (which a same-tick retry-plus-live-scan
       // race of the same product could make stale — see addLineItem's own comment).
-      const { created } = addLineItem(product, fresh ? typed!.qty : 1);
-      if (fresh) setAddQtyRaw("1"); // the typed qty was used — a scan that ignored it leaves it alone
+      const { created } = addLineItem(product);
       return { created };
     },
     onUnknownCode: (code) => {
@@ -390,7 +389,6 @@ export function CreateOrderModal({
     if (!code) return;
     setProductSearch("");
     setDebouncedProductSearch("");
-    typedQtyRef.current = { qty: parseAddQty(addQtyRaw), at: Date.now() };
     barcodeScanHandlerRef.current(code);
   };
 
@@ -420,7 +418,6 @@ export function CreateOrderModal({
     setCustomName("");
     setCustomPrice("");
     setCustomQty("1");
-    resetAddQty();
     setCustomError("");
     setRequestedDeliveryDate("");
     setOrderDate("");
@@ -467,8 +464,8 @@ export function CreateOrderModal({
         if (li.discountedPrice != null) return li;
         const tier = cpMap.get(li.productId) ?? selectedCustomer?.pricingTier ?? 1;
         const tierPrice = getTierPrice(li.tierPrices, tier);
-        const priceType = tier !== 1 ? ("SPECIAL" as const) : ("STANDARD" as const);
-        const specialPrice = tier !== 1 ? tierPrice : undefined;
+        const priceType = isSpecialTier(tier) ? ("SPECIAL" as const) : ("STANDARD" as const);
+        const specialPrice = isSpecialTier(tier) ? tierPrice : undefined;
         if (
           li.unitPrice === tierPrice &&
           li.priceType === priceType &&
@@ -557,8 +554,8 @@ export function CreateOrderModal({
     return { ...li, qty: Math.max(1, li.qty + dir) };
   };
 
-  const addLineItem = (product: any, addQty = 1): { created: boolean } => {
-    const n = orderUiV2 ? parseAddQty(addQty) : 1; // the typed Qty exists only under order_ui_v2
+  const addLineItem = (product: any): { created: boolean } => {
+    const n = 1; // #2696: every pick / scan adds one (the quick-add Qty field is gone)
     // Already in the list: MERGE (sum) into that line instead of adding a duplicate.
     //  - order_ui_v2: +1 for a scan / plain pick, +N for a typed qty. Box-aware: a case-packed line
     //    gains N cases and its qty is re-derived from boxes/pieces (pricing reads the split).
@@ -579,7 +576,7 @@ export function CreateOrderModal({
     const tierOverride = cpMap.get(product.id);
     const effectiveTier = tierOverride ?? customerTier;
     const tierPrice = getTierPrice(product, effectiveTier);
-    const priceType = effectiveTier !== 1 ? ("SPECIAL" as const) : ("STANDARD" as const);
+    const priceType = isSpecialTier(effectiveTier) ? ("SPECIAL" as const) : ("STANDARD" as const);
     // Pre-fill from customer's last-given price for this product (only when below
     // the effective tier price, and only when this isn't already a SPECIAL price
     // — SPECIAL prices are permanent, the discount is already in tierPrice).
@@ -600,7 +597,7 @@ export function CreateOrderModal({
       productName: displayProductName(product),
       unit: product.unit ?? "each",
       listPrice,
-      specialPrice: effectiveTier !== 1 ? tierPrice : undefined,
+      specialPrice: isSpecialTier(effectiveTier) ? tierPrice : undefined,
       discountedPrice: hasHistOverride ? histEntry!.lastPrice : undefined,
       unitPrice: hasHistOverride ? histEntry!.lastPrice : tierPrice,
       priceType: hasHistUpsell
@@ -696,10 +693,9 @@ export function CreateOrderModal({
     return { created: result.created };
   };
 
-  /** A pick from the search dropdown: applies the typed Qty, then clears it. */
+  /** A pick from the search dropdown: +1 (#2696 — no typed quick-add qty). */
   const addPicked = (product: any) => {
-    addLineItem(product, parseAddQty(addQtyRaw));
-    setAddQtyRaw("1");
+    addLineItem(product);
   };
 
   const removeLineItem = (tempId: string) => {
@@ -745,7 +741,6 @@ export function CreateOrderModal({
     setCustomName("");
     setCustomPrice("");
     setCustomQty("1");
-    resetAddQty();
     setCustomError("");
   };
 
@@ -772,6 +767,12 @@ export function CreateOrderModal({
         return { ...li, unitPrice: price, listPrice: price };
       }),
     );
+  };
+
+  /** #2696 (b): a typed qty on a plain (non-case) line — a whole number, at least 1 (like the −). */
+  const setQty = (tempId: string, value: number) => {
+    const qty = Math.max(1, Number.isFinite(value) ? Math.trunc(value) : 1);
+    setLineItems((prev) => prev.map((li) => (li.tempId === tempId ? { ...li, qty } : li)));
   };
 
   const updateQty = (tempId: string, delta: number) => {
@@ -856,40 +857,24 @@ export function CreateOrderModal({
           return {
             ...li,
             discountedPrice: undefined,
+            overrideReason: undefined,
             unitPrice: revertPrice,
             priceType: li.specialPrice != null ? "SPECIAL" : "STANDARD",
           };
         }
-        const enteredPrice = Math.max(0, value);
-        if (enteredPrice < li.listPrice) {
-          return {
-            ...li,
-            discountedPrice: enteredPrice,
-            unitPrice: enteredPrice,
-            priceType: "DISCOUNTED",
-          };
-        }
-        if (enteredPrice > li.listPrice) {
-          // Upsell: sold ABOVE list. Stored as MANUAL; the base is hidden from the
-          // customer server-side and shown green ("Upsell") to the operator.
-          return {
-            ...li,
-            discountedPrice: enteredPrice,
-            unitPrice: enteredPrice,
-            priceType: "MANUAL",
-          };
-        }
-        // Entered price == list price → no override
-        const revertPrice = li.specialPrice ?? li.listPrice;
-        return {
-          ...li,
-          discountedPrice: undefined,
-          unitPrice: revertPrice,
-          priceType: li.specialPrice != null ? "SPECIAL" : "STANDARD",
-        };
+        // #2696(c): the server's own rule A (@routeflow/pricing decideStaffOverride) — within ½¢
+        // of the special / list price is no override; below list DISCOUNTED, at/above MANUAL (an
+        // upsell: the base is hidden from the customer server-side, shown green to the operator).
+        const next = applyTypedPrice(li, value);
+        return next.discountedPrice == null ? { ...next, overrideReason: undefined } : next;
       }),
     );
   };
+
+  const setOverrideReason = (tempId: string, reason: string) =>
+    setLineItems((prev) =>
+      prev.map((li) => (li.tempId === tempId ? { ...li, overrideReason: reason } : li)),
+    );
 
   // ── Submit ────────────────────────────────────────────────────────────────
 
@@ -992,6 +977,12 @@ export function CreateOrderModal({
   // Radix's Escape interception (see Modal.onEscapeKeyDown). While mid-add, swallow
   // the Escape and clear just the sub-flow state, keeping the order builder open.
   const handleEscape = (event: KeyboardEvent) => {
+    // #2696 (b): an open price sheet takes Escape first — it closes the sheet, never the order.
+    if (editingLineId) {
+      event.preventDefault();
+      setEditingLineId(null);
+      return;
+    }
     if (!addItemFlowActive) return; // fall through → Radix dismiss → handleDismiss
     event.preventDefault();
     setProductSearch("");
@@ -1001,7 +992,6 @@ export function CreateOrderModal({
       setCustomName("");
       setCustomPrice("");
       setCustomQty("1");
-      resetAddQty();
       setCustomError("");
     }
     setTimeout(() => productSearchRef.current?.focus(), 0);
@@ -1126,6 +1116,14 @@ export function CreateOrderModal({
       toast({ title: RETURN_SAVE_BLOCKED[inlineReturn], variant: "error" });
       return;
     }
+    // #2696(c): never send what the server refuses — an off-special price needs its reason first.
+    const needsReason = lineItems.find(lineNeedsReason);
+    if (needsReason) {
+      setMergePrompt(null);
+      toast({ title: reasonRequiredMessage(needsReason.productName), variant: "error" });
+      setEditingLineId(needsReason.tempId);
+      return;
+    }
     const itemsForSubmit = (
       asDraft
         ? lineItems.filter(
@@ -1148,7 +1146,12 @@ export function CreateOrderModal({
             // (backend handles those via CustomerPrice).
             ...((li.priceType === "DISCOUNTED" || li.priceType === "MANUAL") &&
             li.discountedPrice != null
-              ? { unitPrice: li.discountedPrice }
+              ? {
+                  unitPrice: li.discountedPrice,
+                  ...(li.overrideReason?.trim()
+                    ? { overrideReason: li.overrideReason.trim() }
+                    : {}),
+                }
               : {}),
             ...note,
           };
@@ -1304,6 +1307,7 @@ export function CreateOrderModal({
         else rowRefs.current.delete(li.tempId);
       }}
       onQtyDelta={(delta) => updateQty(li.tempId, delta)}
+      onSetQty={(value) => setQty(li.tempId, value)}
       onSetBoxes={(value) => setBoxes(li.tempId, value)}
       onSetPieces={(value) => setPieces(li.tempId, value)}
       onSetUnitQty={(value) => setUnitQty(li.tempId, value)}
@@ -1346,6 +1350,8 @@ export function CreateOrderModal({
       onAckFloor={() => ackFloor(li.tempId)}
       onToggleCostRevealed={() => toggleCostRevealed(li.tempId)}
       onClose={close}
+      reasonRequired={lineNeedsReason(li)}
+      onSetOverrideReason={(reason) => setOverrideReason(li.tempId, reason)}
     />
   );
 
@@ -1382,6 +1388,14 @@ export function CreateOrderModal({
     });
     setCreateProductOpen(false);
   };
+
+  // #2696 (b): the main list's price/qty sheet — the scan screen's PriceEditor, same handlers, same
+  // floor check. Rendered only while the tapped line still exists (removing it closes the sheet),
+  // and INSIDE the Modal's content: outside it, Radix marks the sheet aria-hidden and the body
+  // pointer-events:none, so it could not be clicked.
+  const editingLine = editingLineId
+    ? lineItems.find((li) => li.tempId === editingLineId)
+    : undefined;
 
   const dialog = (
     <Modal
@@ -1577,32 +1591,10 @@ export function CreateOrderModal({
                     : "border-surface-border focus:border-transparent",
                 )}
               />
-              {orderUiV2 && (
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  min={1}
-                  max={9999}
-                  value={addQtyRaw}
-                  onChange={(e) => setAddQtyRaw(e.target.value)}
-                  onFocus={(e) => e.target.select()}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      productSearchRef.current?.focus(); // commit the qty, move on to the search
-                    }
-                  }}
-                  aria-label="Quantity to add"
-                  title="Quantity to add (cases for case-packed products)"
-                  className="h-10 w-14 shrink-0 rounded border border-surface-border bg-white px-1 text-center text-sm font-semibold text-navy [appearance:textfield] focus:outline-none focus:ring-2 focus:ring-brand-500 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                />
-              )}
               <BarcodeScannerButton
                 inputRef={productSearchRef}
                 onScan={(code) => {
-                  // A camera scan is always +1 — never inherit a typed qty from a failed Enter.
-                  typedQtyRef.current = null;
-                  barcodeScanHandlerRef.current(code);
+                  barcodeScanHandlerRef.current(code); // a camera scan is +1
                 }}
                 onError={(message) => toast({ variant: "error", title: message })}
                 onOpenContinuous={scanV2 ? () => setScanScreenOpen(true) : undefined}
@@ -1828,7 +1820,13 @@ export function CreateOrderModal({
             {/* Line items list */}
             {lineItems.length > 0 ? (
               <ul className="divide-y divide-surface-border overflow-hidden rounded-lg border border-surface-border">
-                {lineItems.map((li) => renderLine(li))}
+                {lineItems.map((li) =>
+                  renderLine(li, {
+                    // #2696 (b)/(c): tap the price → the line's price/qty sheet, a SPECIAL-priced line
+                    // too — moving off the special price takes a reason there (SA-558).
+                    onTapPrice: () => setEditingLineId(li.tempId),
+                  }),
+                )}
               </ul>
             ) : (
               <div className="rounded-lg border border-dashed border-surface-border bg-surface-raised py-6 text-center">
@@ -1925,6 +1923,7 @@ export function CreateOrderModal({
               ref={returnsRef}
               customerId={selectedCustomer.id}
               refusalMessage={returnSave.refusalMessage}
+              refusalReturn={returnSave.refusalReturn}
             />
           )}
 
@@ -2143,6 +2142,7 @@ export function CreateOrderModal({
           onClose={() => setLicenseBlock(null)}
         />
       )}
+      {editingLine && renderPriceEditor(editingLine, () => setEditingLineId(null))}
     </Modal>
   );
 
@@ -2160,8 +2160,6 @@ export function CreateOrderModal({
           renderLine={renderLine}
           renderPriceEditor={renderPriceEditor}
           resolveCode={(code, opts) => {
-            // A qty typed for an Enter that added nothing must never ride into a camera scan.
-            typedQtyRef.current = null;
             return barcodeScanHandlerRef.current(code, opts);
           }}
           onUndo={undoScan}

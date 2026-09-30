@@ -95,6 +95,7 @@ import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { StorageService } from "../storage/storage.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EstimatesService } from "../estimates/estimates.service";
 import { NumberingService } from "../import/numbering.service";
@@ -194,6 +195,13 @@ describeDb(
           { provide: CreditNotesService, useValue: mockCreditNotes },
           { provide: MessagingService, useValue: mockMessaging },
           { provide: StorageService, useValue: mockStorage },
+          {
+            provide: EntitlementAuthority,
+            inject: [EntitlementsService],
+            useFactory: (e: { hasFlag?: (t: string, k: string) => Promise<boolean> }) => ({
+              can: (t: string, k: string) => e.hasFlag?.(t, k) ?? Promise.resolve(false),
+            }),
+          },
           { provide: EntitlementsService, useValue: mockEntitlements },
           { provide: CommissionEngineService, useValue: mockCommissionEngine },
         ],
@@ -1907,6 +1915,11 @@ describeDb(
             tenantId: tenant.id,
           },
         });
+        // SA-539d: the office bills FIRST (no evidence yet ⇒ the draft bills the full line), then the
+        // door refuses, then the at-door reconcile. Seeding the REFUSED row before the create made
+        // B760 bill min(10, 0) = 0 ⇒ no draft at all (the owner-closed "no fee on a fully refused
+        // delivery"), which is not the path this case pins.
+        await tenantCtx.run(tenant.id, () => invoicesService.createInvoiceFromOrder(order.id));
         await prisma.deliveryMutation.create({
           data: {
             orderId: order.id,
@@ -1917,7 +1930,6 @@ describeDb(
             tenantId: tenant.id,
           },
         });
-        await tenantCtx.run(tenant.id, () => invoicesService.createInvoiceFromOrder(order.id));
 
         await tenantCtx.run(tenant.id, () =>
           invoicesService.reconcileOrderDraftInvoice(order.id, { basis: "delivered" }),

@@ -885,7 +885,13 @@ describe("CreateOrderModal", () => {
         renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
         capturedOnScan!("111");
         await screen.findByText("$10.00 / each");
-        fireEvent.change(screen.getByPlaceholderText("10.00"), { target: { value: "9.00" } });
+        // #2696 (b): the price is changed by tapping it — the sheet owns the one-time price.
+        fireEvent.click(screen.getAllByLabelText("Change price")[0]);
+        const sheet = await screen.findByRole("dialog", { name: /^edit /i });
+        fireEvent.change(within(sheet).getByPlaceholderText("10.00"), {
+          target: { value: "9.00" },
+        });
+        fireEvent.click(within(sheet).getByRole("button", { name: "Done" }));
         expect(await screen.findByText("$9.00 / each")).toBeInTheDocument();
 
         await pickCustomer("Acme Foods");
@@ -1095,6 +1101,185 @@ describe("CreateOrderModal", () => {
       await screen.findByText(/24 pcs total/);
       expect(screen.queryByLabelText("Sell Widget by")).toBeNull();
       expect(saveDraft()).toEqual([{ productId: "prod-1", qty: 24, boxes: 1, pieces: 0 }]);
+    });
+  });
+
+  // #2696 (owner): tap-to-edit price/qty on the line, the case/unit toggle sells ONE unit with loose
+  // units opt-in, and the payload shape is unchanged ({qty, boxes, pieces}).
+  describe("#2696 order line editing", () => {
+    const cust = (tier = 1) => ({ id: "c1", businessName: "Acme Foods", pricingTier: tier });
+    const boxed = {
+      notFound: false,
+      archived: false,
+      product: { id: "prod-1", name: "Widget", pricePerUnit: "42", unit: "Box", unitsPerBox: 24 },
+    };
+    const plain = {
+      notFound: false,
+      archived: false,
+      product: { id: "prod-2", name: "Soda", pricePerUnit: "2.50", unit: "each" },
+    };
+    const setup = async (resolved: unknown, tier = 1) => {
+      mockCustomers = [cust(tier)];
+      mockResolveProductByCode.mockResolvedValue(resolved);
+      renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+      fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
+        target: { value: "Acm" },
+      });
+      fireEvent.click(await screen.findByText("Acme Foods"));
+      await act(async () => {
+        capturedOnScan!("111");
+      });
+    };
+    const saveDraft = () => {
+      fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
+      expect(createOrderMutate).toHaveBeenCalledTimes(1);
+      return createOrderMutate.mock.calls[0][0].items;
+    };
+
+    it("(d) a new case-packed line shows ONLY the cases field and submits pieces = 0", async () => {
+      await setup(boxed);
+      expect(await screen.findByTitle("Number of whole cases")).toBeInTheDocument();
+      expect(screen.queryByLabelText("Extra loose units")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "+ units" })).toBeInTheDocument();
+      expect(saveDraft()).toEqual([{ productId: "prod-1", qty: 24, boxes: 1, pieces: 0 }]);
+    });
+
+    it("(d) “+ units” reveals the loose field; its value rides as pieces on top of the cases", async () => {
+      await setup(boxed);
+      fireEvent.click(await screen.findByRole("button", { name: "+ units" }));
+      fireEvent.change(screen.getByLabelText("Extra loose units"), { target: { value: "5" } });
+      expect(saveDraft()).toEqual([{ productId: "prod-1", qty: 29, boxes: 1, pieces: 5 }]);
+    });
+
+    it("(d) removing the extra units puts pieces back to 0 and hides the field", async () => {
+      await setup(boxed);
+      fireEvent.click(await screen.findByRole("button", { name: "+ units" }));
+      fireEvent.change(screen.getByLabelText("Extra loose units"), { target: { value: "5" } });
+      fireEvent.click(screen.getByRole("button", { name: "Remove extra units" }));
+      expect(screen.queryByLabelText("Extra loose units")).not.toBeInTheDocument();
+      expect(saveDraft()).toEqual([{ productId: "prod-1", qty: 24, boxes: 1, pieces: 0 }]);
+    });
+
+    it("(d) Unit mode shows only the total units; back in Case mode a loose remainder is shown, never dropped", async () => {
+      await setup(boxed);
+      fireEvent.click(await screen.findByRole("button", { name: "Unit" }));
+      const total = screen.getByTitle("Total units") as HTMLInputElement;
+      expect(total.value).toBe("24"); // 1 case → 24 units: the same qty, converted by display
+      expect(screen.queryByTitle("Number of whole cases")).not.toBeInTheDocument();
+      fireEvent.change(total, { target: { value: "25" } });
+      fireEvent.click(screen.getByRole("button", { name: "Case" }));
+      expect((screen.getByTitle("Number of whole cases") as HTMLInputElement).value).toBe("1");
+      expect((screen.getByLabelText("Extra loose units") as HTMLInputElement).value).toBe("1");
+      expect(saveDraft()).toEqual([{ productId: "prod-1", qty: 25, boxes: 1, pieces: 1 }]);
+    });
+
+    it("(b) a plain line's qty is tap-to-type; below 1 clamps to 1", async () => {
+      await setup(plain);
+      const qty = (await screen.findByLabelText("Quantity")) as HTMLInputElement;
+      fireEvent.change(qty, { target: { value: "7" } });
+      expect(qty.value).toBe("7");
+      fireEvent.change(qty, { target: { value: "0" } });
+      expect(qty.value).toBe("1");
+      // A cleared field (and non-numeric input, which a number field reports as "") never NaNs.
+      fireEvent.change(qty, { target: { value: "7" } });
+      fireEvent.change(qty, { target: { value: "" } });
+      expect(qty.value).toBe("1");
+      fireEvent.change(qty, { target: { value: "abc" } });
+      expect(qty.value).toBe("1");
+      fireEvent.change(qty, { target: { value: "7" } });
+      expect(saveDraft()).toEqual([{ productId: "prod-2", qty: 7 }]);
+    });
+
+    it("(b) tapping a line's price opens its price/qty sheet; closing it returns to the list", async () => {
+      await setup(plain);
+      const tap = await screen.findByLabelText("Change price");
+      // The list row carries no inline price box — the price is changed by tapping it (owner).
+      expect(screen.queryByText("Price:")).not.toBeInTheDocument();
+      fireEvent.click(tap);
+      // The modal itself is a dialog; the price sheet is the one named "Edit <product>".
+      expect(await screen.findByRole("dialog", { name: /^edit /i })).toBeInTheDocument();
+      fireEvent.click(screen.getAllByRole("button", { name: /close price editor/i })[0]);
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog", { name: /^edit /i })).not.toBeInTheDocument(),
+      );
+      // Escape closes only the sheet; the order builder stays open.
+      fireEvent.click(screen.getByLabelText("Change price"));
+      const sheet = await screen.findByRole("dialog", { name: /^edit /i });
+      fireEvent.keyDown(sheet, { key: "Escape" });
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog", { name: /^edit /i })).not.toBeInTheDocument(),
+      );
+      expect(screen.getByRole("dialog", { name: "Create Order" })).toBeInTheDocument();
+    });
+
+    // #2696(c) (SA-558/558a): a SPECIAL line's price is tappable too; moving it off the special price
+    // needs a reason, decided by @routeflow/pricing's decideStaffOverride — the server's own rule.
+    const special = {
+      notFound: false,
+      archived: false,
+      product: {
+        id: "prod-2",
+        name: "Soda",
+        pricePerUnit: "2.50",
+        priceTier2: "2.00",
+        unit: "each",
+      },
+    };
+    const openSheet = async () => {
+      expect(await screen.findByText("Special price")).toBeInTheDocument();
+      fireEvent.click(screen.getByLabelText("Change price"));
+      return screen.findByRole("dialog", { name: /^edit /i });
+    };
+    const typePrice = (sheet: HTMLElement, v: string) => {
+      const input = within(sheet).getByLabelText("Price");
+      fireEvent.change(input, { target: { value: v } });
+      fireEvent.blur(input);
+    };
+
+    it("(c) a SPECIAL-priced line's price opens the sheet, the special price as its placeholder", async () => {
+      await setup(special, 2);
+      const sheet = await openSheet();
+      expect(within(sheet).getByLabelText("Price")).toHaveAttribute("placeholder", "2.00");
+      expect(within(sheet).getByText(/special price \$2\.00/i)).toBeInTheDocument();
+    });
+
+    it("(c) moving off the special price with no reason blocks saving, naming the product", async () => {
+      await setup(special, 2);
+      typePrice(await openSheet(), "1.50");
+      expect(screen.getByLabelText("Reason (required)")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
+      expect(createOrderMutate).not.toHaveBeenCalled();
+      expect(mockToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: expect.stringMatching(/reason is required to change Soda/),
+        }),
+      );
+    });
+
+    it("(c) with a reason the override is sent: unitPrice + overrideReason", async () => {
+      await setup(special, 2);
+      typePrice(await openSheet(), "1.50");
+      fireEvent.change(screen.getByLabelText("Reason (required)"), {
+        target: { value: "dented cans" },
+      });
+      expect(saveDraft()).toEqual([
+        { productId: "prod-2", qty: 1, unitPrice: 1.5, overrideReason: "dented cans" },
+      ]);
+    });
+
+    it("(c) typing the LIST price on a special line is a real change too — it needs a reason", async () => {
+      await setup(special, 2);
+      typePrice(await openSheet(), "2.50");
+      expect(screen.getByLabelText("Reason (required)")).toBeInTheDocument();
+    });
+
+    it("(c) typing the special price back restores it: no reason, nothing overridden", async () => {
+      await setup(special, 2);
+      const sheet = await openSheet();
+      typePrice(sheet, "1.50");
+      typePrice(sheet, "2.00");
+      expect(screen.queryByLabelText("Reason (required)")).not.toBeInTheDocument();
+      expect(saveDraft()).toEqual([{ productId: "prod-2", qty: 1 }]);
     });
   });
 });

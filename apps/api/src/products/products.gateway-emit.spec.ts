@@ -18,7 +18,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { AddonService } from "../billing/addon.service";
 import { SystemConfigService } from "../system-config/system-config.service";
-import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -56,7 +56,7 @@ describe("ProductsService — product.updated emits (REG-PROD-EMIT)", () => {
         },
         { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(false) } },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
-        { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(true) } },
+        { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(true) } },
         { provide: PlanCatalogService, useValue: { upgradeTargetForFlag: jest.fn() } },
         { provide: RouteFlowGateway, useValue: gateway },
       ],
@@ -227,7 +227,12 @@ describe("ProductsService — product.updated emits (REG-PROD-EMIT)", () => {
 
   it("REG-PROD-EMIT-10 importFromZoho() over multiple created rows emits ONE coalesced 'bulk' event, never one per row", async () => {
     prisma.product.findFirst.mockResolvedValue(null); // no name/sku/barcode collisions
-    prisma.product.create.mockResolvedValue({} as any);
+    // #2717 M1: create()'s dual-write sync keys off the created row's id — a real Prisma create
+    // always returns one, so the mock needs one too (this test's own concern is emit coalescing).
+    let nextId = 0;
+    prisma.product.create.mockImplementation(() =>
+      Promise.resolve({ id: `zoho-${nextId++}` } as any),
+    );
 
     const result = await service.importFromZoho({
       items: [

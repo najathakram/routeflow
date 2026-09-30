@@ -43,7 +43,7 @@ export default function CustomerScanScreen() {
       addToCart({
         productId: p.id,
         name: p.name,
-        unitPrice: Number(p.buyerPrice ?? p.basePrice ?? p.price) || 0,
+        unitPrice: p.buyerPrice,
         unit: p.unit,
         unitsPerBox: p.unitsPerBox ?? null,
         category: p.category ?? null,

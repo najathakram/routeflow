@@ -41,6 +41,7 @@ interface Line {
   name: string;
   unitPrice: number;
   qty: number;
+  priceType?: string;
 }
 const L = (o: Partial<Line> = {}): Line => ({
   tempId: "t1",
@@ -65,12 +66,14 @@ function setup(
     open: true,
     onClose: jest.fn(),
     lines: [] as Line[],
-    renderLine: (l: Line, ctx: { highlighted: boolean; onTapPrice: () => void }) => (
+    renderLine: (l: Line, ctx: { highlighted: boolean; onTapPrice?: () => void }) => (
       <li key={l.tempId} data-testid={`row-${l.productId}`} data-highlighted={ctx.highlighted}>
         {l.name} ×{l.qty}
-        <button type="button" data-testid={`price-${l.productId}`} onClick={ctx.onTapPrice}>
-          price
-        </button>
+        {ctx.onTapPrice && (
+          <button type="button" data-testid={`price-${l.productId}`} onClick={ctx.onTapPrice}>
+            price
+          </button>
+        )}
       </li>
     ),
     renderPriceEditor: (l: Line, close: () => void) => (
@@ -933,6 +936,12 @@ describe("ScanOrderScreen", () => {
       expect(screen.queryByTestId("editor")).not.toBeInTheDocument();
       fireEvent.keyDown(document.body, { key: "Escape" });
       expect(props.onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it("a SPECIAL-priced line's price opens the editor too — an override needs a reason there (#2696(c))", () => {
+      setup({ lines: [L({ priceType: "SPECIAL" }), L({ tempId: "t2", productId: "p2" })] });
+      fireEvent.click(screen.getByTestId("price-p1"));
+      expect(screen.getByTestId("editor")).toBeInTheDocument();
     });
 
     it("a new session never reopens a stale editor", () => {

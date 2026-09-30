@@ -41,7 +41,9 @@ const FEEDBACK_MS = 2500;
 /** How often the poor-signal queue checks for scans that are due a retry. */
 const RETRY_TICK_MS = 1500;
 
-export interface ScanOrderScreenProps<T extends SummaryLine & { tempId: string }> {
+export interface ScanOrderScreenProps<
+  T extends SummaryLine & { tempId: string; priceType?: string },
+> {
   open: boolean;
   /**
    * True while another dialog (create-product for an unknown barcode) is up: the camera stops and
@@ -53,7 +55,8 @@ export interface ScanOrderScreenProps<T extends SummaryLine & { tempId: string }
   /** The order's lines — the SAME state CreateOrderModal owns; this screen never keeps its own cart. */
   lines: readonly T[];
   /** One row per line. `highlighted` marks the line the last scan touched. */
-  renderLine: (line: T, ctx: { highlighted: boolean; onTapPrice: () => void }) => React.ReactNode;
+  /** `onTapPrice` opens the price editor for the line (#2696(c): SPECIAL-priced lines included). */
+  renderLine: (line: T, ctx: { highlighted: boolean; onTapPrice?: () => void }) => React.ReactNode;
   /**
    * The price/quantity editor for one line (LANE-S step 6). When given, tapping a row's price opens
    * it as a sheet over this screen; `close` dismisses it. It receives the LIVE line each render, so
@@ -81,7 +84,7 @@ export interface ScanOrderScreenProps<T extends SummaryLine & { tempId: string }
  * `fixed` child would be positioned against the dialog box, not the viewport) and its focus trap
  * would fight the qty/note inputs. The modal therefore closes its Dialog while this is open.
  */
-export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
+export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceType?: string }>({
   open,
   paused = false,
   onClose,
@@ -679,6 +682,7 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
             {lines.map((line) =>
               renderLine(line, {
                 highlighted: !!line.productId && line.productId === highlightId,
+                // #2696(c): a SPECIAL-priced line too — an override takes a reason in the editor.
                 onTapPrice: () => setEditingId(line.tempId),
               }),
             )}

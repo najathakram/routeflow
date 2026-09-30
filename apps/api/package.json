@@ -31,6 +31,9 @@
     "db:publish:catalog:v10": "ts-node -r tsconfig-paths/register prisma/publish-plan-catalog-v10.ts",
     "db:publish:catalog:v11": "ts-node -r tsconfig-paths/register prisma/publish-plan-catalog-v11.ts",
     "db:publish:catalog:v12": "ts-node -r tsconfig-paths/register prisma/publish-plan-catalog-v12.ts",
+    "db:publish:catalog:v13": "ts-node -r tsconfig-paths/register prisma/publish-plan-catalog-v13.ts",
+    "db:backfill:catalog-rows": "ts-node -r tsconfig-paths/register prisma/backfill-product-catalog-rows.ts",
+    "db:report:barcode-conflicts": "ts-node -r tsconfig-paths/register prisma/report-product-barcode-conflicts.ts",
     "db:drift": "node scripts/schema-drift.mjs",
     "smoke:pdf": "node scripts/pdf-render-smoke.mjs",
     "postinstall": "prisma generate"
@@ -55,6 +58,7 @@
     "@prisma/client": "^7.10.0",
     "@react-pdf/renderer": "^4.9.0",
     "@routeflow/pricing": "*",
+    "@routeflow/scanning": "*",
     "@routeflow/types": "*",
     "@sentry/node": "^10.75.0",
     "@socket.io/redis-adapter": "^8.3.0",
@@ -145,6 +149,7 @@
       "ts"
     ],
     "rootDir": "src",
+    "cacheDirectory": "<rootDir>/../.jest-cache",
     "testRegex": ".*\\.spec\\.ts$",
     "testPathIgnorePatterns": [
       "/node_modules/",
@@ -168,6 +173,7 @@
     },
     "moduleNameMapper": {
       "^@routeflow/pricing$": "<rootDir>/../../../packages/pricing/src/index.ts",
+      "^@routeflow/scanning$": "<rootDir>/../../../packages/scanning/src/index.ts",
       "^ioredis$": "<rootDir>/../test/__mocks__/ioredis.js",
       "^expo-server-sdk$": "<rootDir>/../test/__mocks__/expo-server-sdk.js",
       "^@react-pdf/renderer$": "<rootDir>/../test/__mocks__/react-pdf-renderer.js",

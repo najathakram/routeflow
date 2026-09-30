@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { InvoicePdfVariant } from "../invoice-pdf-variant";
-import type { AnyPaymentMethod } from "../payment-methods";
+import type { PaymentMethod } from "@routeflow/types";
 import type {
   CreateInvoiceItem,
   CreatePartialInvoiceDto,
@@ -16,6 +16,8 @@ export type InvoiceStatus =
 export interface InvoiceItem {
   id: string;
   description: string;
+  /** #2169: the system line kind ("NSF_FEE" for the bounce-fee line), null for a normal line. */
+  systemKind?: string | null;
   productId?: string;
   qty: number;
   unitPrice: number;
@@ -32,7 +34,8 @@ export interface InvoiceItem {
   msrp?: number | null;
 }
 
-export type PaymentMethod = AnyPaymentMethod;
+// #2722: the shared enum directly (no alias chain through ../payment-methods).
+export type { PaymentMethod } from "@routeflow/types";
 
 export interface InvoicePayment {
   id: string;
@@ -155,6 +158,9 @@ export interface CreateInvoiceDto {
   shippingFee?: number;
   referenceNumber?: string;
   subject?: string;
+  /** #1529: opt-in deposit schedule (a percent of the total due by its own date), as on web. */
+  depositPercent?: number;
+  depositDueDate?: string;
   /** Carrier shipment tracking recorded at creation time. */
   shippingCarrier?: string;
   shippingTrackingNumber?: string;

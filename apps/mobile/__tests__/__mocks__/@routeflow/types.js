@@ -25,6 +25,17 @@ module.exports = {
   UserRole: {},
   VENDOR_BILL_STATUS_VALUES: ["DRAFT", "RECEIVED", "PARTIAL", "PAID", "OVERDUE", "VOID"],
   PURCHASE_ORDER_STATUS_VALUES: ["DRAFT", "SENT", "PARTIAL", "RECEIVED", "CLOSED"],
+  // #2722: hand-copied; the parity sweep pins it to Prisma PaymentMethod (via enums.ts).
+  PAYMENT_METHOD_VALUES: [
+    "CASH",
+    "CHECK",
+    "ACH",
+    "OTHER",
+    "CREDIT_NOTE",
+    "ADVANCE",
+    "CREDIT_CARD",
+    "ZELLE",
+  ],
   API_ERROR_CODES: {
     ADDON_GATE: "ADDON_GATE",
     MAILBOX_CONNECT_SECRET_MISMATCH: "mailbox_connect_secret_mismatch",
@@ -34,6 +45,8 @@ module.exports = {
     DUPLICATE_VENDOR_BILL: "DUPLICATE_VENDOR_BILL",
     CLEANUP_IMPORTED_DISABLED: "CLEANUP_IMPORTED_DISABLED",
     ORDER_LINE_CHANGED: "ORDER_LINE_CHANGED",
+    NSF_LINE_UNTAXED: "NSF_LINE_UNTAXED",
+    BARCODE_TAKEN: "BARCODE_TAKEN",
   },
   CHECK_TRANSITIONS: {
     RECORDED: ["DEPOSITED", "BOUNCED"],

@@ -2,7 +2,7 @@
 // fleet-status.mjs — read-only "where are we" snapshot for RouteFlow.
 //
 // Prints a compact markdown report (~120 lines) covering: master HEAD +
-// recent merges, repo visibility, open PRs + CI rollup, the #938 board's
+// recent merges, repo visibility, open PRs + CI rollup, the board's (#2554)
 // recent comments, local worktree hygiene, bug-registry counts, and the
 // newest handoff pointers. Every section fails soft — a section that can't
 // be gathered prints "unavailable: <reason>" and the script keeps going.
@@ -29,6 +29,9 @@ const outFile = outIdx !== -1 ? args[outIdx + 1] : null;
 const __filename = fileURLToPath(import.meta.url);
 const REPO_ROOT = resolve(dirname(__filename), "..", "..", "..", "..");
 const OWNER_REPO = "najathakram/routeflow";
+// The live board of record. #938 hit GitHub's 2,500-comment cap on 2026-09-27; its successor is
+// #2554. Roll to a new board at ~2,300 comments (L-240) and change this one constant.
+const BOARD_ISSUE = Number(process.env.FLEET_BOARD_ISSUE || 2554);
 
 const report = {}; // machine-readable accumulator for --json
 
@@ -223,15 +226,15 @@ h(`## Open PRs`);
 h(``);
 
 // ---------------------------------------------------------------------------
-// #938 board
+// board (#BOARD_ISSUE)
 // ---------------------------------------------------------------------------
-h(`## #938 board (last 12 comments)`);
+h(`## #${BOARD_ISSUE} board (last 12 comments)`);
 {
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const comments = tryRun("gh", [
     "api",
     "--paginate",
-    `repos/${OWNER_REPO}/issues/938/comments?per_page=100&since=${since}`,
+    `repos/${OWNER_REPO}/issues/${BOARD_ISSUE}/comments?per_page=100&since=${since}`,
   ]);
   if (comments.ok) {
     try {
@@ -260,7 +263,7 @@ h(`## #938 board (last 12 comments)`);
       }
       items.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
       const last12 = items.slice(-12);
-      report.board938 = last12.map((c) => ({
+      report.board = last12.map((c) => ({
         id: c.id,
         created_at: c.created_at,
         excerpt: trunc(c.body || "", 140),

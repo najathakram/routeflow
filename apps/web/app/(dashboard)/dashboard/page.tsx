@@ -34,7 +34,10 @@ import { unitsLabel } from "@/lib/stock-label";
 import { useFinanceDashboard } from "@/lib/api/finance";
 import { useInvoices, type Invoice } from "@/lib/api/invoices";
 import { useRoutesAccess, useDeliveryAccess } from "@/lib/api/addons";
+import { DRIVER_LANDING } from "@/lib/portal-routing";
 import { DriverAppBanner } from "./DriverAppBanner";
+import { GettingStartedBanner } from "./GettingStartedBanner";
+import { useTenantOnboarding } from "@/lib/api/onboarding";
 
 // ─── Column definitions (stable refs, defined outside component) ───────────────
 
@@ -520,6 +523,10 @@ export default function DashboardPage() {
     user.role === "TENANT_ADMIN";
   const isCustomer = user?.role === "CUSTOMER";
   const baseIsDriver = user?.role === "DRIVER";
+  // #2159 S4: the onboarding banner is for the workspace's own staff only.
+  const onboardingQuery = useTenantOnboarding(
+    user?.role === "TENANT_ADMIN" || user?.role === "OPERATOR",
+  );
   // #2254: /orders is OPERATOR+CUSTOMER only; /invoices and /bookkeeping/finance-dashboard are
   // OPERATOR only. A DRIVER fired all five here (403s) and saw "Could not load recent orders."
   const readsBusinessData = !baseIsDriver;
@@ -527,10 +534,20 @@ export default function DashboardPage() {
 
   const canActAsDriver = user?.canActAsDriver === true && baseIsOperator && routesAccess;
 
-  // Owner ruling (mobile-web-proxy-redesign): a DRIVER-role account signed in
-  // on the web dashboard is nudged toward the installed driver app — not
-  // forced there (web driver mode is the PHASE 1a work still in progress).
-  // Dismissed for the rest of this mount only; reappears on the next sign-in.
+  // PHASE 1a (web driver mode): a pure DRIVER-role account lands on their own
+  // runs view instead — but ONLY when they actually have access to it (same
+  // routesAccess || deliveryAccess condition DRIVER_NAV's filter in
+  // (dashboard)/layout.tsx uses to show/hide the nav item, and the ONLY thing
+  // stopping this from being an infinite redirect loop: RouteGuard bounces a
+  // driver who lacks BOTH addons off /routes/my-runs back to /dashboard, so
+  // gating this redirect the same way is required, not optional). A driver
+  // with neither addon falls through to the ordinary dashboard render below
+  // (the nudge banner just under this still applies to them, untouched).
+  const driverHasRunsAccess = baseIsDriver && (routesAccess || deliveryAccess);
+  React.useEffect(() => {
+    if (driverHasRunsAccess) router.replace(DRIVER_LANDING);
+  }, [driverHasRunsAccess, router]);
+
   const [driverBannerDismissed, setDriverBannerDismissed] = React.useState(false);
 
   // View mode for dual-role users — persisted across visits
@@ -646,8 +663,17 @@ export default function DashboardPage() {
   const ownerName = settingsData?.ownerName;
   const businessName = settingsData?.businessName;
 
+  // PHASE 1a: the redirect effect above fires once driverHasRunsAccess is
+  // known true — render nothing rather than a frame of operator dashboard
+  // content while router.replace() is in flight. A driver without the addon
+  // falls through to the ordinary render below (driverHasRunsAccess is false).
+  if (driverHasRunsAccess) return null;
+
   return (
     <div className="space-y-6 p-6">
+      {/* ── Onboarding in progress (#2159 S4) ── */}
+      <GettingStartedBanner onboarding={onboardingQuery.data?.onboarding} />
+
       {/* ── Driver-app nudge (DRIVER-role account, web) ── */}
       <DriverAppBanner
         visible={baseIsDriver && !driverBannerDismissed}

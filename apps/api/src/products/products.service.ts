@@ -13,7 +13,7 @@ import { StorageService } from "../storage/storage.service";
 import { compressImage } from "../storage/compress.util";
 import { AddonService } from "../billing/addon.service";
 import { SystemConfigService } from "../system-config/system-config.service";
-import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { buildPlanGateBody } from "../billing/plan-gate";
@@ -35,6 +35,19 @@ import { buildScanSearchOr } from "./scan-search";
 import { assertPackKeepsLevelsValid } from "./unit-pack-rules";
 import { isMsrpBelowWholesale, wholesalePerPiece } from "../common/msrp";
 import { TOBACCO_CATEGORY_NAME, isTobaccoCategoryName } from "../common/tobacco-category";
+import {
+  assertBarcodeAvailable,
+  lockBarcodeCodes,
+  mapBarcodeUniqueViolation,
+  syncProductBarcodesFromLegacy,
+  syncProductImagesFromLegacy,
+} from "./product-catalog-sync";
+import {
+  barcodeRowsToView,
+  mirrorableImageKeys,
+  parseFocalFromKey,
+  synthesizeLegacyBarcodes,
+} from "./product-barcode-rules";
 
 /** `-fp50x40` → focal point 50% across, 40% down. Omitted if focal is centre. */
 function encodeFocalSuffix(focal?: { x: number; y: number }): string {
@@ -85,7 +98,7 @@ export class ProductsService {
     private readonly storage: StorageService,
     private readonly addonService: AddonService,
     private readonly systemConfig: SystemConfigService,
-    private readonly entitlements: EntitlementsService,
+    private readonly authority: EntitlementAuthority,
     private readonly planCatalog: PlanCatalogService,
     private readonly gateway: RouteFlowGateway,
   ) {}
@@ -118,7 +131,8 @@ export class ProductsService {
   private async assertMsrpAllowed(): Promise<void> {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) return; // no tenant context (e.g. SUPER_ADMIN) — nothing to gate
-    if (await this.entitlements.hasFlag(tenantId, "flag.msrp")) return;
+    // #2198: the ONE evaluation point the flag.msrp route guard uses (overrides + live-mode resolver).
+    if (await this.authority.can(tenantId, "flag.msrp")) return;
     const upgrade = await this.planCatalog.upgradeTargetForFlag("flag.msrp").catch(() => ({
       planKey: null,
       planMonthlyPrice: null,
@@ -319,6 +333,8 @@ export class ProductsService {
     // includeVariants since it materially expands the payload.
     const includeRelations = {
       parent: { select: { id: true, name: true } },
+      // #2717 M1 (SA-572b Q5): additive barcodes[] on the list too (rows, else synthesized below).
+      barcodes: { orderBy: { level: "asc" as const } },
       ...(query.includeVariants
         ? {
             variants: {
@@ -346,7 +362,13 @@ export class ProductsService {
         // #2533: only a key under this product's own prefix is ever signed.
         const thumbKey = firstSignableImageKey(p.id, p.imageKeys);
         const thumbnailUrl = thumbKey ? await this.storage.presignedUrl(thumbKey) : null;
-        return { ...p, thumbnailUrl };
+        // #2717 M1 (SA-572b Q5): rows first, else synthesized from the legacy columns.
+        const pBarcodeRows = (p as { barcodes?: unknown[] }).barcodes ?? [];
+        const barcodes =
+          pBarcodeRows.length > 0
+            ? barcodeRowsToView(pBarcodeRows as Parameters<typeof barcodeRowsToView>[0])
+            : synthesizeLegacyBarcodes({ barcode: p.barcode, unitsPerBox: p.unitsPerBox });
+        return { ...p, thumbnailUrl, barcodes };
       }),
     );
 
@@ -396,6 +418,9 @@ export class ProductsService {
         // subcategory, shown on the product detail. Null for standard products.
         trackedCategory: { select: { id: true, name: true } },
         trackedSubcategory: { select: { id: true, name: true, trackedCategoryId: true } },
+        // #2717 M1 (SA-572b Q5): rows first; synthesized from the legacy columns below when empty.
+        barcodes: { orderBy: { level: "asc" as const } },
+        images: { orderBy: { sortOrder: "asc" as const } },
       },
     });
     if (!product) throw new NotFoundException("Product not found");
@@ -407,7 +432,51 @@ export class ProductsService {
     const stockAlertCount = await this.prisma.forTenant().stockAlert.count({
       where: { productId: id, status: StockAlertStatus.PENDING },
     });
-    return { ...product, imageKeys, imageUrls, stockAlertCount };
+    // #2717 M1 (SA-572b Q5): additive read-model fallback. Rows exist (post-backfill or a fresh
+    // dual-write) -> map them; NO rows yet -> synthesize from the legacy columns (origin "LEGACY").
+    // The presigned-url map below reuses the SAME imageKeys/imageUrls pairing above (never a second
+    // presign of the same key).
+    const urlByKey = new Map(imageKeys.map((k, i) => [k, imageUrls[i] ?? null]));
+    const barcodeRows = product.barcodes ?? [];
+    const imageRows = product.images ?? [];
+    const barcodes =
+      barcodeRows.length > 0
+        ? barcodeRowsToView(barcodeRows)
+        : synthesizeLegacyBarcodes({ barcode: product.barcode, unitsPerBox: product.unitsPerBox });
+    // #2728 M1 follow-up (SA-572f, amendment 1 — FINAL): a PER-KEY merge over
+    // mirrorableImageKeys(product), not an all-or-nothing switch on imageRows.length. A key the
+    // dual-write's per-key belt skipped (held by another product) or that's simply never had a row
+    // created for it yet still renders — via its LEGACY fallback — right alongside the keys that do
+    // have rows, so an edit that (correctly) leaves some keys row-less never blanks the gallery.
+    const mirrorKeys = mirrorableImageKeys(product.id, product.imageKeys);
+    const imageRowByKey = new Map(imageRows.map((row) => [row.storageKey, row]));
+    const images = mirrorKeys.map((key, index) => {
+      const existingRow = imageRowByKey.get(key);
+      if (existingRow) {
+        return {
+          storageKey: existingRow.storageKey,
+          url: urlByKey.get(existingRow.storageKey) ?? null,
+          focalX: existingRow.focalX,
+          focalY: existingRow.focalY,
+          sortOrder: existingRow.sortOrder,
+          isPrimary: existingRow.isPrimary,
+          altText: existingRow.altText,
+          origin: "ROW" as const,
+        };
+      }
+      const focal = parseFocalFromKey(key);
+      return {
+        storageKey: key,
+        url: urlByKey.get(key) ?? null,
+        focalX: focal ? focal.x : null,
+        focalY: focal ? focal.y : null,
+        sortOrder: index,
+        isPrimary: index === 0,
+        altText: null,
+        origin: "LEGACY" as const,
+      };
+    });
+    return { ...product, imageKeys, imageUrls, stockAlertCount, barcodes, images };
   }
 
   async uploadImage(
@@ -430,10 +499,22 @@ export class ProductsService {
     const key = `products/${id}/${crypto.randomUUID()}${fpSuffix}.${compressed.ext}`;
     await this.storage.upload(key, compressed.buffer, compressed.mimeType);
 
-    // Append key to the product's imageKeys array
-    await this.prisma.forTenant().product.update({
-      where: { id },
-      data: { imageKeys: { push: key } },
+    // Append key to the product's imageKeys array (#2717 M1: dual-write the row in the same tx).
+    const tenantIdForUpload = this.prisma.getTenantId();
+    if (!tenantIdForUpload) throw new BadRequestException("No tenant context");
+    await this.prisma.tenantTransaction(async (tx: any) => {
+      // Sync from the value the UPDATE actually wrote (it holds the row lock until commit), never
+      // from the earlier read: a concurrent upload's push would otherwise be missing from the rows.
+      const written = await tx.product.update({
+        where: { id },
+        data: { imageKeys: { push: key } },
+        select: { imageKeys: true },
+      });
+      await syncProductImagesFromLegacy(tx, {
+        tenantId: tenantIdForUpload,
+        productId: id,
+        imageKeys: written.imageKeys,
+      });
     });
 
     const url = await this.storage.presignedUrl(key);
@@ -451,11 +532,23 @@ export class ProductsService {
     // planted before the write guard (another tenant's file) is unlinked below but never deleted.
     if (isOwnProductImageKey(id, key)) await this.storage.delete(key);
 
-    // Remove key from array
-    await this.prisma.forTenant().product.update({
-      where: { id },
-      data: { imageKeys: product.imageKeys.filter((k) => k !== key) },
+    // Remove key from array (#2717 M1: dual-write the row in the same tx).
+    const tenantIdForDelete = this.prisma.getTenantId();
+    if (!tenantIdForDelete) throw new BadRequestException("No tenant context");
+    const nextImageKeysDel = product.imageKeys.filter((k) => k !== key);
+    await this.prisma.tenantTransaction(async (tx: any) => {
+      const written = await tx.product.update({
+        where: { id },
+        data: { imageKeys: nextImageKeysDel },
+        select: { imageKeys: true },
+      });
+      await syncProductImagesFromLegacy(tx, {
+        tenantId: tenantIdForDelete,
+        productId: id,
+        imageKeys: written.imageKeys,
+      });
     });
+    return;
   }
 
   /**
@@ -684,45 +777,73 @@ export class ProductsService {
       });
       syncedCategory = sub?.name;
     }
-    const created = await this.prisma.forTenant().product.create({
-      data: {
-        name: dto.name,
-        sku: dto.sku,
-        barcode: dto.barcode,
-        unitSku: dto.unitSku,
-        unit: dto.unit,
-        pricePerUnit: dto.pricePerUnit,
-        priceTier2: dto.priceTier2 ?? (parent ? parent.priceTier2.toString() : dto.pricePerUnit),
-        priceTier3: dto.priceTier3 ?? (parent ? parent.priceTier3.toString() : dto.pricePerUnit),
-        priceTier4: dto.priceTier4 ?? (parent ? parent.priceTier4.toString() : dto.pricePerUnit),
-        priceTier5: dto.priceTier5 ?? (parent ? parent.priceTier5.toString() : dto.pricePerUnit),
-        category: syncedCategory ?? dto.category ?? parent?.category ?? undefined,
-        description: dto.description,
-        isActive: dto.isActive,
-        // Inherited-from-parent tobacco skips the addon re-check (top of create):
-        // the parent already passed it when IT was flagged. `isTobacco` here is
-        // the mirror-derived value computed above (category is the one axis).
-        isTobacco,
-        // Default new products to the tenant's configured costing method when the
-        // operator didn't pick one (pos-cost-roles-spec §1). Variants inherit the
-        // parent's method instead so the family is costed consistently.
-        costingMethod: parent
-          ? (dto.costingMethod ?? parent.costingMethod)
-          : await this.resolveCostingMethod(dto.costingMethod),
-        standardCost: dto.standardCost ?? parent?.standardCost?.toString(),
-        // MSRP (suggested retail price) — per PIECE, display-only, never money math.
-        // 0/negative are normalized to null (never rendered as $0.00).
-        msrp: normalizeMsrpForWrite(dto.msrp),
-        unitsPerBox: dto.unitsPerBox ?? parent?.unitsPerBox ?? undefined,
-        parentProductId: dto.parentProductId ?? null,
-        variantName: dto.variantName ?? null,
-        trackedCategoryId: regulated.trackedCategoryId,
-        trackedSubcategoryId: regulated.trackedSubcategoryId,
-        regItemType: regulated.regItemType,
-        regUomCase: regulated.regUomCase,
-        regUomUnit: regulated.regUomUnit,
-      },
-      include: { variants: true, parent: true },
+    // #2717 M1 (SA-572b Q4/Q6): the resolved costingMethod is computed OUTSIDE the transaction
+    // below (it may call resolveCostingMethod, which itself reads/writes SystemConfig) so the tx
+    // body stays a plain product-create + barcode-row sync.
+    const resolvedCostingMethod = parent
+      ? (dto.costingMethod ?? parent.costingMethod)
+      : await this.resolveCostingMethod(dto.costingMethod);
+    const resolvedUnitsPerBox = dto.unitsPerBox ?? parent?.unitsPerBox ?? undefined;
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) throw new BadRequestException("No tenant context");
+    const created = await this.prisma.tenantTransaction(async (tx: any) => {
+      // SA-572b Q4/SA-572c: lock the code BEFORE the create — otherwise a concurrent create of the
+      // same code races on the legacy unique index and surfaces a raw P2002 instead of a 409.
+      if (dto.barcode) {
+        await lockBarcodeCodes(tx, tenantId, [dto.barcode]);
+        await assertBarcodeAvailable(tx, { tenantId, productId: null, code: dto.barcode });
+      }
+      let row;
+      try {
+        row = await tx.product.create({
+          data: {
+            name: dto.name,
+            sku: dto.sku,
+            barcode: dto.barcode,
+            unitSku: dto.unitSku,
+            unit: dto.unit,
+            pricePerUnit: dto.pricePerUnit,
+            priceTier2:
+              dto.priceTier2 ?? (parent ? parent.priceTier2.toString() : dto.pricePerUnit),
+            priceTier3:
+              dto.priceTier3 ?? (parent ? parent.priceTier3.toString() : dto.pricePerUnit),
+            priceTier4:
+              dto.priceTier4 ?? (parent ? parent.priceTier4.toString() : dto.pricePerUnit),
+            priceTier5:
+              dto.priceTier5 ?? (parent ? parent.priceTier5.toString() : dto.pricePerUnit),
+            category: syncedCategory ?? dto.category ?? parent?.category ?? undefined,
+            description: dto.description,
+            isActive: dto.isActive,
+            // Inherited-from-parent tobacco skips the addon re-check (top of create):
+            // the parent already passed it when IT was flagged. `isTobacco` here is
+            // the mirror-derived value computed above (category is the one axis).
+            isTobacco,
+            costingMethod: resolvedCostingMethod,
+            standardCost: dto.standardCost ?? parent?.standardCost?.toString(),
+            // MSRP (suggested retail price) — per PIECE, display-only, never money math.
+            // 0/negative are normalized to null (never rendered as $0.00).
+            msrp: normalizeMsrpForWrite(dto.msrp),
+            unitsPerBox: resolvedUnitsPerBox,
+            parentProductId: dto.parentProductId ?? null,
+            variantName: dto.variantName ?? null,
+            trackedCategoryId: regulated.trackedCategoryId,
+            trackedSubcategoryId: regulated.trackedSubcategoryId,
+            regItemType: regulated.regItemType,
+            regUomCase: regulated.regUomCase,
+            regUomUnit: regulated.regUomUnit,
+          },
+          include: { variants: true, parent: true },
+        });
+      } catch (e) {
+        mapBarcodeUniqueViolation(e, dto.barcode ?? "");
+      }
+      await syncProductBarcodesFromLegacy(tx, {
+        tenantId,
+        productId: row.id,
+        barcode: row.barcode,
+        unitsPerBox: row.unitsPerBox,
+      });
+      return row;
     });
     this.emitProductChanged(created.id, "created");
     return created;
@@ -984,9 +1105,42 @@ export class ProductsService {
     // isActive, bulkSetMsrp() also writes msrp) or of Product rows in general
     // (import/variant-resolution paths write directly and emit nothing; see
     // products.gateway-emit.spec.ts for the paths that DO emit).
-    const updated = await this.prisma.forTenant().product.update({
-      where: { id },
-      data,
+    // #2717 M1 (SA-572b Q4/Q6, SA-572c): the effective post-write barcode (the PATCH's value, else the
+    // current one) decides which codes to lock and check BEFORE the write; the rows are then synced from
+    // the row the UPDATE returns. Always synced on every update: the diff inside the sync helpers
+    // writes nothing when nothing moved.
+    const effectiveBarcode: string | null | undefined =
+      data.barcode !== undefined ? data.barcode : existing.barcode;
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) throw new BadRequestException("No tenant context");
+    const updated = await this.prisma.tenantTransaction(async (tx: any) => {
+      // Source-order pin: lock [new, old] before the update's own product.findFirst-style reads.
+      await lockBarcodeCodes(tx, tenantId, [effectiveBarcode, existing.barcode]);
+      if (effectiveBarcode) {
+        await assertBarcodeAvailable(tx, { tenantId, productId: id, code: effectiveBarcode });
+      }
+      let row;
+      try {
+        row = await tx.product.update({ where: { id }, data });
+      } catch (e) {
+        mapBarcodeUniqueViolation(e, effectiveBarcode ?? "");
+      }
+      // Sync from the row the UPDATE returned (the post-write values, under its row lock), not from
+      // `existing`: a concurrent image upload between the read and this write would otherwise be
+      // dropped from the rows. The lock/assert above used the effective values (same codes).
+      await syncProductBarcodesFromLegacy(tx, {
+        tenantId,
+        productId: id,
+        barcode: row.barcode,
+        unitsPerBox: row.unitsPerBox,
+        previousBarcode: existing.barcode,
+      });
+      await syncProductImagesFromLegacy(tx, {
+        tenantId,
+        productId: id,
+        imageKeys: row.imageKeys,
+      });
+      return row;
     });
     // suppressEmit lets a caller that loops this method (bulkAssignParent) emit
     // ONE coalesced event after the loop instead of one per row.
@@ -1426,26 +1580,42 @@ export class ProductsService {
         // product and its opening movement land atomically.
         const openingStock = new Prisma.Decimal(item.currentStock ?? "0");
         const openingCost = item.averageCost != null ? new Prisma.Decimal(item.averageCost) : null;
-        await this.prisma.tenantTransaction(async (tx) => {
-          const created = await tx.product.create({
-            data: {
-              name: item.name,
-              sku: item.sku ?? null,
-              barcode: item.barcode ?? null,
-              unit: item.unit,
-              pricePerUnit: item.pricePerUnit,
-              priceTier2: item.pricePerUnit,
-              priceTier3: item.pricePerUnit,
-              priceTier4: item.pricePerUnit,
-              priceTier5: item.pricePerUnit,
-              category: item.category ?? null,
-              description: item.description ?? null,
-              isActive: item.isActive ?? true,
-              currentStock: openingStock,
-              averageCost: openingCost,
-              reorderPoint: item.reorderPoint ?? null,
-            },
-          });
+        const tenantIdForBulk = this.prisma.getTenantId();
+        if (!tenantIdForBulk) throw new BadRequestException("No tenant context");
+        await this.prisma.tenantTransaction(async (tx: any) => {
+          // #2717 M1 (SA-572b Q4/Q6): lock+check BEFORE the create, same as the single-row create().
+          if (item.barcode) {
+            await lockBarcodeCodes(tx, tenantIdForBulk, [item.barcode]);
+            await assertBarcodeAvailable(tx, {
+              tenantId: tenantIdForBulk,
+              productId: null,
+              code: item.barcode,
+            });
+          }
+          let created: { id: string };
+          try {
+            created = await tx.product.create({
+              data: {
+                name: item.name,
+                sku: item.sku ?? null,
+                barcode: item.barcode ?? null,
+                unit: item.unit,
+                pricePerUnit: item.pricePerUnit,
+                priceTier2: item.pricePerUnit,
+                priceTier3: item.pricePerUnit,
+                priceTier4: item.pricePerUnit,
+                priceTier5: item.pricePerUnit,
+                category: item.category ?? null,
+                description: item.description ?? null,
+                isActive: item.isActive ?? true,
+                currentStock: openingStock,
+                averageCost: openingCost,
+                reorderPoint: item.reorderPoint ?? null,
+              },
+            });
+          } catch (e) {
+            mapBarcodeUniqueViolation(e, item.barcode ?? "");
+          }
           if (!openingStock.isZero()) {
             await tx.stockMovement.create({
               data: {
@@ -1459,6 +1629,12 @@ export class ProductsService {
               },
             });
           }
+          await syncProductBarcodesFromLegacy(tx, {
+            tenantId: tenantIdForBulk,
+            productId: created.id,
+            barcode: item.barcode ?? null,
+            unitsPerBox: null,
+          });
           return created;
         });
 

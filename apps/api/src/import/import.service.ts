@@ -17,6 +17,17 @@ import { ImportEntityType, InvoiceStatus, MovementType, UserRole } from "@prisma
 import * as bcrypt from "bcrypt";
 import * as crypto from "crypto";
 import { addressStateFields } from "../customers/address-state";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import {
+  assertBarcodeAvailable,
+  lockBarcodeCodes,
+  mapBarcodeUniqueViolation,
+  syncProductBarcodesFromLegacy,
+} from "../products/product-catalog-sync";
+import {
+  flagRestrictedLines,
+  writeRestrictedLinesAudit,
+} from "../selling-restrictions/restricted-lines-flag";
 
 /**
  * F9-008: hard row-count cap on any CSV import. The byte-size caps on the upload
@@ -77,6 +88,7 @@ export class ImportService {
     private readonly customersService: CustomersService,
     private readonly numbering: NumberingService,
     private readonly externalRefs: ExternalRefService,
+    private readonly sellingRestrictions: SellingRestrictionsService,
   ) {}
 
   private parseCsv(buffer: Buffer): any[] {
@@ -561,11 +573,31 @@ export class ImportService {
   async importInvoices(
     buffer: Buffer,
     userId: string,
-  ): Promise<{ imported: number; updated: number; skipped: number; errors: string[] }> {
+  ): Promise<{
+    imported: number;
+    updated: number;
+    skipped: number;
+    errors: string[];
+    restrictedLines: Array<{
+      invoiceNumber: string;
+      productId: string;
+      productName: string;
+      message: string;
+    }>;
+  }> {
     const rows = this.parseCsv(buffer);
     let imported = 0,
       updated = 0,
       skipped = 0;
+    // F-05 (#2093): IMPORT IS EXEMPT — every row imports unchanged; flag only. Collected as we go
+    // (customer + catalog productIds per newly-created invoice), checked in ONE batch per
+    // customer AFTER the loop (never per row) so a 500-row file issues a handful of reads, not
+    // hundreds.
+    const flagCandidates: Array<{
+      customerId: string;
+      invoiceNumber: string;
+      productIds: string[];
+    }> = [];
     // Invoice import auto-creates missing customers as a side effect; track that so
     // the CUSTOMERS grace window still opens if those rows push the tenant over cap.
     // No pre-check here — the soft cap blocks only a deliberate new-customer create,
@@ -1067,6 +1099,18 @@ export class ImportService {
           );
         }
 
+        // F-05 (#2093): collected, not checked here — see the batched check after the loop.
+        const importedProductIds = itemsData
+          .map((it: any) => it.productId)
+          .filter((id: any): id is string => !!id);
+        if (importedProductIds.length > 0) {
+          flagCandidates.push({
+            customerId,
+            invoiceNumber: newInvoice.invoiceNumber,
+            productIds: importedProductIds,
+          });
+        }
+
         imported++;
       } catch (e: any) {
         // #2468: a deliberate refusal is reported by its reason, not the generic "import failed".
@@ -1080,7 +1124,55 @@ export class ImportService {
     // the tenant over cap, so the next deliberate create is gated as it should be.
     if (autoCreatedCustomers) await this.customersService.maybeStartCustomerGrace();
 
-    return { imported, updated, skipped, errors };
+    // F-05 (#2093): IMPORT IS EXEMPT — every row above already imported unchanged. ONE
+    // checkLinesSellable call per customer (never per row), then ONE audit row for the
+    // whole run — written here, outside every per-invoice transaction above, and never
+    // throwing or retroactively touching a row that already committed.
+    const tenantId = this.prisma.getTenantId() ?? "";
+    const restrictedLines: Array<{
+      invoiceNumber: string;
+      productId: string;
+      productName: string;
+      message: string;
+    }> = [];
+    const byCustomer = new Map<string, typeof flagCandidates>();
+    for (const c of flagCandidates)
+      byCustomer.set(c.customerId, [...(byCustomer.get(c.customerId) ?? []), c]);
+    for (const [customerId, entries] of byCustomer) {
+      const flagged = await flagRestrictedLines(
+        { restrictions: this.sellingRestrictions, warn: (m) => this.logger.warn(m) },
+        { tenantId, customerId, productIds: entries.flatMap((e) => e.productIds) },
+      );
+      const byProduct = new Map(flagged.map((f) => [f.productId, f]));
+      for (const e of entries)
+        for (const pid of e.productIds) {
+          const f = byProduct.get(pid);
+          if (f)
+            restrictedLines.push({
+              invoiceNumber: e.invoiceNumber,
+              productId: pid,
+              productName: f.productName,
+              message: f.message,
+            });
+        }
+    }
+    if (restrictedLines.length > 0) {
+      await writeRestrictedLinesAudit(
+        { prisma: this.prisma, warn: (m) => this.logger.warn(m) },
+        {
+          tenantId,
+          action: "invoice.import.restricted_lines",
+          entityType: "invoices",
+          entityId: "import",
+          meta: {
+            invoiceNumbers: [...new Set(restrictedLines.map((r) => r.invoiceNumber))],
+            productIds: [...new Set(restrictedLines.map((r) => r.productId))],
+          },
+        },
+      );
+    }
+
+    return { imported, updated, skipped, errors, restrictedLines };
   }
 
   async importPayments(
@@ -1865,18 +1957,36 @@ export class ImportService {
           // with the product create, so the replay treats it as a legitimate
           // baseline rather than a gap. No cost column exists in this CSV, so
           // the movement carries no unitCost — it fixes the quantity gap only.
-          await this.prisma.tenantTransaction(async (tx) => {
-            const createdProduct = await tx.product.create({
-              data: {
-                name,
-                barcode: rawSku || null,
-                sku: rawSku || null,
-                currentStock: closingStock,
-                pricePerUnit: 0,
-                unit: "unit",
-                isActive: true,
-              },
-            });
+          const tenantIdForZoho = this.prisma.getTenantId();
+          if (!tenantIdForZoho) throw new BadRequestException("No tenant context");
+          const zohoBarcode = rawSku || null;
+          await this.prisma.tenantTransaction(async (tx: any) => {
+            // #2717 M1 (SA-572b Q4/Q6): lock+check BEFORE the create, same pattern as
+            // products.service.ts create().
+            if (zohoBarcode) {
+              await lockBarcodeCodes(tx, tenantIdForZoho, [zohoBarcode]);
+              await assertBarcodeAvailable(tx, {
+                tenantId: tenantIdForZoho,
+                productId: null,
+                code: zohoBarcode,
+              });
+            }
+            let createdProduct: { id: string };
+            try {
+              createdProduct = await tx.product.create({
+                data: {
+                  name,
+                  barcode: zohoBarcode,
+                  sku: rawSku || null,
+                  currentStock: closingStock,
+                  pricePerUnit: 0,
+                  unit: "unit",
+                  isActive: true,
+                },
+              });
+            } catch (e) {
+              mapBarcodeUniqueViolation(e, zohoBarcode ?? "");
+            }
             if (closingStock !== 0) {
               await tx.stockMovement.create({
                 data: {
@@ -1888,6 +1998,12 @@ export class ImportService {
                 },
               });
             }
+            await syncProductBarcodesFromLegacy(tx, {
+              tenantId: tenantIdForZoho,
+              productId: createdProduct.id,
+              barcode: zohoBarcode,
+              unitsPerBox: null,
+            });
           });
           created++;
         }

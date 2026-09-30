@@ -712,6 +712,8 @@ export class MailboxConnectionService {
           throttledUntil: null,
           lastError: null,
           lastErrorAt: null,
+          // #2113: an alert still owed about the OLD grant says nothing true about the new one.
+          alertPendingAt: null,
           connectedByUserId: pending.userId,
           // Every field above belongs to the GRANT and is rewritten on every confirm.
           // `lastSentAt` belongs to the MAILBOX: re-granting the same mailbox keeps its history,
