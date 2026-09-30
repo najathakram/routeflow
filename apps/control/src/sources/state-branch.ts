@@ -221,13 +221,42 @@ function checkEnv(env: Env): void {
   assertBranchName(env.archiveBranch);
 }
 
-/** Clone the state branch on first use (single branch, depth 50); idempotent and race-safe. */
+const CLONE_MARKER = "ctl-clone-complete";
+
+/** A clone dir with usable refs and no leftover lock files (probed against its own .git only). */
+function cloneUsable(dir: string, branch: string): boolean {
+  const gitDir = path.join(dir, ".git");
+  for (const l of ["shallow.lock", "index.lock", "HEAD.lock"]) {
+    if (fs.existsSync(path.join(gitDir, l))) return false;
+  }
+  const probe = (ref: string) =>
+    gitTry(dir, ["--git-dir", gitDir, "rev-parse", "--verify", "-q", ref]).ok;
+  return probe("HEAD") && probe(`refs/remotes/origin/${branch}`);
+}
+
+/**
+ * Clone the state branch on first use (single branch, depth 50). The whole check-and-clone runs
+ * under the clone lock and ends by writing a completion marker, so a sibling process can never
+ * mistake a half-made clone for a finished one. An unmarked dir is a crashed clone (removed and
+ * redone) unless it is a complete clone from before the marker existed (kept, then marked).
+ */
 export async function ensureClone(env: Env): Promise<string> {
   checkEnv(env);
   const dir = path.resolve(env.cloneDir);
-  if (!fs.existsSync(path.join(dir, ".git"))) {
+  const marker = path.join(dir, ".git", CLONE_MARKER);
+  if (!fs.existsSync(marker)) {
     await withLock(`${dir}.clone.lock`, LOCK_STALE_MS, () => {
-      if (fs.existsSync(path.join(dir, ".git"))) return;
+      if (fs.existsSync(marker)) return;
+      if (fs.existsSync(dir)) {
+        if (fs.existsSync(path.join(dir, ".git")) && cloneUsable(dir, env.stateBranch)) {
+          fs.writeFileSync(marker, "ok\n");
+          return;
+        }
+        if (fs.readdirSync(dir).length > 0 && !fs.existsSync(path.join(dir, ".git"))) {
+          throw new CtlError(5, `clone dir exists and is not a ctl clone: ${dir}`);
+        }
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
       const r = gitAnywhere(
         [
           "clone",
@@ -245,7 +274,11 @@ export async function ensureClone(env: Env): Promise<string> {
         ],
         { timeoutMs: cloneTimeoutMs() },
       );
-      if (!r.ok) throw new CtlError(5, `clone failed: ${r.err.trim()}`);
+      if (!r.ok) {
+        fs.rmSync(dir, { recursive: true, force: true });
+        throw new CtlError(5, `clone failed: ${r.err.trim()}`);
+      }
+      fs.writeFileSync(marker, "ok\n");
     });
   }
   // keep our lock/parking files out of `git add -A`

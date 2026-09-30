@@ -75,6 +75,32 @@ function alreadyArchived(view: ArchiveView, lane: string, first: number, last: n
   }
 }
 
+/** Compaction trigger: the WHOLE tip (events/ + snapshot.json + nonces.txt) over 384 KB. */
+export const COMPACT_TRIGGER_BYTES = 384 * 1024;
+
+export function tipBytes(dir: string): number {
+  const size = (p: string): number => {
+    try {
+      return fs.statSync(p).size;
+    } catch {
+      return 0;
+    }
+  };
+  let total = size(path.join(dir, "snapshot.json")) + size(path.join(dir, NONCES_FILE));
+  try {
+    for (const n of fs.readdirSync(path.join(dir, "events")))
+      total += size(path.join(dir, "events", n));
+  } catch {
+    /* no events dir yet */
+  }
+  return total;
+}
+
+/** True when a checkout's whole tip is over the trigger (events alone would miss a fat snapshot). */
+export function compactDue(dir: string, limit = COMPACT_TRIGGER_BYTES): boolean {
+  return tipBytes(dir) > limit;
+}
+
 /** Compact the state branch from `env.cloneDir`. Safe to re-run; never rewrites history. */
 export async function compact(env: Env): Promise<CompactResult> {
   const clone = await ensureClone(env);

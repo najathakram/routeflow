@@ -265,6 +265,117 @@ describe("R32 compacted tip with a full nonce window", () => {
   }, 30_000);
 });
 
+describe("R32b snapshot size with many tasks, and the whole-tip compaction trigger", () => {
+  /** lead creates 600 RF tasks; one lane starts and progresses each; notes pad events/ to >= 384 KB. */
+  function manyTasks(): Record<string, string> {
+    const files = baseState(0);
+    const lead = files["events/lead.jsonl"]
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l));
+    let t = Date.parse("2026-01-10T00:00:00Z");
+    const ts = () => new Date((t += 1000)).toISOString().replace(".000Z", "Z");
+    let seq = lead.length;
+    lead.push({
+      seq: ++seq,
+      ts: ts(),
+      lane: "lead",
+      type: "release.created",
+      by: "agent",
+      id: "R1",
+      name: "One",
+      shipDate: "2026-02-01",
+    });
+    for (let n = 2; n <= 600; n++) {
+      lead.push({
+        seq: ++seq,
+        ts: ts(),
+        lane: "lead",
+        type: "task.created",
+        by: "agent",
+        id: `RF-${n}`,
+        title: `acme task ${n}: a realistic title of about sixty characters long`,
+        kind: "feature",
+        priority: "P1",
+        release: "R1",
+        areas: ["apps/web/src/app/(dashboard)/orders/**", "apps/api/src/orders/**"],
+        effort: "L",
+        importance: 4,
+        customerImpact: "high",
+        dependsOn: ["RF-1"],
+        related: ["B12", "F-3"],
+        ref: { feature: "F-12" },
+        notes: "kept short but present on every row, as real registers do",
+      });
+    }
+    files["events/lead.jsonl"] = lead.map(jl).join("");
+    const u: any[] = [];
+    let us = 0;
+    for (let n = 1; n <= 600; n++) {
+      u.push({
+        seq: ++us,
+        ts: ts(),
+        lane: "lane-u",
+        type: "task.started",
+        by: "agent",
+        task: `RF-${n}`,
+      });
+      u.push({
+        seq: ++us,
+        ts: ts(),
+        lane: "lane-u",
+        type: "task.progress",
+        by: "agent",
+        task: `RF-${n}`,
+        phase: "phase1",
+      });
+    }
+    while (u.map(jl).join("").length + files["events/lead.jsonl"].length < 400 * 1024) {
+      u.push({
+        seq: ++us,
+        ts: ts(),
+        lane: "lane-u",
+        type: "lane.note",
+        by: "agent",
+        note: "n".padEnd(900, "x"),
+      });
+    }
+    files["events/lane-u.jsonl"] = u.map(jl).join("");
+    return files;
+  }
+
+  it("600 tasks at the trigger: compacted tip (events + snapshot + nonces) <= 512 KB and fold is unchanged", async () => {
+    const files = manyTasks();
+    world.seedBranch(STATE_BRANCH, files);
+    const env = world.env("srv");
+    const all: Record<string, any[]> = {};
+    for (const lane of ["lead", "lane-u"]) {
+      all[lane] = files[`events/${lane}.jsonl`]
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => JSON.parse(l));
+    }
+    const { fold } = need(FD, "domain/fold");
+    const expected = fold(REGISTERS, all, null, null, NOW);
+    await need(CP, "compact").compact(env);
+    const shallow = world.shallowClone(STATE_BRANCH, "shallow");
+    expect(kb(shallow)).toBeLessThanOrEqual(512);
+    expect(need(SB, "state-branch").foldDir(shallow, REGISTERS, NOW)).toEqual(expected);
+  }, 30_000);
+
+  it("compactDue looks at the WHOLE tip (events + snapshot + nonces.txt), not events/ alone", () => {
+    const { compactDue } = need(CP, "compact");
+    const dir = fs.mkdtempSync(path.join(world.root, "tip-"));
+    fs.mkdirSync(path.join(dir, "events"));
+    fs.writeFileSync(path.join(dir, "events", "lane-u.jsonl"), "x".repeat(100 * 1024));
+    expect(compactDue(dir)).toBe(false);
+    fs.writeFileSync(path.join(dir, "snapshot.json"), "x".repeat(200 * 1024));
+    expect(compactDue(dir)).toBe(false);
+    fs.writeFileSync(path.join(dir, "nonces.txt"), "x".repeat(100 * 1024));
+    expect(compactDue(dir)).toBe(true);
+  });
+});
+
 /** mulberry32: fixed-seed PRNG, so the property test is reproducible. */
 function prng(seed: number): () => number {
   let a = seed >>> 0;

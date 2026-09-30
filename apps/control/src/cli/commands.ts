@@ -128,19 +128,9 @@ export function validationContext(registers: Registers) {
   };
 }
 
-/**
- * ensureClone's own `.git exists` fast path can see a half-finished clone made by a sibling
- * process, so every CLI call serializes ensureClone behind a separate lock (own lock name, since
- * ensureClone takes `<dir>.clone.lock` itself and the lock is not reentrant).
- */
-async function cloneReady(env: Env): Promise<string> {
-  const dir = path.resolve(env.cloneDir);
-  return withLock(`${dir}.cli.lock`, LOCK_STALE_MS, () => ensureClone(env));
-}
-
 /** Clone on first use, sync, read, validate and fold, all under the clone lock. */
 export async function snapshot(ctx: Ctx): Promise<Snapshot> {
-  const clone = await cloneReady(ctx.env);
+  const clone = await ensureClone(ctx.env);
   return withLock(lockDirOf(clone), LOCK_STALE_MS, () => {
     syncClone(ctx.env, clone);
     const tree = readTree(clone);
@@ -545,7 +535,7 @@ const validate: Command = async (ctx) => {
 };
 
 const compactCmd: Command = async (ctx) => {
-  await cloneReady(ctx.env);
+  await ensureClone(ctx.env);
   const r = await compact(ctx.env);
   ctx.out(
     changeLine(

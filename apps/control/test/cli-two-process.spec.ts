@@ -46,4 +46,15 @@ describe("two processes, one lane", () => {
     const seqs = world.remoteLines("lane-u").map((l) => l.seq);
     expect(seqs).toEqual([1, 2, 3, 4, 5, 6]);
   });
+
+  it("three processes on one FRESH clone dir: the clone is taken once, all exit 0, seqs distinct", async () => {
+    const work = makeWorkRepo(world);
+    const r = await Promise.all(
+      ["alpha", "bravo", "charlie"].map((n) =>
+        runCli(world, ["note", n], { machine: "fresh", cwd: work.dir }),
+      ),
+    );
+    expect(r.map((x) => x.code)).toEqual([0, 0, 0]);
+    expect(world.remoteLines("lane-u").map((l) => l.seq)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+  });
 });

@@ -91,6 +91,84 @@ function taskFromBase(b: BaseTask): TaskState {
 
 type TaskField = "status" | "priority" | "release" | "lane" | "phase" | "areas" | "related" | "pr";
 type ReleaseField = "status" | "shipDate";
+/** A provenance-wrapped value stored raw: [value, ref]; the source is always "reported". */
+type Tup<T> = [T, string | null];
+const wrap = <T>(t: Tup<T>): Derived<T> => ({ value: t[0], source: "reported", ref: t[1] });
+const unwrap = <T>(d: Derived<T>): Tup<T> => [d.value, d.ref];
+
+/** An event-minted task with raw values; defaults are omitted (spec §8 keeps the snapshot small). */
+export interface CreatedRaw {
+  t: string;
+  k: string;
+  s: Tup<Status>;
+  p: Tup<string>;
+  r: Tup<string | null>;
+  l: Tup<string | null>;
+  h: Tup<string | null>;
+  a: Tup<string[]>;
+  x: Tup<string[]>;
+  q: Tup<number | null>;
+  d?: string[];
+  e?: string;
+  i?: number;
+  c?: string;
+  f?: Record<string, unknown>;
+  n?: string;
+}
+
+const rowOf = (t: TaskState): CreatedRaw => {
+  const row: CreatedRaw = {
+    t: t.title,
+    k: t.kind,
+    s: unwrap(t.status),
+    p: unwrap(t.priority),
+    r: unwrap(t.release),
+    l: unwrap(t.lane),
+    h: unwrap(t.phase),
+    a: unwrap(t.areas),
+    x: unwrap(t.related),
+    q: unwrap(t.pr),
+  };
+  if (t.dependsOn.length > 0) row.d = t.dependsOn;
+  if (t.effort !== "M") row.e = t.effort;
+  if (t.importance !== 3) row.i = t.importance;
+  if (t.customerImpact !== "none") row.c = t.customerImpact;
+  if (t.ref !== null) row.f = t.ref;
+  if (t.notes !== null) row.n = t.notes;
+  return row;
+};
+
+const taskOfRow = (id: string, w: CreatedRaw): TaskState => ({
+  id,
+  title: w.t,
+  kind: w.k,
+  status: wrap(w.s),
+  priority: wrap(w.p),
+  release: wrap(w.r),
+  lane: wrap(w.l),
+  phase: wrap(w.h),
+  areas: wrap(w.a),
+  dependsOn: w.d ?? [],
+  related: wrap(w.x),
+  effort: w.e ?? "M",
+  importance: w.i ?? 3,
+  customerImpact: w.c ?? "none",
+  ref: w.f ?? null,
+  notes: w.n ?? null,
+  pr: wrap(w.q),
+});
+
+const ovFromRaw = (
+  o: Partial<Record<TaskField, Tup<unknown>>>,
+): Partial<Pick<TaskState, TaskField>> => {
+  const out: Record<string, Derived<unknown>> = {};
+  for (const f of Object.keys(o) as TaskField[]) {
+    const v = o[f];
+    if (v) out[f] = wrap(v);
+  }
+  return out;
+};
+
 const WARNINGS_CAP = 2000;
 const TIMELINE_CAP = 200;
 
@@ -104,9 +182,9 @@ export interface FoldAcc {
   /** Status-machine track, only for tasks an event touched. */
   tracks: Record<string, Track>;
   /** Fields an event set on a register task. */
-  taskOv: Record<string, Partial<Pick<TaskState, TaskField>>>;
-  /** Tasks minted by events (task.created / task.proposed), whole. */
-  created: Record<string, TaskState>;
+  taskOv: Record<string, Partial<Record<TaskField, Tup<unknown>>>>;
+  /** Tasks minted by events (task.created / task.proposed), as raw values (see CreatedRaw). */
+  created: Record<string, CreatedRaw>;
   lanes: Record<string, LaneState>;
   alias: Record<string, string>;
   releaseOv: Record<string, Partial<Pick<ReleaseState, ReleaseField>>>;
@@ -181,9 +259,9 @@ export function foldEvents(
   }
   const createdIds = new Set<string>(Object.keys(acc.created));
   for (const id of Object.keys(acc.taskOv)) {
-    if (tasks[id]) Object.assign(tasks[id], acc.taskOv[id]);
+    if (tasks[id]) Object.assign(tasks[id], ovFromRaw(acc.taskOv[id]));
   }
-  for (const id of Object.keys(acc.created)) tasks[id] = acc.created[id];
+  for (const id of Object.keys(acc.created)) tasks[id] = taskOfRow(id, acc.created[id]);
   for (const id of Object.keys(acc.tracks)) tracks.set(id, acc.tracks[id]);
   const marks = new Map<string, Set<TaskField>>();
   for (const id of Object.keys(acc.taskOv)) {
@@ -700,14 +778,14 @@ export function foldEvents(
   }
 
   // dehydrate: only what events set; register data is never frozen in
-  const taskOv: FoldAcc["taskOv"] = {};
+  const taskOv: Record<string, Partial<Pick<TaskState, TaskField>>> = {};
   for (const [id, fields] of marks) {
     if (!tasks[id] || createdIds.has(id)) continue;
     const o: Record<string, unknown> = {};
     for (const f of [...fields].sort()) o[f] = tasks[id][f];
     taskOv[id] = o;
   }
-  const created: FoldAcc["created"] = {};
+  const created: Record<string, TaskState> = {};
   for (const id of createdIds) if (tasks[id]) created[id] = tasks[id];
   const outTracks: FoldAcc["tracks"] = {};
   for (const id of dirtyTracks) {
@@ -734,8 +812,17 @@ export function foldEvents(
   for (const id of Object.keys(created)) taskRelease[id] = created[id].release.value;
 
   acc.tracks = outTracks;
-  acc.taskOv = taskOv;
-  acc.created = created;
+  acc.taskOv = {};
+  for (const id of Object.keys(taskOv)) {
+    const o: Partial<Record<TaskField, Tup<unknown>>> = {};
+    for (const f of Object.keys(taskOv[id]) as TaskField[]) {
+      const d = taskOv[id][f] as Derived<unknown> | undefined;
+      if (d) o[f] = unwrap(d);
+    }
+    acc.taskOv[id] = o;
+  }
+  acc.created = {};
+  for (const id of Object.keys(created)) acc.created[id] = rowOf(created[id]);
   acc.lanes = { ...lanes };
   acc.alias = Object.fromEntries(alias);
   acc.releaseOv = releaseOv;
@@ -768,10 +855,10 @@ export function project(
   for (const b of base.tasks) {
     const t = taskFromBase(b);
     const ov = acc.taskOv[b.id];
-    if (ov) Object.assign(t, ov);
+    if (ov) Object.assign(t, ovFromRaw(ov));
     tasks[b.id] = t;
   }
-  for (const id of Object.keys(acc.created)) tasks[id] = acc.created[id];
+  for (const id of Object.keys(acc.created)) tasks[id] = taskOfRow(id, acc.created[id]);
   const releases = Object.create(null) as Record<string, ReleaseState>;
   for (const r of base.releases) {
     const rel: ReleaseState = {

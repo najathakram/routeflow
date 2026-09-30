@@ -325,6 +325,48 @@ describe("R32 the nonce window is 7 days", () => {
   });
 });
 
+describe("ensureClone completion marker", () => {
+  const marker = (dir: string) => path.join(dir, ".git", "ctl-clone-complete");
+
+  it("a fresh clone ends with the marker", async () => {
+    world.seedBranch(STATE_BRANCH, baseState(1));
+    const env = world.env("a");
+    await SB.appendAndPush(env, "lane-u", note("x"));
+    expect(fs.existsSync(marker(env.cloneDir))).toBe(true);
+  });
+
+  it("a half-made clone (a .git dir, no marker, no usable refs) is removed and re-cloned", async () => {
+    world.seedBranch(STATE_BRANCH, baseState(2));
+    const env = world.env("a");
+    fs.mkdirSync(path.join(env.cloneDir, ".git"), { recursive: true });
+    fs.writeFileSync(path.join(env.cloneDir, ".git", "shallow.lock"), "");
+    fs.writeFileSync(path.join(env.cloneDir, "junk.txt"), "half");
+    const ev = await SB.appendAndPush(env, "lane-u", note("x"));
+    expect(ev.seq).toBe(3);
+    expect(fs.existsSync(marker(env.cloneDir))).toBe(true);
+    expect(fs.existsSync(path.join(env.cloneDir, "junk.txt"))).toBe(false);
+  });
+
+  it("a complete clone that predates the marker is kept (its parked lines survive) and gets the marker", async () => {
+    world.seedBranch(STATE_BRANCH, baseState(2));
+    const env = world.env("a");
+    await SB.appendAndPush(env, "lane-u", note("first"));
+    fs.rmSync(marker(env.cloneDir));
+    fs.writeFileSync(path.join(env.cloneDir, ".git", "sentinel"), "keep");
+    await SB.ensureClone(env);
+    expect(fs.existsSync(path.join(env.cloneDir, ".git", "sentinel"))).toBe(true);
+    expect(fs.existsSync(marker(env.cloneDir))).toBe(true);
+  });
+
+  it("two ensureClone calls racing on a fresh dir both succeed", async () => {
+    world.seedBranch(STATE_BRANCH, baseState(1));
+    const env = world.env("a");
+    const r = await Promise.all([SB.ensureClone(env), SB.ensureClone(env)]);
+    expect(r[0]).toBe(r[1]);
+    expect(fs.existsSync(marker(env.cloneDir))).toBe(true);
+  });
+});
+
 describe("N3 clone and fetch have their own, longer timeout", () => {
   it("defaults: 120 s for clone/fetch, 10 s for everything else", () => {
     expect(GT.GIT_CLONE_TIMEOUT_MS).toBe(120_000);
