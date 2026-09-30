@@ -253,6 +253,15 @@ describe("classifySaleAxis", () => {
       ).toBe("unknown");
     });
 
+    it.each([
+      ["null", null],
+      ["an unparseable string", "not-a-date"],
+    ])("writtenAt %s -> unknown write time reads as pre-cutoff: parks", (_l, writtenAt) => {
+      expect(classifySaleAxis(sale(3, 3, writtenAt as never), boxUnaware, [], 1).state).toBe(
+        "unknown",
+      );
+    });
+
     it("36/3 (already expanded) with pack now 1 -> piece-axis at any time", () => {
       expect(classifySaleAxis(sale(3, 36), boxUnaware, [], 1).state).toBe("piece-axis");
       expect(classifySaleAxis(sale(3, 36, AFTER_CUTOFF), boxUnaware, [], 1).state).toBe(

@@ -24,7 +24,7 @@ describe("reverseReturnEntries — product un-boxed since the sale (#2052)", () 
     jest.spyOn((service as any).logger, "warn").mockImplementation(() => undefined);
   });
 
-  const saleRow = (createdAt: Date) => ({
+  const saleRow = (createdAt: Date | string | null, soldAt: Date | null = null) => ({
     id: "s-2052",
     entryType: "SALE",
     tenantId: "t1",
@@ -38,13 +38,18 @@ describe("reverseReturnEntries — product un-boxed since the sale (#2052)", () 
     netSales: 30,
     categoryTax: 6,
     createdAt,
-    soldAt: createdAt,
+    soldAt: soldAt ?? createdAt,
   });
 
-  const arrange = (opts: { createdAt: Date; linePack: number | null; livePack: number | null }) => {
+  const arrange = (opts: {
+    createdAt: Date | string | null;
+    soldAt?: Date;
+    linePack: number | null;
+    livePack: number | null;
+  }) => {
     prisma.regulatedSalesLedger.findMany
       .mockResolvedValueOnce([]) // prior-reversal idempotency
-      .mockResolvedValueOnce([saleRow(opts.createdAt)]) // sales
+      .mockResolvedValueOnce([saleRow(opts.createdAt, opts.soldAt ?? null)]) // sales
       .mockResolvedValueOnce([]) // priorReversals
       .mockResolvedValueOnce([]); // loadCorrectionsBySaleId
     prisma.invoiceItem.findMany.mockResolvedValue([
@@ -112,5 +117,41 @@ describe("reverseReturnEntries — product un-boxed since the sale (#2052)", () 
       skipDuplicates: true,
     });
     expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
+  });
+
+  // SA-609: the axis is a property of the code that WROTE the row (createdAt), never of soldAt —
+  // a business date that can be back-dated or imported.
+  it("soldAt AFTER the cutoff but createdAt BEFORE it: still parks (soldAt is ignored)", async () => {
+    arrange({
+      createdAt: new Date("2026-09-10T00:00:00Z"),
+      soldAt: new Date("2026-10-05T00:00:00Z"),
+      linePack: null,
+      livePack: null,
+    });
+    await ret();
+    expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
+    expect(prisma.regulatedLedgerParkedReversal.createMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("soldAt BEFORE the cutoff (back-dated) but createdAt AFTER it: books, never parks", async () => {
+    arrange({
+      createdAt: new Date("2026-10-05T00:00:00Z"),
+      soldAt: new Date("2026-09-10T00:00:00Z"),
+      linePack: null,
+      livePack: null,
+    });
+    await ret();
+    expect(prisma.regulatedLedgerParkedReversal.createMany).not.toHaveBeenCalled();
+    expect(prisma.regulatedSalesLedger.createMany).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["createdAt null", null],
+    ["createdAt an unparseable string", "not-a-date"],
+  ])("%s (unknown write time) is treated as pre-cutoff: parks", async (_label, createdAt) => {
+    arrange({ createdAt, linePack: null, livePack: null });
+    await ret();
+    expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
+    expect(prisma.regulatedLedgerParkedReversal.createMany).toHaveBeenCalledTimes(1);
   });
 });

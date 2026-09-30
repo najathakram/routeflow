@@ -211,7 +211,9 @@ describeDb("Real-Postgres — a return on a product un-boxed since the sale (#20
       where: { returnId: ret.id },
     });
     expect(parked).toHaveLength(1);
-    expect(parked[0]).toMatchObject({ saleEntryId: sale.id, returnedPieces: 36, resolvedAt: null });
+    expect(parked[0]).toMatchObject({ saleEntryId: sale.id, resolvedAt: null });
+    // returnedPieces is Decimal(10,3) on Postgres: compare the number, never the Decimal object.
+    expect(Number(parked[0].returnedPieces)).toBe(36);
 
     // Resolve with the operator pack 12 -> books the 36 pieces; the line ends at 0.
     const result = await tenantCtx.run(tenantId, () =>

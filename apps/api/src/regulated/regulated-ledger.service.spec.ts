@@ -3034,6 +3034,7 @@ describe("RegulatedLedgerService", () => {
           entryType: corrected.entryType,
           qty: corrected.qty,
           unitBasisQty: corrected.unitBasisQty,
+          writtenAt: corrected.createdAt ?? null,
         },
         { boxes: null, pieces: null, unitLabel: null, unitsPerBox: 12 },
         corrections().map((c) => ({ qty: c.qty, unitBasisQty: c.unitBasisQty })),
