@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -21,6 +20,7 @@ import type { BuyerJwtPayload } from "../buyer/interfaces/buyer-jwt-payload.inte
 import { EntitlementsService } from "../billing/entitlements.service";
 import type { DeviceInfo } from "./auth.service";
 import { escapeHtml } from "../common/html-escape";
+import { casLinkProviderId, resolveBySubThenEmail } from "./oauth-account-link";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -519,38 +519,6 @@ export class GoogleOAuthService {
   // `google-oauth.email-verified.security.spec.ts`) — so an unverified email
   // can never reach this lookup or the auto-link branches below it. Pinned,
   // not re-checked here, to avoid duplicating that gate.
-  private async resolveBySubThenEmail<T extends { googleId: string | null }>(
-    findFirst: (args: Record<string, unknown>) => Promise<T | null>,
-    baseWhere: Record<string, unknown>,
-    profile: GoogleProfile,
-  ): Promise<T | null> {
-    // #2664: fail closed before touching the DB at all — a falsy sub or email means
-    // `verifyCallback`'s profile is malformed (should never happen downstream of a real
-    // Google ID token), and querying with an undefined/empty filter would turn `where`
-    // into an unscoped match instead of refusing outright.
-    if (!profile.googleId || !profile.email) {
-      throw new ForbiddenException("unauthorized");
-    }
-
-    const bySub = await findFirst({ where: { ...baseWhere, googleId: profile.googleId } });
-    if (bySub) return bySub;
-
-    // #2664: SUPER_ADMIN rows are scoped by `tenantId: null`, and Postgres treats every
-    // NULL as distinct under `@@unique([tenantId, email])` — two platform admins CAN share
-    // an email. `findFirst` with no `orderBy` has no defined row order, so pin one:
-    // oldest-created row wins, `id` as the final tiebreak for rows created in the same tick.
-    const byEmail = await findFirst({
-      where: { ...baseWhere, email: profile.email },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-    });
-    if (byEmail && byEmail.googleId && byEmail.googleId !== profile.googleId) {
-      // A different Google account is already bound to this email — no sign-in,
-      // no update. The caller must resolve the conflict out-of-band.
-      throw new ConflictException("google_account_mismatch");
-    }
-    return byEmail;
-  }
-
   // ─── Link race guard (#2495 LOW) ────────────────────────────────────────────
   // The googleId-NULL email-match auto-link (handlePlatformAuth, handleTenantAuth's
   // staff link, handleBuyerPortalAuth's first-link branch) used to be check-then-update:
@@ -561,33 +529,6 @@ export class GoogleOAuthService {
   // (`updateMany` scoped to `googleId: null`) so only the first writer succeeds; a losing
   // writer re-reads and either finds itself already linked (a harmless duplicate — same
   // sub) or a DIFFERENT sub now bound, which is refused exactly like the read-time check.
-  private async casLinkGoogleId<T extends { id: string; googleId: string | null }>(
-    updateMany: (args: {
-      where: Record<string, unknown>;
-      data: Record<string, unknown>;
-    }) => Promise<{ count: number }>,
-    findUnique: (id: string) => Promise<T | null>,
-    row: T,
-    profile: GoogleProfile,
-    data: Record<string, unknown>,
-  ): Promise<{ row: T; linked: boolean }> {
-    const result = await updateMany({ where: { id: row.id, googleId: null }, data });
-    if (result.count === 1) {
-      return { row: { ...row, ...data } as T, linked: true };
-    }
-
-    // Lost the race — someone else wrote googleId on this row between our read and
-    // our write. Re-read and decide who won.
-    const fresh = await findUnique(row.id);
-    if (!fresh) throw new ForbiddenException("unauthorized");
-    if (fresh.googleId && fresh.googleId !== profile.googleId) {
-      throw new ConflictException("google_account_mismatch");
-    }
-    // Already linked to THIS same sub (a duplicate concurrent request) — proceed
-    // with the row as it now stands; no side effect to repeat.
-    return { row: fresh, linked: false };
-  }
-
   /** Find or create the appropriate user record and return a token pair. */
   async findOrCreateUser(
     profile: GoogleProfile,
@@ -604,11 +545,13 @@ export class GoogleOAuthService {
     profile: GoogleProfile,
     deviceInfo?: DeviceInfo,
   ): Promise<GoogleAuthResult> {
-    const user = await this.resolveBySubThenEmail(
-      (args: any) => this.prisma.user.findFirst(args),
-      { tenantId: null, role: "SUPER_ADMIN", deletedAt: null },
-      profile,
-    );
+    const user = await resolveBySubThenEmail({
+      findFirst: (args: any) => this.prisma.user.findFirst(args),
+      baseWhere: { tenantId: null, role: "SUPER_ADMIN", deletedAt: null },
+      column: "googleId",
+      sub: profile.googleId,
+      email: profile.email,
+    });
 
     if (!user || user.status !== "ACTIVE") {
       throw new ForbiddenException("unauthorized");
@@ -618,13 +561,14 @@ export class GoogleOAuthService {
     // Also clear forcePasswordChange — Google-authenticated users cannot set a
     // password via the change-password form, so the flag must not block them.
     if (!user.googleId) {
-      await this.casLinkGoogleId(
-        (args) => this.prisma.user.updateMany(args),
-        (id) => this.prisma.user.findUnique({ where: { id } }),
-        user,
-        profile,
-        { googleId: profile.googleId, forcePasswordChange: false },
-      );
+      await casLinkProviderId({
+        updateMany: (args) => this.prisma.user.updateMany(args),
+        findUnique: (id) => this.prisma.user.findUnique({ where: { id } }),
+        row: user,
+        column: "googleId",
+        sub: profile.googleId,
+        data: { forcePasswordChange: false },
+      });
     }
 
     const tokens = await this.issueUserTokenPair(user, null, deviceInfo);
@@ -662,15 +606,17 @@ export class GoogleOAuthService {
     }
 
     // Check for a matching staff user in this tenant first
-    let staffUser = await this.resolveBySubThenEmail(
-      (args: any) => this.prisma.user.findFirst(args),
-      {
+    let staffUser = await resolveBySubThenEmail({
+      findFirst: (args: any) => this.prisma.user.findFirst(args),
+      baseWhere: {
         tenantId: tenant.id,
         deletedAt: null,
         role: { in: ["OPERATOR", "DRIVER", "TENANT_ADMIN"] },
       },
-      profile,
-    );
+      column: "googleId",
+      sub: profile.googleId,
+      email: profile.email,
+    });
 
     if (staffUser) {
       if (staffUser.status !== "ACTIVE") throw new ForbiddenException("unauthorized");
@@ -679,15 +625,16 @@ export class GoogleOAuthService {
       if (profile.context === "portal") throw new ForbiddenException("google_email_is_staff");
 
       if (!staffUser.googleId) {
-        const { row } = await this.casLinkGoogleId(
-          (args) => this.prisma.user.updateMany(args),
-          (id) => this.prisma.user.findUnique({ where: { id } }),
-          staffUser,
-          profile,
+        const { row } = await casLinkProviderId({
+          updateMany: (args) => this.prisma.user.updateMany(args),
+          findUnique: (id) => this.prisma.user.findUnique({ where: { id } }),
+          row: staffUser,
+          column: "googleId",
+          sub: profile.googleId,
           // Clear forcePasswordChange — Google users cannot use the password
           // change form, so the flag must not redirect them to /change-password.
-          { googleId: profile.googleId, forcePasswordChange: false },
-        );
+          data: { forcePasswordChange: false },
+        });
         staffUser = row;
       }
       const tokens = await this.issueUserTokenPair(staffUser, tenant.slug, deviceInfo);
@@ -709,11 +656,13 @@ export class GoogleOAuthService {
   }
 
   private async handleBuyerPortalAuth(profile: GoogleProfile): Promise<GoogleAuthResult> {
-    let buyer = await this.resolveBySubThenEmail(
-      (args: any) => this.prisma.buyerAccount.findFirst(args),
-      { deletedAt: null },
-      profile,
-    );
+    let buyer = await resolveBySubThenEmail({
+      findFirst: (args: any) => this.prisma.buyerAccount.findFirst(args),
+      baseWhere: { deletedAt: null },
+      column: "googleId",
+      sub: profile.googleId,
+      email: profile.email,
+    });
 
     if (buyer) {
       if (buyer.status === "SUSPENDED") throw new ForbiddenException("unauthorized");
@@ -739,18 +688,18 @@ export class GoogleOAuthService {
         let linked: boolean;
         if (squattedPassword) {
           const placeholderHash = await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 10);
-          const casResult = await this.casLinkGoogleId(
-            (args) => this.prisma.buyerAccount.updateMany(args),
-            (id) => this.prisma.buyerAccount.findUnique({ where: { id } }),
-            buyer,
-            profile,
-            {
-              googleId: profile.googleId,
+          const casResult = await casLinkProviderId({
+            updateMany: (args) => this.prisma.buyerAccount.updateMany(args),
+            findUnique: (id) => this.prisma.buyerAccount.findUnique({ where: { id } }),
+            row: buyer,
+            column: "googleId",
+            sub: profile.googleId,
+            data: {
               emailVerified: true,
               passwordHash: placeholderHash,
               passwordSet: false,
             },
-          );
+          });
           buyer = casResult.row;
           linked = casResult.linked;
           if (linked) {
@@ -763,16 +712,14 @@ export class GoogleOAuthService {
             );
           }
         } else {
-          const casResult = await this.casLinkGoogleId(
-            (args) => this.prisma.buyerAccount.updateMany(args),
-            (id) => this.prisma.buyerAccount.findUnique({ where: { id } }),
-            buyer,
-            profile,
-            {
-              googleId: profile.googleId,
-              ...(googleAttestsMailbox ? { emailVerified: true } : {}),
-            },
-          );
+          const casResult = await casLinkProviderId({
+            updateMany: (args) => this.prisma.buyerAccount.updateMany(args),
+            findUnique: (id) => this.prisma.buyerAccount.findUnique({ where: { id } }),
+            row: buyer,
+            column: "googleId",
+            sub: profile.googleId,
+            data: googleAttestsMailbox ? { emailVerified: true } : {},
+          });
           buyer = casResult.row;
           linked = casResult.linked;
         }
