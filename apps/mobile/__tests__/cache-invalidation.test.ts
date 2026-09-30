@@ -191,6 +191,56 @@ describe("useSocket — product.updated handler + invoice.updated buyer-family f
     expect(keys).not.toEqual(expect.arrayContaining([["products", expect.any(String)]]));
   });
 
+  it('SA-316: a coalesced "bulk" product.updated (productId: null) refetches both product families', async () => {
+    const { socketHandlers, invalidateQueries } = setupSocketMocks();
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- fresh module under the mock, isolated per test
+    const { useSocket } = require("../hooks/useSocket");
+    useSocket();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // The CSV importer and bulkSetMsrp emit ONE event per file with no product id.
+    socketHandlers["product.updated"]({ productId: null, action: "bulk" });
+
+    expect(invalidatedKeys(invalidateQueries)).toEqual([["products"], ["admin", "products"]]);
+  });
+
+  it("SA-316: useSocket is the only product.updated listener in web or mobile source", () => {
+    // Every consumer must treat a null productId as "refetch all". Pin the consumer set so a new
+    // listener (which might key off payload.productId) has to be added here, and reviewed.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- node built-ins in a jest test
+    const fs = require("fs") as typeof import("fs");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- node built-ins in a jest test
+    const path = require("path") as typeof import("path");
+    const appsDir = path.resolve(__dirname, "..", "..");
+    const skip = new Set([
+      "node_modules",
+      ".next",
+      "dist",
+      "__tests__",
+      "e2e",
+      ".expo",
+      "coverage",
+    ]);
+    const found: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (skip.has(entry.name)) continue;
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (/\.(ts|tsx)$/.test(entry.name) && !/\.(test|spec)\.tsx?$/.test(entry.name)) {
+          if (/["']product\.updated["']/.test(fs.readFileSync(full, "utf8"))) {
+            found.push(path.relative(appsDir, full));
+          }
+        }
+      }
+    };
+    walk(path.join(appsDir, "web"));
+    walk(path.join(appsDir, "mobile"));
+
+    expect(found).toEqual([path.join("mobile", "hooks", "useSocket.ts")]);
+  });
+
   it('REG-CACHE-5: "invoice.updated" now ALSO invalidates the buyer family ["invoices"] alongside ["admin","invoices"]', async () => {
     const { socketHandlers, invalidateQueries } = setupSocketMocks();
     // eslint-disable-next-line @typescript-eslint/no-require-imports -- fresh module under the mock, isolated per test

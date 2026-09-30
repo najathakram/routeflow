@@ -493,6 +493,37 @@ describe("InventoryService", () => {
       expect(poItemArgs.qtyReceived).toBe(120);
     });
 
+    it("#2734: a boxed receive uses the line's STORED pack, not the live product pack", async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue(
+        purchaseOrder({
+          items: [
+            {
+              id: "poi-1",
+              productId: "prod-1",
+              qtyOrdered: D(120),
+              qtyReceived: D(0),
+              unitCost: D(2),
+              packSize: 12,
+            },
+          ],
+        }),
+      );
+      // product repacked to 6 after the line was ordered at 12
+      prisma.product.findUnique.mockResolvedValue(
+        product({ unitsPerBox: 6, currentStock: D(0), averageCost: null }),
+      );
+
+      await service.receivePurchaseOrder(
+        "po-1",
+        { items: [{ itemId: "poi-1", boxes: 5 }] },
+        "user-1",
+      );
+
+      // 5 boxes x stored pack 12 = 60 pieces (the live pack 6 would give 30)
+      const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+      expect(Number(movementArgs.quantity)).toBe(60);
+    });
+
     it("a bare receivedQty KEEPS meaning pieces for a boxed product — never reinterpreted as boxes (regression pin)", async () => {
       prisma.purchaseOrder.findUnique.mockResolvedValue(purchaseOrder());
       prisma.product.findUnique.mockResolvedValue(

@@ -1,5 +1,5 @@
 {
-  "next": 1,
+  "next": 0,
   "log": [
     {
       "sessionId": "deb762d8-ad62-4c79-99c0-dacb0dc708c0",
@@ -7,6 +7,13 @@
       "approach": "dev-pipeline",
       "deferNote": null,
       "at": "2026-09-15T18:35:33.574Z"
+    },
+    {
+      "sessionId": "8d4d424d-c608-472b-8a44-3d925265a720",
+      "slot": "superpowers",
+      "approach": "raw",
+      "deferNote": "superpowers arm: run `approach.mjs next` and start a new session",
+      "at": "2026-09-29T04:33:44.926Z"
     }
   ]
 }
