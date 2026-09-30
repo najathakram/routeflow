@@ -109,6 +109,7 @@ export const LOCK_FAMILIES = [
   "tenant-mirror",
   "demo-booking",
   "mailbox",
+  "policy-write",
 ] as const;
 export type LockFamily = (typeof LOCK_FAMILIES)[number];
 export interface AdvisoryLockOptions {
@@ -170,6 +171,12 @@ const POOL_MAX: Record<string, number | undefined> = {
   // admin actions. Same size as `billing`/`tenant-mirror` for the same reason: short,
   // request-path, no real hot-path volume.
   mailbox: 4,
+  // `policy-write` (SA-138 policy layer phase 1): `PolicyService#set/#clear`, keyed
+  // `${tenantId}:${key}` — the supersede-then-insert window that keeps ONE active PolicyValue row
+  // per (tenant, key, scope) (Prisma cannot express that partial unique index). A tenant-admin
+  // settings action: request-path, short (one tx), rarer than even `billing`'s add-on toggles —
+  // same size as `billing` for the same reason.
+  "policy-write": 4,
 };
 const DEFAULT_POOL_MAX = 8;
 function lockPool(family: string): Pool {
