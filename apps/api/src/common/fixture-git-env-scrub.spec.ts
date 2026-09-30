@@ -160,7 +160,10 @@ function blankStrings(code: string): string {
 // `git(path.join(t, "r"), "init")`, `["init", ...]`) or the string form `git init`. Helper names
 // and first-argument shapes are irrelevant.
 const INIT_RE = /["'`]init["'`]|["'`]git\s+init\b/;
-const SPAWNERS = /\b(spawnSync|execFileSync|execSync|spawn|execFile|exec)\s*\(/g;
+// A spawner is a bare call or a child_process member call; `re.exec(text)`, `obj.spawn(...)` and other
+// same-named METHODS are not process spawns.
+const SPAWNERS =
+  /(?:(?<![.\w$])|(?<=\b(?:child_process|cp|childProcess)\.))\b(spawnSync|execFileSync|execSync|spawn|execFile|exec)\s*\(/g;
 const SCRUB_ROOT = "scrubbedGitEnv";
 
 /** Names in this file provably derived from the shared helper (assignments, functions, imports). */
@@ -190,7 +193,7 @@ function derivedNames(code: string): Set<string> {
       }
       add(m[1], code.slice(open, k));
     }
-    for (const m of code.matchAll(/b(\w+)\s+as\s+(\w+)b/g)) {
+    for (const m of code.matchAll(/\b(\w+)\s+as\s+(\w+)\b/g)) {
       if (names.has(m[1]) && !names.has(m[2])) {
         names.add(m[2]);
         changed = true;
@@ -211,15 +214,23 @@ function unscrubbedGitSpawns(src: string): { sites: number; bad: string[] } {
     gitAliases.add(m[1]);
   let sites = 0;
   const bad: string[] = [];
+  const initFile = INIT_RE.test(code);
   for (const m of code.matchAll(SPAWNERS)) {
     const open = m.index! + m[0].length - 1;
     const args = balanced(code, open);
     const bareArgs = balanced(bare, open);
     const first = args.trimStart();
-    const isGit =
+    const literalGit =
       /^["'`]git["'`]\s*[,)]/.test(first) ||
       /^["'`]git\s/.test(first) ||
       [...gitAliases].some((a) => new RegExp(String.raw`^${a}\s*[,)]`).test(first));
+    // In a file that runs a repo init, EVERY spawn is a git site (a generic runner such as
+    // `const run = (cmd, a, cwd) => execFileSync(cmd, a, { cwd }); run("git", ["init"], dir)` hides the
+    // command from the literal check) unless its command is provably not git: a non-git string
+    // literal, or process.execPath.
+    const provablyNotGit =
+      /^process\.execPath\s*[,)]/.test(first) || (/^["'`]/.test(first) && !literalGit);
+    const isGit = literalGit || (initFile && !provablyNotGit);
     if (!isGit) continue;
     sites++;
     const passes = [...derived].some((n) =>
@@ -363,6 +374,38 @@ describe("fixture git repos scrub git's repo-scoped env", () => {
         const { scrubbedGitEnv } = require("../../../../scripts/lib/scrubbed-git-env.cjs");
         spawnSync("git", ["init"], { cwd: d, env: scrubbedGitEnv() });
         spawnSync(process.execPath, [script], { cwd: d, env: { ...scrubbedGitEnv(), LOG: "x" } });
+      `;
+      expect(fixtureOffences(src)).toBeNull();
+    });
+  });
+
+  describe("scanner mutant pins (generic runners, #2737 review)", () => {
+    it("(l) a generic runner hiding the git command is flagged in a file that runs a repo init", () => {
+      const src = `
+        const run = (cmd, a, cwd) => execFileSync(cmd, a, { cwd });
+        run("git", ["init"], dir);
+      `;
+      expect(fixtureOffences(src)).not.toBeNull();
+    });
+    it("(m) `execSync(cmd, ...)` with no env in an init file is flagged; with the shared scrub it is clean", () => {
+      const bare = "execSync(`git init`, { cwd }); execSync(cmd, { cwd });";
+      expect(fixtureOffences(bare)).not.toBeNull();
+      const scrubbed =
+        "execSync(`git init`, { cwd, env: scrubbedGitEnv() }); execSync(cmd, { cwd, env: scrubbedGitEnv() });";
+      expect(fixtureOffences(scrubbed)).toBeNull();
+    });
+    it("(n) provably non-git spawns (process.execPath, a non-git literal) stay out of scope", () => {
+      const src = `
+        spawnSync("git", ["init"], { cwd, env: scrubbedGitEnv() });
+        spawnSync(process.execPath, [script], { cwd });
+        spawnSync("node", [script], { cwd });
+      `;
+      expect(fixtureOffences(src)).toBeNull();
+    });
+    it("(o) the `b(\\w+) as (\\w+)b` import-alias pass really runs: an aliased helper counts", () => {
+      const src = `
+        import { scrubbedGitEnv as clean } from "./scrubbed-git-env.cjs";
+        spawnSync("git", ["init"], { cwd, env: clean() });
       `;
       expect(fixtureOffences(src)).toBeNull();
     });
