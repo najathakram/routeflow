@@ -62,11 +62,14 @@ describe("Notifications save failure (#1965 review F1)", () => {
   beforeEach(() => {
     mockGet.mockReset();
     mockPatch.mockReset();
-    mockGet.mockImplementation((url: string) =>
-      url.includes("delivery-health")
-        ? Promise.reject({ response: { status: 404 } })
-        : Promise.resolve({ data: config }),
-    );
+    // The FIRST config read resolves; every later one (the refetch after the failed save) never
+    // settles, so the switch can only return to "on" through the optimistic rollback itself.
+    let configReads = 0;
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes("delivery-health")) return Promise.reject({ response: { status: 404 } });
+      configReads += 1;
+      return configReads === 1 ? Promise.resolve({ data: config }) : new Promise(() => undefined);
+    });
   });
 
   it("T11 one toast, no server text, and the switch reverts to on", async () => {
