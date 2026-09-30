@@ -179,8 +179,9 @@ export function decideScope(root, env = process.env, probe = {}) {
  * replays without running jest — the `--freshness-only` pre-step earlier in `npm run verify`
  * forces a real run for exactly that case (order pinned by verify-turbo.self-test SP8). FAILS
  * OPEN ([]): an unanswerable question must never narrow or break a run — the end-of-verify check
- * still enforces freshness exactly as before. Note campaign-check scrubs a fixed list of GIT_*
- * variables while `cleanGitEnv` strips all of them; git does not export GIT_CONFIG_* into hooks.
+ * still enforces freshness exactly as before. `cleanGitEnv` is an alias of the shared
+ * `scrubbedGitEnv` (scripts/lib/scrubbed-git-env.cjs), the one prefix filter that drops every
+ * GIT_* variable (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, GIT_CONFIG* ...).
  */
 export function staleWorkspaces(root, workspaces = loadWorkspaces(root)) {
   const r = spawnSync(
