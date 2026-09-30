@@ -1,9 +1,11 @@
 import { ConflictException } from "@nestjs/common";
+import type { ProductReactivationHolder } from "@routeflow/types";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { lockBarcodeCodes, lockProductRow, type CatalogTx } from "./product-catalog-sync";
 import {
   CODE_FIELD_LABEL,
   findCodeHolders,
+  peekProductCodes,
   releaseProductCodes,
   type CodeField,
 } from "./product-code-release";
@@ -21,17 +23,8 @@ import { lockProductName } from "./product-name-rules";
  */
 export const DEACTIVATED_FOR_REACTIVATION_ACTION = "product.deactivated_for_reactivation";
 
-export interface ReactivationHolder {
-  code:
-    | typeof API_ERROR_CODES.CODE_TAKEN
-    | typeof API_ERROR_CODES.BARCODE_TAKEN
-    | typeof API_ERROR_CODES.NAME_TAKEN;
-  field: CodeField | "name";
-  value: string;
-  productId: string;
-  productName: string;
-  blocked?: "HAS_ACTIVE_VARIANTS";
-}
+/** The shared contract type (@routeflow/types): never redeclared here. */
+export type ReactivationHolder = ProductReactivationHolder;
 
 const FIELD_ORDER: Array<CodeField | "name"> = ["sku", "unitSku", "barcode", "name"];
 
@@ -132,22 +125,47 @@ async function deriveHolders(
   return uniq;
 }
 
-export async function resolveReactivationConflicts(
+/**
+ * The codes to lock up front for a reactivation (one sorted call, before any row write): this product's retired codes
+ * (minus those the same PATCH re-sets) and, when `deactivateHolderIds` is sent, every live code of the blocking holders
+ * from an UNLOCKED pre-peek (the holders' codes are released by the deactivation, so they must be locked first).
+ */
+export async function reactivationLockCodes(
   tx: CatalogTx,
   input: {
     tenantId: string;
     productId: string;
     name: string;
     parentProductId: string | null;
-    /** Fields the same PATCH sets explicitly: their retired value is dropped, never restored, so never a conflict. */
     skip: readonly CodeField[];
-    /** undefined / empty = "just tell me": any holder is a 409 listing all of them. */
-    holderIds?: readonly string[];
-    actorId: string | null;
+    withHolders: boolean;
   },
-): Promise<void> {
-  const { tenantId, productId, actorId } = input;
+): Promise<string[]> {
+  const { tenantId, productId } = input;
   const skip = new Set(input.skip);
+  const wanted = await retiredCodes(tx, tenantId, productId, skip);
+  const out = wanted.map((w) => w.value);
+  if (!input.withHolders) return out;
+  const holders = await deriveHolders(tx, {
+    tenantId,
+    productId,
+    name: input.name,
+    parentProductId: input.parentProductId,
+    wanted,
+  });
+  for (const id of new Set(holders.map((h) => h.productId))) {
+    // eslint-disable-next-line no-await-in-loop -- a handful of holders
+    out.push(...(await peekProductCodes(tx, tenantId, id)));
+  }
+  return out;
+}
+
+async function retiredCodes(
+  tx: CatalogTx,
+  tenantId: string,
+  productId: string,
+  skip: ReadonlySet<CodeField>,
+): Promise<Array<{ field: CodeField; value: string }>> {
   const me: {
     retiredSku: string | null;
     retiredBarcode: string | null;
@@ -170,6 +188,31 @@ export async function resolveReactivationConflicts(
     for (const r of rows)
       if (r.retiredCode) wanted.push({ field: "barcode", value: r.retiredCode });
   }
+  return wanted;
+}
+
+export async function resolveReactivationConflicts(
+  tx: CatalogTx,
+  input: {
+    tenantId: string;
+    productId: string;
+    name: string;
+    parentProductId: string | null;
+    /** Fields the same PATCH sets explicitly: their retired value is dropped, never restored, so never a conflict. */
+    skip: readonly CodeField[];
+    /** undefined / empty = "just tell me": any holder is a 409 listing all of them. */
+    holderIds?: readonly string[];
+    actorId: string | null;
+    /**
+     * The codes the caller ALREADY locked in its ONE sorted `lockBarcodeCodes` call (Opus #2860 B2). The holders' live
+     * codes are released below, so after the row locks they must still be a subset of this set: if the holder set grew
+     * a code in between, the call is refused with the current holders (a retry re-locks the larger set).
+     */
+    lockedCodes?: ReadonlySet<string>;
+  },
+): Promise<{ deactivatedIds: string[] }> {
+  const { tenantId, productId, actorId } = input;
+  const wanted = await retiredCodes(tx, tenantId, productId, new Set(input.skip));
   const derive = {
     tenantId,
     productId,
@@ -190,7 +233,7 @@ export async function resolveReactivationConflicts(
   const given = [...new Set(input.holderIds ?? [])].sort();
   if (given.length === 0) {
     if (holders.length > 0) throw conflict(holders);
-    return;
+    return { deactivatedIds: [] };
   }
   const sameSet = (hs: ReactivationHolder[]) => {
     const exp = [...new Set(hs.map((h) => h.productId))].sort();
@@ -207,15 +250,23 @@ export async function resolveReactivationConflicts(
   // 4. re-derive under the row locks; the set must still be exactly what was named.
   holders = await deriveHolders(tx, derive);
   if (!sameSet(holders) || holders.some((h) => h.blocked)) throw conflict(holders);
+  if (input.lockedCodes) {
+    // The holders' live codes are released below: every one must already be locked (Opus #2860 B2), else refuse.
+    for (const id of new Set(holders.map((h) => h.productId))) {
+      // eslint-disable-next-line no-await-in-loop
+      for (const code of await peekProductCodes(tx, tenantId, id)) {
+        if (!input.lockedCodes.has(code)) throw conflict(holders);
+      }
+    }
+  }
 
+  const deactivatedIds: string[] = [];
   for (const id of [...new Set(holders.map((h) => h.productId))].sort()) {
-    const freed = holders
-      .filter((h) => h.productId === id)
-      .map((h) => ({ field: h.field, value: h.value }));
+    // Codes FIRST (already locked above, reentrant), the row write after: house order (Opus #2860 B1).
+    // eslint-disable-next-line no-await-in-loop
+    const { freed } = await releaseProductCodes(tx, { tenantId, productId: id });
     // eslint-disable-next-line no-await-in-loop
     await tx.product.update({ where: { id }, data: { isActive: false } });
-    // eslint-disable-next-line no-await-in-loop
-    await releaseProductCodes(tx, { tenantId, productId: id });
     // eslint-disable-next-line no-await-in-loop
     await tx.auditLog.create({
       data: {
@@ -226,10 +277,12 @@ export async function resolveReactivationConflicts(
         entityId: id,
         meta: {
           reactivatedProductId: productId,
-          freed,
+          freed, // everything the deactivation released, not only the colliding code (audit == effect)
           reason: `deactivated to reactivate ${productId}`,
         },
       },
     });
+    deactivatedIds.push(id);
   }
+  return { deactivatedIds };
 }
