@@ -1,15 +1,15 @@
 /**
- * #2775 (SA-598 P1 for Google) — real-Postgres proof that GoogleOAuthService.linkGoogleAccount
- * links by compare-and-set through the shared oauth-account-link helper: two concurrent calls for
- * two DIFFERENT Google subs on one staff user both pass the "not linked yet" read, and only the
- * `updateMany({ id, tenantId, googleId: null })` guard decides the winner.
+ * #2775 (SA-598 P1 for Google) — real-Postgres proof that GoogleOAuthService.findOrCreateUser's
+ * staff link goes through the shared oauth-account-link compare-and-set: two concurrent sign-ins
+ * for two DIFFERENT Google subs on one staff user both resolve the unbound row by email, and only
+ * the `updateMany({ id, googleId: null })` guard decides the winner.
  *
  * WHY THE DB LANE: a lost-update race only exists against a real Postgres; mocks cannot interleave.
  * Collected only by `jest.db.config.js` (`.db.spec.ts$`); run via `npm run local:test:db`.
  *
  * SAFETY: one throwaway `qa-google-<run>-a` tenant (`assertTestTenant`); `afterAll` deletes exactly
  * that tenant's rows. NOT run by the author session — the brief prohibits running DB-backed specs.
- * linkGoogleAccount takes an already-verified profile, so no Google token verification is stubbed.
+ * findOrCreateUser takes an already-verified profile, so no Google token verification is stubbed.
  */
 import { randomUUID } from "crypto";
 import { ConflictException } from "@nestjs/common";
@@ -47,11 +47,11 @@ describeDb("#2775 (SA-598 P1) — Google link CAS on real Postgres", () => {
   }, 60_000);
 
   it("SA-598 P1 (service path, forced interleave): two callers linking DIFFERENT subs to one user both pass the read, and exactly one wins the CAS", async () => {
-    // Drives GoogleOAuthService.linkGoogleAccount against real Postgres. The user row is read by
-    // both callers BEFORE either writes (a barrier on the first two `user.findUnique` calls, which
-    // sit between the "not linked yet" read and the conditional update), so only the
-    // `updateMany({ id, tenantId, googleId: null })` guard decides the winner. Reverting that guard
-    // lets both writes land: two fulfilled calls, the last write wins -> RED.
+    // Drives GoogleOAuthService.findOrCreateUser (staff branch) against real Postgres. The row is
+    // read by email by both callers BEFORE either writes (a barrier on the first two email-fallback
+    // `user.findFirst` calls, which sit between the "not linked yet" read and the conditional
+    // update), so only the `updateMany({ id, googleId: null })` guard decides the winner. Reverting
+    // that guard lets both writes land: two fulfilled calls, the last write wins -> RED.
     const subA = `google-sub-${run}-race-a`;
     const subB = `google-sub-${run}-race-b`;
     const user = await raw.user.create({
@@ -64,8 +64,8 @@ describeDb("#2775 (SA-598 P1) — Google link CAS on real Postgres", () => {
     });
 
     // Barrier: releases once BOTH callers have arrived; a lone arrival fails fast (< 5 s, inside
-    // the Prisma/Jest limits) instead of hanging the lane. Later findUnique calls (the loser's
-    // post-CAS refetch) pass straight through.
+    // the Prisma/Jest limits) instead of hanging the lane. Later calls (the loser's post-CAS
+    // refetch, the sub-first lookups) pass straight through.
     let arrived = 0;
     let release!: () => void;
     const both = new Promise<void>((resolve) => (release = resolve));
@@ -82,14 +82,17 @@ describeDb("#2775 (SA-598 P1) — Google link CAS on real Postgres", () => {
     };
     const prismaShim = {
       user: {
-        findUnique: async (args: Prisma.UserFindUniqueArgs) => {
-          const row = await raw.user.findUnique(args);
-          await gate();
+        findUnique: (args: Prisma.UserFindUniqueArgs) => raw.user.findUnique(args),
+        findFirst: async (args: Prisma.UserFindFirstArgs) => {
+          const row = await raw.user.findFirst(args);
+          if ((args.where as any)?.email) await gate();
           return row;
         },
-        findFirst: (args: Prisma.UserFindFirstArgs) => raw.user.findFirst(args),
         updateMany: (args: Prisma.UserUpdateManyArgs) => raw.user.updateMany(args),
+        update: (args: Prisma.UserUpdateArgs) => raw.user.update(args),
       },
+      tenant: { findFirst: (args: Prisma.TenantFindFirstArgs) => raw.tenant.findFirst(args) },
+      refreshToken: { upsert: jest.fn().mockResolvedValue({}) },
     };
     const emailSend = jest.fn().mockResolvedValue(undefined);
     const config = {
@@ -100,7 +103,10 @@ describeDb("#2775 (SA-598 P1) — Google link CAS on real Postgres", () => {
     } as unknown as ConfigService;
     const service = new GoogleOAuthService(
       prismaShim as any,
-      { sign: jest.fn(), decode: jest.fn() } as unknown as JwtService,
+      {
+        sign: jest.fn(() => "signed"),
+        decode: jest.fn(() => ({ exp: Math.floor(Date.now() / 1000) + 3600 })),
+      } as unknown as JwtService,
       config,
       { send: emailSend } as any,
       { claimsFor: jest.fn().mockResolvedValue(null) } as any,
@@ -116,13 +122,15 @@ describeDb("#2775 (SA-598 P1) — Google link CAS on real Postgres", () => {
     };
 
     const results = await Promise.allSettled([
-      service.linkGoogleAccount({
-        linkUserId: user.id,
+      service.findOrCreateUser({
+        type: "tenant",
+        tenantSlug: slugA,
         googleId: subA,
         email: user.email,
       } as any),
-      service.linkGoogleAccount({
-        linkUserId: user.id,
+      service.findOrCreateUser({
+        type: "tenant",
+        tenantSlug: slugA,
         googleId: subB,
         email: user.email,
       } as any),
@@ -137,7 +145,6 @@ describeDb("#2775 (SA-598 P1) — Google link CAS on real Postgres", () => {
     expect((lost[0].reason as ConflictException).message).toBe("google_account_mismatch");
     const after = await raw.user.findUnique({ where: { id: user.id } });
     expect([subA, subB]).toContain(after?.googleId);
-    await Promise.resolve(); // flush the fire-and-forget send
-    expect(emailSend).toHaveBeenCalledTimes(1); // only the winner sends the linked email
+    expect(emailSend).not.toHaveBeenCalled(); // the staff link sends no email
   });
 });

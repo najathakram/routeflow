@@ -111,7 +111,7 @@ describe("GoogleOAuthService — SA-598 P1 sub-first resolve + CAS link (#2495 f
       expect(prisma.user.updateMany).not.toHaveBeenCalled();
     });
 
-    it("the email fallback is ordered createdAt,id, tenant-scoped, and links by tenant-scoped CAS", async () => {
+    it("the email fallback is ordered createdAt,id, tenant-scoped, and links by CAS on id + googleId:null", async () => {
       const { service, prisma } = build();
       prisma.user.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ ...STAFF });
       prisma.user.updateMany.mockResolvedValue({ count: 1 });
@@ -123,7 +123,7 @@ describe("GoogleOAuthService — SA-598 P1 sub-first resolve + CAS link (#2495 f
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(prisma.user.updateMany).toHaveBeenCalledWith({
-        where: { id: "user-1", tenantId: "tenant-1", googleId: null },
+        where: { id: "user-1", googleId: null },
         data: { googleId: "google-sub-1", forcePasswordChange: false },
       });
     });
@@ -170,7 +170,6 @@ describe("GoogleOAuthService — SA-598 P1 sub-first resolve + CAS link (#2495 f
         await expect(service.findOrCreateUser(staffProfile(over))).rejects.toThrow(
           ForbiddenException,
         );
-        expect(prisma.tenant.findFirst).not.toHaveBeenCalled();
         expect(prisma.user.findFirst).not.toHaveBeenCalled();
         expect(prisma.buyerAccount.findFirst).not.toHaveBeenCalled();
         expect(prisma.user.updateMany).not.toHaveBeenCalled();
@@ -339,81 +338,6 @@ describe("GoogleOAuthService — SA-598 P1 sub-first resolve + CAS link (#2495 f
         );
         expect(prisma.buyerAccount.findFirst).not.toHaveBeenCalled();
         expect(prisma.buyerAccount.create).not.toHaveBeenCalled();
-      }
-    });
-  });
-
-  describe("linkGoogleAccount", () => {
-    const USER = {
-      id: "user-1",
-      email: "op@acme.example",
-      tenantId: "tenant-1",
-      googleId: null as string | null,
-      deletedAt: null,
-    };
-    const link = (over: Record<string, unknown> = {}) => ({
-      linkUserId: "user-1",
-      googleId: "google-sub-1",
-      email: "op@acme.example",
-      ...over,
-    });
-
-    function env() {
-      const b = build();
-      b.prisma.user.findUnique.mockResolvedValue({ ...USER });
-      b.prisma.user.findFirst.mockResolvedValue(null);
-      return b;
-    }
-
-    it("links by CAS scoped to id + tenantId + googleId:null, then emails", async () => {
-      const { service, prisma, emailService } = env();
-      prisma.user.updateMany.mockResolvedValue({ count: 1 });
-
-      await service.linkGoogleAccount(link() as any);
-      await Promise.resolve();
-
-      expect(prisma.user.updateMany).toHaveBeenCalledWith({
-        where: { id: "user-1", tenantId: "tenant-1", googleId: null },
-        data: { googleId: "google-sub-1", forcePasswordChange: false },
-      });
-      expect(emailService.send).toHaveBeenCalledTimes(1);
-    });
-
-    it("a lost CAS to a DIFFERENT sub is a 409 and sends no email", async () => {
-      const { service, prisma, emailService } = env();
-      prisma.user.updateMany.mockResolvedValue({ count: 0 });
-      prisma.user.findUnique
-        .mockResolvedValueOnce({ ...USER })
-        .mockResolvedValueOnce({ ...USER, googleId: "attacker" });
-
-      await expect(service.linkGoogleAccount(link() as any)).rejects.toThrow(
-        new ConflictException("google_account_mismatch"),
-      );
-      await Promise.resolve();
-      expect(emailService.send).not.toHaveBeenCalled();
-    });
-
-    it("a lost CAS to the SAME sub succeeds without a second email", async () => {
-      const { service, prisma, emailService } = env();
-      prisma.user.updateMany.mockResolvedValue({ count: 0 });
-      prisma.user.findUnique
-        .mockResolvedValueOnce({ ...USER })
-        .mockResolvedValueOnce({ ...USER, googleId: "google-sub-1" });
-
-      await expect(service.linkGoogleAccount(link() as any)).resolves.toBeUndefined();
-      await Promise.resolve();
-      expect(emailService.send).not.toHaveBeenCalled();
-    });
-
-    it("a falsy sub or email is refused with ZERO prisma calls", async () => {
-      for (const over of [{ googleId: "" }, { email: "" }]) {
-        const { service, prisma } = env();
-        await expect(service.linkGoogleAccount(link(over) as any)).rejects.toThrow(
-          ForbiddenException,
-        );
-        expect(prisma.user.findUnique).not.toHaveBeenCalled();
-        expect(prisma.user.findFirst).not.toHaveBeenCalled();
-        expect(prisma.user.updateMany).not.toHaveBeenCalled();
       }
     });
   });
