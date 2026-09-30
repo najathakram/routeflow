@@ -51,7 +51,10 @@ describe("toLineComponentView", () => {
       { componentProductId: "b", name: "B", qty: 1, position: 1, displayUnitPrice4: 1 },
       { componentProductId: "a", name: "A", qty: 1, position: 0, displayUnitPrice4: 1 },
     ];
-    expect(toLineComponentViews(rows as never).map((v) => v.componentProductId)).toEqual(["a", "b"]);
+    expect(toLineComponentViews(rows as never).map((v) => v.componentProductId)).toEqual([
+      "a",
+      "b",
+    ]);
     expect(toLineComponentViews(undefined)).toEqual([]);
     expect(toLineComponentViews(null)).toEqual([]);
   });
@@ -73,7 +76,11 @@ describe("withComponentViews (the findOne wiring)", () => {
 
   it("maps every line's components to views: a number price, position order, no tenant or parent key", () => {
     const out = withViews([
-      { id: "li-1", subtotal: 30, components: [row(1, { toString: () => "0.6250" }), row(0, null)] },
+      {
+        id: "li-1",
+        subtotal: 30,
+        components: [row(1, { toString: () => "0.6250" }), row(0, null)],
+      },
     ]) as Array<{ id: string; subtotal: number; components: Array<Record<string, unknown>> }>;
     expect(out[0].id).toBe("li-1");
     expect(out[0].subtotal).toBe(30);

@@ -33,5 +33,13 @@ export function deriveInvoiceDetailFields(inv: any, now: Date = new Date()) {
   const todayIso = now.toISOString().slice(0, 10);
   const isOverdue = !isSettled && balanceDue > 0 && dueDateIso != null && dueDateIso < todayIso;
   const { depositAmount, depositOverdue } = computeDepositFields(inv, totalConfirmed, todayIso);
-  return { balanceDue, paidAmount, creditApplied, advanceApplied, isOverdue, depositAmount, depositOverdue };
+  return {
+    balanceDue,
+    paidAmount,
+    creditApplied,
+    advanceApplied,
+    isOverdue,
+    depositAmount,
+    depositOverdue,
+  };
 }

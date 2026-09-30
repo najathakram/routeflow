@@ -28,10 +28,13 @@ jest.mock("@/lib/api/notifications", () => ({
 // cell is `unavailable: "NO_TRIGGER"` — REG-B180 (T6's companion fixture: no
 // firing site exists for LOW_STOCK yet, so the cell can't be a live toggle).
 const messagingConfig = {
+  channelStatus: { EMAIL: "LIVE", WHATSAPP: "NOT_BUILT", SMS: "NOT_BUILT", PORTAL: "NOT_BUILT" },
   events: [
     {
       eventKey: "LOW_STOCK",
       label: "Low stock",
+      audience: "STAFF",
+      hasTrigger: false,
       channels: [
         {
           channel: "INTERNAL",
@@ -79,16 +82,17 @@ describe("SettingsPage — Notifications tab", () => {
     expect(screen.getByText(/record/i)).toBeInTheDocument();
   });
 
-  // T9 / REG-B180: a cell with no firing site is `unavailable` — the matrix
-  // must show a qualifier explaining why, not a live enable/disable switch.
-  it("REG-B180 an unavailable cell renders a qualifier, not a switch", async () => {
+  // T9 / REG-B180 (reworked by #1965): an event with no firing site must never render a live
+  // enable/disable switch — it is listed under "Coming soon" with plain text instead of a
+  // per-cell "Not available" qualifier.
+  it("REG-B180 an event with no trigger renders under Coming soon, not as a switch", async () => {
     renderWithProviders(<SettingsPage />);
 
-    const row = (await screen.findByText("Low stock")).closest("tr");
-    expect(row).not.toBeNull();
-    const cell = within(row as HTMLElement);
-
-    expect(cell.queryByRole("switch", { name: /low stock via internal/i })).not.toBeInTheDocument();
-    expect(cell.getByText(/no trigger|not available|unavailable/i)).toBeInTheDocument();
+    const soon = (await screen.findByText(/^coming soon$/i)).closest("details");
+    expect(soon).not.toBeNull();
+    const scoped = within(soon as HTMLElement);
+    expect(scoped.getByText("Low stock")).toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: /low stock/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/not available/i)).not.toBeInTheDocument();
   });
 });

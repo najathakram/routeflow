@@ -38,10 +38,13 @@ import { isCreditOpenForApply } from "../lib/credit-notes-logic";
 import { showToast } from "../lib/toast";
 import { classifyMutationError } from "../lib/offline-errors";
 import { resolveProductByCode } from "../lib/barcode-resolve";
-import { findExactScanMatch, looksLikeScanCode, scanUnitKind } from "../lib/wedge-scan";
+import { resolveScanSellLevel } from "@routeflow/scanning";
+import type { SellLevel } from "@routeflow/pricing";
+import { findExactScanMatch, levelsForScan, looksLikeScanCode } from "../lib/wedge-scan";
 import { makeScanHandler, runWedgeSubmit } from "../lib/scan-ladder";
 import { createScanAttempt, createWedgeSubmitHandler } from "../lib/wedge-submit";
 import { createScanAcceptGuard } from "../lib/scan-accept-guard";
+import { needsUnitLabelConfirm } from "../lib/scan-unit-confirm";
 // Compose "<Parent> - <Variant>" so scanned variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../lib/product-display";
 import { effectiveQty, getTierPrice, isSpecialTier, roundMoney } from "@routeflow/pricing";
@@ -66,7 +69,7 @@ import { InlineToast, useInlineToast } from "./InlineToast";
 import { ProductRow } from "./ProductRow";
 import { ScanOrderSheet } from "./ScanOrderSheet";
 import {
-  incrementLinePiece,
+  addScannedLevelToLine,
   isUnitLine,
   setLineBoxes,
   setLinePieces,
@@ -753,10 +756,11 @@ function ProductPickView({
    * Add 1 box (boxed product) or 1 piece (non-boxed) to the cart line for
    * `id`. If the product isn't yet known to the screen, the caller passes
    * the resolved Product so we can stash it for the totals/cart UI.
-   * `kind === "piece"` (a PIECE-barcode scan — the product's unitSku) adds
-   * one LOOSE piece instead of a box, rolling over at unitsPerBox.
+   * `level` is the level the scanned CODE carries (SA-580 R1/R2, from the shared resolver):
+   * "UNIT" adds one LOOSE piece instead of a box, rolling over at unitsPerBox. A "+1" tap or a
+   * catalog pick passes no level and adds a box, as before.
    */
-  const addOne = (id: string, productSnapshot?: Product, kind: "case" | "piece" = "case") => {
+  const addOne = (id: string, productSnapshot?: Product, level: SellLevel = "BOX") => {
     const p = productSnapshot ?? productById.get(id);
     const upb = Number(p?.unitsPerBox ?? 0);
     const isBoxed = upb > 1;
@@ -779,13 +783,11 @@ function ProductPickView({
       const prev: LineState = m[id] ?? { qty: 0 };
       // Spread prev inside incrementLine so a repeat scan / +1 keeps the operator's
       // unitPrice override + note (previously wiped on every increment).
-      // A unit-sold line (re-scanned or "+1"-ed) always steps its COUNT via
-      // stepLineQty, regardless of scan kind — "piece" only means something for a
-      // PACK's own barcode split (SA-085f BLOCKER: box math on a unit line).
-      const line =
-        kind === "piece" && !isUnitLine(prev)
-          ? incrementLinePiece(prev, isBoxed, upb)
-          : stepLineQty(prev, 1, isBoxed, upb)!;
+      // The scanned level decides (addScannedLevelToLine). A unit-sold line (re-scanned or
+      // "+1"-ed) always steps its COUNT, regardless of level — a level only means something for
+      // a PACK's own barcode split (SA-085f BLOCKER: box math on a unit line). upb <= 1 has no
+      // box/unit distinction (R4): today's plain +1.
+      const line = addScannedLevelToLine(prev, level, isBoxed, upb);
       if (isNew && prefill != null) {
         line.unitPrice = prefill;
         // B755: tag this as a HISTORY pre-fill, not an operator override — resuming this
@@ -1007,12 +1009,12 @@ function ProductPickView({
   };
   const scanGuardRef = useRef(createScanAcceptGuard<Product>());
 
-  const finishAccept = (product: Product, unitKind: "case" | "piece"): ScanOutcome => {
-    addOne(product.id, product, unitKind);
+  const finishAccept = (product: Product, level: SellLevel): ScanOutcome => {
+    addOne(product.id, product, level);
     bumpScanned(product.id);
     clearSearch();
     const label =
-      unitKind === "piece" && Number(product.unitsPerBox ?? 0) > 1
+      level === "UNIT" && Number(product.unitsPerBox ?? 0) > 1
         ? `Added 1 loose · ${displayName(product)}`
         : `Added ${displayName(product)}`;
     if (scanOpen) return; // the tray row is the confirmation
@@ -1023,14 +1025,11 @@ function ProductPickView({
 
   // units_v1 (SA-085h LOW): a PIECE-barcode hit on an already unit-sold line would add a
   // whole unit, not one loose piece — confirm rather than silently adding a large jump.
-  const acceptScannedProduct = (
-    product: Product,
-    unitKind: "case" | "piece" = "case",
-  ): ScanOutcome => {
+  const acceptScannedProduct = (product: Product, level: SellLevel = "BOX"): ScanOutcome => {
     const label = items[product.id]?.unitLabel;
-    if (unitKind !== "piece" || !label) return finishAccept(product, unitKind);
+    if (!needsUnitLabelConfirm(level, product, label)) return finishAccept(product, level);
     const onYes = () => {
-      const o = finishAccept(product, unitKind);
+      const o = finishAccept(product, level);
       if (o?.feedback?.kind === "added") showInline(o.feedback.text);
     };
     confirm(`Add 1 ${label}?`, `${displayName(product)} is sold by ${label}.`, onYes, {
@@ -1124,13 +1123,13 @@ function ProductPickView({
     const { match } = findExactScanMatch(code, products);
     if (!match) return;
     if (!autoAddAttemptRef.current.shouldAutoAdd(code)) return;
-    const kind = scanUnitKind(code, match);
+    const level = resolveScanSellLevel(match, levelsForScan(code, match));
     // Consume the nonce FIRST (above), then offer: a match parked on an open
     // ladder claim must not re-park on a later settle of the same attempt. A
     // false answer means the ladder owns this label and will redeem the match
     // itself if its own lookup comes back empty.
-    if (!scanGuardRef.current.offer(code, match, kind)) return;
-    const outcome = acceptScannedProduct(match, kind);
+    if (!scanGuardRef.current.offer(code, match, level)) return;
+    const outcome = acceptScannedProduct(match, level);
     if (outcome?.feedback?.kind === "added") showInline(outcome.feedback.text);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchTerm, products, isSearching]);

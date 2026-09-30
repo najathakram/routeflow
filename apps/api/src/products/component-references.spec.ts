@@ -17,7 +17,10 @@ const db = (over: Record<string, unknown> = {}) => ({
   invoiceItemComponent: grouper([]),
   ...over,
 });
-const referencedBy = async (groupers: ReturnType<typeof recipeReferenceGroupers>, ids: string[]) => {
+const referencedBy = async (
+  groupers: ReturnType<typeof recipeReferenceGroupers>,
+  ids: string[],
+) => {
   const out = new Set<string>();
   for (const g of groupers) {
     for (const r of await g.groupBy({ by: ["productId"], where: { productId: { in: ids } } })) {
@@ -30,7 +33,9 @@ const referencedBy = async (groupers: ReturnType<typeof recipeReferenceGroupers>
 describe("recipeReferenceGroupers covers document component rows", () => {
   it("a product named only by an ORDER component row is referenced", async () => {
     const d = db({ orderItemComponent: grouper([{ componentProductId: "p1" }]) });
-    expect([...(await referencedBy(recipeReferenceGroupers(d as never), ["p1", "p2"]))]).toEqual(["p1"]);
+    expect([...(await referencedBy(recipeReferenceGroupers(d as never), ["p1", "p2"]))]).toEqual([
+      "p1",
+    ]);
     expect(d.orderItemComponent.groupBy).toHaveBeenCalledWith({
       by: ["componentProductId"],
       where: { componentProductId: { in: ["p1", "p2"] } },
@@ -39,7 +44,9 @@ describe("recipeReferenceGroupers covers document component rows", () => {
 
   it("a product named only by an INVOICE component row is referenced", async () => {
     const d = db({ invoiceItemComponent: grouper([{ componentProductId: "p2" }]) });
-    expect([...(await referencedBy(recipeReferenceGroupers(d as never), ["p1", "p2"]))]).toEqual(["p2"]);
+    expect([...(await referencedBy(recipeReferenceGroupers(d as never), ["p1", "p2"]))]).toEqual([
+      "p2",
+    ]);
   });
 
   it("no component rows: nothing extra is referenced", async () => {
@@ -55,6 +62,8 @@ describe("recipeReferenceGroupers covers document component rows", () => {
 
   it("a client without the component delegates (an older stub) still works", async () => {
     const legacy = { recipe: grouper([]), recipeComponent: grouper([]) };
-    await expect(referencedBy(recipeReferenceGroupers(legacy as never), ["p1"])).resolves.toEqual(new Set());
+    await expect(referencedBy(recipeReferenceGroupers(legacy as never), ["p1"])).resolves.toEqual(
+      new Set(),
+    );
   });
 });
