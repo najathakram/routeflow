@@ -335,10 +335,11 @@ describe("ensureClone completion marker", () => {
     expect(fs.existsSync(marker(env.cloneDir))).toBe(true);
   });
 
-  it("a half-made clone (a .git dir, no marker, no usable refs) is removed and re-cloned", async () => {
+  it("OUR half-made clone (ctl-owned, no marker, no usable refs) is removed and re-cloned", async () => {
     world.seedBranch(STATE_BRANCH, baseState(2));
     const env = world.env("a");
     fs.mkdirSync(path.join(env.cloneDir, ".git"), { recursive: true });
+    fs.writeFileSync(path.join(env.cloneDir, ".git", "ctl-owned"), env.origin + "\n"); // ours
     fs.writeFileSync(path.join(env.cloneDir, ".git", "shallow.lock"), "");
     fs.writeFileSync(path.join(env.cloneDir, "junk.txt"), "half");
     const ev = await SB.appendAndPush(env, "lane-u", note("x"));
@@ -364,6 +365,98 @@ describe("ensureClone completion marker", () => {
     const r = await Promise.all([SB.ensureClone(env), SB.ensureClone(env)]);
     expect(r[0]).toBe(r[1]);
     expect(fs.existsSync(marker(env.cloneDir))).toBe(true);
+  });
+});
+
+describe("ensureClone never touches a dir the ctl did not create", () => {
+  const OWNED_MSG = /is not a ctl clone; move it or set CONTROL_STATE_DIR/;
+  const fingerprint = (dir: string) =>
+    [
+      git(dir, ["rev-parse", "HEAD"]).trim(),
+      git(dir, ["status", "--porcelain", "-uall"]).trim(),
+      fs.readFileSync(path.join(dir, "precious.txt"), "utf8"),
+      fs.readFileSync(path.join(dir, "events", "lane-u.jsonl"), "utf8"),
+    ].join("|");
+
+  function foreignClone(env: any): World {
+    const other = makeWorld();
+    other.seedBranch(STATE_BRANCH, baseState(3));
+    git(other.root, [
+      "clone",
+      "-q",
+      "--single-branch",
+      "--branch",
+      STATE_BRANCH,
+      other.originUrl,
+      env.cloneDir,
+    ]);
+    fs.writeFileSync(path.join(env.cloneDir, "precious.txt"), "do not delete");
+    return other;
+  }
+
+  it("a repo with a DIFFERENT origin (and origin/<stateBranch>) survives byte-identical; exit 5", async () => {
+    world.seedBranch(STATE_BRANCH, baseState(1));
+    const env = world.env("a");
+    const other = foreignClone(env);
+    try {
+      const before = fingerprint(env.cloneDir);
+      const err = await fail(SB.appendAndPush(env, "lane-u", note("x")));
+      expect(codeOf(err)).toBe(5);
+      expect(String(err.message)).toMatch(OWNED_MSG);
+      expect(fingerprint(env.cloneDir)).toBe(before);
+      // a stray marker from an older build does not make it ours either
+      fs.writeFileSync(path.join(env.cloneDir, ".git", "ctl-clone-complete"), "ok\n");
+      expect(codeOf(await fail(SB.appendAndPush(env, "lane-u", note("y"))))).toBe(5);
+      expect(fingerprint(env.cloneDir)).toBe(before);
+      expect(world.remoteLines("lane-u")).toHaveLength(1); // only the seed line
+    } finally {
+      other.cleanup();
+    }
+  });
+
+  it("compact refuses it too", async () => {
+    world.seedBranch(STATE_BRANCH, baseState(1));
+    const env = world.env("a");
+    const other = foreignClone(env);
+    try {
+      const before = fingerprint(env.cloneDir);
+      expect(codeOf(await fail(CP.compact(env)))).toBe(5);
+      expect(fingerprint(env.cloneDir)).toBe(before);
+    } finally {
+      other.cleanup();
+    }
+  });
+
+  it("an unrelated non-git dir survives untouched; exit 5", async () => {
+    world.seedBranch(STATE_BRANCH, baseState(1));
+    const env = world.env("a");
+    fs.mkdirSync(env.cloneDir, { recursive: true });
+    fs.writeFileSync(path.join(env.cloneDir, "thesis.docx"), "years of work");
+    const err = await fail(SB.appendAndPush(env, "lane-u", note("x")));
+    expect(codeOf(err)).toBe(5);
+    expect(String(err.message)).toMatch(OWNED_MSG);
+    expect(fs.readFileSync(path.join(env.cloneDir, "thesis.docx"), "utf8")).toBe("years of work");
+  });
+
+  it("a pre-marker clone with the MATCHING origin is adopted (ctl-owned written), parked lines survive", async () => {
+    world.seedBranch(STATE_BRANCH, baseState(2));
+    const env = world.env("a");
+    await SB.appendAndPush(env, "lane-u", note("first"));
+    fs.rmSync(path.join(env.cloneDir, ".git", "ctl-clone-complete"));
+    fs.rmSync(path.join(env.cloneDir, ".git", "ctl-owned"), { force: true });
+    await SB.ensureClone(env);
+    expect(fs.readFileSync(path.join(env.cloneDir, ".git", "ctl-owned"), "utf8").trim()).toBe(
+      env.origin,
+    );
+  });
+
+  it("a fresh clone records its origin in .git/ctl-owned", async () => {
+    world.seedBranch(STATE_BRANCH, baseState(1));
+    const env = world.env("a");
+    await SB.ensureClone(env);
+    expect(fs.readFileSync(path.join(env.cloneDir, ".git", "ctl-owned"), "utf8").trim()).toBe(
+      env.origin,
+    );
   });
 });
 

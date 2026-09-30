@@ -267,7 +267,7 @@ describe("R32 compacted tip with a full nonce window", () => {
 
 describe("R32b snapshot size with many tasks, and the whole-tip compaction trigger", () => {
   /** lead creates 600 RF tasks; one lane starts and progresses each; notes pad events/ to >= 384 KB. */
-  function manyTasks(): Record<string, string> {
+  function manyTasks(count = 600): Record<string, string> {
     const files = baseState(0);
     const lead = files["events/lead.jsonl"]
       .split("\n")
@@ -286,7 +286,7 @@ describe("R32b snapshot size with many tasks, and the whole-tip compaction trigg
       name: "One",
       shipDate: "2026-02-01",
     });
-    for (let n = 2; n <= 600; n++) {
+    for (let n = 2; n <= count; n++) {
       lead.push({
         seq: ++seq,
         ts: ts(),
@@ -311,7 +311,7 @@ describe("R32b snapshot size with many tasks, and the whole-tip compaction trigg
     files["events/lead.jsonl"] = lead.map(jl).join("");
     const u: any[] = [];
     let us = 0;
-    for (let n = 1; n <= 600; n++) {
+    for (let n = 1; n <= count; n++) {
       u.push({
         seq: ++us,
         ts: ts(),
@@ -363,17 +363,51 @@ describe("R32b snapshot size with many tasks, and the whole-tip compaction trigg
     expect(need(SB, "state-branch").foldDir(shallow, REGISTERS, NOW)).toEqual(expected);
   }, 30_000);
 
-  it("compactDue looks at the WHOLE tip (events + snapshot + nonces.txt), not events/ alone", () => {
-    const { compactDue } = need(CP, "compact");
+  it("compactDue triggers on events/ bytes ONLY (a fat snapshot or nonces.txt never re-triggers)", () => {
+    const { compactDue, tipBytes } = need(CP, "compact");
     const dir = fs.mkdtempSync(path.join(world.root, "tip-"));
     fs.mkdirSync(path.join(dir, "events"));
     fs.writeFileSync(path.join(dir, "events", "lane-u.jsonl"), "x".repeat(100 * 1024));
     expect(compactDue(dir)).toBe(false);
-    fs.writeFileSync(path.join(dir, "snapshot.json"), "x".repeat(200 * 1024));
-    expect(compactDue(dir)).toBe(false);
+    fs.writeFileSync(path.join(dir, "snapshot.json"), "x".repeat(600 * 1024));
     fs.writeFileSync(path.join(dir, "nonces.txt"), "x".repeat(100 * 1024));
+    expect(compactDue(dir)).toBe(false);
+    expect(tipBytes(dir)).toBe((100 + 600 + 100) * 1024); // still reported as a metric
+    fs.writeFileSync(path.join(dir, "events", "lane-v.jsonl"), "x".repeat(300 * 1024));
     expect(compactDue(dir)).toBe(true);
   });
+
+  it("snapshotWarning fires only above 1 MB", () => {
+    const { snapshotWarning } = need(CP, "compact");
+    const dir = fs.mkdtempSync(path.join(world.root, "snap-"));
+    expect(snapshotWarning(dir)).toBeNull();
+    fs.writeFileSync(path.join(dir, "snapshot.json"), "x".repeat(1024 * 1024));
+    expect(snapshotWarning(dir)).toBeNull();
+    fs.writeFileSync(path.join(dir, "snapshot.json"), "x".repeat(1024 * 1024 + 1));
+    expect(String(snapshotWarning(dir))).toMatch(/snapshot\.json/);
+  });
+
+  it("300 tasks: compacted tip <= 512 KB", async () => {
+    world.seedBranch(STATE_BRANCH, manyTasks(300));
+    const env = world.env("srv");
+    await need(CP, "compact").compact(env);
+    expect(kb(world.shallowClone(STATE_BRANCH, "shallow300"))).toBeLessThanOrEqual(512);
+  }, 30_000);
+
+  it("1,000 tasks: no compaction loop (compactDue false right after compact), no snapshot warning", async () => {
+    world.seedBranch(STATE_BRANCH, manyTasks(1000));
+    const env = world.env("srv");
+    const { compact, compactDue } = need(CP, "compact");
+    expect(compactDue(world.shallowClone(STATE_BRANCH, "before"))).toBe(true);
+    const r = await compact(env);
+    expect(r.compacted).toBe(true);
+    expect(r.snapshotWarning).toBeNull();
+    const after = world.shallowClone(STATE_BRANCH, "after");
+    expect(compactDue(after)).toBe(false);
+    expect(fs.statSync(path.join(after, "snapshot.json")).size).toBeLessThan(1024 * 1024);
+    const again = await compact(env); // nothing new: no churn
+    expect(again.compacted).toBe(false);
+  }, 60_000);
 });
 
 /** mulberry32: fixed-seed PRNG, so the property test is reproducible. */
