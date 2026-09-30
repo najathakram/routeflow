@@ -48,6 +48,7 @@ const config = {
 };
 
 const mockGet = jest.fn();
+let releaseRefetch: () => void = () => undefined;
 const mockPatch = jest.fn();
 jest.mock("@/lib/api-client", () => ({
   apiClient: {
@@ -62,21 +63,32 @@ describe("Notifications save failure (#1965 review F1)", () => {
   beforeEach(() => {
     mockGet.mockReset();
     mockPatch.mockReset();
-    // The FIRST config read resolves; every later one (the refetch after the failed save) never
-    // settles, so the switch can only return to "on" through the optimistic rollback itself.
+    // The FIRST config read resolves; later ones (the refetch after the failed save) settle only
+    // when the test releases them, so the revert below can only come from the optimistic rollback.
     let configReads = 0;
     mockGet.mockImplementation((url: string) => {
       if (url.includes("delivery-health")) return Promise.reject({ response: { status: 404 } });
       configReads += 1;
-      return configReads === 1 ? Promise.resolve({ data: config }) : new Promise(() => undefined);
+      return configReads === 1
+        ? Promise.resolve({ data: config })
+        : new Promise((resolve) => {
+            releaseRefetch = () => resolve({ data: config });
+          });
     });
   });
 
   it("T11 one toast, no server text, and the switch reverts to on", async () => {
-    mockPatch.mockRejectedValue({
-      message: "Request failed with status code 500",
-      response: { status: 500, data: { message: "Internal server error boom" } },
-    });
+    let failPatch: () => void = () => undefined;
+    mockPatch.mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          failPatch = () =>
+            reject({
+              message: "Request failed with status code 500",
+              response: { status: 500, data: { message: "Internal server error boom" } },
+            });
+        }),
+    );
     const globalToast = jest.fn();
     const queryClient = new QueryClient({
       mutationCache: new MutationCache({
@@ -91,14 +103,24 @@ describe("Notifications save failure (#1965 review F1)", () => {
     expect(sw).toHaveAttribute("aria-checked", "true");
 
     fireEvent.click(sw);
+    // optimistic flip
+    await waitFor(() =>
+      expect(screen.getByRole("switch", { name: /order confirmed/i })).toHaveAttribute(
+        "aria-checked",
+        "false",
+      ),
+    );
 
-    expect(await screen.findAllByText("Couldn't save, please try again")).toHaveLength(1);
+    failPatch();
+    // rollback, while the refetch is still pending (the server state is not what reverts it)
     await waitFor(() =>
       expect(screen.getByRole("switch", { name: /order confirmed/i })).toHaveAttribute(
         "aria-checked",
         "true",
       ),
     );
+    releaseRefetch();
+    expect(await screen.findAllByText("Couldn't save, please try again")).toHaveLength(1);
     expect(globalToast).not.toHaveBeenCalled();
     expect(screen.queryByText(/boom|Internal server error|status code/i)).not.toBeInTheDocument();
   });

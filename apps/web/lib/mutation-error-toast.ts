@@ -1,10 +1,12 @@
+import type { ToastData } from "@routeflow/ui/web";
+
 /**
  * The app-wide MutationCache error handler (extracted from `app/providers.tsx`, #1965 so it is
  * testable). A mutation that renders its own error UI opts out with
  * `meta: { localErrorToast: true }` — otherwise a failed save shows this generic toast (the raw
  * server message) on top of the page's own sentence.
  */
-type ToastFn = (opts: Record<string, unknown>) => unknown;
+type ToastFn = (opts: Omit<ToastData, "id">) => unknown;
 
 export function handleMutationError(
   error: unknown,
@@ -12,7 +14,6 @@ export function handleMutationError(
   toast: ToastFn,
   router: { push: (href: string) => void },
 ): void {
-  if (mutation?.meta?.localErrorToast) return;
   const data = (error as any)?.response?.data;
   // These 409s (and READ_ONLY's 403) are turned into guided in-app flows by the
   // initiating component (merge prompt, license guard, the read-only toast below)
@@ -57,6 +58,9 @@ export function handleMutationError(
     });
     return;
   }
+  // The mutation renders its own (fixed-sentence) error UI. Checked AFTER the read-only branch so a
+  // read-only tenant still gets "Choose a plan" from any mutation.
+  if (mutation?.meta?.localErrorToast) return;
   if (data?.code && HANDLED_CODES.includes(data.code)) return;
   const message = data?.message || (error as Error)?.message || "Something went wrong";
   toast({ title: message, variant: "error" });

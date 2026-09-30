@@ -97,7 +97,9 @@ export function NotificationRulesCard({
   ];
   // An event with no cell in any visible column (e.g. Invoice sent: portal-only) would render a
   // dead row; the footnote explains invoices instead.
-  const live = triggered.filter((e) => e.channels.some((c) => columns.includes(c.channel)));
+  const live = triggered.filter((e) =>
+    e.channels.some((c) => !c.locked && columns.includes(c.channel)),
+  );
   const notBuilt = CHANNEL_ORDER.filter((c) => status[c as keyof typeof status] === "NOT_BUILT");
   const metered = status.WHATSAPP === "LIVE" || status.SMS === "LIVE";
 
