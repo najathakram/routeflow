@@ -1140,6 +1140,7 @@ export class CreditNotesService {
     id: string,
     actorId: string | null,
     tz: Awaited<ReturnType<typeof tenantTimeZone>>,
+    reason?: string | null, // #2540: optional WHY, recorded in the VOIDED audit row
   ) {
     const seen: any[] = await this.liveCreditPayments(tx, id);
     // SA-498a: the lock set is COMPLETE, per SA-214: every order this void writes. That is the
@@ -1214,7 +1215,7 @@ export class CreditNotesService {
         action: "VOIDED", // SA-442 vocabulary
         entityType: "CreditNote",
         entityId: id,
-        meta: { reversed: reopened },
+        meta: { reversed: reopened, ...(reason?.trim() ? { reason: reason.trim() } : {}) },
       },
     });
     const voided = await tx.creditNote.findUnique({ where: { id } });
@@ -1231,12 +1232,15 @@ export class CreditNotesService {
    * Orders (sorted), then their Invoices (sorted), then the CreditNote row. Every refusal is
    * decided BEFORE the first write, so a refused call writes nothing.
    */
-  async voidWithReversal(id: string, actorId: string | null) {
+  async voidWithReversal(id: string, actorId: string | null, reason?: string | null) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: once per call, before any loop
     const result = await retryOnTxConflict(`credit void-with-reversal cn=${id}`, () =>
-      this.prisma.tenantTransaction((tx: any) => this.voidWithReversalInTx(tx, id, actorId, tz), {
-        isolationLevel: "Serializable",
-      }),
+      this.prisma.tenantTransaction(
+        (tx: any) => this.voidWithReversalInTx(tx, id, actorId, tz, reason),
+        {
+          isolationLevel: "Serializable",
+        },
+      ),
     );
 
     this.gateway.emitCreditNoteVoided(this.prisma.getTenantId(), {

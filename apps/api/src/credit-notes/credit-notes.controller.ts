@@ -21,6 +21,7 @@ import { CreditNotesService } from "./credit-notes.service";
 import { CreditNoteReissueService } from "./credit-note-reissue.service";
 import { ReissueCreditNoteDto } from "./dto/reissue-credit-note.dto";
 import { CreateCreditNoteDto } from "./dto/create-credit-note.dto";
+import { VoidCreditNoteDto } from "./dto/void-credit-note.dto";
 import { SetAutoApplyExclusionDto } from "./dto/set-auto-apply-exclusion.dto";
 import { ApplyCreditNoteDto, UnapplyCreditNoteDto } from "./dto/apply-credit-note.dto";
 
@@ -100,8 +101,12 @@ export class CreditNotesController {
   @Post(":id/void-with-reversal")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
-  voidWithReversal(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
-    return this.creditNotesService.voidWithReversal(id, user?.sub ?? null);
+  voidWithReversal(
+    @Param("id") id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto?: VoidCreditNoteDto,
+  ) {
+    return this.creditNotesService.voidWithReversal(id, user?.sub ?? null, dto?.reason);
   }
 
   // #2648 / SA-535(b): an amount/line edit = void-with-reversal + an unapplied replacement, in ONE
