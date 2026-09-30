@@ -70,6 +70,11 @@ export class StaffOrderEmailService {
     private readonly deliveries: EmailDeliveryService,
   ) {}
 
+  /** Read-only effective mode (env ceiling read at call time, min with the policy term). */
+  getEffectiveMode(): StaffOrderEmailMode {
+    return effectiveStaffOrderEmailMode(process.env.STAFF_ORDER_EMAIL, this.policyMode);
+  }
+
   /** Active tenant admins + up to 5 valid `notifications.staffCc` addresses, deduped. */
   async resolveRecipients(_tenantId: string): Promise<string[]> {
     return (await this.resolveRecipientRows()).map((r) => r.email);
@@ -120,7 +125,7 @@ export class StaffOrderEmailService {
     try {
       if (!(event in OPT_OUT_KEY)) return;
       const kind = event as StaffEvent;
-      const mode = effectiveStaffOrderEmailMode(process.env.STAFF_ORDER_EMAIL, this.policyMode);
+      const mode = this.getEffectiveMode();
       if (mode === "off") return;
 
       const order = (await this.prisma.forTenant().order.findFirst({

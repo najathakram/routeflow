@@ -7,6 +7,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   UseGuards,
 } from "@nestjs/common";
@@ -20,6 +21,7 @@ import { MessagingService } from "./messaging.service";
 import { MessagingConfigService } from "./messaging-config.service";
 import { MessagingDeliveriesService } from "./messaging-deliveries.service";
 import { EmailDeliveryStatus } from "@prisma/client";
+import { StaffEmailSettingsService } from "./staff-email-settings.service";
 import { SendMessageDto } from "./dto/send-message.dto";
 import { NotifyDto } from "./dto/notify.dto";
 import { UpdateRuleDto } from "./dto/update-rule.dto";
@@ -48,6 +50,7 @@ export class MessagingController {
     private readonly messaging: MessagingService,
     private readonly config: MessagingConfigService,
     private readonly deliveries: MessagingDeliveriesService,
+    private readonly staffEmail: StaffEmailSettingsService,
   ) {}
 
   @Post("threads/:customerId/messages")
@@ -164,5 +167,24 @@ export class MessagingController {
   })
   updateSettings(@Body() dto: UpdateMessagingSettingsDto) {
     return this.config.updateSettings(dto);
+  }
+
+  // ─── Staff order-email settings (WS4, SA-606) ────────────────────────────
+
+  @Get("staff-email-settings")
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
+  @ApiOperation({
+    summary:
+      "Staff order-email 'Also send to' list + read-only effective mode (masked for OPERATOR)",
+  })
+  getStaffEmailSettings(@CurrentUser() user: { role: string }) {
+    return this.staffEmail.get(user.role);
+  }
+
+  @Put("staff-email-settings")
+  @Roles(UserRole.TENANT_ADMIN)
+  @ApiOperation({ summary: "Replace the staff order-email 'Also send to' list (TENANT_ADMIN)" })
+  updateStaffEmailSettings(@Body() body: { staffCc: string[] }) {
+    return this.staffEmail.update(body);
   }
 }

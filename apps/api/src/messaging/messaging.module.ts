@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { MessagingService } from "./messaging.service";
 import { MessagingConfigService } from "./messaging-config.service";
 import { StaffOrderEmailService } from "./staff-order-email";
+import { StaffEmailSettingsService } from "./staff-email-settings.service";
 import { MessagingDeliveriesService } from "./messaging-deliveries.service";
 import { MessagingController } from "./messaging.controller";
 import { MESSAGE_PROVIDER } from "./providers/message-provider.interface";
@@ -28,6 +29,7 @@ import { EmailModule } from "../email/email.module";
     MessagingService,
     MessagingConfigService,
     StaffOrderEmailService,
+    StaffEmailSettingsService,
     MessagingDeliveriesService,
     { provide: MESSAGE_PROVIDER, useClass: EmailChannelProvider },
   ],
