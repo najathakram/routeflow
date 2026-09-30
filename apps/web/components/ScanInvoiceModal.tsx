@@ -1356,7 +1356,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
               // Bill was created but receive failed — surface the issue but don't lose the bill
               console.error(receiveErr);
               notes.push(
-                "Vendor bill created in Draft (could not auto-receive, open the bill and click Receive to update stock)",
+                "Supplier bill created in Draft (could not auto-receive, open the bill and click Receive to update stock)",
               );
             }
           }
@@ -1652,8 +1652,8 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
             <div className="p-6">
               <p className="mb-4 text-sm text-navy/70">
                 Upload vendor invoices — drop several PDFs to scan <b>each as its own invoice</b>{" "}
-                (one supplier bill per PDF), or photograph the pages of one invoice as images. Claude
-                will extract every line item and match them to your catalog.
+                (one supplier bill per PDF), or photograph the pages of one invoice as images.
+                Claude will extract every line item and match them to your catalog.
               </p>
               <div
                 onDragOver={(e) => {
