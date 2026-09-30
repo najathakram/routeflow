@@ -29,8 +29,9 @@ const ROUTED: Record<string, string[]> = {
 /** File -> why a direct column write there can never reach a governed (variant or recipe) row. */
 const EXEMPT: Record<string, string> = {
   "products/product-families.service.ts":
-    "WS8 families: createFamily mints a brand-new family with brand-new variants (no existing governed row); " +
-    "updateVariants price edits are refused 409 FAMILY_PRICE_AUTHORITY while mixed_packs is on and added variants take the family price.",
+    "WS8 families: createFamily mints brand-new rows and, by plan, ignores the mixed_packs mode (the variant price is the " +
+    "caller's unless copyFamilyPrice is set); updateVariants refuses a price EDIT 409 FAMILY_PRICE_AUTHORITY while mixed_packs is on, " +
+    "and an added variant takes all five family columns read under the family row lock (familyPricesForNewVariant).",
   "import/import.service.ts":
     "Zoho import creates a brand-new STANDALONE product (no parentProductId): nothing to inherit.",
   "import/variant-resolution.service.ts":
