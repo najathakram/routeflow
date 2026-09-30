@@ -36,16 +36,21 @@ const REGISTRY: Record<string, Entry> = {
   "invoices/invoices.service.ts::createPartialFromOrder": { kind: "invoice" },
   "invoices/invoices.service.ts::duplicate": {
     kind: "exempt",
-    reason: "an order-linked invoice cannot be duplicated (RF-011); composed lines exist only on those",
+    reason:
+      "an order-linked invoice cannot be duplicated (RF-011); composed lines exist only on those",
   },
   "invoices/invoices.service.ts::update": { kind: "invoice" },
   "orders/line-composition.ts::syncLineCompositions": {
     kind: "exempt",
-    reason: "the writer itself: stamps compositionMode/recipeId/recipeVersion after it writes the rows",
+    reason:
+      "the writer itself: stamps compositionMode/recipeId/recipeVersion after it writes the rows",
   },
   "orders/orders.service.ts::changeStatus": { kind: "exempt", reason: "status only" },
   "orders/orders.service.ts::reopenOrder": { kind: "exempt", reason: "status only" },
-  "orders/orders.service.ts::recomputeLineCategoryTaxes": { kind: "exempt", reason: "tax amount only" },
+  "orders/orders.service.ts::recomputeLineCategoryTaxes": {
+    kind: "exempt",
+    reason: "tax amount only",
+  },
   "orders/order-line-removal.ts::writeLineRemoval": {
     kind: "exempt",
     reason: "struck-off lines (qty 0); called only from updateOrderItems, which syncs at its end",
@@ -56,36 +61,65 @@ const REGISTRY: Record<string, Entry> = {
   },
   "orders/order-edit-composition.ts::restoreCarriedComposition": {
     kind: "exempt",
-    reason: "re-stamps a surviving line's stored composition after a replace-all; updateOrderItems syncs at its end",
+    reason:
+      "re-stamps a surviving line's stored composition after a replace-all; updateOrderItems syncs at its end",
   },
   "orders/unit-line-edit.ts::createUnitLine": {
     kind: "exempt",
     reason: "a unit-aware line is never composed (COMPOSED_UNIT_LINE)",
   },
-  "invoices/finalize-order-recompute.ts::checkOrderCoverage": { kind: "exempt", reason: "invoicedQty only" },
+  "invoices/finalize-order-recompute.ts::checkOrderCoverage": {
+    kind: "exempt",
+    reason: "invoicedQty only",
+  },
   "invoices/finalize-order-recompute.ts::finalizeOrderRecompute": {
     kind: "exempt",
     reason: "zeroes a cancelled orphan line (0 pieces); no live composition is re-planned",
   },
-  "invoices/partial-invoice-cas.ts::bumpInvoicedQtyCas": { kind: "exempt", reason: "invoicedQty only" },
-  "invoices/invoices.service.ts::adjustInvoicedQtyForInvoice": { kind: "exempt", reason: "invoicedQty only" },
-  "invoices/invoices.service.ts::resyncOrderInvoicesForEdit": { kind: "exempt", reason: "invoicedQty reset only" },
+  "invoices/partial-invoice-cas.ts::bumpInvoicedQtyCas": {
+    kind: "exempt",
+    reason: "invoicedQty only",
+  },
+  "invoices/invoices.service.ts::adjustInvoicedQtyForInvoice": {
+    kind: "exempt",
+    reason: "invoicedQty only",
+  },
+  "invoices/invoices.service.ts::resyncOrderInvoicesForEdit": {
+    kind: "exempt",
+    reason: "invoicedQty reset only",
+  },
   "invoices/invoices.service.ts::applyPriceAdjustment": {
     kind: "exempt",
-    reason: "post-issue price adjustment; component prices are frozen per document row (SA-589, I5)",
+    reason:
+      "post-issue price adjustment; component prices are frozen per document row (SA-589, I5)",
   },
-  "invoices/invoices.service.ts::setCheckStatus": { kind: "exempt", reason: "NSF fee line, no product" },
-  "estimates/estimates.service.ts::create": { kind: "exempt", reason: "EstimateItem, not an order/invoice line" },
+  "invoices/invoices.service.ts::setCheckStatus": {
+    kind: "exempt",
+    reason: "NSF fee line, no product",
+  },
+  "estimates/estimates.service.ts::create": {
+    kind: "exempt",
+    reason: "EstimateItem, not an order/invoice line",
+  },
   "estimates/estimates.service.ts::convertToInvoice": {
     kind: "exempt",
     reason: "estimate lines have no recipe composition (M4a)",
   },
-  "import/import.service.ts::importInvoices": { kind: "exempt", reason: "imported history, never composed" },
-  "inventory/inventory.service.ts::createDraftPurchaseOrderInTx": { kind: "exempt", reason: "purchase order items" },
+  "import/import.service.ts::importInvoices": {
+    kind: "exempt",
+    reason: "imported history, never composed",
+  },
+  "inventory/inventory.service.ts::createDraftPurchaseOrderInTx": {
+    kind: "exempt",
+    reason: "purchase order items",
+  },
   "returns/inline-returns.service.ts::captureInTx": { kind: "exempt", reason: "credit note items" },
   "routes/routes.service.ts::completeWithPayment": { kind: "exempt", reason: "deliveredQty only" },
   "routes/routes.service.ts::reopenStop": { kind: "exempt", reason: "deliveredQty/status only" },
-  "common/testing/copier-contract/copier-ast.ts::?": { kind: "exempt", reason: "a comment in the copier AST helper" },
+  "common/testing/copier-contract/copier-ast.ts::?": {
+    kind: "exempt",
+    reason: "a comment in the copier AST helper",
+  },
 };
 
 const SITE =
@@ -177,7 +211,9 @@ describe("composition writer tripwire (#2717 M3, case 14)", () => {
     const fixtureSites = scanSites("fixture/fixture.service.ts", fixture, new Map());
     const unlisted = [...fixtureSites.keys()].filter((k) => !REGISTRY[k]);
     expect(unlisted).toEqual(["fixture/fixture.service.ts::sneakyWriter"]);
-    expect(fixtureSites.get(unlisted[0])).not.toMatch(/syncOrderLineCompositions\(|this\.syncCompositions\(/);
+    expect(fixtureSites.get(unlisted[0])).not.toMatch(
+      /syncOrderLineCompositions\(|this\.syncCompositions\(/,
+    );
   });
 
   it("every order/invoice line writer is listed (an unlisted new site fails here)", () => {

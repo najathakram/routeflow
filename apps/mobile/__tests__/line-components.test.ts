@@ -31,8 +31,20 @@ const comps = [
   },
 ];
 const expected = [
-  componentSubLineText({ name: "Almond", qty: 24, unitSku: "ALM-1", unitBarcode: "036000291452", displayUnitPrice4: 0.625 }),
-  componentSubLineText({ name: "Oat", qty: 24, unitSku: null, unitBarcode: null, displayUnitPrice4: null }),
+  componentSubLineText({
+    name: "Almond",
+    qty: 24,
+    unitSku: "ALM-1",
+    unitBarcode: "036000291452",
+    displayUnitPrice4: 0.625,
+  }),
+  componentSubLineText({
+    name: "Oat",
+    qty: 24,
+    unitSku: null,
+    unitBarcode: null,
+    displayUnitPrice4: null,
+  }),
 ];
 
 describe("mobile composed-line sub-lines", () => {
@@ -47,7 +59,18 @@ describe("mobile composed-line sub-lines", () => {
 
   it("the order line card model carries the same texts", () => {
     const model = orderLineCardModel(
-      { id: "l1", productId: "p", name: null, qty: 48, unitPrice: 30, boxes: 2, pieces: 0, unitsPerBox: 24, status: "PENDING", components: comps } as never,
+      {
+        id: "l1",
+        productId: "p",
+        name: null,
+        qty: 48,
+        unitPrice: 30,
+        boxes: 2,
+        pieces: 0,
+        unitsPerBox: 24,
+        status: "PENDING",
+        components: comps,
+      } as never,
       "PENDING",
     );
     expect(model.subLines).toEqual(expected);
