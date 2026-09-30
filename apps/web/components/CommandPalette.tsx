@@ -28,6 +28,7 @@ import {
   Megaphone,
   Route as RouteIcon,
   type LucideIcon,
+  ClipboardCheck,
 } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
@@ -151,6 +152,13 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
           label: "Inventory",
           icon: Layers,
           action: () => router.push("/inventory"),
+        },
+        {
+          id: "nav-purchase-orders",
+          group: "Navigate",
+          label: "Purchase Orders",
+          icon: ClipboardCheck,
+          action: () => router.push("/purchase-orders"),
         },
         {
           id: "nav-suppliers",

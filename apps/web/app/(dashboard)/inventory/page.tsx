@@ -3,7 +3,6 @@
 import * as React from "react";
 import * as Tabs from "@radix-ui/react-tabs";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
 import { Plus, X, Info, Sparkles, Search, SlidersHorizontal, DollarSign } from "lucide-react";
 import { Badge, Button, Modal, PageHeader, cn, useToast } from "@routeflow/ui/web";
 import { SearchableProductPicker } from "@/components/SearchableProductPicker";
@@ -42,11 +41,8 @@ import { VariantSplitModal } from "@/components/VariantSplitModal";
 import { SupplierSelect } from "@/components/SupplierSelect";
 import { useSortableData } from "@/lib/use-sortable-data";
 import { SortableTh } from "@/components/SortableTh";
-import {
-  INVENTORY_TABS,
-  inventoryTabHref,
-  resolveInventoryTab,
-} from "./_components/inventory-tabs";
+import { INVENTORY_TABS } from "./_components/inventory-tabs";
+import { useInventoryTab } from "./_components/use-inventory-tab";
 import { CreatePOModal } from "./_components/PurchaseOrdersCreateModal";
 import type { Supplier } from "./_components/purchase-orders-shared";
 
@@ -277,7 +273,7 @@ function QuickRestockModal({
                 upgrade. */}
             {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
             <a href="/vendor-bills" className="text-brand-500 hover:underline">
-              Bills &amp; Purchasing
+              Supplier Bills
             </a>
           </p>
         </div>
@@ -1644,17 +1640,7 @@ export default function InventoryPage() {
   // Every panel tab deep-links via `?tab=<value>` (and `?amend=<id>` implies "count"); an
   // unknown value falls back to Stock and `?tab=purchase-orders` goes to its own route. Read
   // once on mount; StockCountTab strips `amend` from the URL itself once it's consumed it.
-  const searchParams = useSearchParams();
-  const router = useRouter();
-  const [initialTab] = React.useState(() => resolveInventoryTab(searchParams));
-  const [activeTab, setActiveTab] = React.useState(initialTab.tab);
-  React.useEffect(() => {
-    if (initialTab.redirect) router.replace(initialTab.redirect);
-  }, [initialTab.redirect, router]);
-  const selectTab = (value: string) => {
-    setActiveTab(value);
-    window.history.replaceState(null, "", inventoryTabHref(value));
-  };
+  const { activeTab, selectTab } = useInventoryTab();
 
   const { data: stockItems = [], isLoading: stockLoading } = useStockOverview();
   const { data: suppliers = [], isLoading: suppliersLoading } = useSuppliers();

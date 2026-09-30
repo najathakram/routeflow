@@ -181,6 +181,8 @@ function PODetailRow({
   );
 }
 
+const PAGE_SIZE = 20;
+
 export function PurchaseOrdersTab({
   suppliers,
   products,
@@ -192,6 +194,7 @@ export function PurchaseOrdersTab({
   const [supplierFilter, setSupplierFilter] = React.useState("");
   const [dateFrom, setDateFrom] = React.useState("");
   const [dateTo, setDateTo] = React.useState("");
+  const [page, setPage] = React.useState(1);
   const [showCreateModal, setShowCreateModal] = React.useState(false);
   const [expandedId, setExpandedId] = React.useState<string | null>(null);
   const [receivePO, setReceivePO] = React.useState<PurchaseOrder | null>(null);
@@ -207,18 +210,25 @@ export function PurchaseOrdersTab({
     supplierId: supplierFilter || undefined,
     from: dateFrom || undefined,
     to: dateTo || undefined,
-    page: 1,
-    limit: 20,
+    page,
+    limit: PAGE_SIZE,
   });
 
+  // A new filter starts from page 1, otherwise a narrow filter can land on an empty later page.
+  React.useEffect(() => {
+    setPage(1);
+  }, [statusFilter, supplierFilter, dateFrom, dateTo]);
+
   const orders: PurchaseOrder[] = poData?.data ?? poData ?? [];
+  const total: number = poData?.meta?.total ?? orders.length;
+  const totalPages: number = poData?.meta?.totalPages ?? 1;
 
   const toggleExpand = (id: string) => setExpandedId((prev) => (prev === id ? null : id));
 
   return (
     <>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-base font-semibold text-navy">Purchase Orders</h2>
+        <h3 className="text-base font-semibold text-navy">All purchase orders</h3>
         <Button
           size="sm"
           leftIcon={<Plus className="h-4 w-4" />}
@@ -301,7 +311,7 @@ export function PurchaseOrdersTab({
           }
         />
       ) : orders.length === 0 && !(statusFilter || supplierFilter || dateFrom || dateTo) ? (
-        <EmptyState title="No purchase orders yet. Create one by hand, or scan a supplier invoice and we'll draft it for you." />
+        <EmptyState title="No purchase orders yet. Create one by hand when you place an order with a supplier." />
       ) : (
         <div className="overflow-x-auto rounded-xl border border-surface-border">
           <table className="w-full text-sm">
@@ -396,6 +406,33 @@ export function PurchaseOrdersTab({
               )}
             </tbody>
           </table>
+        </div>
+      )}
+      {totalPages > 1 && (
+        <div className="mt-3 flex items-center justify-between text-sm text-navy/70">
+          <span>
+            Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of {total}
+          </span>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={page <= 1}
+              onClick={() => setPage((p) => p - 1)}
+              aria-label="Previous page"
+            >
+              Previous
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={page >= totalPages}
+              onClick={() => setPage((p) => p + 1)}
+              aria-label="Next page"
+            >
+              Next
+            </Button>
+          </div>
         </div>
       )}
 

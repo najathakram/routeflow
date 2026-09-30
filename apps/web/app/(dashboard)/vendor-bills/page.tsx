@@ -2354,7 +2354,7 @@ type ExpensesTab = "inventory" | "pos" | "other";
 function ExpensesContent() {
   const { setTitle } = usePageTitle();
   React.useEffect(() => {
-    setTitle("Bills & Purchasing");
+    setTitle("Supplier Bills");
   }, [setTitle]);
 
   const searchParams = useSearchParams();
@@ -2399,7 +2399,7 @@ function ExpensesContent() {
   return (
     <div className="space-y-6 p-6">
       <PageHeader
-        title="Bills & Purchasing"
+        title="Supplier Bills"
         subtitle="One hub for vendor bills, purchase orders and inventory spend — supplier payments happen here."
       />
 

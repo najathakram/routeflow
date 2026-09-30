@@ -41,7 +41,14 @@ const GATED_LABELS = [
   "Analytics",
 ];
 /** Always-ungated top-level entries every plan (including LITE) keeps. */
-const UNGATED_LABELS = ["Dashboard", "All Orders", "Customers", "Inventory", "Products"];
+const UNGATED_LABELS = [
+  "Dashboard",
+  "All Orders",
+  "Customers",
+  "Inventory",
+  "Purchase Orders",
+  "Products",
+];
 
 async function loginAsLiteOperator(
   page: import("@playwright/test").Page,

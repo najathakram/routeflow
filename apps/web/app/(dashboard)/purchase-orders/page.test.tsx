@@ -11,13 +11,17 @@ jest.mock("@routeflow/ui/web", () => {
 });
 
 const refetch = jest.fn();
+let lastPoParams: unknown;
 let poState: { data?: unknown; isLoading: boolean; isError: boolean } = {
   data: { data: [] },
   isLoading: false,
   isError: false,
 };
 jest.mock("@/lib/api/inventory", () => ({
-  usePurchaseOrders: () => ({ ...poState, refetch }),
+  usePurchaseOrders: (params: unknown) => {
+    lastPoParams = params;
+    return { ...poState, refetch };
+  },
   usePurchaseOrder: () => ({ data: undefined, isLoading: false }),
   useSendPurchaseOrder: () => ({ mutate: jest.fn(), isPending: false }),
   useClosePurchaseOrder: () => ({ mutate: jest.fn(), isPending: false }),
@@ -43,13 +47,46 @@ describe("/purchase-orders page", () => {
     expect(screen.getByRole("button", { name: "Create PO" })).toBeInTheDocument();
   });
 
-  it("shows the empty state copy", () => {
+  it("shows manual-only empty copy that never promises invoice scanning", () => {
     render(<PurchaseOrdersPage />);
-    expect(
-      screen.getByText(
-        "No purchase orders yet. Create one by hand, or scan a supplier invoice and we'll draft it for you.",
-      ),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/No purchase orders yet\. Create one/)).toBeInTheDocument();
+    expect(screen.queryByText(/scan/i)).not.toBeInTheDocument();
+  });
+
+  it("has a page header", () => {
+    render(<PurchaseOrdersPage />);
+    expect(screen.getByRole("heading", { level: 2, name: "Purchase Orders" })).toBeInTheDocument();
+  });
+
+  it("pages a long list: shows the range, total and a working Next", () => {
+    const rows = Array.from({ length: 20 }, (_, i) => ({
+      id: `po${i}`,
+      poNumber: `PO-${i}`,
+      status: "DRAFT",
+      supplier: { name: "Acme Supply" },
+      lines: [],
+      total: 0,
+    }));
+    poState = {
+      data: { data: rows, meta: { total: 45, page: 1, limit: 20, totalPages: 3 } },
+      isLoading: false,
+      isError: false,
+    };
+    render(<PurchaseOrdersPage />);
+    expect(screen.getByText("Showing 1–20 of 45")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Previous page" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(lastPoParams).toMatchObject({ page: 2, limit: 20 });
+  });
+
+  it("hides the pager when everything fits on one page", () => {
+    poState = {
+      data: { data: [], meta: { total: 0, page: 1, limit: 20, totalPages: 0 } },
+      isLoading: false,
+      isError: false,
+    };
+    render(<PurchaseOrdersPage />);
+    expect(screen.queryByRole("button", { name: "Next page" })).not.toBeInTheDocument();
   });
 
   it("shows skeleton rows while loading, not the empty state", () => {

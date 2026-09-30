@@ -49,4 +49,24 @@ describe("operator nav: Purchase Orders + Supplier Bills", () => {
   it("has no default group when the nav has no Warehouse (customer)", () => {
     expect(defaultOpenGroup(CUSTOMER_NAV, "/dashboard")).toBeNull();
   });
+
+  it("keeps Purchase Orders for a LITE tenant (no plan flags) and lists it once", () => {
+    const all = hrefs(OPERATOR_NAV);
+    expect(all.filter((h) => h === "/purchase-orders")).toHaveLength(1);
+    // the leaf's own route never maps to a plan flag, so a flag-less plan keeps it
+    expect(matchPlanGatedRoute("/purchase-orders")).toBeNull();
+  });
+
+  it("puts no Bills & Purchasing label anywhere in any role's nav", () => {
+    const labels = [OPERATOR_NAV, CUSTOMER_NAV, DRIVER_NAV].flatMap((nav) =>
+      nav.flatMap((e) =>
+        e.kind === "group"
+          ? [e.label, ...e.children.map((c) => c.label)]
+          : "label" in e
+            ? [e.label]
+            : [],
+      ),
+    );
+    expect(labels).not.toContain("Bills & Purchasing");
+  });
 });

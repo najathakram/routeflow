@@ -5,13 +5,10 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  LayoutDashboard,
-  ShoppingCart,
   MapPin,
   Truck,
   Users,
   Package,
-  Layers,
   Settings,
   Bell,
   ChevronRight,
@@ -19,24 +16,10 @@ import {
   ChevronDown,
   ArrowLeft,
   LogOut,
-  User as UserIcon,
   AlertTriangle,
   CheckCircle2,
   Trash2,
-  FileText,
-  BarChart2,
-  Receipt,
-  RotateCcw,
-  FileCheck,
-  FileSpreadsheet,
-  Wallet,
-  Building2,
-  DollarSign,
-  CreditCard,
-  BarChart3,
-  PieChart,
-  ClipboardList,
-  Megaphone,
+  User as UserIcon,
   Search,
   Menu,
   X,
@@ -46,7 +29,6 @@ import {
   ShieldAlert,
   Handshake,
   BadgePercent,
-  type LucideIcon,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { cn, Avatar, ToastProvider } from "@routeflow/ui/web";

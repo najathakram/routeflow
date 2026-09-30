@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { PageHeader } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useSuppliers } from "@/lib/api/inventory";
 import { useProducts } from "@/lib/api/products";
@@ -25,6 +26,10 @@ export default function PurchaseOrdersPage() {
 
   return (
     <div className="space-y-5 p-6">
+      <PageHeader
+        title="Purchase Orders"
+        subtitle="Orders you place with suppliers — draft, send, receive into stock."
+      />
       <PurchaseOrdersTab suppliers={suppliers as Supplier[]} products={products} />
     </div>
   );
