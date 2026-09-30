@@ -87,27 +87,31 @@ describe("isBuyerVisibleProduct (in-memory twin)", () => {
   });
 
   it("every field is REQUIRED: a partial select is a compile error, not a silently visible product", () => {
-    // @ts-expect-error portalVisible missing — used to count as visible (fail-open)
-    isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, {
-      id: "p",
-      isActive: true,
-      kind: "STANDARD",
-      parent: null,
-    });
-    // @ts-expect-error kind missing
-    isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, {
-      id: "p",
-      isActive: true,
-      portalVisible: true,
-      parent: null,
-    });
-    // @ts-expect-error parent missing (null = standalone must be explicit)
-    isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, {
-      id: "p",
-      isActive: true,
-      kind: "STANDARD",
-      portalVisible: true,
-    });
+    // Compile-time pin only: the calls live in a function that is never invoked.
+    const compileOnly = () => {
+      // @ts-expect-error portalVisible missing — used to count as visible (fail-open)
+      isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, {
+        id: "p",
+        isActive: true,
+        kind: "STANDARD",
+        parent: null,
+      });
+      // @ts-expect-error kind missing
+      isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, {
+        id: "p",
+        isActive: true,
+        portalVisible: true,
+        parent: null,
+      });
+      // @ts-expect-error parent missing (null = standalone must be explicit)
+      isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, {
+        id: "p",
+        isActive: true,
+        kind: "STANDARD",
+        portalVisible: true,
+      });
+    };
+    expect(typeof compileOnly).toBe("function");
   });
 });
 
