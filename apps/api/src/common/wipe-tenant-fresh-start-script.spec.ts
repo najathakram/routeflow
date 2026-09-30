@@ -265,4 +265,16 @@ describe("wipe-tenant-fresh-start.js (#2500), real script, no database", () => {
     expect(code).toContain("new Pool(target.poolConfig)");
     expect(code).toContain("console.log(`\\n${target.banner}`)");
   });
+
+  it("source pin (SA-594): recipeComponent < recipe < product in NUKE_MODELS (RESTRICT FKs into Product)", () => {
+    const code = readFileSync(SCRIPT, "utf8");
+    const body = /const NUKE_MODELS = \[([\s\S]*?)\n\];/.exec(code)?.[1] ?? "";
+    const names = [...body.replace(/\/\/.*$/gm, "").matchAll(/"(\w+)"/g)].map((m) => m[1]);
+    const at = (n: string) => {
+      expect(names.filter((x) => x === n)).toHaveLength(1);
+      return names.indexOf(n);
+    };
+    expect(at("recipeComponent")).toBeLessThan(at("recipe"));
+    expect(at("recipe")).toBeLessThan(at("product"));
+  });
 });
