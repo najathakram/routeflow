@@ -147,6 +147,14 @@ describe("settings registry — rules", () => {
     expect(staffBuyer.plannedSurface).toBeTruthy();
   });
 
+  it("both staff-email prefs name the My account 'Email me about' card as their planned surface", () => {
+    for (const k of ["staffOrderEmail", "staffBuyerChangeEmail"]) {
+      const r = SETTINGS_REGISTRY.find((x) => x.key === k)!;
+      expect(r.screen).toBeUndefined();
+      expect(r.plannedSurface).toMatch(/My account/);
+    }
+  });
+
   it("seeds the policy rows by the SA's camelCase names, pending #1337", () => {
     const policy = SETTINGS_REGISTRY.filter((r) => r.home === "policy");
     expect(policy.map((r) => r.key).sort()).toEqual([

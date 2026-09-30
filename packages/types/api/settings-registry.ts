@@ -170,7 +170,7 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
     home: "userPref",
     kind: "preference",
     status: "pending WS4",
-    plannedSurface: "WS4 staff order email toggle (Notifications tab)",
+    plannedSurface: "WS4 staff order email toggle (My account → Email me about)",
     adminOnly: true,
   },
   {
@@ -178,7 +178,7 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
     home: "userPref",
     kind: "preference",
     status: "pending WS4",
-    plannedSurface: "WS4 staff buyer-change email toggle (Notifications tab)",
+    plannedSurface: "WS4 staff buyer-change email toggle (My account → Email me about)",
     adminOnly: true,
   },
   {
