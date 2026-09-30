@@ -1,4 +1,5 @@
 import type { FamilyRowConflict } from "@routeflow/types";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import type { CatalogTx } from "./product-catalog-sync";
 import { findCodeHolders, type CodeField } from "./product-code-release";
 
@@ -92,7 +93,7 @@ export async function codeTakenBy(
         row: c.row,
         field: c.field,
         value: c.value,
-        reason: "CODE_TAKEN",
+        reason: API_ERROR_CODES.CODE_TAKEN,
         conflictProductId: active.id,
       });
     }
@@ -124,7 +125,7 @@ export async function nameTakenBy(
         row: n.row,
         field: "name",
         value: n.name,
-        reason: "NAME_TAKEN",
+        reason: API_ERROR_CODES.NAME_TAKEN,
         conflictProductId: holder.id,
       });
     }
