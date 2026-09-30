@@ -4,6 +4,7 @@ import * as React from "react";
 import { Bell, Loader2, Lock, Pencil } from "lucide-react";
 import { Badge, Button, Card, Input, Modal, Textarea, cn, useToast } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
+import { LowStockDigestToggle } from "./LowStockDigestToggle";
 import { useNotificationsStatus, useSendTestNotification } from "@/lib/api/notifications";
 import {
   useMessagingConfig,
@@ -264,6 +265,8 @@ export function NotificationsSettingsTab() {
       </Card>
 
       <QuietHoursCard settings={data.settings} isAdmin={isAdmin} />
+
+      <LowStockDigestToggle />
 
       <PushStatusCard />
 
