@@ -4,7 +4,8 @@ import { join } from "path";
 /**
  * SA-603 Sitting-B schema bundle: the migration file is READ at test time and pinned by shape.
  * Final DDL (SA-603a): `Product.portalVisible` + retired* columns, `ProductBarcode.code` DROP NOT NULL
- * + `retiredCode`, the two active-only Product NAME partial uniques (SA-603b, gated), and the `EmailDelivery` table (+ its 6-value enum). Metadata-only.
+ * + `retiredCode`, the two active-only Product NAME partial uniques (SA-603b, gated), and the `EmailDelivery` table (+ its 6-value enum).
+ * SA-603c: `EmailDelivery.contentFingerprint` (nullable hash, never content) and the folded-in #1337 `PolicyValue` table (+ `PolicyScopeType` enum), no partial index on it. Metadata-only.
  */
 const FOLDER = "20260929220000_sitting_b_bundle";
 const MIGRATIONS_DIR = join(__dirname, "..", "..", "prisma", "migrations");
@@ -93,6 +94,58 @@ describe("sitting-B bundle migration shape (SA-603)", () => {
     const table = sql.match(/CREATE TABLE "EmailDelivery" \(([\s\S]*?)\n\);/);
     expect(table).not.toBeNull();
     expect(table![1]).not.toMatch(/"subject"|"body"/i);
+  });
+
+  it("EmailDelivery has a nullable contentFingerprint TEXT column (SA-603c)", () => {
+    const table = sql.match(/CREATE TABLE "EmailDelivery" \(([\s\S]*?)\n\);/);
+    expect(table).not.toBeNull();
+    const cols = table![1].replace(/\s+/g, " ");
+    expect(cols).toMatch(/"contentFingerprint" TEXT(,|\s*$)/);
+    expect(cols).not.toMatch(/"contentFingerprint" TEXT NOT NULL/);
+  });
+
+  it("creates the PolicyScopeType enum before its first use (SA-603c)", () => {
+    const create = stmts.findIndex((s) =>
+      /^CREATE TYPE "PolicyScopeType" AS ENUM \('TENANT', ?'CATEGORY', ?'CUSTOMER'\)$/.test(s),
+    );
+    expect(create).toBeGreaterThan(-1);
+    const firstUse = stmts.findIndex((s, i) => i !== create && s.includes('"PolicyScopeType"'));
+    expect(firstUse).toBeGreaterThan(create);
+  });
+
+  it("creates PolicyValue with its columns, two indexes and the tenant FK ON DELETE CASCADE (SA-603c)", () => {
+    const table = sql.match(/CREATE TABLE "PolicyValue" \(([\s\S]*?)\n\);/);
+    expect(table).not.toBeNull();
+    const cols = table![1].replace(/\s+/g, " ");
+    for (const col of [
+      "id",
+      "tenantId",
+      "key",
+      "scopeType",
+      "scopeId",
+      "value",
+      "reason",
+      "setById",
+      "setByName",
+      "createdAt",
+      "supersededAt",
+      "supersededById",
+    ]) {
+      expect(cols).toContain(`"${col}" `);
+    }
+    expect(cols).toMatch(/"value" JSONB NOT NULL/);
+    const idx = stmts.filter((x) => /^CREATE (UNIQUE )?INDEX "PolicyValue_/.test(x));
+    expect(idx).toHaveLength(2);
+    expect(
+      idx.some((x) =>
+        x.startsWith('CREATE INDEX "PolicyValue_tenantId_key_scopeType_scopeId_supersededAt_idx"'),
+      ),
+    ).toBe(true);
+    expect(idx.some((x) => x.startsWith('CREATE INDEX "PolicyValue_tenantId_idx"'))).toBe(true);
+    for (const x of idx) expect(x).not.toMatch(/\bWHERE\b/i);
+    expect(sql).toMatch(
+      /ALTER TABLE "PolicyValue" ADD CONSTRAINT "PolicyValue_tenantId_fkey" FOREIGN KEY \("tenantId"\) REFERENCES "Tenant"\("id"\) ON DELETE CASCADE/,
+    );
   });
 
   it("is otherwise additive only", () => {

@@ -237,6 +237,7 @@ const MODEL_DOMAIN = {
   StripeBillingEvent: "platform",
   RfInvoice: "platform",
   SystemConfig: "platform",
+  PolicyValue: "platform",
   Message: "platform",
   MessageThread: "platform",
   MessageTemplate: "platform",

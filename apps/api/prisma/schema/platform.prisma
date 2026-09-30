@@ -385,6 +385,40 @@ model SystemConfig {
   @@index([tenantId])
 }
 
+/// SA-138 phase 1: which layer a tenant POLICY value applies to. Resolution order is
+/// registry default → TENANT → CATEGORY → CUSTOMER (the most specific active row wins).
+/// Mirrored by packages/types/api/enums.ts POLICY_SCOPE_TYPE_VALUES (enum-parity.spec.ts).
+enum PolicyScopeType {
+  TENANT
+  CATEGORY
+  CUSTOMER
+}
+
+/// SA-138 phase 1: a tenant's own policy value for one `apps/api/src/policy/policy-registry.ts`
+/// key at one scope. APPEND-ONLY: a write supersedes the active row (`supersededAt`/`supersededById`)
+/// and inserts the new one in one transaction under the `policy-write` advisory lock (key
+/// `${tenantId}:${key}`), which is what keeps one active row per (tenant, key, scope) — Prisma
+/// cannot express the partial unique index. Nothing is updated except the supersede stamps and
+/// nothing is deleted. `scopeId` is a soft pointer (TrackedCategory / Customer id; null for TENANT).
+model PolicyValue {
+  id             String          @id @default(uuid())
+  tenantId       String
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  key            String
+  scopeType      PolicyScopeType
+  scopeId        String?
+  value          Json
+  reason         String
+  setById        String?
+  setByName      String?
+  createdAt      DateTime        @default(now())
+  supersededAt   DateTime?
+  supersededById String?
+
+  @@index([tenantId, key, scopeType, scopeId, supersededAt])
+  @@index([tenantId])
+}
+
 // ─── Driver-to-Dispatcher Messaging ──────────────────────────────────────────
 
 model Message {
@@ -1334,6 +1368,8 @@ model EmailDelivery {
   attempts          Int                 @default(0)
   sentAt            DateTime?
   createdAt         DateTime            @default(now())
+  // SHA-256 of the rendered subject+body computed in the app, stored as a hash never the content; no index yet.
+  contentFingerprint String?
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
