@@ -506,7 +506,9 @@ export function MailboxCard() {
           )}
 
           {data.lastError && status !== "THROTTLED" && status !== "REVOKED" && (
-            <p className="text-xs text-navy/50">Last error: {data.lastError}</p>
+            <p className="text-xs text-navy/50">
+              The last sync reported a problem. Reconnect the mailbox if mail isn&apos;t sending.
+            </p>
           )}
 
           <p className="text-xs text-navy/50">
