@@ -6,6 +6,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../common/encryption.service";
 import { MailboxSendService } from "./mailbox/mailbox-send.service";
 import { mailboxRevokedCopy } from "./mailbox/mailbox-alert.copy";
+import { isInternalEmail } from "../common/internal-email";
 import { escapeHtml, safeLinkHref } from "../common/html-escape";
 // F03/R9: ONE original-price display decision shared with the PDF, so the two
 // customer-facing documents of the same send can never disagree (a pure helper —
@@ -1147,6 +1148,22 @@ export class EmailService {
      */
     fromAddress?: string;
   }> {
+    // Sentinel guard (#2854 Opus B4): import sentinels (@imported.local /
+    // @placeholder.local) are non-routable — ONE choke point here covers every
+    // caller (new-device login notice, resetPassword's set-password invite,
+    // future sends) instead of per-caller filters. Sits BEFORE the platform
+    // delegation so both sender classes are covered. Honest result (R5).
+    if (isInternalEmail(params.to)) {
+      this.logger.warn(
+        `send() refused: recipient ${params.to} is an internal import sentinel, not a real inbox`,
+      );
+      return {
+        delivered: false,
+        transport: "none",
+        error: "Recipient is an internal placeholder address (no real email on file).",
+      };
+    }
+
     // Security review Phase 2: a platform-class send is a full DELEGATION to `sendPlatform()`
     // — not a set of skipped branches inside this method. `sendPlatform` never resolves
     // tenant SMTP, a tenant's own Reply-To, or a tenant's connected mailbox; it always uses

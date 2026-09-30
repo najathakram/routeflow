@@ -149,6 +149,44 @@ describe("EmailService — honest send (R5)", () => {
  * (security/account mail only) is deliberately untouched — invoice sends never use
  * `senderClass:"platform"`.
  */
+describe("EmailService — sentinel recipients refused at the choke point (#2854 B4)", () => {
+  // Import sentinels (@imported.local / @placeholder.local) are non-routable. ONE
+  // guard at the top of send() covers every caller — the new-device login notice,
+  // resetPassword's set-password invite, and future sends — with a configured
+  // transport present, proving the refusal is the guard, not "nothing configured".
+  it.each(["acme_store@imported.local", "no-email+x@placeholder.local"])(
+    "send() to %s is refused before any transport: delivered:false, transport:'none'",
+    async (sentinel) => {
+      const svc = makeService({ resendKey: "re_test_key" });
+      const res = await svc.send({ to: sentinel, subject: "x", html: "<p>x</p>" });
+      expect(res).toMatchObject({ delivered: false, transport: "none" });
+      expect(res.error).toMatch(/placeholder address/i);
+    },
+  );
+
+  it("platform-class sends are refused too — the guard sits before the sendPlatform delegation", async () => {
+    const svc = makeService({ resendKey: "re_test_key" });
+    const res = await svc.send({
+      to: "acme_store@imported.local",
+      subject: "x",
+      html: "<p>x</p>",
+      senderClass: "platform",
+    });
+    expect(res).toMatchObject({ delivered: false, transport: "none" });
+    expect(res.error).toMatch(/placeholder address/i);
+  });
+
+  it("a real recipient still flows past the guard (unconfigured here → honest R5 refusal, not the placeholder error)", async () => {
+    const res = await makeService().send({
+      to: "owner@acme.example",
+      subject: "x",
+      html: "<p>x</p>",
+    });
+    expect(res.delivered).toBe(false);
+    expect(res.error ?? "").not.toMatch(/placeholder address/i);
+  });
+});
+
 describe("EmailService — attachments threaded to every transport", () => {
   const smtpRows = () => [
     { key: "email.smtpHost", value: "smtp.example.com" },

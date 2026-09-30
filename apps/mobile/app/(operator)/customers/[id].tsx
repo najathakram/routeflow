@@ -26,7 +26,7 @@ import { SALES_AGENTS_ADDON, useHasAddon } from "../../../lib/api/tobacco";
 import { useTierLabels } from "../../../lib/api/tier-labels";
 import { MoneyTextInput } from "../../../components/MoneyTextInput";
 import { openInMaps } from "../../../components/openInMaps";
-import { isInternalEmail } from "../../../lib/internal-email";
+import { displayEmail } from "../../../lib/internal-email";
 import {
   SELECTABLE_METHOD_OPTIONS,
   type SelectablePaymentMethod,
@@ -120,7 +120,7 @@ export default function CustomerDetailScreen() {
 
   // Import sentinels aren't real inboxes — treat them as "no email on file"
   // (no Email quick-action, no Account row), mirroring web.
-  const email = isInternalEmail(customer.email) ? undefined : customer.email;
+  const email = displayEmail(customer.email);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
