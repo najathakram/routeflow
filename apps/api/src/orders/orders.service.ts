@@ -3254,12 +3254,11 @@ export class OrdersService implements OnApplicationBootstrap {
             if (!item.qty) continue;
             const product = productMap.get(item.productId);
             if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
-            // Boxed line: `qty` is the piece count, so re-split it and prorate by the
-            // BOX price (mirrors createOrder + the operator path). Without this a plain
-            // qty*unitPrice over-charges boxed lines by unitsPerBox. Split when the line
-            // is already piece-denominated OR (buyer path) the payload carries an explicit
-            // boxes/pieces split. Box-UNAWARE selling-unit lines (pre-existing OR new plain
-            // buyer qty) keep qty*price, and DRIVER edits keep the strict pieceDenominated gate.
+            // An explicit boxes/pieces split (and DRIVER pieceDenominated lines) carry qty as
+            // PIECES: re-split and prorate by the BOX price, else qty*unitPrice over-charges
+            // by unitsPerBox. A PLAIN buyer qty (pre-existing or new) is the default selling
+            // unit (the pack), NOT pieces: it is never re-split and keeps qty*price.
+            // DRIVER edits keep the strict pieceDenominated gate.
             const upb = Number(product.unitsPerBox ?? 0);
             const shouldSplit =
               upb > 1 &&
