@@ -205,4 +205,14 @@ describe("sitting-B bundle migration shape (SA-603)", () => {
     });
     expect(sql).not.toMatch(/STAFF_ORDER_STATUS_CHANGED/);
   });
+
+  it("SA-603g C2: EXACTLY ONE migration folder creates PolicyValue / PolicyScopeType (#1337 must drop its own folder)", () => {
+    const folders = readdirSync(MIGRATIONS_DIR).filter((n) => n !== "migration_lock.toml");
+    const creators = (re: RegExp) =>
+      folders.filter((n) =>
+        re.test(readFileSync(join(MIGRATIONS_DIR, n, "migration.sql"), "utf8")),
+      );
+    expect(creators(/CREATE TABLE "PolicyValue"/)).toEqual([FOLDER]);
+    expect(creators(/CREATE TYPE "PolicyScopeType"/)).toEqual([FOLDER]);
+  });
 });
