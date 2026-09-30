@@ -47,7 +47,13 @@ function matchesValue(actual: unknown, filter: unknown): boolean {
   if (filter === undefined) return true;
   if (filter === null) return actual == null;
   if (filter !== null && typeof filter === "object") {
-    const f = filter as { not?: unknown; in?: unknown[]; equals?: string; mode?: string };
+    const f = filter as {
+      not?: unknown;
+      in?: unknown[];
+      notIn?: unknown[];
+      equals?: string;
+      mode?: string;
+    };
     if ("equals" in f) {
       return f.mode === "insensitive"
         ? String(actual).toLowerCase() === String(f.equals).toLowerCase()
@@ -55,6 +61,7 @@ function matchesValue(actual: unknown, filter: unknown): boolean {
     }
     if ("not" in f) return f.not === null ? actual != null : actual !== f.not;
     if ("in" in f) return (f.in ?? []).includes(actual);
+    if ("notIn" in f) return !(f.notIn ?? []).includes(actual);
   }
   return actual === filter;
 }
