@@ -3,7 +3,7 @@
 import * as React from "react";
 import { UnitPicker } from "@/components/UnitPicker";
 import { useProductUnits, useUnitsEnabled } from "@/lib/api/product-units";
-import { buildUnitOptions, type UnitOption } from "@/lib/unit-options";
+import { buildUnitOptions, defaultUnitValue, type UnitOption } from "@/lib/unit-options";
 import { ladderProductOf, type PackBase } from "@/lib/order-line-unit";
 
 /** The line fields the picker reads (structurally satisfied by the order modal's line). */
@@ -36,8 +36,14 @@ export function OrderLineUnitPicker({
   line,
   tier,
   onChange,
+  startOnDefaultUnit = false,
 }: {
   line: OrderLineUnitPickerLine;
+  /**
+   * #2784: a NEW line (the picker tap / a scan) starts on the level flagged `isDefaultSelling`, else stays on the pack.
+   * Applied once when the ladder first arrives, and never over a unit the line already holds or a price the operator typed.
+   */
+  startOnDefaultUnit?: boolean;
   /** The EFFECTIVE tier for this product (`CustomerPrice.pricingTier ?? customer.pricingTier ?? 1`). */
   tier: number;
   onChange: (option: UnitOption, refresh: boolean) => void;
@@ -59,6 +65,25 @@ export function OrderLineUnitPicker({
       return []; // display-only: a bad tier never unmounts the order form (the server 400s on save)
     }
   }, [enabled, units.data, product, tier, packPrice]);
+
+  const startedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!startOnDefaultUnit || startedRef.current || options.length === 0) return;
+    startedRef.current = true; // one shot per mount: the operator's later choice is never re-overridden
+    if (line.unitLabel || line.priceEdited || !units.data) return;
+    const value = defaultUnitValue(product, units.data, tier);
+    const option = value ? options.find((o) => o.value === value) : undefined;
+    if (option) onChange(option, false);
+  }, [
+    startOnDefaultUnit,
+    options,
+    units.data,
+    product,
+    tier,
+    line.unitLabel,
+    line.priceEdited,
+    onChange,
+  ]);
 
   const packOption: UnitOption = {
     value: "",
