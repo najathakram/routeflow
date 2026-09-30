@@ -123,10 +123,12 @@ describe("the skipped line / stock writers now refuse a FAMILY (400 FAMILY_NOT_S
   });
 
   it("the recurring template create AND update both call the shared guard helper (pinned: 2 call sites)", () => {
-    const src = readFileSync(
+    const raw = readFileSync(
       join(__dirname, "../recurring-invoices/recurring-invoices.service.ts"),
       "utf8",
     );
+    // comments stripped, like the tripwire: a comment mentioning the call must not count
+    const src = raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
     expect((src.match(/this\.assertNoFamilyLines\(/g) ?? []).length).toBe(2);
     expect(src.indexOf("this.assertNoFamilyLines(")).toBeLessThan(
       src.indexOf("recurringInvoice.create("),

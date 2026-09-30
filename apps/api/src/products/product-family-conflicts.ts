@@ -26,7 +26,7 @@ const sameNamespace = (a: CodeField, b: CodeField): boolean =>
   a === b || a === "unitSku" || b === "unitSku";
 
 const clean = (v: string | undefined | null): string | null =>
-  typeof v === "string" && v.trim().length > 0 ? v : null;
+  typeof v === "string" && v.trim().length > 0 ? v.trim() : null;
 
 /**
  * IN-REQUEST duplicates (pure): a code repeated across ALL code columns of ALL rows (respecting the namespaces above)

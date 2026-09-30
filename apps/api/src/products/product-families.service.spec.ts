@@ -1,5 +1,8 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { plainToInstance } from "class-transformer";
+import { validate } from "class-validator";
+import { CreateFamilyDto } from "./dto/family.dto";
 import { ProductFamiliesService } from "./product-families.service";
 import { ACTOR, T, makeTx, product, row } from "./product-code-release.fake-tx";
 
@@ -434,5 +437,28 @@ describe("GET /products/sku-available (skuAvailable)", () => {
       takenBy: { productId: "lv" },
     });
     await expect(service.skuAvailable("X9")).resolves.toEqual({ available: true });
+  });
+});
+
+describe("family DTO bounds (Decimal(10,2) price <= 8 integer digits, Decimal(10,4) cost <= 6)", () => {
+  const check = async (over: Record<string, unknown>) =>
+    validate(
+      plainToInstance(CreateFamilyDto, {
+        family: { name: " Soda " },
+        variants: [{ name: " A ", pricePerUnit: "1.00", ...over }],
+      }),
+      { whitelist: true },
+    );
+  it("rejects an over-wide price or cost, accepts the boundary, and trims names", async () => {
+    expect(await check({ standardCost: "1234567" })).not.toHaveLength(0); // 7 integer digits
+    expect(await check({ pricePerUnit: "123456789" })).not.toHaveLength(0); // 9 integer digits
+    expect(await check({ standardCost: "999999", pricePerUnit: "99999999" })).toHaveLength(0);
+    expect(await check({ name: "   " })).not.toHaveLength(0); // trimmed to empty
+    const dto = plainToInstance(CreateFamilyDto, {
+      family: { name: " Soda " },
+      variants: [{ name: " A ", pricePerUnit: "1.00", sku: " S1 " }],
+    });
+    expect(dto.family.name).toBe("Soda");
+    expect(dto.variants[0]).toMatchObject({ name: "A", sku: "S1" });
   });
 });

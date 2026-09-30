@@ -137,6 +137,12 @@ export class ProductFamiliesService {
     const variantRows = dto.variants.map((v, i) => ({ row: i, ...v }));
     const familyPrice = money(dto.family.pricePerUnit);
     const familyName = dto.family.name.trim();
+    if (dto.family.standardCost != null && dto.family.standardCost !== "")
+      cost4(dto.family.standardCost);
+    for (const v of dto.variants) {
+      money(v.pricePerUnit);
+      if (v.standardCost != null && v.standardCost !== "") cost4(v.standardCost);
+    }
     const run = () =>
       this.prisma.tenantTransaction(async (tx: CatalogTx) => {
         const codes = this.codeInputs(variantRows);
@@ -314,6 +320,15 @@ export class ProductFamiliesService {
     const authority = (await readFamilyPriceMode(this.featureConfig, tenantId)) === "on";
     if (authority && update.some((u) => u.pricePerUnit !== undefined)) {
       throw familyPriceAuthorityError(familyId);
+    }
+    // Range-check every price / cost BEFORE the transaction (a rounding overflow is a 400, never after locks + writes).
+    for (const u of update) {
+      if (u.pricePerUnit !== undefined) money(u.pricePerUnit);
+      if (u.standardCost !== undefined) cost4(u.standardCost);
+    }
+    for (const v of add) {
+      money(v.pricePerUnit);
+      if (v.standardCost != null && v.standardCost !== "") cost4(v.standardCost);
     }
     const touchedIds = [...new Set([...update.map((u) => u.id), ...deactivate])];
     const addRows = add.map((v, i) => ({ row: i, ...v }));

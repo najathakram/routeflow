@@ -15,7 +15,7 @@ import { join, relative } from "path";
 const SRC = join(__dirname, "..");
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
 const WRITER =
-  /\b(?:orderItem|invoiceItem|estimateItem|purchaseOrderItem|orderTemplateItem|recurringInvoiceItem|stockMovement|stockLot)\s*\.\s*(?:create|createMany|createManyAndReturn|upsert)\s*\(|\b(?:lineItems|items)\s*:\s*\{\s*create(?:Many)?\b|\b(?:orderItem|invoiceItem|estimateItem|purchaseOrderItem|orderTemplateItem|recurringInvoiceItem)\s*\.\s*update(?:Many)?\s*\([\s\S]{0,300}?\bdata\s*:\s*\{[^}]{0,300}?\bproductId\b/g;
+  /\b(?:orderItem|invoiceItem|estimateItem|purchaseOrderItem|orderTemplateItem|recurringInvoiceItem|stockMovement|stockLot)\s*\.\s*(?:create|createMany|createManyAndReturn|upsert)\s*\(|\b(?:lineItems|items)\s*:\s*\{\s*create(?:Many)?\b|\b(?:orderItem|invoiceItem|estimateItem|purchaseOrderItem|orderTemplateItem|recurringInvoiceItem)\s*\.\s*update(?:Many)?\s*\([^;]{0,300}?\bdata\s*:\s*\{[^}]{0,300}?\bproductId\b/g;
 const GUARD = /assertSellableLines\(/g;
 
 /** Files that call the guard: the EXACT call count is pinned. */
@@ -44,7 +44,7 @@ const GUARDED: Record<string, { calls: number; sites: number; why: string }> = {
   "inventory/inventory.service.ts": {
     calls: 10,
     sites: 16,
-    why: "PO draft/create/update, recordPurchase (StockLot), recordAdjustment, commitStockCount (+ applyStockCountItemsInTx), commitStockCountSession, upsertStockCountLine, setCostBasis, bulkSetCostBasis; the remaining writer sites are receive/transfer/count leaves reached only from those guarded entry points",
+    why: "PO draft/create/update, recordPurchase (StockLot), recordAdjustment, commitStockCount (+ applyStockCountItemsInTx), commitStockCountSession, upsertStockCountLine, setCostBasis, bulkSetCostBasis; the other writer sites (assignToVariants, PO receive/reverse, cost replay) move stock only out of / into a product that HAS stock: a FAMILY is created with zero stock and never receives any (every entry point above refuses it), so their pool checks reject it",
   },
   "order-templates/order-templates.service.ts": {
     calls: 4,
