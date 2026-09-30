@@ -283,6 +283,16 @@ describe("resolveLineUnits — honourDefaultSelling (#2784, SA-601 buyer qty-onl
     });
   });
 
+  it("SA-610: a HELD PACK line (an existing line, unitLabel null) stays a pack line — the default never re-units it", () => {
+    const heldPack = { unitLabel: null, unitsPerBox: 24 };
+    expect(resolveLineUnits(boxed, [flaggedCase], undefined, heldPack, opts)).toEqual({
+      unitsPerBox: 24,
+      unitLabel: null,
+      kind: "pack",
+    });
+    expect(resolveLineUnits(boxed, [flaggedCase], undefined, {}, opts).kind).toBe("pack");
+  });
+
   it("no flagged level -> today's pack line", () => {
     expect(resolveLineUnits(boxed, [caseRow], undefined, null, opts)).toEqual({
       unitsPerBox: 24,
