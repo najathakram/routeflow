@@ -423,6 +423,34 @@ export function prorateLineSubtotal(
 }
 
 /**
+ * B894 (SA-576) / SA-581: THE linear cumulative basis, `creditedThrough(S, c, P) = roundMoney(S × min(c, P) / P)`,
+ * shared by `prorateComponentCredit` (#2717) and the return-credit / price-correction callers. What does a SLICE
+ * of an already-billed line cost — a return credit, or the target for the qty still held after a partial
+ * return? LINEAR.
+ *
+ * Use this — never {@link prorateLineSubtotal} — wherever a slice is priced FROM SCRATCH. That function is
+ * the invoice's delivered-basis bill: its floored free-unit telescope must agree with the invoice line the
+ * document shows, and it is non-monotone point by point (a free unit is a whole box on a pieces axis), so
+ * it is only right where the curve is telescoped (sum = S). Priced per slice it is NOT additive: BOGO,
+ * P=2, F=1, S: returning 1 piece credits S, returning the other credits S again (2S on an S line).
+ *
+ * Additive (any chunking sums to S up to half a cent per chunk; capped at S), monotone, never negative, and
+ * equal to `prorateLineSubtotal(S, c, P)` when there are no free units. `storedSubtotal` accepts null /
+ * undefined like its sibling. A non-positive or non-finite `lineQty`, or a non-positive slice, is 0.
+ */
+export function creditedThrough(
+  storedSubtotal: number | null | undefined,
+  sliceQty: number,
+  lineQty: number,
+): number {
+  const stored = Number(storedSubtotal) || 0;
+  const line = Number(lineQty) || 0;
+  const slice = Number(sliceQty) || 0;
+  if (!(line > 0) || !(slice > 0)) return 0;
+  return roundMoney((stored * Math.min(slice, line)) / line);
+}
+
+/**
  * DISPLAY-ONLY derived per-unit price for a case-packed product: case price ÷ units-per-case,
  * rounded to cents. Returns null when the product is sold as single units (unitsPerBox
  * null/0/1) or the input is not a finite number.
