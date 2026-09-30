@@ -1,4 +1,4 @@
-import { classifySaleAxis } from "./legacy-box-axis";
+import { B661_CUTOFF, classifySaleAxis } from "./legacy-box-axis";
 
 /**
  * classifySaleAxis — B681/SA-058/SA-070(a). Red-first on the SA-058 synthetic rows (r1, r3, r5 —
@@ -9,6 +9,8 @@ import { classifySaleAxis } from "./legacy-box-axis";
  */
 describe("classifySaleAxis", () => {
   const boxUnaware = { boxes: null, pieces: null, unitLabel: null, unitsPerBox: null };
+  const BEFORE_CUTOFF = new Date(B661_CUTOFF.getTime() - 24 * 3600 * 1000);
+  const AFTER_CUTOFF = new Date(B661_CUTOFF.getTime() + 24 * 3600 * 1000);
 
   it("r1: box-unaware, pack 12 (via productPackNow), qty 5 / unitBasisQty 5 -> legacy (box axis)", () => {
     expect(
@@ -61,9 +63,14 @@ describe("classifySaleAxis", () => {
     ).toEqual({ state: "piece-axis", reason: "unit line: qty is base units" });
   });
 
-  it("non-boxed today (no line snapshot, productPackNow 1): qty 7 / unitBasisQty 7 -> piece-axis, not boxed", () => {
+  it("never-boxed line written AFTER B661 (no snapshot, productPackNow 1): qty 7 / unitBasisQty 7 -> piece-axis, not boxed", () => {
     expect(
-      classifySaleAxis({ entryType: "SALE", qty: 7, unitBasisQty: 7 }, boxUnaware, [], 1),
+      classifySaleAxis(
+        { entryType: "SALE", qty: 7, unitBasisQty: 7, writtenAt: AFTER_CUTOFF },
+        boxUnaware,
+        [],
+        1,
+      ),
     ).toEqual({ state: "piece-axis", reason: "not boxed — qty is already pieces" });
   });
 
@@ -76,7 +83,12 @@ describe("classifySaleAxis", () => {
 
   it("productPackNow explicitly null (product exists, no box size) still decides — NOT unknown", () => {
     expect(
-      classifySaleAxis({ entryType: "SALE", qty: 5, unitBasisQty: 5 }, boxUnaware, [], null),
+      classifySaleAxis(
+        { entryType: "SALE", qty: 5, unitBasisQty: 5, writtenAt: AFTER_CUTOFF },
+        boxUnaware,
+        [],
+        null,
+      ),
     ).toEqual({ state: "piece-axis", reason: "not boxed — qty is already pieces" });
   });
 
@@ -155,5 +167,68 @@ describe("classifySaleAxis", () => {
     expect(
       classifySaleAxis({ entryType: "SALE", qty: 5, unitBasisQty: NaN }, boxUnaware, [], 12),
     ).toEqual({ state: "unknown", reason: "row qty/unitBasisQty is not a usable number" });
+  });
+  // SA-609 / #2052: a snapshot-less line's live pack may no longer short-circuit to piece-axis —
+  // a product un-boxed AFTER the sale reads "not boxed" though the row sold N boxes (box axis).
+  describe("#2052 — snapshot-less line, product un-boxed since the sale", () => {
+    const sale = (qty: number, ubq: number, writtenAt: Date | string | null = BEFORE_CUTOFF) => ({
+      entryType: "SALE",
+      qty,
+      unitBasisQty: ubq,
+      writtenAt,
+    });
+
+    it.each([1, null])(
+      "REG-2052: pre-cutoff 3/3, pack now %s -> unknown (parks), NOT piece-axis (would book 3 pieces of 36)",
+      (packNow) => {
+        expect(classifySaleAxis(sale(3, 3), boxUnaware, [], packNow).state).toBe("unknown");
+      },
+    );
+
+    it("the same 3/3 row written AFTER the cutoff -> piece-axis (B661 would have written 36)", () => {
+      expect(classifySaleAxis(sale(3, 3, AFTER_CUTOFF), boxUnaware, [], 1)).toEqual({
+        state: "piece-axis",
+        reason: "not boxed — qty is already pieces",
+      });
+    });
+
+    it("a createdAt string on the cutoff instant counts as AFTER (boundary: < cutoff parks)", () => {
+      expect(classifySaleAxis(sale(3, 3, B661_CUTOFF.toISOString()), boxUnaware, [], 1).state).toBe(
+        "piece-axis",
+      );
+      expect(
+        classifySaleAxis(sale(3, 3, new Date(B661_CUTOFF.getTime() - 1)), boxUnaware, [], 1).state,
+      ).toBe("unknown");
+    });
+
+    it("36/3 (already expanded) with pack now 1 -> piece-axis at any time", () => {
+      expect(classifySaleAxis(sale(3, 36), boxUnaware, [], 1).state).toBe("piece-axis");
+      expect(classifySaleAxis(sale(3, 36, AFTER_CUTOFF), boxUnaware, [], 1).state).toBe(
+        "piece-axis",
+      );
+    });
+
+    it("pack now 12 with ratio 1 -> legacy, unchanged, at any time", () => {
+      expect(classifySaleAxis(sale(3, 3), boxUnaware, [], 12).state).toBe("legacy");
+      expect(classifySaleAxis(sale(3, 3, AFTER_CUTOFF), boxUnaware, [], 12).state).toBe("legacy");
+    });
+
+    it("a line WITH a unitsPerBox snapshot is unchanged whatever the time or live pack", () => {
+      const snap1 = { ...boxUnaware, unitsPerBox: 1 };
+      const snap12 = { ...boxUnaware, unitsPerBox: 12 };
+      expect(classifySaleAxis(sale(3, 3), snap1, [], 12).state).toBe("piece-axis");
+      expect(classifySaleAxis(sale(3, 3), snap1, [], 1).state).toBe("piece-axis");
+      expect(classifySaleAxis(sale(3, 3), snap12, [], 1).state).toBe("legacy");
+    });
+
+    it("corrections fold: a pre-cutoff 3/3 row already corrected to 36 is never re-parked", () => {
+      expect(
+        classifySaleAxis(sale(3, 3), boxUnaware, [{ qty: 0, unitBasisQty: 33 }], 1).state,
+      ).toBe("piece-axis");
+    });
+
+    it("pack now OMITTED with no snapshot -> unknown, as today", () => {
+      expect(classifySaleAxis(sale(3, 3, AFTER_CUTOFF), boxUnaware).state).toBe("unknown");
+    });
   });
 });

@@ -55,6 +55,8 @@ export interface SaleAxisRow {
   entryType: string;
   qty: unknown;
   unitBasisQty: unknown;
+  /** The row's `createdAt` — when it was WRITTEN (SA-609). Optional only until the fix lands. */
+  writtenAt?: Date | string | null;
 }
 
 /**
@@ -80,6 +82,16 @@ export interface SaleAxisCorrection {
 }
 
 const EPS = 0.0005;
+
+/**
+ * SA-609 (#2052): when the api that WROTE a SALE row stopped writing box-axis rows — the
+ * `@routeflow/api` Railway deployment of B661 (f45eaf52, #1207) reaching SUCCESS on 2026-09-22T06:43:26Z
+ * (GitHub deployment 6584912245 statuses), plus 24 h of replica-overlap margin. No rollback to a
+ * pre-B661 image followed (every later production deployment descends from f45eaf52). A row written
+ * before this is judged on its WRITE time (`createdAt`), never `soldAt` (a business date that can be
+ * back-dated or imported).
+ */
+export const B661_CUTOFF = new Date("2026-09-23T06:43:26Z");
 
 /** `Number()` with a finite check — `null` for anything that isn't a real, usable number
  *  (including a non-numeric string, `null`, `undefined`, `NaN`, `Infinity`). Prisma's `Decimal`
