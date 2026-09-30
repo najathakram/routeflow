@@ -21,9 +21,7 @@ describe("/inventory overflow (B919)", () => {
   });
 
   it("the stock toolbar buttons wrap instead of overflowing", () => {
-    const i = src.indexOf("Adjust Stock");
-    const before = src.slice(Math.max(0, i - 900), i);
-    expect(before).toMatch(/<div className="flex flex-wrap gap-2">/);
+    expect(src).toMatch(/<div className="flex flex-wrap gap-2">[\s\S]{0,2500}?Adjust Stock/);
   });
 
   it("the stock table shell scrolls horizontally instead of clipping (no overflow-hidden)", () => {

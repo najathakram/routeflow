@@ -1068,7 +1068,7 @@ export default function DashboardPage() {
       {/* ── Recent Orders (not for a DRIVER: /orders is OPERATOR+CUSTOMER only, #2254) ── */}
       {readsBusinessData && (
         <Card>
-          <div className="mb-4 flex items-center justify-between">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-base font-semibold text-navy">Recent Orders</h2>
             <Link
               href="/orders"
@@ -1087,7 +1087,7 @@ export default function DashboardPage() {
           ) : recentError ? (
             <ErrorBanner message="Could not load recent orders." />
           ) : (
-            <div className="-mx-6 -mb-6">
+            <div className="-mx-6 -mb-6 overflow-x-auto">
               <Table
                 data={recentOrders}
                 columns={orderColumns}

@@ -1892,13 +1892,13 @@ export default function InventoryPage() {
       )}
 
       <Tabs.Root value={activeTab} onValueChange={setActiveTab}>
-        <Tabs.List className="flex gap-1 border-b border-surface-border">
+        <Tabs.List className="flex gap-1 overflow-x-auto border-b border-surface-border">
           {tabs.map((tab) => (
             <Tabs.Trigger
               key={tab.value}
               value={tab.value}
               className={cn(
-                "-mb-px border-b-2 border-transparent px-4 py-2.5 text-sm font-medium transition-colors",
+                "-mb-px shrink-0 whitespace-nowrap border-b-2 border-transparent px-4 py-2.5 text-sm font-medium transition-colors",
                 "text-navy/70 hover:text-navy",
                 "data-[state=active]:border-brand-500 data-[state=active]:text-navy",
               )}
@@ -2107,7 +2107,7 @@ export default function InventoryPage() {
                 return `${shown} of ${total}`;
               })()}
             </p>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               {/* B562 (interim mitigation): the dedicated "Recompute" button and the
                   "Costs" button's recompute fallback (used when there were no missing
                   costs) were removed here. recompute-costs is blind to raw order
@@ -2164,7 +2164,7 @@ export default function InventoryPage() {
             </div>
           </div>
 
-          <div className="overflow-hidden rounded-b-lg border border-t-0 border-surface-border bg-white shadow-card">
+          <div className="overflow-x-auto rounded-b-lg border border-t-0 border-surface-border bg-white shadow-card">
             {stockLoading ? (
               <div className="space-y-2 p-4">
                 {[...Array(5)].map((_, i) => (
