@@ -9,6 +9,8 @@ import {
   requiresConsent,
 } from "./messaging.helpers";
 import { MESSAGE_PROVIDER, type MessageProvider } from "./providers/message-provider.interface";
+import type { ChannelStatusMap, NotificationAudience } from "@routeflow/types";
+import { NOTIFICATION_TRIGGERS, notificationAudience } from "./notification-triggers";
 
 const { INTERNAL, WHATSAPP, SMS, EMAIL, PORTAL } = MessageChannel;
 const CUSTOMER_CHANNELS: MessageChannel[] = [WHATSAPP, SMS, EMAIL, PORTAL];
@@ -37,8 +39,8 @@ export const EVENT_CHANNELS: Record<NotificationEvent, MessageChannel[]> = {
   [NotificationEvent.LOW_STOCK]: [INTERNAL],
   [NotificationEvent.FAILED_DELIVERY]: [INTERNAL],
   [NotificationEvent.PAYMENT_FAILED_NSF]: [INTERNAL],
-  // Post-dated check payments PR-1: no firing site yet (see NO_TRIGGER_EVENTS
-  // below) — entry exists only so this Record stays exhaustive over
+  // Post-dated check payments PR-1: no firing site yet (absent from
+  // NOTIFICATION_TRIGGERS) — entry exists only so this Record stays exhaustive over
   // NotificationEvent.
   [NotificationEvent.CHECK_RETURNED]: [INTERNAL],
 };
@@ -109,7 +111,7 @@ export const DEFAULT_TEMPLATES: Record<NotificationEvent, { label: string; body:
 
 /** Cells seeded enabled=true — PORTAL/EMAIL (free, un-metered, consent-less).
  *  Every metered/consented channel (WA/SMS) seeds OFF, and so does every
- *  INTERNAL ops alert below (NO_TRIGGER_EVENTS) — seeding a key ON that can
+ *  INTERNAL ops alert below (none is in NOTIFICATION_TRIGGERS) — seeding a key ON that can
  *  never fire is B180 (cause-ruling.md §2/Check).
  *
  *  N1 (2026-09-16): the four order-status events default their EMAIL cell ON
@@ -128,21 +130,12 @@ export const DEFAULT_ON = new Set<string>([
   `${NotificationEvent.CANCELLED}:${EMAIL}`,
 ]);
 
-/** Events with no firing site anywhere in `apps/api/src` outside `messaging/` today (S3 check on
- *  12cdc26a, cause-ruling.md §2/Check — `default-on-is-wired.spec.ts` re-proves this by walking
- *  the tree). Their cells render `unavailable: "NO_TRIGGER"` and are excluded from `DEFAULT_ON`.
- *  Re-add a key here (and to `DEFAULT_ON`) only in the same PR that adds its firing site —
- *  FAILED_DELIVERY specifically: B146/F11 reconciles a skipped stop but never emits the event. */
-const NO_TRIGGER_EVENTS = new Set<NotificationEvent>([
-  NotificationEvent.URGENT_ORDER_PLACED,
-  NotificationEvent.LOW_STOCK,
-  NotificationEvent.FAILED_DELIVERY,
-  NotificationEvent.PAYMENT_FAILED_NSF,
-  // Post-dated check payments PR-1: added with the enum value itself; a later
-  // PR adds the firing site (check-lifecycle transition to BOUNCED) and moves
-  // this to DEFAULT_ON in the same PR, per this set's own header comment.
-  NotificationEvent.CHECK_RETURNED,
-]);
+/** An event with no firing site (absent from `NOTIFICATION_TRIGGERS`, the single registry that
+ *  `notification-triggers.spec.ts` proves against the tree) renders `unavailable: "NO_TRIGGER"`
+ *  and is excluded from `DEFAULT_ON`. Re-add it to the registry (and `DEFAULT_ON`) only in the
+ *  same PR that adds its firing site — FAILED_DELIVERY specifically: B146/F11 reconciles a skipped
+ *  stop but never emits the event. */
+const hasNoTrigger = (eventKey: NotificationEvent): boolean => !NOTIFICATION_TRIGGERS.has(eventKey);
 
 export interface TemplateView {
   id: string;
@@ -166,6 +159,10 @@ export interface MatrixCell {
 export interface MatrixEvent {
   eventKey: NotificationEvent;
   label: string;
+  /** #1965: who receives this event's message (buyer vs staff). */
+  audience: NotificationAudience;
+  /** #1965: false = no firing site; the web lists it under "Coming soon" with no switch. */
+  hasTrigger: boolean;
   channels: MatrixCell[];
 }
 export interface MessagingSettingsView {
@@ -176,6 +173,8 @@ export interface MessagingSettingsView {
 }
 export interface MessagingConfigView {
   events: MatrixEvent[];
+  /** #1965: per-channel availability so the web never infers it per cell. */
+  channelStatus: ChannelStatusMap;
   settings: MessagingSettingsView;
   msgsMeter: {
     used: number;
@@ -229,7 +228,13 @@ export class MessagingConfigService {
           if (isInvoicePolicyViolation(eventKey, channel))
             channels.push({ channel, enabled: false, ruleId: null, locked: true, template: null });
         }
-        return { eventKey, label: DEFAULT_TEMPLATES[eventKey].label, channels };
+        return {
+          eventKey,
+          label: DEFAULT_TEMPLATES[eventKey].label,
+          audience: notificationAudience(eventKey),
+          hasTrigger: !hasNoTrigger(eventKey),
+          channels,
+        };
       },
     );
 
@@ -246,7 +251,7 @@ export class MessagingConfigService {
     } catch {
       /* meter readout is decorative — never fail the matrix for it */
     }
-    return { events, settings, msgsMeter };
+    return { events, channelStatus: this.channelStatus(), settings, msgsMeter };
   }
 
   async setRuleEnabled(id: string, enabled: boolean) {
@@ -322,6 +327,13 @@ export class MessagingConfigService {
     return this.getSettings();
   }
 
+  /** NOT_CONFIGURED is reserved for a channel that has a transport but no tenant setup; no such
+   *  channel exists yet, so today every channel is LIVE (transport bound) or NOT_BUILT. */
+  private channelStatus(): ChannelStatusMap {
+    const st = (c: MessageChannel) => (this.provider.transports(c) ? "LIVE" : "NOT_BUILT");
+    return { EMAIL: st(EMAIL), WHATSAPP: st(WHATSAPP), SMS: st(SMS), PORTAL: st(PORTAL) };
+  }
+
   /** F23/B180+B182+B183a (cause-ruling.md §2): the ONE capability seam consulted by both
    *  getMatrix()/setRuleEnabled() here and sendMessage() in messaging.service.ts. NO_TRIGGER
    *  takes priority (an INTERNAL-only ops alert with no firing site — its channel is always
@@ -331,9 +343,9 @@ export class MessagingConfigService {
     eventKey: NotificationEvent,
     channel: MessageChannel,
   ): MatrixCell["unavailable"] {
-    if (NO_TRIGGER_EVENTS.has(eventKey)) return "NO_TRIGGER";
+    if (hasNoTrigger(eventKey)) return "NO_TRIGGER";
     // The `channel !== INTERNAL` exemption is currently unreachable: every INTERNAL event is
-    // in NO_TRIGGER_EVENTS above, so this line never sees channel === INTERNAL today. Kept for
+    // absent from NOTIFICATION_TRIGGERS (so `hasNoTrigger` returns above), so this line never sees channel === INTERNAL today. Kept for
     // the first wired INTERNAL event; pinned by the NO_TRANSPORT spec in
     // messaging-config.service.spec.ts.
     if (channel !== INTERNAL && !this.provider.transports(channel)) return "NO_TRANSPORT";
