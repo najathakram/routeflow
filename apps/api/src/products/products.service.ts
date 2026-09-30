@@ -1336,7 +1336,9 @@ export class ProductsService {
           : { propagate: false };
       // Codes + row lock BEFORE the isActive write (Opus #2860 B1): the release takes this product's code locks, then
       // its row lock; the UPDATE below must never be the first thing to lock the row.
-      if (deactivating) await releaseProductCodes(tx, { tenantId, productId: id });
+      if (deactivating) {
+        await releaseProductCodes(tx, { tenantId, productId: id, lockedCodes: new Set(lockList) });
+      }
       let row;
       try {
         row = await tx.product.update({ where: { id }, data });
@@ -1574,7 +1576,10 @@ export class ProductsService {
     const archived = await this.prisma.tenantTransaction(async (tx: any) => {
       // SA-603a: archiving releases the codes, so a new product can reuse them. Codes + row lock FIRST, the isActive
       // write after (house order, Opus #2860 B1).
-      await releaseProductCodes(tx, { tenantId, productId: id });
+      // ONE sorted lock call for every code of the product (Opus #2860 R1), then the release, then the write.
+      const codes = (await peekProductCodes(tx, tenantId, id)).filter((c) => c.trim().length > 0);
+      await lockBarcodeCodes(tx, tenantId, codes);
+      await releaseProductCodes(tx, { tenantId, productId: id, lockedCodes: new Set(codes) });
       return tx.product.update({ where: { id }, data: { isActive: false } });
     });
     this.emitProductChanged(id, "archived");
@@ -1706,9 +1711,18 @@ export class ProductsService {
       await this.prisma.tenantTransaction(async (tx: any) => {
         // SA-603a: an archived product releases its codes (same rule as remove()), codes + row lock FIRST in sorted id
         // order, THEN the isActive write (Opus #2860 B1).
+        // ONE sorted lock call over EVERY soft-deleted product's codes BEFORE the loop (Opus #2860 r2): per-product
+        // lock-then-row would deadlock against a concurrent PATCH B {sku: <A's code>} (codes A -> row A -> codes B).
+        const all: string[] = [];
+        for (const productId of softDeleteIds) {
+          // eslint-disable-next-line no-await-in-loop -- pre-lock peek, a bounded set
+          all.push(...(await peekProductCodes(tx, clearTenantId, productId)));
+        }
+        const lockedCodes = new Set(all.filter((c) => c.trim().length > 0));
+        await lockBarcodeCodes(tx, clearTenantId, [...lockedCodes]);
         for (const productId of [...softDeleteIds].sort()) {
           // eslint-disable-next-line no-await-in-loop
-          await releaseProductCodes(tx, { tenantId: clearTenantId, productId });
+          await releaseProductCodes(tx, { tenantId: clearTenantId, productId, lockedCodes });
         }
         await tx.product.updateMany({
           where: { id: { in: softDeleteIds } },
