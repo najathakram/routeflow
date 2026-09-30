@@ -60,7 +60,7 @@ function bigState(): { files: Record<string, string>; byLane: Record<string, any
         lane,
         type: "lane.note",
         by: "agent",
-        note: `n${i}-`.padEnd(800, "x"),
+        note: `n${i}-`.padEnd(i % 4 === 0 ? 815 : 814, "x"),
       });
     }
     byLane[lane] = evs;

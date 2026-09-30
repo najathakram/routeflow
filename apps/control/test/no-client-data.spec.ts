@@ -12,14 +12,12 @@
  * fixture/source files — it is excluded from the WP0 red gate by name (test-plan.md §6).
  */
 
+import { execFileSync } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 
 const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
-const CONTROL_DIR = path.join(REPO_ROOT, "apps", "control");
 const DENYLIST_FILE = path.join(REPO_ROOT, "scripts", "campaign", "plane-denylist.json");
-
-const EXCLUDED_DIR_NAMES = new Set(["node_modules", "dist"]);
 
 interface DenylistPattern {
   name: string;
@@ -39,17 +37,17 @@ function loadDenylistRegexes(): RegExp[] {
   return [...fromFile, railwayHost];
 }
 
-function listFiles(dir: string, out: string[] = []): string[] {
-  if (!fs.existsSync(dir)) return out;
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (entry.isDirectory()) {
-      if (EXCLUDED_DIR_NAMES.has(entry.name)) continue;
-      listFiles(path.join(dir, entry.name), out);
-      continue;
-    }
-    out.push(path.join(dir, entry.name));
-  }
-  return out;
+/** What can ship: tracked plus new-not-ignored files (never gitignored build output). */
+function listFiles(): string[] {
+  const out = execFileSync("git", ["ls-files", "-co", "--exclude-standard", "--", "apps/control"], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  return out
+    .split("\n")
+    .filter((l) => l !== "")
+    .map((l) => path.join(REPO_ROOT, l));
 }
 
 describe("apps/control contains no client-identifying data (T59, R30)", () => {
@@ -59,7 +57,9 @@ describe("apps/control contains no client-identifying data (T59, R30)", () => {
 
   it("no file under apps/control/** matches a denylist pattern", () => {
     const regexes = loadDenylistRegexes();
-    const files = listFiles(CONTROL_DIR);
+    const files = listFiles();
+    expect(files.length).toBeGreaterThan(0);
+    expect(files).toContain(path.join(REPO_ROOT, "apps", "control", "src", "sources", "git.ts"));
     const hits: Array<{ file: string; pattern: string }> = [];
 
     for (const file of files) {
