@@ -78,6 +78,7 @@ import { useI18n, LOCALES, LOCALE_LABELS } from "@/lib/i18n";
 import { useDriveMode } from "@/lib/drive-mode";
 import { matchPlanGatedRoute, planFlagVisible } from "@/lib/plan-gated-nav";
 import { RouteGuard } from "./_components/gates/RouteGuard";
+import { activeLeafHref } from "./_components/nav-active";
 
 // ─── Nav types & structure ────────────────────────────────────────────────────
 
@@ -486,6 +487,13 @@ function SidebarNav({
 
   const toggleGroup = (label: string) => setOpenGroup((cur) => (cur === label ? null : label));
 
+  // Exactly ONE top-level leaf is active: the longest segment-boundary prefix (B918: a bare
+  // startsWith lit both "Today's route" /routes/my-runs and "My Routes" /routes).
+  const activeLeaf = activeLeafHref(
+    navStructure.filter((e): e is NavLeaf => e.kind === "leaf"),
+    pathname,
+  );
+
   return (
     <ul className="flex flex-col gap-0.5">
       {navStructure.map((entry) =>
@@ -509,11 +517,7 @@ function SidebarNav({
             <NavLink
               item={entry}
               collapsed={collapsed}
-              active={
-                entry.href === "/dashboard"
-                  ? pathname === "/dashboard"
-                  : pathname.startsWith(entry.href)
-              }
+              active={activeLeaf === entry.href}
               onNavigate={onNavigate}
             />
           </li>
