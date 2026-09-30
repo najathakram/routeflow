@@ -120,7 +120,7 @@ export const ROUTE_PARITY: Readonly<Record<string, ParityRow>> = {
   "(dashboard)/analytics": { mobile: ["(operator)/analytics/index"] },
   "(dashboard)/settings": { mobile: ["(operator)/settings/index"] },
   "(dashboard)/settings/product-categories": { missing: "W>M, owner triage" },
-  "(dashboard)/settings/restrictions": { missing: "W>M, owner triage" },
+  "(dashboard)/settings/restrictions": { mobile: ["(operator)/settings/restrictions"] },
   "(dashboard)/settings/restrictions/rules": { missing: "W>M, owner triage" },
   "(dashboard)/settings/batch-import": { webOnly: "desktop file flows" },
   "(dashboard)/settings/import": { webOnly: "desktop file flows" },

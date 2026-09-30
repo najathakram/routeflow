@@ -32,12 +32,20 @@ import {
 import { registerPushToken, deregisterPushToken } from "../../../lib/auth";
 import { showToast } from "../../../lib/toast";
 import { alertInfo } from "../../../lib/confirm";
+import { useAuthStore } from "../../../lib/auth-store";
+import {
+  LowStockDigestCard,
+  RestrictionsEntryCard,
+  RouteDefaultsCard,
+} from "../../../components/settings/SettingsParityCards";
+import { showDigestToggle } from "../../../lib/settings-parity-logic";
 
 // ─── General tab ──────────────────────────────────────────────────────────────
 
 function GeneralTab() {
   const { data, isLoading } = useBusinessSettings();
   const update = useUpdateBusinessSettings();
+  const role = useAuthStore((s) => s.user?.role);
 
   const [phone, setPhone] = useState("");
   const [taxRate, setTaxRate] = useState("");
@@ -170,6 +178,10 @@ function GeneralTab() {
             />
           </View>
         </FormSection>
+
+        <RouteDefaultsCard />
+        {showDigestToggle(role) ? <LowStockDigestCard /> : null}
+        <RestrictionsEntryCard />
 
         <Pressable
           style={[styles.saveBtn, update.isPending && { opacity: 0.5 }]}
