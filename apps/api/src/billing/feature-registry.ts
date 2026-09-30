@@ -100,7 +100,7 @@ export interface FeatureDef {
   requires?: { allOf?: readonly string[]; anyOf?: readonly string[] };
   conflicts?: readonly string[];
   meter?: string;
-  config?: { fallbackMode: "unset"; modes: Record<string, FeatureConfigMode> };
+  config?: { fallbackMode: "unset" | "off"; modes: Record<string, FeatureConfigMode> };
 }
 
 /** Shared text for the seven `RequirePlanFlag` rows that ship dark under the 2026-08-23 rollout. */
@@ -1007,6 +1007,33 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
           ],
         },
         single_sku: { label: "Single SKU", available: false, settings: [] },
+      },
+    },
+  },
+  {
+    key: "mixed_packs",
+    kind: "boolean",
+    area: "catalog",
+    label: "Mixed packs",
+    description:
+      "Family price authority and fixed recipes: a family owns its variants' prices, and a recipe sells a fixed mix of them as one product.",
+    gate: {
+      via: "none",
+      state: "none",
+      added: "2026-09-29",
+      routes: [],
+      grantPath: NEW_ROW_GRANT_PATH,
+      backfill: NEW_ROW_BACKFILL,
+    },
+    billing: { skus: [], selfService: false },
+    defaultGranted: false,
+    // #2717 M2 (SA-574 Q5): the mode is read only, never a setting. `on` turns family price
+    // write-through and the recipe routes on for the tenant; the owner flips it per tenant.
+    config: {
+      fallbackMode: "off",
+      modes: {
+        off: { label: "Off (today's behavior)", available: true, settings: [] },
+        on: { label: "On", available: true, settings: [] },
       },
     },
   },
