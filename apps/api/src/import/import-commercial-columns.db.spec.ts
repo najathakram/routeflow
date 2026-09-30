@@ -53,6 +53,7 @@ import { CustomersService } from "../customers/customers.service";
 import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
 import { ProductsService } from "../products/products.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { FeatureOverrideService } from "../billing/feature-override.service";
 import { AuditService } from "../audit/audit.service";
@@ -118,6 +119,13 @@ describeDb(
           AuditService,
           { provide: PrismaService, useValue: prisma },
           { provide: VendorBillsService, useValue: { create: jest.fn(), receive: jest.fn() } },
+          // #2093: importInvoices flags banned lines (never blocks); ALLOW keeps this suite's rows unflagged.
+          {
+            provide: SellingRestrictionsService,
+            useValue: {
+              checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+            },
+          },
           // ProductsService peripherals — everything permitted, no side channel. Gate-refusal
           // behavior (P6/P7) is proven against a mocked ProductsService in
           // import-commercial-columns.spec.ts, not here.
