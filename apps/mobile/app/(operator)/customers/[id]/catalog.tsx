@@ -23,7 +23,7 @@ import {
 } from "../../../../lib/api/customers";
 import { useAdminProducts, type AdminProduct } from "../../../../lib/api/admin";
 import { useTierLabels } from "../../../../lib/api/tier-labels";
-import { getTierPrice } from "@routeflow/pricing";
+import { isSpecialTier, getTierPrice } from "@routeflow/pricing";
 import { tierLabel } from "../../../../lib/tier-label";
 import { showToast } from "../../../../lib/toast";
 import { confirm } from "../../../../lib/confirm";
@@ -35,7 +35,7 @@ function fmt(n: number | string | undefined | null): string {
 
 /** True when the product's tier column is unset (0/null) — that tier inherits the list price. */
 function tierUnset(product: any, tier: number): boolean {
-  return !!product && tier !== 1 && !(Number(product[`priceTier${tier}`]) > 0);
+  return !!product && isSpecialTier(tier) && !(Number(product[`priceTier${tier}`]) > 0);
 }
 
 // ─── Add / Edit modal ─────────────────────────────────────────────────────────

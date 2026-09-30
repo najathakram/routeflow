@@ -65,7 +65,12 @@ import { useApprovePortalRequest, useDeclinePortalRequest } from "@/lib/api/port
 import { CustomerFormModal } from "../_components/CustomerFormModal";
 import { AuthorizationsTab } from "../_components/AuthorizationsTab";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
-import { getTierPrice, computeMarginFraction, classifyMargin } from "@routeflow/pricing";
+import {
+  isSpecialTier,
+  getTierPrice,
+  computeMarginFraction,
+  classifyMargin,
+} from "@routeflow/pricing";
 import {
   SELECTABLE_PAYMENT_METHODS,
   PAYMENT_METHOD_LABELS,
@@ -976,7 +981,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
 
   // An unset tier column (0/null) inherits the list price at checkout — label it.
   const tierUnset = (product: any, tier: number) =>
-    !!product && tier !== 1 && !(Number(product[`priceTier${tier}`]) > 0);
+    !!product && isSpecialTier(tier) && !(Number(product[`priceTier${tier}`]) > 0);
 
   const openAdd = () => {
     setEditingPrice(null);

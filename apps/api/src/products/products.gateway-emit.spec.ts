@@ -232,7 +232,12 @@ describe("ProductsService — product.updated emits (REG-PROD-EMIT)", () => {
 
   it("REG-PROD-EMIT-10 importFromZoho() over multiple created rows emits ONE coalesced 'bulk' event, never one per row", async () => {
     prisma.product.findFirst.mockResolvedValue(null); // no name/sku/barcode collisions
-    prisma.product.create.mockResolvedValue({} as any);
+    // #2717 M1: create()'s dual-write sync keys off the created row's id — a real Prisma create
+    // always returns one, so the mock needs one too (this test's own concern is emit coalescing).
+    let nextId = 0;
+    prisma.product.create.mockImplementation(() =>
+      Promise.resolve({ id: `zoho-${nextId++}` } as any),
+    );
 
     const result = await service.importFromZoho({
       items: [
