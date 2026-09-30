@@ -1196,7 +1196,7 @@ function InventoryPurchasesTab() {
           <Sparkles className="mr-1 h-4 w-4" /> Scan Invoice
         </Button>
         <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setIsCreateOpen(true)}>
-          New Purchase
+          New purchase
         </Button>
       </div>
 
@@ -1644,7 +1644,7 @@ function PurchaseOrdersTab() {
     <div className="space-y-5">
       <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700">
         Purchase orders track what&apos;s on order with suppliers. Receiving a PO updates stock; the
-        resulting supplier bill appears under <strong>Vendor Bills</strong>.
+        resulting supplier bill appears under <strong>Supplier Bills</strong>.
       </div>
 
       {/* Chip-style status filters */}
@@ -2120,7 +2120,7 @@ function OtherExpensesTab() {
                         {e.vendorBillId && (
                           <Link
                             href={`/finance/vendor-bills/${e.vendorBillId}`}
-                            title="View in Vendor Bills"
+                            title="View in Supplier Bills"
                             className="rounded p-1 text-teal-600 hover:bg-teal-50 transition-colors"
                           >
                             <ExternalLink className="h-3.5 w-3.5" />
@@ -2400,12 +2400,12 @@ function ExpensesContent() {
     <div className="space-y-6 p-6">
       <PageHeader
         title="Supplier Bills"
-        subtitle="One hub for vendor bills, purchase orders and inventory spend — supplier payments happen here."
+        subtitle="One hub for supplier bills, purchase orders and inventory spend — supplier payments happen here."
       />
 
       {/* Tab switcher */}
       <div className="flex gap-1 rounded-xl border border-surface-border bg-surface-raised p-1 w-fit">
-        <TabButton tab="inventory" label="Vendor Bills" count={billsCount} />
+        <TabButton tab="inventory" label="Supplier Bills" count={billsCount} />
         <TabButton tab="pos" label="Purchase Orders" count={posCount} />
         <TabButton tab="other" label="Other Expenses" />
       </div>

@@ -803,7 +803,7 @@ export default function VendorBillDetailPage() {
       <div className="flex flex-col items-center gap-4 p-12 text-center">
         <p className="text-base font-medium text-navy">Vendor bill not found.</p>
         <Button variant="secondary" href="/vendor-bills">
-          Back to Vendor Bills
+          Back to Supplier Bills
         </Button>
       </div>
     );
@@ -1044,7 +1044,7 @@ export default function VendorBillDetailPage() {
         className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
-        Vendor Bills
+        Supplier Bills
       </Link>
 
       {/* Header */}

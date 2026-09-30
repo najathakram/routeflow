@@ -252,6 +252,7 @@ export function PurchaseOrdersTab({
       {/* Filters */}
       <div className="mb-4 flex flex-wrap gap-3">
         <select
+          aria-label="Status"
           value={statusFilter}
           onChange={(e) => onFilter(setStatusFilter, e.target.value)}
           className="rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
@@ -265,6 +266,7 @@ export function PurchaseOrdersTab({
         </select>
 
         <select
+          aria-label="Supplier"
           value={supplierFilter}
           onChange={(e) => onFilter(setSupplierFilter, e.target.value)}
           className="rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
@@ -277,20 +279,26 @@ export function PurchaseOrdersTab({
           ))}
         </select>
 
-        <input
-          type="date"
-          value={dateFrom}
-          onChange={(e) => onFilter(setDateFrom, e.target.value)}
-          placeholder="From"
-          className="w-36 rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-        />
-        <input
-          type="date"
-          value={dateTo}
-          onChange={(e) => onFilter(setDateTo, e.target.value)}
-          placeholder="To"
-          className="w-36 rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-        />
+        <label className="flex items-center gap-2 text-sm text-navy/70">
+          From
+          <input
+            type="date"
+            aria-label="From date"
+            value={dateFrom}
+            onChange={(e) => onFilter(setDateFrom, e.target.value)}
+            className="w-36 rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+        </label>
+        <label className="flex items-center gap-2 text-sm text-navy/70">
+          To
+          <input
+            type="date"
+            aria-label="To date"
+            value={dateTo}
+            onChange={(e) => onFilter(setDateTo, e.target.value)}
+            className="w-36 rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+        </label>
         {(statusFilter || supplierFilter || dateFrom || dateTo) && (
           <button
             onClick={() => {
@@ -321,6 +329,7 @@ export function PurchaseOrdersTab({
       ) : isError ? (
         <EmptyState
           title="Couldn't load purchase orders."
+          description="Check your connection and try again."
           action={
             <Button size="sm" variant="secondary" onClick={() => refetch()}>
               Retry
@@ -328,7 +337,19 @@ export function PurchaseOrdersTab({
           }
         />
       ) : orders.length === 0 && !(statusFilter || supplierFilter || dateFrom || dateTo) ? (
-        <EmptyState title="No purchase orders yet. Create one by hand when you place an order with a supplier." />
+        <EmptyState
+          title="No purchase orders yet"
+          description="Create one when you place an order with a supplier."
+          action={
+            <Button
+              size="sm"
+              leftIcon={<Plus className="h-4 w-4" />}
+              onClick={() => setShowCreateModal(true)}
+            >
+              New purchase order
+            </Button>
+          }
+        />
       ) : (
         <div
           aria-busy={isPlaceholderData || undefined}
