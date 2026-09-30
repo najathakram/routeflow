@@ -94,11 +94,14 @@ describe("ProductPortalVisibilityService", () => {
   });
 
   it("bulk: id-set assertion happens BEFORE the many-write; updates only changed ids; one tx", async () => {
-    tx.product.findMany.mockResolvedValue([
-      { id: "p1", portalVisible: true },
-      { id: "p2", portalVisible: false },
-      { id: "p3", portalVisible: true },
-    ]);
+    tx.product.findMany.mockImplementation(async () => {
+      order.push("findMany");
+      return [
+        { id: "p1", portalVisible: true },
+        { id: "p2", portalVisible: false },
+        { id: "p3", portalVisible: true },
+      ];
+    });
     const res = await service.setBulk(["p1", "p2", "p3"], false, "u1");
     expect(order).toEqual(["findMany", "updateMany"]);
     expect((prisma as any).tenantTransaction).toHaveBeenCalledTimes(1);
