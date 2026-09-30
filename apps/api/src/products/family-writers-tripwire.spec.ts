@@ -41,8 +41,8 @@ const GUARDED: Record<string, { calls: number; why: string }> = {
     why: "template create, update (replace-all), addItem, generateOrder (would become a SALE movement)",
   },
   "recurring-invoices/recurring-invoices.service.ts": {
-    calls: 2,
-    why: "assertLinesSellable on template create and on the replace-all update",
+    calls: 1,
+    why: "the assertLinesSellable helper, which BOTH template create and the replace-all update call (pinned in the wiring spec)",
   },
   "vendor-bills/vendor-bills.service.ts": {
     calls: 1,
@@ -52,6 +52,10 @@ const GUARDED: Record<string, { calls: number; why: string }> = {
 
 /** Writer files that do NOT call the guard, each with the reason it cannot carry a FAMILY line. `sites` is pinned. */
 const ALLOWED: Record<string, { sites: number; why: string }> = {
+  "bookkeeping/bookkeeping.service.ts": {
+    sites: 1,
+    why: "the nested itemised ExpenseLineItem rows of an expense (account / notes / amount): an accounting line that has no product column",
+  },
   "invoices/invoices.service.ts": {
     sites: 9,
     why: "every line it writes comes from an order line, an estimate line (guarded at their writers) or from manual-invoice-context / invoice-edit-plan (both GUARDED above)",
