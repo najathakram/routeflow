@@ -1,0 +1,2 @@
+-- B904 / SA-582 RED fixture: a NEW migration with no BEGIN; SET LOCAL lock_timeout ...; COMMIT; wrap.
+ALTER TABLE "User" ADD COLUMN "lastLoginAt" TIMESTAMP(3);

@@ -114,6 +114,9 @@ const NUKE_MODELS = [
 
   // 3. Master data the user explicitly wants gone.
   "customer",
+  // #2717 M2 (SA-594): Recipe/RecipeComponent hold RESTRICT FKs into Product — children first.
+  "recipeComponent",
+  "recipe",
   "product",
   "supplier",
   "expenseCategory",
