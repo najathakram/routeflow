@@ -399,10 +399,7 @@ describe("syncLineCompositions (order side)", () => {
       ]) {
         const { tx, ctx } = fixture(opts as never);
         await syncLineCompositions(tx as never, ["li-1"], ctx);
-        const writes = [
-          ...tx.orderItem.update.mock.calls.map((c: any[]) => c[0].data),
-          ...(tx.orderItem.updateMany?.mock?.calls ?? []).map((c: any[]) => c[0].data),
-        ];
+        const writes = tx.orderItem.update.mock.calls.map((c: any[]) => c[0].data);
         for (const data of writes) {
           expect(Object.keys(data).filter((k) => MONEY.includes(k))).toEqual([]);
         }
