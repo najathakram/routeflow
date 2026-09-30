@@ -1,5 +1,5 @@
 import { BadRequestException, Inject, Injectable, Logger, Optional } from "@nestjs/common";
-import { roundMoney } from "@routeflow/pricing";
+import { round4, roundMoney } from "@routeflow/pricing";
 import { AuditService } from "../audit/audit.service";
 import {
   addCalendarDays,
@@ -41,8 +41,6 @@ export const PRODUCTS_EXPORT_HEADER = [
   "Last sold date",
 ];
 
-/** Average cost is stored to 4 decimals; a 2dp money round would drop real precision. */
-const round4 = (n: number) => Math.round((n + Number.EPSILON) * 10_000) / 10_000;
 const num = (v: unknown) => (v == null ? null : Number(v));
 const yesNo = (b: boolean) => (b ? "Yes" : "No");
 
