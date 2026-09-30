@@ -74,3 +74,10 @@ describe("levelsForScan — trusts scanMatch only for the code that produced it 
     expect(wedge.levelsForScan("UNIT-U", { ...prod, scanMatch: { levels: ["BOX"] as Array<"BOX" | "UNIT"> } })).toEqual(["BOX"]);
   });
 });
+
+describe("levelsForScan — the local path ignores cached rows whose level is not BOX/UNIT (#2764)", () => {
+  it("CASE + UNIT rows on one code -> [UNIT]", () => {
+    const p = { unitsPerBox: 6, barcodes: [{ code: "SH", level: "CASE" }, { code: "SH", level: "UNIT" }] };
+    expect(wedge.levelsForScan("SH", p as any)).toEqual(["UNIT"]);
+  });
+});

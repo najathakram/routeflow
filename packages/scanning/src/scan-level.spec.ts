@@ -16,6 +16,7 @@ import { defaultSellLevel, SELL_LEVEL_VALUES, type SellLevel } from "@routeflow/
 import {
   levelsForScannedCode,
   resolveScanSellLevel,
+  scanMatchIsForCode,
 } from "./scan-level";
 
 const BOX: SellLevel = "BOX";
@@ -223,5 +224,24 @@ describe("levelsForScannedCode — SA-595: rows supersede ONLY the barcode colum
   it("a sku equal to a UNIT row code is shared (BOX+UNIT)", () => {
     const q = { ...p, sku: "ROW-U" };
     expect([...levelsForScannedCode("ROW-U", q)].sort()).toEqual([BOX, UNIT]);
+  });
+});
+
+describe("scanMatchIsForCode — a scanMatch only speaks for the code that produced it (#2764)", () => {
+  it("same code (case / whitespace) and UPC-A vs EAN-13 forms agree; a different code does not", () => {
+    expect(scanMatchIsForCode(" shared-b ", "SHARED-B")).toBe(true);
+    expect(scanMatchIsForCode("042100005264", "0042100005264")).toBe(true);
+    expect(scanMatchIsForCode("UNIT-U", "SHARED-B")).toBe(false);
+  });
+  it("a missing code cannot be disproved", () => {
+    expect(scanMatchIsForCode("X", undefined)).toBe(true);
+    expect(scanMatchIsForCode("X", "")).toBe(true);
+  });
+});
+
+describe("levelsForScannedCode — a row whose level is not BOX/UNIT never contributes (#2764)", () => {
+  it("CASE + UNIT rows on one code -> [UNIT] only", () => {
+    const rows = [{ code: "SH", level: "CASE" }, { code: "SH", level: "UNIT" }] as any;
+    expect(levelsForScannedCode("SH", { barcodes: rows, unitsPerBox: 6 })).toEqual(["UNIT"]);
   });
 });

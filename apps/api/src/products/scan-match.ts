@@ -1,5 +1,5 @@
 import { Logger } from "@nestjs/common";
-import { SELL_LEVEL_VALUES, type SellLevel } from "@routeflow/pricing";
+import type { SellLevel } from "@routeflow/pricing";
 import { levelsForScannedCode, pickBestScanMatch } from "@routeflow/scanning";
 import type { ProductBarcodeView, ScanMatchView } from "@routeflow/types";
 import { barcodeRowsToView, synthesizeLegacyBarcodes } from "./product-barcode-rules";
@@ -121,13 +121,10 @@ export async function findScanMatches(
       : synthesizeLegacyBarcodes(product);
 
   // The ONE shared derivation (server and clients agree): rows replace only the barcode column.
-  // Only BOX/UNIT rows count: a row carrying any other level string would otherwise resolve to UNIT.
-  const levelRows = [...productRows, ...ownRows].filter((r: RowLike) =>
-    (SELL_LEVEL_VALUES as readonly string[]).includes(r.level),
-  );
+  // levelsForScannedCode itself ignores any row whose level is not BOX/UNIT.
   const levels = levelsForScannedCode(code, {
     ...product,
-    barcodes: levelRows,
+    barcodes: [...productRows, ...ownRows],
   });
 
   return {

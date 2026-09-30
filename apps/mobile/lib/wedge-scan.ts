@@ -14,7 +14,12 @@
  *   problem a human should resolve, not a coin flip.
  */
 import type { SellLevel } from "@routeflow/pricing";
-import { levelsForScannedCode, normalizeScanCode, type ScanBarcodeRow } from "@routeflow/scanning";
+import {
+  levelsForScannedCode,
+  normalizeScanCode,
+  scanMatchIsForCode,
+  type ScanBarcodeRow,
+} from "@routeflow/scanning";
 
 /** Digit-only, ≥8 chars (shortest real barcode is EAN-8). Spaces trimmed. */
 export function looksLikeScanCode(term: string): boolean {
@@ -38,18 +43,6 @@ export interface ExactScanMatch<T> {
   match: T | null;
   /** True when MORE than one product matched (leave the list for a tap). */
   multiple: boolean;
-}
-
-/**
- * The server stamps `scanMatch` on the row the FIRST scan resolved, and builders snapshot that row, so a
- * later scan of ANOTHER code on the same product would inherit the first code's levels (scan box, then the
- * unit code -> +1 case). `scanMatch.levels` is only evidence for the code that produced it: the two codes
- * must share a `normalizeScanCode` candidate (a stub with no code is taken as-is) (UPC-A vs EAN-13 forms of one code still agree).
- */
-export function scanMatchIsForCode(term: string, matchCode: string | null | undefined): boolean {
-  if (!matchCode) return true; // the server always stamps a code; a codeless stub cannot be disproved
-  const mine = new Set(normalizeScanCode(term.trim()).map((c) => c.toLowerCase()));
-  return normalizeScanCode(matchCode.trim()).some((c) => mine.has(c.toLowerCase()));
 }
 
 /**

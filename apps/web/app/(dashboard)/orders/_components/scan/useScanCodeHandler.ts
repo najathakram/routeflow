@@ -4,8 +4,8 @@ import * as React from "react";
 import type { useToast } from "@routeflow/ui/web";
 import {
   levelsForScannedCode,
-  normalizeScanCode,
   resolveScanSellLevel,
+  scanMatchIsForCode,
   type ScanBarcodeRow,
 } from "@routeflow/scanning";
 import type { SellLevel } from "@routeflow/pricing";
@@ -41,12 +41,6 @@ export function isConnectivityError(err: unknown): boolean {
     e?.message === "Network Error" ||
     /timeout/i.test(e?.message ?? "")
   );
-}
-
-function scanMatchIsForCode(code: string, matchCode: string | undefined): boolean {
-  if (!matchCode) return true; // the server always stamps a code; a codeless stub cannot be disproved
-  const mine = new Set(normalizeScanCode(code.trim()).map((c) => c.toLowerCase()));
-  return normalizeScanCode(matchCode.trim()).some((c) => mine.has(c.toLowerCase()));
 }
 
 /**

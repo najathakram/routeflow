@@ -61,7 +61,10 @@ export function levelsForScannedCode(code: string, product: ScanLevelProduct): S
   // SA-595: rows supersede ONLY the barcode-column contribution; sku -> BOX and unitSku -> UNIT
   // always resolve (the server and every client share this one derivation).
   if (product.barcodes && product.barcodes.length > 0) {
-    for (const row of product.barcodes) if (hit(row.code)) found.add(row.level);
+    // Only BOX/UNIT rows carry a level; any other string on a row never becomes one.
+    for (const row of product.barcodes) {
+      if ((row.level === "BOX" || row.level === "UNIT") && hit(row.code)) found.add(row.level);
+    }
   } else if (hit(product.barcode)) {
     found.add("UNIT");
     if (typeof product.unitsPerBox === "number" && product.unitsPerBox > 1) found.add("BOX");
@@ -69,4 +72,17 @@ export function levelsForScannedCode(code: string, product: ScanLevelProduct): S
   if (hit(product.sku)) found.add("BOX");
   if (hit(product.unitSku)) found.add("UNIT");
   return [...found];
+}
+
+/**
+ * A server `scanMatch` is stamped by the FIRST scan that resolved a product, and the builders snapshot
+ * that row; its `levels` are evidence for `matchCode` only. A later scan of ANOTHER code on the same
+ * product must derive its own levels (box code, then unit code -> must not add a case). The two codes
+ * agree when they share a `normalizeScanCode` candidate (UPC-A vs EAN-13 forms of one code). A stub with
+ * no code (the server always sends one) cannot be disproved and is taken as-is.
+ */
+export function scanMatchIsForCode(code: string, matchCode: string | null | undefined): boolean {
+  if (!matchCode) return true;
+  const mine = new Set(normalizeScanCode(code.trim()).map((c) => c.toLowerCase()));
+  return normalizeScanCode(matchCode.trim()).some((c) => mine.has(c.toLowerCase()));
 }
