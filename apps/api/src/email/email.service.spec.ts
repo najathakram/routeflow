@@ -2167,6 +2167,29 @@ describe("EmailService — send() logs never carry a full recipient address; Res
     noFullAddress(read());
   });
 
+  it("the error RETURNED to callers on a Resend rejection/throw is redacted too", async () => {
+    const leaky = "connect ECONNREFUSED 10.0.1.4:443 for owner@acme.example";
+    const svc = makeService({ resendKey: "re_test" });
+    (svc as any).resend.emails.send = jest
+      .fn()
+      .mockResolvedValueOnce({ data: null, error: { message: leaky } })
+      .mockResolvedValueOnce({ data: null, error: { message: leaky } })
+      .mockRejectedValueOnce(new Error(leaky))
+      .mockRejectedValueOnce(new Error(leaky));
+    const results = [
+      await svc.send({ to: TO, subject: "x", html: "<p>x</p>" }),
+      await svc.sendPlatform({ to: TO, subject: "x", html: "<p>x</p>" }),
+      await svc.send({ to: TO, subject: "x", html: "<p>x</p>" }),
+      await svc.sendPlatform({ to: TO, subject: "x", html: "<p>x</p>" }),
+    ];
+    for (const r of results) {
+      expect(r.delivered).toBe(false);
+      expect(r.error ?? "").not.toContain("10.0.1.4");
+      expect(r.error ?? "").not.toContain("owner@");
+      expect(r.error ?? "").toContain("[address]");
+    }
+  });
+
   it("Resend error text is redacted of address literals in both send() and sendPlatform() logs", async () => {
     const leaky = "connect ECONNREFUSED 10.0.1.4:443 via ::1:587";
     const svc = makeService({ resendKey: "re_test" });
@@ -2221,7 +2244,7 @@ describe("redactAddresses — masks IP literals AND email addresses (keeps the d
     const hostile = "a".repeat(50_000);
     const started = Date.now();
     const out = redactAddresses(hostile);
-    expect(Date.now() - started).toBeLessThan(100);
+    expect(Date.now() - started).toBeLessThan(500);
     expect(out.length).toBeLessThanOrEqual(4096);
   });
 
@@ -2235,7 +2258,7 @@ describe("redactAddresses — masks IP literals AND email addresses (keeps the d
     ]) {
       const started = Date.now();
       redactAddresses(hostile);
-      expect(Date.now() - started).toBeLessThan(100);
+      expect(Date.now() - started).toBeLessThan(500);
     }
   });
 

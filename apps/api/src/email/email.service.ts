@@ -192,7 +192,8 @@ const REDACT_MAX_INPUT = 4096;
  * chars blocked the event loop for ~12 s). The IPv6 pattern is intentionally NOT
  * \b-anchored at the start and requires >=2 colon groups: that catches "::"-compressed
  * forms Node actually emits (e.g. "::1:587", ":::53408"), which a \b-anchored pattern would
- * miss. Over-redaction of address-shaped tokens in this fallback branch is acceptable.
+ * miss. Over-redaction of address-shaped tokens in this fallback branch is acceptable. The email
+ * pattern needs a dotted domain, so a bare `user@localhost` is deliberately not masked.
  */
 export function redactAddresses(msg: string): string {
   return (
@@ -1379,9 +1380,14 @@ export class EmailService {
         if ((result as any)?.error) {
           const msg = (result as any).error?.message ?? "Resend rejected the message";
           this.logger.error(
-            `Resend rejected email to ${this.logRecipient(params.to)}: ${redactAddresses(msg)}`,
+            `Resend rejected email to ${this.logRecipient(params.to)}: ${redactAddresses(String(msg))}`,
           );
-          return { delivered: false, transport: "resend", error: msg, smtpFallbackReason };
+          return {
+            delivered: false,
+            transport: "resend",
+            error: redactAddresses(String(msg)),
+            smtpFallbackReason,
+          };
         }
         this.logger.log(
           `Email sent via Resend to ${this.logRecipient(params.to)} — id: ${(result.data as any)?.id}`,
@@ -1404,7 +1410,7 @@ export class EmailService {
         return {
           delivered: false,
           transport: "resend",
-          error: err?.message ?? "Resend send failed",
+          error: redactAddresses(String(err?.message ?? "Resend send failed")),
           smtpFallbackReason,
         };
       }
@@ -1502,9 +1508,9 @@ export class EmailService {
         if ((result as any)?.error) {
           const msg = (result as any).error?.message ?? "Resend rejected the message";
           this.logger.error(
-            `Resend rejected platform email to ${this.logRecipient(params.to)}: ${redactAddresses(msg)}`,
+            `Resend rejected platform email to ${this.logRecipient(params.to)}: ${redactAddresses(String(msg))}`,
           );
-          return { delivered: false, transport: "resend", error: msg };
+          return { delivered: false, transport: "resend", error: redactAddresses(String(msg)) };
         }
         this.logger.log(
           `Platform email sent via Resend to ${this.logRecipient(params.to)} — id: ${(result.data as any)?.id}`,
@@ -1517,7 +1523,7 @@ export class EmailService {
         return {
           delivered: false,
           transport: "resend",
-          error: err?.message ?? "Resend send failed",
+          error: redactAddresses(String(err?.message ?? "Resend send failed")),
         };
       }
     }
