@@ -40,6 +40,7 @@ import { EncryptionService } from "../common/encryption.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { OrdersService } from "./orders.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { BuyerController } from "../buyer/buyer.controller";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -762,6 +763,8 @@ describeDb("#2717 M3 qty-only RECIPE line composition — real Postgres", () => 
   };
   const lineShape = (l: Awaited<ReturnType<typeof linesOf>>[number]) => ({
     cols: cols(l),
+    // non-regulated products only: both paths store 0/null here (see the regulated it.todo below).
+    categoryTaxAmount: Number(l.categoryTaxAmount ?? 0),
     // component product ids differ per world; compare the ordered quantities.
     components: l.components.map((c) => c.qty),
   });
@@ -797,6 +800,62 @@ describeDb("#2717 M3 qty-only RECIPE line composition — real Postgres", () => 
       if (kind === "recipe") {
         expect(viaMerge!.components.reduce((n, c) => n + c.qty, 0)).toBe(qty * 24);
       }
+    },
+  );
+
+  it.todo(
+    "Q8 LEAD-REVIEW (regulated product): create() writes categoryTaxAmount, the replace-all new-line branch stamps only the rate trio -- assert parity here once a regulated-category seed exists; deliberately NOT asserted (would hide a possible difference)",
+  );
+
+  // Q8e: END TO END through the REAL BuyerController.createOrder (guards/interceptors bypassed by
+  // calling the method directly): no active order -> create() vs active order -> foldMergeItems ->
+  // updateOrderItems({replaceAll}). Each path in its own world.
+  const buyerController = () =>
+    Object.assign(Object.create(BuyerController.prototype), {
+      logger: new Logger(BuyerController.name),
+      ordersService: orders,
+      prisma,
+    }) as BuyerController;
+  const ctxOf = (w: World, b: { customerId: string; userId: string }) => ({
+    customerId: b.customerId,
+    tenantId: w.tenantId,
+    tenantSlug: w.slug,
+    userId: b.userId,
+  });
+
+  it.each([
+    ["recipe product", "recipe"],
+    ["boxed upb 24 plain product", "boxed"],
+  ] as const)(
+    "Q8e controller: plain buyer qty 3 on a %s via BuyerController.createOrder, create path == fold path",
+    async (_n, kind) => {
+      const wA = await seedWorld(`q8ea-${kind}`);
+      const pA = await shapeOf(wA, kind);
+      const bA = await seedBuyer(wA, `q8ea-${kind}`);
+      const resA = (await inTenant(wA.tenantId, () =>
+        buyerController().createOrder(
+          { items: [{ productId: pA.id, qty: 3 }] } as any,
+          ctxOf(wA, bA),
+        ),
+      )) as { id: string };
+      const viaCreate = (await linesOf(resA.id)).find((l) => l.productId === pA.id);
+
+      const wB = await seedWorld(`q8eb-${kind}`);
+      const pB = await shapeOf(wB, kind);
+      const bB = await seedActiveBuyerOrder(wB, `q8eb-${kind}`);
+      const resB = (await inTenant(wB.tenantId, () =>
+        buyerController().createOrder(
+          { items: [{ productId: pB.id, qty: 3 }] } as any,
+          ctxOf(wB, bB),
+        ),
+      )) as { id: string };
+      expect(resB.id).toBe(bB.existing.id); // it really took the fold path
+      const viaFold = (await linesOf(bB.existing.id)).find((l) => l.productId === pB.id);
+
+      expect(viaCreate).toBeDefined();
+      expect(viaFold).toBeDefined();
+      expect(Number(viaFold!.qty)).toBe(3);
+      expect(lineShape(viaFold!)).toEqual(lineShape(viaCreate!));
     },
   );
 
