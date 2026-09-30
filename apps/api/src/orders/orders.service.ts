@@ -10,7 +10,7 @@ import {
   Optional,
   ServiceUnavailableException,
 } from "@nestjs/common";
-import { assertNoNewHiddenProduct, isBuyerVisibleBase } from "../buyer/buyer-product-visibility";
+import { assertBuyerMayOrder } from "../buyer/buyer-product-visibility";
 import { randomUUID } from "crypto";
 import { LeaderCron } from "../common/cron-lock";
 import { withAfterCommit } from "../common/after-commit";
@@ -1617,18 +1617,14 @@ export class OrdersService implements OnApplicationBootstrap {
     // archived) line; every other caller — staff create, buyer createOrder —
     // still rejects a new archived line (REG-B142-E/F).
     if (!options.allowArchived) {
-      // A portal-hidden product (own flag or hidden parent) is refused to a BUYER exactly like
-      // an archived one; staff are unaffected.
-      const archivedCreate = products.find(
-        (p: any) =>
-          p.isActive === false ||
-          (user.role === UserRole.CUSTOMER && !isBuyerVisibleBase({ ...p, isActive: true })),
-      );
+      const archivedCreate = products.find((p: any) => p.isActive === false);
       if (archivedCreate) {
         throw new BadRequestException(
           `Product ${archivedCreate.sku ?? archivedCreate.name} is archived`,
         );
       }
+      // A portal-hidden product is a 409 SELLING_RESTRICTED for a BUYER (WS6); staff are unaffected.
+      if (user.role === UserRole.CUSTOMER) assertBuyerMayOrder(products, new Set());
     }
 
     // RF-4: load the regulated section (TrackedCategory) tax config for every
@@ -3179,7 +3175,7 @@ export class OrdersService implements OnApplicationBootstrap {
             include: { parent: { select: { portalVisible: true } } },
           });
           if (user.role === UserRole.CUSTOMER)
-            assertNoNewHiddenProduct(products, new Set(order.lineItems.map((l) => l.productId!)));
+            assertBuyerMayOrder(products, new Set(order.lineItems.map((l) => l.productId!)));
           const productMap = new Map<string, any>(products.map((p: any) => [p.id, p]));
           // B297 (SA-098a): this pack-line create() is disconnected from `uctx.categoryMap`
           // (which only covers unit-aware `unitCtx.products`) — its own scoped load.
@@ -3606,16 +3602,13 @@ export class OrdersService implements OnApplicationBootstrap {
             // product at this interactive edge only — a qty/price edit or removal
             // of a line that already exists never reaches `addProductIds` (it has
             // an `item.id`), so archived lines already on the order keep working.
-            const archivedAdd = addProducts.find(
-              (p: any) =>
-                p.isActive === false ||
-                (user?.role === UserRole.CUSTOMER && !isBuyerVisibleBase({ ...p, isActive: true })),
-            );
+            const archivedAdd = addProducts.find((p: any) => p.isActive === false);
             if (archivedAdd) {
               throw new BadRequestException(
                 `Product ${archivedAdd.sku ?? archivedAdd.name} is archived`,
               );
             }
+            if (user?.role === UserRole.CUSTOMER) assertBuyerMayOrder(addProducts, new Set());
 
             for (const item of dto.items) {
               // New unlisted item (no id, no productId, has name + unitPrice).

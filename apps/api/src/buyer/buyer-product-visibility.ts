@@ -1,4 +1,5 @@
-import { BadRequestException } from "@nestjs/common";
+import { ConflictException } from "@nestjs/common";
+import type { BuyerBlockedLine, BuyerSellingRestrictedError } from "@routeflow/types";
 import type { Prisma } from "@prisma/client";
 import { isSellableProduct, sellableProductWhere } from "../products/sellable-product-where";
 
@@ -80,35 +81,57 @@ export function isBuyerVisibleBase(p: Parameters<typeof isBuyerVisibleProduct>[1
   return isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, p);
 }
 
-/**
- * Buyer replace-all gate: the first product in `products` that is portal-hidden (own flag or
- * hidden parent) and that the order does not already hold. Lines already on the order stay
- * editable; archived products are deliberately not judged here.
- */
-export function firstNewHiddenProduct<
-  T extends {
-    id: string;
-    portalVisible?: boolean | null;
-    parent?: { portalVisible?: boolean | null } | null;
-  },
->(products: T[], heldProductIds: Set<string>): T | undefined {
-  return products.find(
-    (p) =>
-      !heldProductIds.has(p.id) && (p.portalVisible === false || p.parent?.portalVisible === false),
-  );
+/** The product facts the refusal reads: a hidden product is named in the 409 body. */
+interface OrderableProduct {
+  id: string;
+  name?: string;
+  isActive?: boolean | null;
+  kind?: string | null;
+  portalVisible?: boolean | null;
+  parent?: { portalVisible?: boolean | null } | null;
 }
 
-/** Throws the archived-style 400 for the first new hidden product (buyer replace-all). */
-export function assertNoNewHiddenProduct(
-  products: Array<{
-    id: string;
-    sku?: string | null;
-    name?: string;
-    portalVisible?: boolean | null;
-    parent?: { portalVisible?: boolean | null } | null;
-  }>,
-  heldProductIds: Set<string>,
+/**
+ * The ONE buyer order-write gate (SA-606 WS6 "Refusal"): a BUYER order naming a NEW product the catalog would hide
+ * (portal-hidden, under a hidden parent, or a FAMILY container) is a 409 in the EXISTING buyer envelope,
+ * `{ code: "SELLING_RESTRICTED", blockedLines: [{ productId, productName, reason: "HIDDEN_FROM_PORTAL" }] }`, so the
+ * cart's blocked-lines dialog opens. EVERY new hidden product is named, not the first. `heldProductIds` are lines the
+ * order already holds (replace-all keeps them editable). An archived product (`isActive === false`) is not judged
+ * here: the archived 400 rules stay as they were. The reason appears on buyer lines ONLY for this case; a state or ban
+ * reason stays staff-only (selling-restrictions.service.ts).
+ */
+export function assertBuyerMayOrder(
+  products: readonly OrderableProduct[],
+  heldProductIds: ReadonlySet<string>,
 ): void {
-  const hidden = firstNewHiddenProduct(products, heldProductIds);
-  if (hidden) throw new BadRequestException(`Product ${hidden.sku ?? hidden.name} is archived`);
+  const hidden = products.filter(
+    (p) =>
+      p.isActive !== false &&
+      !heldProductIds.has(p.id) &&
+      !isBuyerVisibleBase({
+        id: p.id,
+        isActive: true,
+        kind: p.kind ?? "STANDARD",
+        // A missing flag is judged on the loaded row; callers load the full row (+ parent) so it is never absent.
+        portalVisible: p.portalVisible !== false,
+        parent: p.parent ? { portalVisible: p.parent.portalVisible !== false } : null,
+      }),
+  );
+  if (hidden.length === 0) return;
+  const blockedLines: BuyerBlockedLine[] = hidden.map((p) => ({
+    productId: p.id,
+    productName: p.name ?? "An item",
+    reason: "HIDDEN_FROM_PORTAL",
+  }));
+  throw new ConflictException({
+    code: "SELLING_RESTRICTED",
+    message:
+      blockedLines.length === 1
+        ? `"${blockedLines[0].productName}" isn't available for online ordering.`
+        : `${blockedLines.length} items on this order aren't available for online ordering: ${blockedLines
+            .slice(0, 3)
+            .map((l) => `"${l.productName}"`)
+            .join(", ")}${blockedLines.length > 3 ? ` and ${blockedLines.length - 3} more` : ""}.`,
+    blockedLines,
+  } satisfies BuyerSellingRestrictedError);
 }
