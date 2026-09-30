@@ -21,6 +21,11 @@
 //   BARCODE_TAKEN — `body.code` of the 409 a product barcode write answers when another product
 //                    of the same tenant already holds the code (#2717 M1, SA-572b Q3); body also
 //                    carries `barcode` and the holder's `productId`.
+//   CODE_TAKEN     — `body.code` of the 409 when a product sku / unit code (a barcode answers
+//                    BARCODE_TAKEN) is held by another ACTIVE product of the tenant (SA-603a); body
+//                    carries `field` (sku | unitSku), `value`, the holder's `productId` and `productName`.
+//   NAME_TAKEN     — `body.code` of the 409 when reactivating a product whose name an ACTIVE product of
+//                    the same scope now holds (SA-603a/b); body carries the holder's `productId`/`productName`.
 //   RECIPE_IMMUTABLE — `body.code` of the 409 when a recipe that is ACTIVE or RETIRED is edited
 //                    in place (#2717 M2, I3); clone it with POST /recipes/:id/versions instead.
 //   RECIPE_CATEGORY_LOCKED — `body.code` of the 409 when a product that sits in a non-RETIRED
@@ -56,6 +61,8 @@ export const API_ERROR_CODES = {
   ORDER_LINE_CHANGED: "ORDER_LINE_CHANGED",
   NSF_LINE_UNTAXED: "NSF_LINE_UNTAXED",
   BARCODE_TAKEN: "BARCODE_TAKEN",
+  CODE_TAKEN: "CODE_TAKEN",
+  NAME_TAKEN: "NAME_TAKEN",
   RECIPE_IMMUTABLE: "RECIPE_IMMUTABLE",
   RECIPE_CATEGORY_LOCKED: "RECIPE_CATEGORY_LOCKED",
   RECIPE_FAMILY_LOCKED: "RECIPE_FAMILY_LOCKED",

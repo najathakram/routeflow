@@ -1266,7 +1266,7 @@ export class ProductsService {
       }
       if (deactivating) {
         await releaseProductCodes(tx, { tenantId, productId: id });
-        row = await tx.product.findFirst({ where: { id } });
+        row = await tx.product.findFirst({ where: { id, tenantId } });
       }
       // Sync from the row the UPDATE returned (the post-write values, under its row lock), not from
       // `existing`: a concurrent image upload between the read and this write would otherwise be
