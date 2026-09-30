@@ -3,6 +3,8 @@ import { BadRequestException, ConflictException } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { UserRole } from "@prisma/client";
 import { CreditNoteReissueService } from "./credit-note-reissue.service";
+import { codeOf, cnBad } from "./credit-note-errors";
+import { API_ERROR_CODES as CODES } from "../common/api-error-codes";
 import { CreditNotesService } from "./credit-notes.service";
 import { CreditNotesController } from "./credit-notes.controller";
 import { PrismaService } from "../prisma/prisma.service";
@@ -161,7 +163,9 @@ describe("CreditNoteReissueService (#2648)", () => {
         "Credit line amount (90) exceeds invoice line subtotal (50)",
         "Credit line qty (9) exceeds invoice line qty (5)",
       ]) {
-        creditNotes.validateAndBuildCnItems.mockRejectedValueOnce(new BadRequestException(msg));
+        creditNotes.validateAndBuildCnItems.mockRejectedValueOnce(
+          cnBad(CODES.CREDIT_NOTE_LINE_INVALID, msg),
+        );
         const err = await service
           .reissue("cn-old", { amount: 20, items: [{ invoiceItemId: "li", amount: 20 }] }, "k", "u")
           .catch((e: unknown) => e);
@@ -172,7 +176,8 @@ describe("CreditNoteReissueService (#2648)", () => {
 
     it("...but WITH prior credits it is the state conflict (409)", async () => {
       creditNotes.validateAndBuildCnItems.mockRejectedValueOnce(
-        new BadRequestException(
+        cnBad(
+          CODES.CREDIT_NOTE_OVER_HEADROOM,
           "Credit line amount (20) plus prior credits (40) would exceed invoice line subtotal (50)",
         ),
       );
@@ -196,9 +201,11 @@ describe("CreditNoteReissueService (#2648)", () => {
     });
 
     it("a credit consumed somewhere a void cannot reverse is a 409 BEFORE the tx (no number burned)", async () => {
-      creditNotes.voidWithReversalRefusal.mockResolvedValue(
-        "Part of this credit was used somewhere it cannot be reversed from here (RETURN_CREDIT_CONSUMED). Nothing was changed.",
-      );
+      creditNotes.voidWithReversalRefusal.mockResolvedValue({
+        code: CODES.CREDIT_NOTE_CREDIT_CONSUMED,
+        message:
+          "Part of this credit was used somewhere it cannot be reversed from here (RETURN_CREDIT_CONSUMED). Nothing was changed.",
+      });
       await expect(service.reissue("cn-old", { amount: 20 }, "key-1", "u")).rejects.toThrow(
         /RETURN_CREDIT_CONSUMED/,
       );
@@ -211,7 +218,9 @@ describe("CreditNoteReissueService (#2648)", () => {
       "Credit line amount must be greater than 0",
       "Credit line amounts (25) must sum to the credit note amount (20)",
     ])("a line-shape error is a 400, not a 409: %s", async (msg) => {
-      creditNotes.validateAndBuildCnItems.mockRejectedValueOnce(new BadRequestException(msg));
+      creditNotes.validateAndBuildCnItems.mockRejectedValueOnce(
+        cnBad(CODES.CREDIT_NOTE_LINE_INVALID, msg),
+      );
       const err = await service
         .reissue("cn-old", { amount: 20, items: [{ invoiceItemId: "li-9", amount: 20 }] }, "k", "u")
         .catch((e: unknown) => e);
@@ -269,11 +278,121 @@ describe("CreditNoteReissueService (#2648)", () => {
 
     it("a source invoice that is gone or no longer creditable stays a 409", async () => {
       creditNotes.validateAndBuildCnItems.mockRejectedValueOnce(
-        new BadRequestException("Invoice not found"),
+        cnBad(CODES.CREDIT_NOTE_SOURCE_GONE, "Invoice not found"),
       );
       await expect(service.reissue("cn-old", { amount: 20 }, "key-1", "u")).rejects.toBeInstanceOf(
         ConflictException,
       );
+    });
+  });
+
+  describe("PR-C: every refusal carries its CREDIT_NOTE_* code and status", () => {
+    const p2034 = () => Object.assign(new Error("write conflict"), { code: "P2034" });
+    const run = (over: Record<string, unknown> = {}, key: string | undefined = "k") =>
+      service.reissue("cn-old", { amount: 20, ...over } as any, key || undefined, "u").then(
+        () => null,
+        (e: unknown) => e as any,
+      );
+    const expectRefusal = async (err: any, code: string, status: number) => {
+      expect(err?.getStatus?.()).toBe(status);
+      expect(codeOf(err)).toBe(code);
+    };
+
+    it("no Idempotency-Key => KEY_REQUIRED 400", async () => {
+      await expectRefusal(await run({}, ""), CODES.CREDIT_NOTE_KEY_REQUIRED, 400);
+    });
+    it("a VOID note => VOID_NOT_EDITABLE 409", async () => {
+      prisma.creditNote.findFirst.mockResolvedValue({ ...OLD, status: "VOID" });
+      await expectRefusal(await run(), CODES.CREDIT_NOTE_VOID_NOT_EDITABLE, 409);
+    });
+    it("a live return-backed note => RETURN_BACKED 409", async () => {
+      prisma.return.findFirst.mockResolvedValue({ returnNumber: "RET-1" });
+      await expectRefusal(await run(), CODES.CREDIT_NOTE_RETURN_BACKED, 409);
+    });
+    it("credit consumed out of reach => CREDIT_CONSUMED 409 (pre-tx)", async () => {
+      creditNotes.voidWithReversalRefusal.mockResolvedValue({
+        code: CODES.CREDIT_NOTE_CREDIT_CONSUMED,
+        message: "consumed",
+      });
+      await expectRefusal(await run(), CODES.CREDIT_NOTE_CREDIT_CONSUMED, 409);
+    });
+    it("an orphan with line rows (its source was deleted) => SOURCE_GONE 409", async () => {
+      prisma.creditNote.findFirst.mockResolvedValue({ ...OLD, invoiceId: null });
+      prisma.creditNoteItem.count.mockResolvedValue(1);
+      await expectRefusal(await run(), CODES.CREDIT_NOTE_SOURCE_GONE, 409);
+    });
+    it("no-invoice note increased => NO_SOURCE_CAP 409", async () => {
+      prisma.creditNote.findFirst.mockResolvedValue({ ...OLD, invoiceId: null, amount: 50 });
+      await expectRefusal(await run({ amount: 60 }), CODES.CREDIT_NOTE_NO_SOURCE_CAP, 409);
+    });
+    it("cap refusals keep their code but become 409: OVER_HEADROOM, SOURCE_GONE", async () => {
+      creditNotes.validateAndBuildCnItems.mockRejectedValueOnce(
+        cnBad(CODES.CREDIT_NOTE_OVER_HEADROOM, "would exceed"),
+      );
+      await expectRefusal(await run(), CODES.CREDIT_NOTE_OVER_HEADROOM, 409);
+      creditNotes.validateAndBuildCnItems.mockRejectedValueOnce(
+        cnBad(CODES.CREDIT_NOTE_SOURCE_GONE, "Invoice not found"),
+      );
+      await expectRefusal(await run(), CODES.CREDIT_NOTE_SOURCE_GONE, 409);
+    });
+    it("a malformed line keeps LINE_INVALID 400", async () => {
+      creditNotes.validateAndBuildCnItems.mockRejectedValueOnce(
+        cnBad(CODES.CREDIT_NOTE_LINE_INVALID, "bad line"),
+      );
+      await expectRefusal(
+        await run({ items: [{ invoiceItemId: "li", amount: 20 }] }),
+        CODES.CREDIT_NOTE_LINE_INVALID,
+        400,
+      );
+    });
+    it("lines on a no-invoice note => LINE_INVALID 400", async () => {
+      prisma.creditNote.findFirst.mockResolvedValue({ ...OLD, invoiceId: null });
+      await expectRefusal(
+        await run({ items: [{ invoiceItemId: "li", amount: 20 }] }),
+        CODES.CREDIT_NOTE_LINE_INVALID,
+        400,
+      );
+    });
+    it("a line-linked note without lines => LINES_REQUIRED 400", async () => {
+      prisma.creditNoteItem.count.mockResolvedValue(2);
+      await expectRefusal(await run(), CODES.CREDIT_NOTE_LINES_REQUIRED, 400);
+    });
+    it("an expired note without a new expiry, or a past expiresAt => EXPIRY_PAST 400", async () => {
+      prisma.creditNote.findFirst.mockResolvedValue({ ...OLD, expiresAt: new Date("2020-01-01") });
+      await expectRefusal(await run(), CODES.CREDIT_NOTE_EXPIRY_PAST, 400);
+      prisma.creditNote.findFirst.mockResolvedValue({ ...OLD });
+      await expectRefusal(
+        await run({ expiresAt: "2020-01-01T00:00:00.000Z" }),
+        CODES.CREDIT_NOTE_EXPIRY_PAST,
+        400,
+      );
+    });
+    it("exhausted retries, a number collision, or a void that raced => CHANGED_CONCURRENTLY 409", async () => {
+      creditNotes.voidWithReversalInTx.mockRejectedValue(p2034());
+      await expectRefusal(await run(), CODES.CREDIT_NOTE_CHANGED_CONCURRENTLY, 409);
+      creditNotes.voidWithReversalInTx.mockReset();
+      creditNotes.voidWithReversalInTx.mockResolvedValue({ creditNote: {}, reopened: [] });
+      creditNotes.insertCreditNoteInTx.mockRejectedValueOnce(
+        Object.assign(new Error("u"), { code: "P2002" }),
+      );
+      await expectRefusal(await run(), CODES.CREDIT_NOTE_CHANGED_CONCURRENTLY, 409);
+      creditNotes.voidWithReversalInTx.mockRejectedValueOnce(
+        cnBad(CODES.CREDIT_NOTE_CHANGED_CONCURRENTLY, "changed while it was being voided"),
+      );
+      await expectRefusal(await run(), CODES.CREDIT_NOTE_CHANGED_CONCURRENTLY, 409);
+    });
+    it("a void that raced onto a return keeps the reissue's RETURN_BACKED 409", async () => {
+      creditNotes.voidWithReversalInTx.mockRejectedValueOnce(
+        cnBad(CODES.CREDIT_NOTE_RETURN_BACKED, "backs a return (RET-5)"),
+      );
+      await expectRefusal(await run(), CODES.CREDIT_NOTE_RETURN_BACKED, 409);
+    });
+    it("the same key with a different body => KEY_REUSED 409", async () => {
+      idem.check.mockResolvedValue({
+        fingerprint: "other",
+        response: { voided: {}, creditNote: {}, unapplied: [] },
+      });
+      await expectRefusal(await run(), CODES.CREDIT_NOTE_KEY_REUSED, 409);
     });
   });
 
@@ -293,7 +412,10 @@ describe("CreditNoteReissueService (#2648)", () => {
 
   it("a refused dry run is a 409 and never reserves a number (no number burned)", async () => {
     creditNotes.validateAndBuildCnItems.mockRejectedValueOnce(
-      new BadRequestException("Credit note amount (99) would exceed invoice total (50)."),
+      cnBad(
+        CODES.CREDIT_NOTE_OVER_HEADROOM,
+        "Credit note amount (99) would exceed invoice total (50).",
+      ),
     );
 
     await expect(service.reissue("cn-old", { amount: 99 }, "key-1", "u")).rejects.toBeInstanceOf(
@@ -306,7 +428,7 @@ describe("CreditNoteReissueService (#2648)", () => {
   it("the in-tx re-cap refusing after the void is a 409 (the reserved number burns, like create())", async () => {
     creditNotes.validateAndBuildCnItems
       .mockResolvedValueOnce([])
-      .mockRejectedValueOnce(new BadRequestException("would exceed invoice total"));
+      .mockRejectedValueOnce(cnBad(CODES.CREDIT_NOTE_OVER_HEADROOM, "would exceed invoice total"));
 
     await expect(service.reissue("cn-old", { amount: 20 }, "key-1", "u")).rejects.toThrow(
       new ConflictException("would exceed invoice total"),
@@ -332,7 +454,8 @@ describe("CreditNoteReissueService (#2648)", () => {
 
   it("a void refusal only a race reaches is re-mapped to 409; the return case keeps the reissue copy", async () => {
     creditNotes.voidWithReversalInTx.mockRejectedValueOnce(
-      new BadRequestException(
+      cnBad(
+        CODES.CREDIT_NOTE_RETURN_BACKED,
         "This credit note backs a return (RET-0005). Cancel the return instead of voiding its credit.",
       ),
     );
@@ -341,7 +464,8 @@ describe("CreditNoteReissueService (#2648)", () => {
     );
 
     creditNotes.voidWithReversalInTx.mockRejectedValueOnce(
-      new BadRequestException(
+      cnBad(
+        CODES.CREDIT_NOTE_CHANGED_CONCURRENTLY,
         "This credit note changed while it was being voided. Nothing was changed; try again.",
       ),
     );
@@ -580,6 +704,93 @@ describe("validateAndBuildCnItems excludeCreditNoteId (SA-535b(1))", () => {
     invoiceId: "inv-1",
     amount,
     items,
+  });
+
+  describe("PR-C: validateAndBuildCnItems refusals carry their CREDIT_NOTE_* code", () => {
+    const codeFrom = async (p: Promise<unknown>) =>
+      p.then(
+        () => null,
+        (e: unknown) => codeOf(e),
+      );
+
+    it("over the invoice total (prior credits) => OVER_HEADROOM", async () => {
+      expect(await codeFrom(service.validateAndBuildCnItems(prisma, dto(10)))).toBe(
+        CODES.CREDIT_NOTE_OVER_HEADROOM,
+      );
+    });
+    it("the source invoice is missing, or dead (VOID) => SOURCE_GONE", async () => {
+      prisma.invoice.findFirst.mockResolvedValueOnce(null);
+      expect(await codeFrom(service.validateAndBuildCnItems(prisma, dto(10)))).toBe(
+        CODES.CREDIT_NOTE_SOURCE_GONE,
+      );
+      prisma.invoice.findFirst.mockResolvedValueOnce({
+        total: 50,
+        customerId: "cust-1",
+        status: "VOID",
+        items: [],
+      });
+      expect(
+        await codeFrom(
+          service.validateAndBuildCnItems(prisma, dto(10), { excludeCreditNoteId: "cn-old" }),
+        ),
+      ).toBe(CODES.CREDIT_NOTE_SOURCE_GONE);
+    });
+    it("a line that is not on the invoice, or amounts that do not sum => LINE_INVALID", async () => {
+      const ex = { excludeCreditNoteId: "cn-old" };
+      expect(
+        await codeFrom(
+          service.validateAndBuildCnItems(
+            prisma,
+            dto(10, [{ invoiceItemId: "nope", amount: 10 }]),
+            ex,
+          ),
+        ),
+      ).toBe(CODES.CREDIT_NOTE_LINE_INVALID);
+      expect(
+        await codeFrom(
+          service.validateAndBuildCnItems(
+            prisma,
+            dto(10, [{ invoiceItemId: "ii-1", amount: 4 }]),
+            ex,
+          ),
+        ),
+      ).toBe(CODES.CREDIT_NOTE_LINE_INVALID);
+    });
+    it("a line over its subtotal with NO prior credit => LINE_INVALID; WITH prior => OVER_HEADROOM", async () => {
+      const ex = { excludeCreditNoteId: "cn-old" };
+      expect(
+        await codeFrom(
+          service.validateAndBuildCnItems(
+            prisma,
+            dto(60, [{ invoiceItemId: "ii-1", amount: 60 }]),
+            ex,
+          ),
+        ),
+      ).toBe(CODES.CREDIT_NOTE_OVER_HEADROOM); // header cap first: 60 > 50
+      prisma.invoice.findFirst.mockResolvedValue({
+        total: 500,
+        customerId: "cust-1",
+        status: "SENT",
+        items: [
+          { id: "ii-1", subtotal: 50, qty: 5, trackedCategoryId: null, categoryTaxAmount: 0 },
+        ],
+      });
+      prisma.creditNote.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+      prisma.creditNoteItem.findMany.mockResolvedValue([]);
+      expect(
+        await codeFrom(
+          service.validateAndBuildCnItems(prisma, dto(60, [{ invoiceItemId: "ii-1", amount: 60 }])),
+        ),
+      ).toBe(CODES.CREDIT_NOTE_LINE_INVALID);
+      prisma.creditNoteItem.findMany.mockResolvedValue([
+        { invoiceItemId: "ii-1", amount: 30, qty: 3 },
+      ]);
+      expect(
+        await codeFrom(
+          service.validateAndBuildCnItems(prisma, dto(30, [{ invoiceItemId: "ii-1", amount: 30 }])),
+        ),
+      ).toBe(CODES.CREDIT_NOTE_OVER_HEADROOM);
+    });
   });
 
   it("with the exclude, a fully-credited invoice passes a new amount ≤ its total, header and lines", async () => {
