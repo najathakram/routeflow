@@ -87,7 +87,7 @@ function check(name, cond, extra) {
   else { failures++; console.log(`  FAIL ${name}${extra ? ` — ${extra}` : ''}`) }
 }
 const byLabel = (calls, p) => calls.filter((c) => c.label.startsWith(p))
-const FULL_IDS = ['claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5', 'claude-haiku-4-5']
+const FULL_IDS = ['claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-4-5']
 
 // The house rules every scenario re-checks (mirrors dry-run.mjs's houseRules).
 function houseRules(calls) {
@@ -181,7 +181,7 @@ const scenarios = [
       // fix's confirmed credit goes there -- never a blanket 'Final pass'.
       check('confirmedByPhase["Gate & Review"] is 1 (the finding originated in Review; F4 credits the originating phase)', r.confirmedByPhase['Gate & Review'] === 1, JSON.stringify(r.confirmedByPhase))
       check('confirmedByPhase["Final pass"] stays 0 (F4 -- crediting no longer defaults there)', r.confirmedByPhase['Final pass'] === 0, JSON.stringify(r.confirmedByPhase))
-      check('the executor ran on the mechanical tier: Sonnet at low effort', byLabel(calls, 'execute:').every((c) => c.model === 'claude-sonnet-5' && c.effort === 'low'))
+      check('the executor ran on the mechanical tier: Sonnet 5.5 at medium effort (never low for code, ruling 2026-09-29)', byLabel(calls, 'execute:').every((c) => c.model === 'claude-sonnet-5-5' && c.effort === 'medium'))
       check('phase() marked Baseline, Implement, Gate & Review, Fix, Final pass — one fix round entered Fix', JSON.stringify(phaseCalls) === JSON.stringify(['Baseline', 'Implement', 'Gate & Review', 'Fix', 'Final pass']), JSON.stringify(phaseCalls))
       houseRules(calls)
     },
@@ -227,19 +227,20 @@ const scenarios = [
     assert({ result: r, calls }) {
       const reviews = byLabel(calls, 'review:')
       check('exactly two review lenses ran', reviews.length === 2, reviews.map((c) => c.label))
-      check('both lenses ran on Opus at high effort', reviews.every((c) => c.model === 'claude-opus-5-5' && c.effort === 'high'))
+      check('both lenses ran on Opus at medium effort (routine packages; high only when a package is HIGH-risk, ruling 2026-09-29)', reviews.every((c) => c.model === 'claude-opus-5-5' && c.effort === 'medium'))
       check('both lenses tagged PHASE: Gate & Review', reviews.every((c) => c.phase === 'Gate & Review'))
       check('a warm-up preceded the two-lens wave', byLabel(calls, 'warmup').length >= 1)
     },
   },
   {
-    name: 'I. Fable fix-planner declines (returns null) — retried once on Opus at xhigh, never silently skipped',
+    name: 'I. Opus fix-planner (high) returns nothing — retried once on Opus at xhigh, never silently skipped',
     args: baseArgs(),
     reviewFindings: [finding()],
     overrides: { 'fix-plan': (label) => (label === 'fix-plan' ? null : { fixes: [{ findingRef: 0, action: 'fix', design: 'apply the hint', invariant: 'x', testPin: '', executorTier: 'sonnet' }], deferred: [], note: 'fallback' }) },
     assert({ result: r, calls }) {
       const plans = calls.filter((c) => c.label === 'fix-plan' || c.label === 'fix-plan:fallback')
-      check('fix-plan (Fable) then fix-plan:fallback (Opus xhigh) both ran', plans.length === 2 && plans[0].label === 'fix-plan' && plans[1].label === 'fix-plan:fallback', JSON.stringify(plans.map((c) => c.label)))
+      check('fix-plan (Opus high) then fix-plan:fallback (Opus xhigh) both ran', plans.length === 2 && plans[0].label === 'fix-plan' && plans[1].label === 'fix-plan:fallback', JSON.stringify(plans.map((c) => c.label)))
+      check('the primary fix plan ran on Opus at high effort (ruling 2026-09-29; was Fable)', plans[0].model === 'claude-opus-5-5' && plans[0].effort === 'high')
       check('the fallback ran on Opus at xhigh effort', plans[1].model === 'claude-opus-5-5' && plans[1].effort === 'xhigh')
       check('the fallback\'s decision was actually used to execute a fix', byLabel(calls, 'execute:').length === 1)
       check('the Opus FALLBACK fix-planner is EXEMPT from the F8 tool-call cap — it decides from brief text alone, zero repo access', !plans[1].prompt.includes('tool calls'), plans[1].prompt)
@@ -286,7 +287,7 @@ const scenarios = [
     },
   },
   {
-    name: 'M. a BLOCK review verdict still enters the fix pipeline (F7); the Opus recheck + an Opus-tier executor both carry the 12-tool-call cap (F8)',
+    name: 'M. a BLOCK review verdict still enters the fix pipeline (F7); the Opus recheck carries the 12-tool-call cap (F8); the opus-tier executor is Sonnet 5.5 at high (Opus decides only, ruling 2026-09-29)',
     args: baseArgs({ maxFixRounds: 1 }),
     reviewResponder: () => ({ claims: [], findings: [finding()], verdict: 'BLOCK' }),
     fixPlan: { fixes: [{ findingRef: 0, action: 'fix', design: 'apply the hint', invariant: 'x', testPin: '', executorTier: 'opus' }], deferred: [], note: '' },
@@ -296,10 +297,32 @@ const scenarios = [
       check('result.rounds is 1 (== maxFixRounds — the cap still applies under BLOCK)', r.rounds === 1, r.rounds)
       check('result.clean is false (recheck still reports BLOCK/findings)', r.clean === false)
       const exec = calls.find((c) => c.label === 'execute:0')
-      check('the opus-tier executor ran on Opus at high effort', !!exec && exec.model === 'claude-opus-5-5' && exec.effort === 'high')
-      check('the opus-tier executor prompt carries the 12-tool-call cap (F8)', !!exec && exec.prompt.includes('Hard cap: 12 tool calls'))
+      check('the opus-tier executor ran on Sonnet 5.5 at high effort -- no Opus executor writes code', !!exec && exec.model === 'claude-sonnet-5-5' && exec.effort === 'high', JSON.stringify(exec && [exec.model, exec.effort]))
+      check('no execute: call anywhere ran on Opus', byLabel(calls, 'execute:').every((c) => c.model !== 'claude-opus-5-5'))
       const recheckCall = calls.find((c) => c.label === 'recheck')
       check('the recheck prompt carries the 12-tool-call cap (F8)', !!recheckCall && recheckCall.prompt.includes('Hard cap: 12 tool calls'))
+    },
+  },
+  {
+    name: 'N. HIGH-risk package: review and recheck run at high; primary fix plan Opus high; every code-writing prompt carries the verification paragraph (ruling 2026-09-29)',
+    args: baseArgs({ maxFixRounds: 1 }),
+    packages: [{ id: 'WP1', title: 'w', brief: 'b', files: ['src/a.ts'], risk: 'HIGH' }],
+    reviewResponder: () => ({ claims: [], findings: [finding()], verdict: 'BLOCK' }),
+    fixPlan: { fixes: [{ findingRef: 0, action: 'fix', design: 'apply the hint', invariant: 'x', testPin: '', executorTier: 'opus' }], deferred: [], note: '' },
+    recheck: { claims: [], findings: [finding({ summary: 'still wrong' })], verdict: 'BLOCK' },
+    assert({ calls }) {
+      const VERIFY = 'run a real check that exercises the change before reporting it done'
+      const review = calls.find((c) => c.label === 'review:correctness')
+      check('HIGH-risk review ran on Opus at high effort', !!review && review.model === 'claude-opus-5-5' && review.effort === 'high', JSON.stringify(review && [review.model, review.effort]))
+      const recheck = calls.find((c) => c.label === 'recheck')
+      check('HIGH-risk recheck ran on Opus at high effort', !!recheck && recheck.model === 'claude-opus-5-5' && recheck.effort === 'high', JSON.stringify(recheck && [recheck.model, recheck.effort]))
+      const plan = calls.find((c) => c.label === 'fix-plan')
+      check('the primary fix plan ran on Opus at high effort', !!plan && plan.model === 'claude-opus-5-5' && plan.effort === 'high', JSON.stringify(plan && [plan.model, plan.effort]))
+      const build = calls.find((c) => c.label === 'build:WP1')
+      check('the build prompt carries the verification paragraph', !!build && build.prompt.includes(VERIFY))
+      const exec = calls.find((c) => c.label === 'execute:0')
+      check('the execute prompt carries the verification paragraph', !!exec && exec.prompt.includes(VERIFY))
+      check('no agent that writes code (build/execute) ran on Opus', calls.filter((c) => c.label.startsWith('build:') || c.label.startsWith('execute:')).every((c) => c.model === 'claude-sonnet-5-5'))
     },
   },
 ]
