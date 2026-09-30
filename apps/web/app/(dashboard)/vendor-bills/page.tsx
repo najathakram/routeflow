@@ -1,5 +1,6 @@
 "use client";
 
+import { PREF } from "@routeflow/types";
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -558,7 +559,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
       setErrors({});
       setDuplicate(null);
       setPoRefusal(null);
-      if (prefs?.["bill.lastSupplierId"]) setSupplierId(prefs["bill.lastSupplierId"]);
+      if (prefs?.[PREF.billLastSupplierId]) setSupplierId(prefs[PREF.billLastSupplierId]);
     }
   }, [isOpen]);
 
@@ -659,7 +660,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
       },
       {
         onSuccess: () => {
-          savePrefs.mutate({ "bill.lastSupplierId": supplierId });
+          savePrefs.mutate({ [PREF.billLastSupplierId]: supplierId });
           toast({ title: "Vendor bill created", variant: "success" });
           onClose();
         },
