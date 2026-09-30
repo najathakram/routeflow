@@ -36,6 +36,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { INVOICE_LINE_CAS_FIELDS } from "./partial-invoice-cas";
 
 describe("split/full invoices: the invoicedQty bump is a compare-and-set (#2612, SA-523)", () => {
@@ -88,6 +89,7 @@ describe("split/full invoices: the invoicedQty bump is a compare-and-set (#2612,
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(false) } },
         InvoicesService,
         {
           provide: SellingRestrictionsService,

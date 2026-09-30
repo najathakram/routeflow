@@ -1,7 +1,11 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
-import { orderAppliedCredits, type OrderAppliedCreditsInput } from "@routeflow/types";
+import {
+  orderAppliedCredits,
+  requestedLabel,
+  type OrderAppliedCreditsInput,
+} from "@routeflow/types";
 import { useUnapplyCreditNote } from "../lib/api/credit-notes";
 import { confirm } from "../lib/confirm";
 import { showToast } from "../lib/toast";
@@ -73,9 +77,7 @@ export function OrderAppliedCredits({ order }: { order: OrderAppliedCreditsInput
             ) : (
               <View style={styles.metaRow}>
                 <Text style={styles.chip}>Not yet applied</Text>
-                <Text style={styles.sub}>
-                  {row.requested != null ? `Requested ${money(row.requested)}` : "Up to remaining"}
-                </Text>
+                <Text style={styles.sub}>{requestedLabel(row, money)}</Text>
               </View>
             )}
           </View>

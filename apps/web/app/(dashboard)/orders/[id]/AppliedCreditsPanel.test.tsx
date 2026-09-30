@@ -136,4 +136,23 @@ describe("AppliedCreditsPanel (#2404)", () => {
     );
     expect(screen.getByText(/un-apply \$7\.50 of CN-B from INV-1/)).toBeTruthy();
   });
+  it("a partly-requested pending credit says what happens to the rest (#2600)", () => {
+    const partial = {
+      ...order,
+      orderCreditNotes: [
+        {
+          id: "oc-d",
+          creditNoteId: "cn-d",
+          amount: "20.00",
+          creditNote: { id: "cn-d", creditNoteNumber: "CN-D", reason: null, amount: "50.00" },
+        },
+      ],
+    };
+    render(<AppliedCreditsPanel order={partial as any} role="OPERATOR" />);
+    expect(
+      within(screen.getByTestId("applied-credit-intent:oc-d")).getByText(
+        "Requested $20.00 of $50.00 (the rest stays as store credit)",
+      ),
+    ).toBeTruthy();
+  });
 });
