@@ -15,7 +15,7 @@ import {
   lockFamilyRow,
   readFamilyPriceMode,
 } from "../products/family-price";
-import { normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
+import { linePack, normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
 import { fetchInvoicedSaleLines, roundQty } from "../common/invoiced-sales";
 import { poLineFromInput } from "./po-line-input";
 import { costDecimal, nextAverageCost, planLotConsumption, reverseAverageCost } from "./costing";
@@ -1302,7 +1302,8 @@ export class InventoryService {
           ? normalizeBoxesPieces({
               boxes: recv.boxes,
               pieces: recv.pieces,
-              unitsPerBox: prod?.unitsPerBox,
+              // #2734: the line's stored pack wins; the live product pack is only the fallback.
+              unitsPerBox: linePack(item, Number(prod?.unitsPerBox ?? 0)),
             }).qty
           : (recv.receivedQty ?? recv.qtyReceived ?? 0);
 
@@ -1392,7 +1393,7 @@ export class InventoryService {
    * currentStock is written as an increment, but the average is derived from
    * the read - the lock is what keeps that read consistent with the write.
    */
-  private async lockProducts(tx: Prisma.TransactionClient, productIds: Iterable<string>) {
+  async lockProducts(tx: Prisma.TransactionClient, productIds: Iterable<string>) {
     const tenantId = this.prisma.getTenantId();
     for (const productId of [...new Set(productIds)].sort()) {
       await tx.$executeRaw`SELECT id FROM "Product" WHERE id = ${productId} AND "tenantId" = ${tenantId} FOR UPDATE`;

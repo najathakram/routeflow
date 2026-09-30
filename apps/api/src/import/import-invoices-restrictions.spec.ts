@@ -12,6 +12,7 @@ import { CustomersService } from "../customers/customers.service";
 import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { ProductsService } from "../products/products.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 describe("ImportService.importInvoices — restricted-lines flag (F-05 #2093)", () => {
@@ -51,6 +52,7 @@ describe("ImportService.importInvoices — restricted-lines flag (F-05 #2093)", 
           provide: ExternalRefService,
           useValue: { findLocalId: jest.fn().mockResolvedValue(null), record: jest.fn() },
         },
+        { provide: ProductsService, useValue: {} },
         { provide: SellingRestrictionsService, useValue: restrictions },
       ],
     }).compile();

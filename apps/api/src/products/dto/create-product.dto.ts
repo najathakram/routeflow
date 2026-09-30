@@ -8,6 +8,7 @@ import {
   IsUUID,
   Matches,
   MaxLength,
+  Min,
 } from "class-validator";
 import { Transform } from "class-transformer";
 import { CostingMethod } from "@prisma/client";
@@ -55,6 +56,9 @@ export class CreateProductDto {
   // Flag-gated service-side (flag.msrp); "" clears; 0 is normalized to null.
   @IsOptional() @Transform(toOptionalMsrp) @IsDecimal() msrp?: string | null;
   @IsOptional() @IsInt() unitsPerBox?: number;
+  // Low-stock thresholds (B858: the CSV import sets them on a new product in the same write).
+  @IsOptional() @IsInt() @Min(0) reorderPoint?: number;
+  @IsOptional() @IsInt() @Min(0) reorderQty?: number;
   // Tolerant tiers: "" → absent, numbers coerced to strings ("" used to 400 the
   // whole save — see fix/tier-pricing-save).
   @IsOptional() @Transform(toOptionalDecimalString) @IsDecimal() priceTier2?: string;

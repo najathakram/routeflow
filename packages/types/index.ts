@@ -145,6 +145,7 @@ export * from "./api/orders";
 export * from "./api/customers";
 export * from "./api/products";
 export * from "./api/finance";
+export * from "./api/credit-notes";
 export * from "./api/returns";
 export * from "./api/inline-returns";
 export * from "./api/regulated";
@@ -160,13 +161,16 @@ export * from "./api/restrictions";
 export * from "./api/restrictions-settings";
 export * from "./api/product-labels";
 export * from "./api/restrictions-admin";
+export * from "./api/messaging-matrix";
 export * from "./api/us-states";
 export * from "./api/config-snapshots";
+export * from "./api/import";
 export * from "./api/analytics-insights";
 export * from "./api/order-tracking";
 export * from "./api/onboarding";
 export * from "./api/order-tracking-view";
 export * from "./api/error-codes";
+export * from "./api/preferences";
 
 // ─── Developer mode (hidden dispatch/driver/route addon) ──────────────────────
 

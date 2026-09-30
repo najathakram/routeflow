@@ -76,6 +76,11 @@ export function OrderLineCard({
             {model.note}
           </Text>
         ) : null}
+        {model.subLines?.map((text, i) => (
+          <Text key={i} style={styles.sub} testID="line-component-sub-line">
+            {text}
+          </Text>
+        ))}
         {model.status ? (
           <View style={{ marginTop: 6, alignSelf: "flex-start" }}>
             <Pill variant={model.status.variant} small dot={false}>

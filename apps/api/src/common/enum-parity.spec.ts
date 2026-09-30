@@ -145,6 +145,8 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["BARCODE_ORIGIN_VALUES", "BarcodeOrigin"],
   // #2717 M2 (SA-574): RecipeStatus, mirrored immediately — see the triage tripwire below.
   ["RECIPE_STATUS_VALUES", "RecipeStatus"],
+  // #2717 M3 (SA-572): CompositionMode, mirrored immediately — see the triage tripwire below.
+  ["COMPOSITION_MODE_VALUES", "CompositionMode"],
 ];
 
 describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
@@ -241,7 +243,7 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // Triage for RecipeStatus (#2717 M2, SA-574, 2026-09-29): one brand-new Prisma enum (migration
 // 20260929120000_2717_m2_recipes) — mirrored immediately as `RECIPE_STATUS_VALUES` in
 // packages/types/api/enums.ts + its `ENUM_TABLE` row above (108 → 109).
-const PINNED_PRISMA_ENUM_COUNT = 109;
+const PINNED_PRISMA_ENUM_COUNT = 110;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {

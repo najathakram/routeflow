@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { CreditNotesController } from "./credit-notes.controller";
 import { CreditNotesService } from "./credit-notes.service";
+import { CreditNoteReissueService } from "./credit-note-reissue.service";
 import { PrismaModule } from "../prisma/prisma.module";
 import { GatewaysModule } from "../gateways/gateways.module";
 import { RegulatedModule } from "../regulated/regulated.module";
@@ -20,7 +21,7 @@ import { EntitlementsModule } from "../billing/entitlements.module";
     EntitlementsModule,
   ],
   controllers: [CreditNotesController],
-  providers: [CreditNotesService],
+  providers: [CreditNotesService, CreditNoteReissueService],
   exports: [CreditNotesService],
 })
 export class CreditNotesModule {}
