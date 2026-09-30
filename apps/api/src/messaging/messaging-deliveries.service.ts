@@ -1,15 +1,19 @@
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
-import {
-  DELIVERY_FIX_KEY_VALUES,
-  EMAIL_DELIVERY_STATUS_VALUES,
-  type DeliveryFixKey,
-  type DeliveryHealth,
-  type DeliveryList,
-  type EmailDeliveryStatus,
-} from "@routeflow/types";
+import { EmailDeliveryStatus } from "@prisma/client";
+import type { DeliveryFixKey, DeliveryHealth, DeliveryList } from "@routeflow/types";
 
-export { DELIVERY_FIX_KEY_VALUES };
+/** Local literal copy (the API never value-imports `@routeflow/types`); pinned equal to the shared
+ *  `DELIVERY_FIX_KEY_VALUES` by `messaging-deliveries-parity.spec.ts`. */
+export const DELIVERY_FIX_KEY_VALUES = [
+  "NO_FROM_ADDRESS",
+  "MAILBOX_REVOKED",
+  "SMTP_AUTH",
+  "UNCONFIGURED",
+  "OTHER",
+] as const satisfies readonly DeliveryFixKey[];
+
+const EMAIL_DELIVERY_STATUS_VALUES = Object.values(EmailDeliveryStatus) as EmailDeliveryStatus[];
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const LIST_WINDOW_DAYS = 30;

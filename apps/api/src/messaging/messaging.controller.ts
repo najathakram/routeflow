@@ -19,7 +19,7 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { MessagingService } from "./messaging.service";
 import { MessagingConfigService } from "./messaging-config.service";
 import { MessagingDeliveriesService } from "./messaging-deliveries.service";
-import { EMAIL_DELIVERY_STATUS_VALUES, type EmailDeliveryStatus } from "@routeflow/types";
+import { EmailDeliveryStatus } from "@prisma/client";
 import { SendMessageDto } from "./dto/send-message.dto";
 import { NotifyDto } from "./dto/notify.dto";
 import { UpdateRuleDto } from "./dto/update-rule.dto";
@@ -142,7 +142,7 @@ export class MessagingController {
     @Query("page") page?: string,
     @Query("pageSize") pageSize?: string,
   ) {
-    const ok = (EMAIL_DELIVERY_STATUS_VALUES as readonly string[]).includes(status ?? "");
+    const ok = (Object.values(EmailDeliveryStatus) as string[]).includes(status ?? "");
     return this.deliveries.list(user.role, {
       status: ok ? (status as EmailDeliveryStatus) : undefined,
       page: page ? Number(page) : undefined,

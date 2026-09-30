@@ -14,9 +14,21 @@ export const DELIVERY_FIX_KEY_VALUES = [
 ] as const;
 export type DeliveryFixKey = (typeof DELIVERY_FIX_KEY_VALUES)[number];
 
+/** Closed set of delivery `kind` labels (the API's `EMAIL_KINDS`, pinned by a parity spec). */
+export const EMAIL_KIND_VALUES = [
+  "STAFF_NEW_ORDER",
+  "BUYER_ORDER_EDITED",
+  "BUYER_ORDER_CANCELLED",
+  "LOW_STOCK_DIGEST",
+  "INVOICE_SENT",
+  "AUTH_OTHER",
+] as const;
+export type EmailKind = (typeof EMAIL_KIND_VALUES)[number];
+
 export interface DeliveryRow {
   id: string;
-  kind: string;
+  /** A closed label key — render the "What" column from a map keyed by it, never as free text. */
+  kind: EmailKind;
   /** Full address for TENANT_ADMIN, masked (`j***@host`) for OPERATOR. */
   toAddress: string;
   status: EmailDeliveryStatus;

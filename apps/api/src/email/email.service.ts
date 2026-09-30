@@ -319,6 +319,59 @@ function renderBrandButton(label: string, url: string): string {
   </td></tr></table>`;
 }
 
+/** The argument of the transport chain (and of the public `send`, which adds `delivery`). */
+export type EmailSendParams = {
+  to: string;
+  subject: string;
+  html: string;
+  replyTo?: string;
+  /** Plain-text alternative (added independently by both N1 and N3 — same field,
+   *  reconciled on merge). Both nodemailer and Resend accept it alongside `html`;
+   *  email clients that can't/won't render HTML fall back to this. Optional so every
+   *  EXISTING caller is unaffected — a transport that doesn't get one just sends
+   *  HTML-only, same as before this field existed. */
+  text?: string;
+  /**
+   * email-connect-google PR-3 (security review Phase 2): `"platform"` DELEGATES the whole
+   * send to `sendPlatform()` — bare platform From, no tenant Reply-To, no tenant domain, no
+   * connected mailbox, no tenant SMTP. Security/platform mail (invites, password reset/set,
+   * verification, new-device, email/role-change notices) must never leave from a tenant's
+   * own mailbox or SMTP server, or carry a tenant's own branding. Every EXISTING caller
+   * omits this (defaults to tenant-eligible), so no prior behavior changes except for the
+   * specific call sites migrated to `"platform"`.
+   */
+  senderClass?: "tenant" | "platform";
+  /**
+   * Files to attach (invoice PDF today). Threaded through every transport this
+   * method can reach (mailbox, tenant SMTP, platform SMTP, Resend) — nodemailer and
+   * Resend both accept this exact `{filename, content, contentType}` shape. Omitted
+   * by every EXISTING caller, so no prior behavior changes for anything but the new
+   * invoice-attachment callers.
+   */
+  attachments?: { filename: string; content: Buffer; contentType?: string }[];
+};
+
+/** What a send resolves to. */
+export type EmailSendResult = {
+  delivered: boolean;
+  transport: "mailbox" | "smtp" | "resend" | "none";
+  id?: string;
+  error?: string;
+  /**
+   * The mapped, plain-language SMTP diagnostic — set whenever the tenant's OWN SMTP
+   * attempt failed, in EVERY branch that follows the catch (Resend rescue, Resend
+   * rejection, no-transport). This is what lets a Resend-rescued send still tell the
+   * operator their own mail is broken instead of quietly looking fine.
+   */
+  smtpFallbackReason?: string;
+  /**
+   * The bare platform address actually used, set alongside `smtpFallbackReason` on a
+   * Resend rescue — the From identity silently changed from the tenant's own mailbox
+   * to the platform address, and that's part of the disclosure, not a footnote.
+   */
+  fromAddress?: string;
+};
+
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
@@ -1111,12 +1164,12 @@ export class EmailService {
    * recorded (every existing caller is unchanged).
    */
   async send(
-    params: Parameters<EmailService["sendUnrecorded"]>[0] & { delivery?: EmailDeliveryContext },
-  ): Promise<Awaited<ReturnType<EmailService["sendUnrecorded"]>>> {
+    params: EmailSendParams & { delivery?: EmailDeliveryContext },
+  ): Promise<EmailSendResult> {
     const { delivery, ...rest } = params;
     if (!delivery) return this.sendUnrecorded(rest);
 
-    let result: Awaited<ReturnType<EmailService["sendUnrecorded"]>>;
+    let result: EmailSendResult;
     try {
       result = await this.sendUnrecorded(rest);
     } catch (err) {
@@ -1152,55 +1205,8 @@ export class EmailService {
     return result;
   }
 
-  /** The transport chain itself (mailbox, tenant SMTP, platform SMTP, Resend), no audit row. */
-  async sendUnrecorded(params: {
-    to: string;
-    subject: string;
-    html: string;
-    replyTo?: string;
-    /** Plain-text alternative (added independently by both N1 and N3 — same field,
-     *  reconciled on merge). Both nodemailer and Resend accept it alongside `html`;
-     *  email clients that can't/won't render HTML fall back to this. Optional so every
-     *  EXISTING caller is unaffected — a transport that doesn't get one just sends
-     *  HTML-only, same as before this field existed. */
-    text?: string;
-    /**
-     * email-connect-google PR-3 (security review Phase 2): `"platform"` DELEGATES the whole
-     * send to `sendPlatform()` — bare platform From, no tenant Reply-To, no tenant domain, no
-     * connected mailbox, no tenant SMTP. Security/platform mail (invites, password reset/set,
-     * verification, new-device, email/role-change notices) must never leave from a tenant's
-     * own mailbox or SMTP server, or carry a tenant's own branding. Every EXISTING caller
-     * omits this (defaults to tenant-eligible), so no prior behavior changes except for the
-     * specific call sites migrated to `"platform"`.
-     */
-    senderClass?: "tenant" | "platform";
-    /**
-     * Files to attach (invoice PDF today). Threaded through every transport this
-     * method can reach (mailbox, tenant SMTP, platform SMTP, Resend) — nodemailer and
-     * Resend both accept this exact `{filename, content, contentType}` shape. Omitted
-     * by every EXISTING caller, so no prior behavior changes for anything but the new
-     * invoice-attachment callers.
-     */
-    attachments?: { filename: string; content: Buffer; contentType?: string }[];
-  }): Promise<{
-    delivered: boolean;
-    transport: "mailbox" | "smtp" | "resend" | "none";
-    id?: string;
-    error?: string;
-    /**
-     * The mapped, plain-language SMTP diagnostic — set whenever the tenant's OWN SMTP
-     * attempt failed, in EVERY branch that follows the catch (Resend rescue, Resend
-     * rejection, no-transport). This is what lets a Resend-rescued send still tell the
-     * operator their own mail is broken instead of quietly looking fine.
-     */
-    smtpFallbackReason?: string;
-    /**
-     * The bare platform address actually used, set alongside `smtpFallbackReason` on a
-     * Resend rescue — the From identity silently changed from the tenant's own mailbox
-     * to the platform address, and that's part of the disclosure, not a footnote.
-     */
-    fromAddress?: string;
-  }> {
+  /** The transport chain itself (mailbox, tenant SMTP, platform SMTP, Resend), no audit row. PRIVATE: every caller goes through `send`, the one entry a recipient guard can sit on. */
+  private async sendUnrecorded(params: EmailSendParams): Promise<EmailSendResult> {
     // Security review Phase 2: a platform-class send is a full DELEGATION to `sendPlatform()`
     // — not a set of skipped branches inside this method. `sendPlatform` never resolves
     // tenant SMTP, a tenant's own Reply-To, or a tenant's connected mailbox; it always uses
