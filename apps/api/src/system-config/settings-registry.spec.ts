@@ -294,6 +294,15 @@ describe("settings registry — every SystemConfig key the settings writers writ
  *      namespace is registered (catches `SENDING_DOMAIN_KEY = "email.sendingDomain"`). Reads of a
  *      key are deliberately not matched.
  */
+/**
+ * KNOWN LIMITS of this scan (documented, not chased). It reads source text, so it cannot see:
+ *  - a SystemConfigService reached through an optional/union-typed parameter or field;
+ *  - one fetched via `moduleRef.get(...)` or held in a delegate variable (`const c = this.svc; c.set`);
+ *  - schema-qualified raw SQL (`"public"."SystemConfig"`);
+ *  - new entries added to an existing `allowed` list (settings.controller's `settings.${k}` /
+ *    `email.${k}` templates) — the handler-driven tests above pin those fields instead.
+ * A writer hidden by one of these still needs a registry row; review catches it, this scan does not.
+ */
 const SRC = path.resolve(__dirname, "..");
 
 function listSourceFiles(dir: string, out: string[] = []): string[] {
@@ -340,10 +349,13 @@ function isWriterFile(rel: string, src: string): boolean {
   return rel.endsWith("system-config/system-config.service.ts") && /this\.set\(/.test(src);
 }
 
-/** First arguments of `set(` that are identifiers/constants, not literals (the key is indirect). */
+/**
+ * First arguments of `set(` that are NOT a string/template literal — an identifier, a constant, a
+ * concatenation (`PREFIX + k`) or a call (`keyFor(x)`). The key is indirect, so each is pinned.
+ */
 export function indirectKeyArgs(src: string): string[] {
-  const re = new RegExp(setCallRegex(src).source + "([A-Za-z_][\\w.]*)\\s*,", "g");
-  return [...new Set([...src.matchAll(re)].map((m) => m[1]))];
+  const re = new RegExp(setCallRegex(src).source + "([^\"'`\\s][^,]*?)\\s*,", "g");
+  return [...new Set([...src.matchAll(re)].map((m) => m[1].trim()))];
 }
 
 /** Keys (and template prefixes, marked with a trailing `*`) a file writes, by nets B and C. */
@@ -356,6 +368,10 @@ export function scanKeys(src: string, namespaces: Set<string>): string[] {
   }
   for (const m of src.matchAll(KEY_DECL)) {
     if (namespaces.has(m[1].split(".")[0])) found.add(m[1]);
+  }
+  // `systemConfig.create({ data: { key: "ns.key", … } })` — a literal key in a prisma write.
+  if (PRISMA_WRITE.test(src)) {
+    for (const m of src.matchAll(/\bkey\s*:\s*"([^"]+)"/g)) found.add(m[1]);
   }
   return [...found];
 }
@@ -440,16 +456,33 @@ describe("settings registry — structural source scan of every SystemConfig wri
     }
   });
 
-  it("files that write through create/update with a `key` variable carry declared constants", () => {
-    // restrictions-settings writes [SYSTEM_CONFIG_ENABLED, SYSTEM_CONFIG_GOVERNING_ADDRESS] in a loop.
+  it("restrictions-settings writes exactly the two selling_restrictions constants, in order", () => {
     const r = writers.find(
       (w) => w.rel === "restrictions-settings/restrictions-settings.service.ts",
     )!;
-    expect(r.src).toMatch(/SYSTEM_CONFIG_ENABLED/);
-    expect(r.src).toMatch(/SYSTEM_CONFIG_GOVERNING_ADDRESS/);
+    const pushed = [...r.src.matchAll(/writes\.push\(\[\s*([^,\]]+)/g)].map((m) => m[1].trim());
+    expect(pushed).toEqual(["SYSTEM_CONFIG_GOVERNING_ADDRESS", "SYSTEM_CONFIG_ENABLED"]);
     for (const k of [SYSTEM_CONFIG_ENABLED, SYSTEM_CONFIG_GOVERNING_ADDRESS]) {
       expect(isRegisteredSettingKey(k)).toBe(true);
     }
+  });
+
+  it("the prisma-direct writer files are frozen, each with a pinned key source", () => {
+    const direct = writers.filter((w) => PRISMA_WRITE.test(w.src)).map((w) => w.rel);
+    expect(direct.sort()).toEqual([
+      "email/email.service.ts",
+      "restrictions-settings/restrictions-settings.service.ts",
+      "system-config/system-config.service.ts",
+    ]);
+    // email: the sending-domain write takes its key from ONE constant.
+    const email = writers.find((w) => w.rel === "email/email.service.ts")!;
+    expect([...email.src.matchAll(/const key = ([^;]+);/g)].map((m) => m[1].trim())).toEqual([
+      "EmailService.SENDING_DOMAIN_KEY",
+    ]);
+    expect(email.src).toMatch(/SENDING_DOMAIN_KEY = "email\.sendingDomain"/);
+    // system-config.service: the generic set(key, value) — every caller is scanned above.
+    const sc = writers.find((w) => w.rel === "system-config/system-config.service.ts")!;
+    expect(sc.src).toMatch(/async set\(key: string, value: string\)/);
   });
 
   it("finds email.sendingDomain (defined as a constant in email.service.ts)", () => {
@@ -479,6 +512,19 @@ describe("settings registry — structural source scan of every SystemConfig wri
     expect(
       indirectKeyArgs('await this.config2.set(someKey, "v");  await this.svc.set(K.X, "v");'),
     ).toEqual(["K.X"]);
+    // A computed first argument is indirect too: a concatenation and a call.
+    expect(indirectKeyArgs("await this.svc.set(PREFIX + k, v);")).toEqual(["PREFIX + k"]);
+    expect(indirectKeyArgs("await this.svc.set(keyFor(x), v);")).toEqual(["keyFor(x)"]);
+    expect(
+      indirectKeyArgs('await this.svc.set("lit.key", v); await this.svc.set(`t.${k}`, v);'),
+    ).toEqual([]);
+    // A literal `key:` in a prisma write is a key too.
+    expect(
+      scanKeys(
+        'await tx.systemConfig.create({ data: { tenantId, key: "planted.prismaKey", value } });',
+        NAMESPACES,
+      ),
+    ).toContain("planted.prismaKey");
   });
 
   it("planted misses are caught: a direct literal, a template prefix, a constant in a known namespace", () => {
