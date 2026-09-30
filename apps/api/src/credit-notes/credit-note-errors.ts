@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, HttpException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { txConflictState } from "../common/tx-retry";
 
 /**
  * #2648/#2848 (SA-608): the credit-note refusals carry a machine-readable `body.code` from the
@@ -33,4 +34,33 @@ export function messageOf(err: HttpException): string {
     typeof body === "object" && body !== null ? (body as { message?: unknown }).message : body;
   if (Array.isArray(m)) return m.map(String).join("; ");
   return typeof m === "string" ? m : err.message;
+}
+
+/**
+ * Exhausted serialization retries (40001 / 40P01 / P2034) and a credit-note-number collision (P2002)
+ * are 409 CHANGED_CONCURRENTLY, never a raw 500. The one shared mapping for the void and the reissue
+ * (SA-608h). Only the creditNoteNumber constraint is a "number conflict" (like create()); the real
+ * P2002 target is logged either way and any other unique violation propagates untouched.
+ */
+export function asReadableConflict(err: unknown, logger: { warn(message: string): void }): unknown {
+  if (txConflictState(err))
+    return cnConflict(
+      API_ERROR_CODES.CREDIT_NOTE_CHANGED_CONCURRENTLY,
+      "Another change to this credit note or its invoice was in progress. Nothing was changed; please retry.",
+    );
+  if ((err as { code?: string })?.code === "P2002") {
+    const meta = (err as { meta?: { target?: unknown } }).meta;
+    const target = Array.isArray(meta?.target)
+      ? meta.target.join(",")
+      : typeof meta?.target === "string"
+        ? meta.target
+        : "";
+    logger.warn(`Credit note write failed code=P2002 target=${target}`);
+    if (target === "" || target.includes("creditNoteNumber"))
+      return cnConflict(
+        API_ERROR_CODES.CREDIT_NOTE_CHANGED_CONCURRENTLY,
+        "Credit note number conflict — please retry.",
+      );
+  }
+  return err;
 }

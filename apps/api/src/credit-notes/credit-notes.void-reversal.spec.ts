@@ -324,6 +324,29 @@ describe("CreditNotesService — SA-436 PR-2 void-with-reversal", () => {
       expect(codeOf(err)).toBe(code);
     });
 
+    it("SA-608h: exhausted Serializable retries (P2034) are a 409 CHANGED_CONCURRENTLY, never a raw 500", async () => {
+      armNote();
+      armRestore();
+      prisma.invoicePayment.findMany.mockResolvedValue(livePayments);
+      const conflict = Object.assign(new Error("write conflict"), { code: "P2034" });
+      prisma.tenantTransaction.mockRejectedValue(conflict);
+
+      const err: any = await service.voidWithReversal("cn-a", "user-7").catch((e: unknown) => e);
+
+      expect(err?.getStatus?.()).toBe(409);
+      expect(codeOf(err)).toBe(CODES.CREDIT_NOTE_CHANGED_CONCURRENTLY);
+      expect(prisma.tenantTransaction).toHaveBeenCalledTimes(3); // the bounded retry ran first
+      expect(gateway.emitCreditNoteVoided).not.toHaveBeenCalled();
+    });
+
+    it("SA-608h: any other error still propagates untouched", async () => {
+      armNote();
+      armRestore();
+      const boom = new Error("boom");
+      prisma.tenantTransaction.mockRejectedValue(boom);
+      await expect(service.voidWithReversal("cn-a", "user-7")).rejects.toBe(boom);
+    });
+
     it("PR-C: a lost compare-and-set is CHANGED_CONCURRENTLY", async () => {
       armNote();
       armRestore();

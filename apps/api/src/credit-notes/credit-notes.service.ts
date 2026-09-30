@@ -17,7 +17,7 @@ import { InvoiceStatus, PaymentMethod } from "@prisma/client";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { NumberingService } from "../import/numbering.service";
 import { retryOnTxConflict, txConflictState } from "../common/tx-retry";
-import { cnBad, cnConflict, type CreditNoteCode } from "./credit-note-errors";
+import { asReadableConflict, cnBad, cnConflict, type CreditNoteCode } from "./credit-note-errors";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { blockedPairs, clearApplyBlocks, pairKey, writeApplyBlocks } from "./apply-block";
 import {
@@ -1270,11 +1270,16 @@ export class CreditNotesService {
    */
   async voidWithReversal(id: string, actorId: string | null) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: once per call, before any loop
-    const result = await retryOnTxConflict(`credit void-with-reversal cn=${id}`, () =>
-      this.prisma.tenantTransaction((tx: any) => this.voidWithReversalInTx(tx, id, actorId, tz), {
-        isolationLevel: "Serializable",
-      }),
-    );
+    let result: Awaited<ReturnType<CreditNotesService["voidWithReversalInTx"]>>;
+    try {
+      result = await retryOnTxConflict(`credit void-with-reversal cn=${id}`, () =>
+        this.prisma.tenantTransaction((tx: any) => this.voidWithReversalInTx(tx, id, actorId, tz), {
+          isolationLevel: "Serializable",
+        }),
+      );
+    } catch (err) {
+      throw asReadableConflict(err, this.logger); // SA-608h: exhausted retries are a 409, not a 500
+    }
 
     this.gateway.emitCreditNoteVoided(this.prisma.getTenantId(), {
       creditNoteId: result.creditNote.id,
