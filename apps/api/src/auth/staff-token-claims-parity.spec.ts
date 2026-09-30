@@ -2,6 +2,7 @@ import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
 import { AuthService } from "./auth.service";
 import { AppleOAuthService } from "./apple-oauth.service";
+import { GoogleOAuthService } from "./google-oauth.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 // SA-598c / #2486: the Apple staff access token must carry exactly the claim keys a password
@@ -113,5 +114,57 @@ describe("staff token claims parity (AuthService.login vs Apple staff token)", (
   it("canActAsDriver defaults to false when undefined", async () => {
     const { applePayload } = await mintBoth(baseUser({ canActAsDriver: undefined }));
     expect(applePayload.canActAsDriver).toBe(false);
+  });
+});
+
+// #2775: the same pin for the Google staff token (private issueUserTokenPair, driven directly).
+async function mintGoogle(user: Record<string, unknown>) {
+  const config = { get: (k: string) => (k === "jwt" ? JWT_CONFIG : undefined) } as ConfigService;
+  const googleSign = jest.fn().mockReturnValue("t");
+  const google = new GoogleOAuthService(
+    createMockPrisma() as any,
+    {
+      sign: googleSign,
+      decode: jest.fn().mockReturnValue({ exp: 9999999999 }),
+    } as unknown as JwtService,
+    config,
+    { send: jest.fn() } as any,
+    { claimsFor: jest.fn().mockResolvedValue(null) } as any,
+  );
+  try {
+    await (google as any).issueUserTokenPair(user, "acme");
+  } finally {
+    (google as any).redis?.disconnect?.();
+  }
+  return googleSign.mock.calls[0][0] as Record<string, unknown>;
+}
+
+describe("staff token claims parity (AuthService.login vs Google staff token)", () => {
+  it("mints the same claim key set for the same staff row", async () => {
+    const { authPayload } = await mintBoth(baseUser());
+    const googlePayload = await mintGoogle(baseUser());
+    expect(Object.keys(googlePayload).sort()).toEqual(Object.keys(authPayload).sort());
+  });
+
+  it("the key-set comparison fails when isAdmin or canActAsDriver is missing", async () => {
+    const { authPayload } = await mintBoth(baseUser());
+    const googlePayload = await mintGoogle(baseUser());
+    for (const key of ["isAdmin", "canActAsDriver"]) {
+      const mutated = { ...googlePayload };
+      delete mutated[key];
+      expect(Object.keys(mutated).sort()).not.toEqual(Object.keys(authPayload).sort());
+    }
+  });
+
+  it("isAdmin is true for TENANT_ADMIN and for isAdmin=true, false for a plain OPERATOR", async () => {
+    expect((await mintGoogle(baseUser({ role: "TENANT_ADMIN" }))).isAdmin).toBe(true);
+    expect((await mintGoogle(baseUser({ isAdmin: true }))).isAdmin).toBe(true);
+    expect((await mintGoogle(baseUser())).isAdmin).toBe(false);
+  });
+
+  it("canActAsDriver passes through true and false, and defaults to false", async () => {
+    expect((await mintGoogle(baseUser({ canActAsDriver: true }))).canActAsDriver).toBe(true);
+    expect((await mintGoogle(baseUser({ canActAsDriver: false }))).canActAsDriver).toBe(false);
+    expect((await mintGoogle(baseUser({ canActAsDriver: undefined }))).canActAsDriver).toBe(false);
   });
 });
