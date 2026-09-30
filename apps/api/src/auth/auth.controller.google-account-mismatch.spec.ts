@@ -17,6 +17,7 @@ function makeController(googleOAuth: any) {
     configService as any,
     {} as any, // tenantGoogleOAuth
     googleOAuth,
+    {} as any, // appleOAuth
   );
 }
 
