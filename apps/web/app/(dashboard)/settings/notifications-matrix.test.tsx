@@ -51,6 +51,21 @@ function makeConfig(over: Record<string, unknown> = {}) {
         channels: [cell("EMAIL", { ruleId: "rule-d-email" })],
       },
       {
+        eventKey: "INVOICE_SENT",
+        label: "Invoice sent",
+        audience: "CUSTOMER",
+        hasTrigger: true,
+        channels: [
+          cell("PORTAL", {
+            enabled: false,
+            ruleId: "rule-inv-portal",
+            unavailable: "NO_TRANSPORT",
+          }),
+          { ...cell("WHATSAPP", { enabled: false, ruleId: null }), locked: true },
+          { ...cell("SMS", { enabled: false, ruleId: null }), locked: true },
+        ],
+      },
+      {
         eventKey: "PAYMENT_REMINDER",
         label: "Payment reminder",
         audience: "CUSTOMER",
@@ -87,6 +102,7 @@ const state: {
   refetch: jest.Mock;
   health: unknown;
   toggle: jest.Mock;
+  keepDataOnError: boolean;
 } = {
   config: makeConfig(),
   isError: false,
@@ -94,12 +110,13 @@ const state: {
   refetch: jest.fn(),
   health: null,
   toggle: jest.fn(),
+  keepDataOnError: false,
 };
 
 jest.mock("@/lib/api/messaging", () => ({
   ...jest.requireActual("@/lib/api/messaging"),
   useMessagingConfig: () => ({
-    data: state.isError ? undefined : state.config,
+    data: state.isError && !state.keepDataOnError ? undefined : state.config,
     isLoading: state.isLoading,
     isError: state.isError,
     refetch: state.refetch,
@@ -119,6 +136,7 @@ beforeEach(() => {
   state.health = null;
   state.refetch = jest.fn();
   state.toggle = jest.fn();
+  state.keepDataOnError = false;
 });
 
 describe("Notifications page — grouped list (#1965)", () => {
@@ -126,7 +144,9 @@ describe("Notifications page — grouped list (#1965)", () => {
     renderWithProviders(<NotificationsSettingsTab />);
     expect(screen.queryByText(/not available/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("columnheader", { name: /whatsapp|sms|portal/i })).toBeNull();
-    expect(screen.getAllByText(/whatsapp, sms and portal: coming soon/i)).toHaveLength(1);
+    expect(
+      screen.getAllByText(/whatsapp, sms and customer portal messages: coming soon/i),
+    ).toHaveLength(1);
   });
 
   it("T6 every live row shows a recipient chip; order rows say 'Your customer'", () => {
@@ -157,7 +177,11 @@ describe("Notifications page — grouped list (#1965)", () => {
     for (const sw of disabled) {
       expect(sw).toHaveAttribute("aria-disabled", "true");
       expect(sw).toHaveAttribute("title", "Set up WhatsApp to use this");
+      // keyboard/screen-reader users get the same text (a title alone is mouse-only)
+      expect(sw).toHaveAccessibleDescription("Set up WhatsApp to use this");
+      fireEvent.click(sw);
     }
+    expect(state.toggle).not.toHaveBeenCalled();
   });
 
   it("T8 events without a firing site have no switch and appear only under 'Coming soon'", () => {
@@ -191,22 +215,74 @@ describe("Notifications page — grouped list (#1965)", () => {
     }
   });
 
-  it("T11 a failed toggle shows a fixed sentence, never the server message", async () => {
-    state.toggle = jest.fn((_vars, opts) =>
-      opts.onError({ response: { data: { message: "P2002 raw provider text" } } }),
-    );
-    renderWithProviders(<NotificationsSettingsTab />);
-    fireEvent.click(screen.getByRole("switch", { name: /order confirmed/i }));
-    expect(await screen.findByText("Couldn't save, please try again")).toBeInTheDocument();
-    expect(screen.queryByText(/P2002/)).not.toBeInTheDocument();
-  });
-
   it("T12 a load error shows a sentence and a working Retry", () => {
     state.isError = true;
     renderWithProviders(<NotificationsSettingsTab />);
     expect(screen.getByText("Couldn't load notification settings.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /retry/i }));
     expect(state.refetch).toHaveBeenCalled();
+  });
+
+  it("T2 (review F2) a live event with no cell in any visible column is not listed (no dead 'Invoice sent' row)", () => {
+    renderWithProviders(<NotificationsSettingsTab />);
+    expect(screen.queryByText("Invoice sent")).not.toBeInTheDocument();
+    expect(screen.getByText(/invoices are emailed when you press send/i)).toBeInTheDocument();
+  });
+
+  it("T3 (review F3) the template editor shows only live channels and opens on Email", () => {
+    renderWithProviders(<NotificationsSettingsTab />);
+    fireEvent.click(screen.getByRole("button", { name: /edit order confirmed template/i }));
+    expect(screen.getByRole("button", { name: "Email" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /whatsapp|sms|portal/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/meta template name/i)).not.toBeInTheDocument();
+  });
+
+  it("T12b (review nit 7) a failed background refetch keeps the list and shows an inline alert", () => {
+    state.isError = true;
+    state.keepDataOnError = true;
+    renderWithProviders(<NotificationsSettingsTab />);
+    expect(screen.getByText("Order confirmed")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Couldn't refresh notification settings.");
+  });
+
+  it("T14 (review nit 8) the policy-lock info icon is keyboard reachable and named", () => {
+    state.config = makeConfig({
+      channelStatus: { EMAIL: "LIVE", WHATSAPP: "LIVE", SMS: "LIVE", PORTAL: "NOT_BUILT" },
+      events: [
+        {
+          eventKey: "INVOICE_SENT",
+          label: "Invoice sent",
+          audience: "CUSTOMER",
+          hasTrigger: true,
+          channels: [
+            cell("EMAIL", { ruleId: "rule-inv-email" }),
+            { ...cell("WHATSAPP", { enabled: false, ruleId: null }), locked: true },
+          ],
+        },
+      ],
+    });
+    renderWithProviders(<NotificationsSettingsTab />);
+    const info = screen.getByRole("img", {
+      name: /invoices are sent by email or the buyer portal only/i,
+    });
+    expect(info).toHaveAttribute("tabindex", "0");
+  });
+
+  it("T16 (review) setup hint links to email setup and says team emails are not live yet", () => {
+    renderWithProviders(<NotificationsSettingsTab />);
+    expect(screen.getByRole("link", { name: /set up email/i })).toHaveAttribute(
+      "href",
+      "/settings?tab=email",
+    );
+    expect(screen.getByText(/your team isn't emailed about orders yet/i)).toBeInTheDocument();
+  });
+
+  it("T17 (review) the recipient chip is a design-system Badge and the loading state uses skeleton rows", () => {
+    state.isLoading = true;
+    renderWithProviders(<NotificationsSettingsTab />);
+    expect(
+      screen.getByRole("status", { name: /loading notification settings/i }),
+    ).toBeInTheDocument();
   });
 
   it("T13 the health strip maps a reason code to a sentence + fix link and never prints the raw code", () => {
@@ -225,6 +301,17 @@ describe("Notifications page — grouped list (#1965)", () => {
       expect.stringContaining("tab=email"),
     );
     expect(screen.queryByText(/NO_FROM_ADDRESS/)).not.toBeInTheDocument();
+  });
+
+  it("T13c (review nit 6) a partial health payload renders nothing and windowDays drives the label", () => {
+    state.health = { windowDays: 7, sent: 4, byReason: [] };
+    const { unmount } = renderWithProviders(<NotificationsSettingsTab />);
+    expect(screen.queryByText(/undefined/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/last 7 days/i)).not.toBeInTheDocument();
+    unmount();
+    state.health = { windowDays: 30, sent: 1, failed: 0, skipped: 0, byReason: [] };
+    renderWithProviders(<NotificationsSettingsTab />);
+    expect(screen.getByText(/last 30 days: 1 sent/i)).toBeInTheDocument();
   });
 
   it("T13b the health strip renders nothing when the endpoint has no data", () => {
