@@ -118,7 +118,7 @@ const GROUPS = [
         reorder: 10,
       },
       {
-        name: "Orange Juice 1gal",
+        name: "Orange Juice 64oz", // renamed: prisma/seed.ts has "Orange Juice 1gal" (active names are unique, SA-603b)
         unit: "case",
         price: 18.0,
         cost: 12.5,
