@@ -1,3 +1,4 @@
+import { listenOnLoopback } from "../common/testing/listen-loopback";
 import "reflect-metadata";
 import { INestApplication, ValidationPipe } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
@@ -52,6 +53,7 @@ describe("PATCH/GET users/me/preferences — typed lowStockDigestEnabled", () =>
       new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }),
     );
     await app.init();
+    await listenOnLoopback(app); // #2267
   });
 
   afterEach(() => app.close());
