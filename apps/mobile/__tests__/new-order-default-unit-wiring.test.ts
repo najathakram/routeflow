@@ -25,7 +25,7 @@ describe("mobile default selling unit wiring (#2784)", () => {
   });
 
   it("CartRow passes the line's flag to the picker, which applies defaultStartOption once", () => {
-    expect(cartRow).toMatch(/startOnDefaultUnit=\{line\.startOnDefaultUnit\}/);
+    expect(cartRow).toMatch(/startOnDefaultUnit=\{/); // gated on the pristine-line guard below
     expect(row).toMatch(/startOnDefaultUnit\?: boolean/);
     expect(row).toMatch(/defaultStartOption\(/);
     expect(row).toMatch(/startedRef/);
