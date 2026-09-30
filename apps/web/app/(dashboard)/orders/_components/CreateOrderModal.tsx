@@ -575,10 +575,10 @@ export function CreateOrderModal({
       unitScan
         ? mergePieceIntoLine(li, n)
         : orderUiV2
-          ? mergeQtyIntoLine(li, n)
-          : scanV2
-            ? stepLineUnit(li, 1)
-            : { ...li, qty: li.qty + 1 };
+        ? mergeQtyIntoLine(li, n)
+        : scanV2
+          ? stepLineUnit(li, 1)
+          : { ...li, qty: li.qty + 1 };
     // Built once, outside the updater — none of it depends on `prev`, only on `product`/the
     // customer/pricing context, so there is nothing here a race could make stale.
     const newTempId = product.id + "-" + Date.now();

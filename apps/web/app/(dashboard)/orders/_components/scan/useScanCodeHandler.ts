@@ -64,10 +64,7 @@ export function scanLevelsForHit(code: string, product: any): SellLevel[] {
 }
 
 export function scanLevelForHit(code: string, product: any): SellLevel {
-  return resolveScanSellLevel(
-    { unitsPerBox: product?.unitsPerBox },
-    scanLevelsForHit(code, product),
-  );
+  return resolveScanSellLevel({ unitsPerBox: product?.unitsPerBox }, scanLevelsForHit(code, product));
 }
 
 export interface ScanCodeHandlerDeps {

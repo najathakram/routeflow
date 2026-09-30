@@ -93,21 +93,12 @@ describe("useScanCodeHandler — passes the scanned level (R1/R2)", () => {
   });
 
   it("no scanMatch but cached row barcodes[]: a UNIT-only row code -> 'UNIT'", async () => {
-    const p = boxed({
-      barcodes: [
-        { code: "ROW-U", level: "UNIT" },
-        { code: "ROW-B", level: "BOX" },
-      ],
-    });
+    const p = boxed({ barcodes: [{ code: "ROW-U", level: "UNIT" }, { code: "ROW-B", level: "BOX" }] });
     expect((await scan("ROW-U", p)).addLineItem).toHaveBeenCalledWith(p, "UNIT");
   });
 
   it("upb <= 1 product still passes a BOX|UNIT level (the modal keeps today's line shape, R4)", async () => {
-    const p = boxed({
-      unitsPerBox: null,
-      unitSku: null,
-      scanMatch: { code: "X", levels: ["UNIT"] },
-    });
+    const p = boxed({ unitsPerBox: null, unitSku: null, scanMatch: { code: "X", levels: ["UNIT"] } });
     const d = await scan("X", p);
     const level = (d.addLineItem as jest.Mock).mock.calls[0][1];
     expect(["BOX", "UNIT"]).toContain(level);

@@ -31,9 +31,7 @@ describe("useScanCodeHandler", () => {
 
     result.current.current("012345678905");
 
-    await waitFor(() =>
-      expect(d.addLineItem).toHaveBeenCalledWith(product, expect.stringMatching(/^(BOX|UNIT)$/)),
-    );
+    await waitFor(() => expect(d.addLineItem).toHaveBeenCalledWith(product, expect.stringMatching(/^(BOX|UNIT)$/)));
     expect(d.onUnknownCode).not.toHaveBeenCalled();
     expect(d.toast).not.toHaveBeenCalled();
   });
@@ -50,12 +48,7 @@ describe("useScanCodeHandler", () => {
     rerender({ d: second });
     captured.current("012345678905");
 
-    await waitFor(() =>
-      expect(second.addLineItem).toHaveBeenCalledWith(
-        product,
-        expect.stringMatching(/^(BOX|UNIT)$/),
-      ),
-    );
+    await waitFor(() => expect(second.addLineItem).toHaveBeenCalledWith(product, expect.stringMatching(/^(BOX|UNIT)$/)));
     expect(first.addLineItem).not.toHaveBeenCalled();
   });
 

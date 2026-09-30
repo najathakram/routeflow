@@ -17,7 +17,7 @@ nothing is unverifiable — fix the plan or the test plan, not the claim.
 
 **Ground rule — nothing named here may be invented.** Every file path, directory, shell
 command and package-manifest script in this file is checked against the repo by the
-pipeline's Baseline phase _before_ any agent writes a line; one that does not exist comes
+pipeline's Baseline phase *before* any agent writes a line; one that does not exist comes
 back as a **major** finding on this artifact and is routed to a fixer. The only exception is
 a path this change CREATES — say so where you name it, or the check cannot tell a new file
 from a wrong one. Read the repo (`ls`, the package manifest's `scripts`, the test config)
@@ -27,15 +27,15 @@ instead of guessing.
 
 ## Preamble (small scale)
 
-_OPTIONAL — the one-artifact mode. Fill this in and this file replaces `discovery.md` and
+*OPTIONAL — the one-artifact mode. Fill this in and this file replaces `discovery.md` and
 `spec.md`; then omit `discoveryPath`/`specPath` from the pipeline args. `test-plan.md` is
 never absorbed. On major work DELETE this section — the real artifacts exist, and a second
-copy of the requirements forks them._
+copy of the requirements forks them.*
 
 - **Problem:** <what is broken or missing today — the symptom, not the fix>
 - **Who hits it:** <the user or system affected, and how often>
 - **Success signal:** <the one observable thing that is true afterwards and false now>
-- **Requirements** _(the `R#` that each package's `satisfies:` and each `T#` point at)_:
+- **Requirements** *(the `R#` that each package's `satisfies:` and each `T#` point at)*:
   - `R1` — <must; one checkable statement>
   - `R2` — <should; …>
 - **Non-goals (the scope fence):** <what this change deliberately does not do>
@@ -56,8 +56,8 @@ under debate. Compressing discovery you never did is not small scale, it is gues
 
 ## Objective
 
-_2–4 sentences. What we are building or fixing and why. Name the user-visible or
-system-visible outcome, not the code._
+*2–4 sentences. What we are building or fixing and why. Name the user-visible or
+system-visible outcome, not the code.*
 
 <objective>
 
@@ -68,8 +68,8 @@ system-visible outcome, not the code._
 
 ## Constraints & conventions
 
-_Facts the agents cannot discover from this file alone. Read the repo before filling
-this in — its conventions win over any habit._
+*Facts the agents cannot discover from this file alone. Read the repo before filling
+this in — its conventions win over any habit.*
 
 - **Stack / framework:** <…>
 - **Test runner and layout:** <exact runner, exact spec-file location and naming convention>
@@ -84,13 +84,12 @@ this in — its conventions win over any habit._
 
 ## Test packages
 
-_Authored FIRST, before any implementation package runs. These agents write tests only —
+*Authored FIRST, before any implementation package runs. These agents write tests only —
 no implementation code, no edits to source files. Each package writes the files named in
 [test-plan.md](./test-plan.md); file lists here must be disjoint from each other and from
-the implementation packages below._
+the implementation packages below.*
 
 ### TP1 — <title>
-
 - **writes:** `<exact repo-relative test file path>`, `<…>`
 - **tests:** T<n>, T<n>
 - **brief:** <what each test asserts and the oracle for the expected value — restate it
@@ -98,14 +97,13 @@ the implementation packages below._
 - **must fail with:** <the assertion failure expected before implementation exists>
 
 ### TP2 — <title>
-
 - **writes:** `<path>`
 - **tests:** T<n>
 - **brief:** <…>
 - **must fail with:** <…>
 
-**Red gate command** _(runs only these new tests; every one must fail on an assertion,
-none may pass)_:
+**Red gate command** *(runs only these new tests; every one must fail on an assertion,
+none may pass)*:
 
 ```bash
 <exact command>
@@ -131,7 +129,6 @@ Rules:
   test genuinely must change, say so explicitly here and say why.
 
 ### WP1 — <title>
-
 - **files:** `<path/a>`, `<path/b>` (exact repo-relative paths)
 - **satisfies:** R<n>, R<m>
 - **provenBy:** T<n>, T<n>
@@ -145,7 +142,6 @@ Rules:
 ```
 
 ### WP2 — <title>
-
 - **files:** `<path>`
 - **satisfies:** R<n>
 - **provenBy:** T<n>
@@ -154,10 +150,10 @@ Rules:
 
 ### Package map
 
-| WP  | satisfies | provenBy | dependsOn | Wave |
-| --- | --------- | -------- | --------- | ---- |
-| WP1 | R1, R2    | T1, T3   | —         | 1    |
-| WP2 | R3        | T2       | WP1       | 2    |
+| WP | satisfies | provenBy | dependsOn | Wave |
+|---|---|---|---|---|
+| WP1 | R1, R2 | T1, T3 | — | 1 |
+| WP2 | R3 | T2 | WP1 | 2 |
 
 Cross-check: every `R#` in the spec appears in some package's `satisfies:`, or is listed
 as deliberately out of scope above. Every `T#` in the test plan appears in some package's
@@ -167,8 +163,8 @@ as deliberately out of scope above. Every `T#` in the test plan appears in some 
 
 ## Acceptance criteria
 
-_Numbered, checkable statements. The `spec-compliance` reviewer walks these one by one
-against the diff — write them so pass/fail is unambiguous, and tie each to its R#._
+*Numbered, checkable statements. The `spec-compliance` reviewer walks these one by one
+against the diff — write them so pass/fail is unambiguous, and tie each to its R#.*
 
 1. `R<n>` — <observable, checkable statement>
 2. `R<n>` — <…>
@@ -206,8 +202,8 @@ review only, and that fact belongs in the risks section.
 
 ## UI verification
 
-_UI work only. Flows and assertions come from §8 of [test-plan.md](./test-plan.md) —
-copy them, do not re-derive them._
+*UI work only. Flows and assertions come from §8 of [test-plan.md](./test-plan.md) —
+copy them, do not re-derive them.*
 
 - **URL:** `<url>`
 - **Start command:** `<command, or none>` — whatever the agent starts, it must stop.
@@ -219,9 +215,9 @@ copy them, do not re-derive them._
 
 ## Risks & rollback
 
-| Risk | Likelihood     | Blast radius                                               | Mitigation / what the reviewer should watch |
-| ---- | -------------- | ---------------------------------------------------------- | ------------------------------------------- |
-| <…>  | <low/med/high> | <money wrong / data lost / cross-boundary leak / cosmetic> | <…>                                         |
+| Risk | Likelihood | Blast radius | Mitigation / what the reviewer should watch |
+|---|---|---|---|
+| <…> | <low/med/high> | <money wrong / data lost / cross-boundary leak / cosmetic> | <…> |
 
 - **Rollback:** <how to revert — a revert of the diff, a flag flip, a reverse migration.
   Name the exact steps.>
@@ -237,12 +233,12 @@ copy them, do not re-derive them._
 
 ## Pipeline args
 
-_Ready to copy into the Workflow call. `buildPlanPath` and a non-empty `tasks[]` are the only
+*Ready to copy into the Workflow call. `buildPlanPath` and a non-empty `tasks[]` are the only
 required keys — delete any other that does not apply. Each optional key's phase is skipped
 silently when absent, so a missing key never fails the run; it just removes that evidence.
 **Transcription note:** each Test package (TP#) above merges into the matching Work package's
 (WP#) task below as that task's `tests[]` — the engine has ONE task graph, not a separate
-test/implementation id space; a task authors its own tests and its own implementation._
+test/implementation id space; a task authors its own tests and its own implementation.*
 
 ```js
 {
