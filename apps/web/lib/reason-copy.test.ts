@@ -116,3 +116,22 @@ describe("reason-copy: run failures, return reasons, save errors (#1965)", () =>
     expect(RECORDS_FAILED_COPY).toMatch(/try again/i);
   });
 });
+
+import { describeDeliveryOutcome } from "./reason-copy";
+
+describe("describeDeliveryOutcome (#1965 UX review)", () => {
+  it("counts in the sentence, names skipped vs not sent, and never echoes the code", () => {
+    expect(describeDeliveryOutcome("NO_FROM_ADDRESS", 2)).toBe(
+      "2 emails weren't sent: no sending email address is set up.",
+    );
+    expect(describeDeliveryOutcome("NO_FROM_ADDRESS", 1)).toBe(
+      "1 email wasn't sent: no sending email address is set up.",
+    );
+    expect(describeDeliveryOutcome("RULE_OFF", 3)).toBe(
+      "3 emails were skipped: this notification is switched off.",
+    );
+    expect(describeDeliveryOutcome("SMTP 550 user unknown", 2)).toBe(
+      "2 emails weren't sent for a reason we couldn't identify.",
+    );
+  });
+});

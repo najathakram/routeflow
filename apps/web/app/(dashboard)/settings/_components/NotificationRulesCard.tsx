@@ -13,13 +13,15 @@ import {
   type MessagingConfig,
   type WaApprovalStatus,
 } from "@/lib/api/messaging";
+import type { EmailSender } from "./useEmailSender";
 import { MiniSwitch } from "./MiniSwitch";
 
 /**
- * #1965 (spec 10): the notification rules as a grouped list. It shows what the tenant can control,
- * says who receives each message, and says nothing in a cell that belongs in a header:
- *  - channels that are not built appear ONCE ("… coming soon"), never as disabled columns;
- *  - a channel that exists but isn't set up gets ONE header link, and muted cells with a tooltip;
+ * #1965 (spec 10): the notification rules as a grouped, stacked list (a <ul>, not a table, so it
+ * wraps at 390px). It shows what the tenant can control, says who receives each message and which
+ * address emails go out from, and says nothing in a row that belongs in a header:
+ *  - channels that are not built are named ONCE, inside "Coming soon";
+ *  - a channel that exists but isn't set up is stated once, above the list, and its switches are muted;
  *  - events with no firing site are listed under "Coming soon" with no switch.
  */
 
@@ -53,6 +55,16 @@ const GROUP_TITLE: Record<NotificationAudience, string> = {
   STAFF: "Emails to your team",
 };
 
+/** One line per event: who gets it, and when. Closed copy keyed by the event code. */
+const EVENT_DESCRIPTION: Record<string, string> = {
+  ORDER_CONFIRMED: "Sent when an order is confirmed for delivery.",
+  OUT_FOR_DELIVERY: "Sent when the driver starts the route with this order.",
+  DELIVERED: "Sent when the order is delivered.",
+  CANCELLED: "Sent when an order is cancelled.",
+  ORDER_CHANGED_AT_DOOR: "Sent when a driver changes the order at the door.",
+  LICENSE_EXPIRING: "Sent before a customer's licence expires.",
+};
+
 const WA_STATUS_BADGE: Record<
   WaApprovalStatus,
   { variant: "success" | "warning" | "danger" | "neutral"; label: string }
@@ -77,10 +89,12 @@ function joinList(items: string[]): string {
 export function NotificationRulesCard({
   data,
   isAdmin,
+  sender,
   onEdit,
 }: {
   data: MessagingConfig;
   isAdmin: boolean;
+  sender: EmailSender | null;
   onEdit: (event: MatrixEvent) => void;
 }) {
   const { toast } = useToast();
@@ -91,16 +105,20 @@ export function NotificationRulesCard({
   const comingSoon = data.events.filter((e) => !e.hasTrigger);
   const hasInternal = triggered.some((e) => e.channels.some((c) => c.channel === "INTERNAL"));
 
+  // Channels that can show a switch: live ones and set-up-pending ones (muted). Never "not built".
   const columns: MessageChannel[] = [
     ...CHANNEL_ORDER.filter((c) => status[c as keyof typeof status] !== "NOT_BUILT"),
     ...(hasInternal ? (["INTERNAL"] as MessageChannel[]) : []),
   ];
-  // An event with no cell in any visible column (e.g. Invoice sent: portal-only) would render a
-  // dead row; the footnote explains invoices instead.
+  // An event with no usable cell in any shown channel (e.g. Invoice sent: portal-only, or only a
+  // policy-locked cell) would be a dead row; the footnote explains invoices instead.
   const live = triggered.filter((e) =>
     e.channels.some((c) => !c.locked && columns.includes(c.channel)),
   );
   const notBuilt = CHANNEL_ORDER.filter((c) => status[c as keyof typeof status] === "NOT_BUILT");
+  const notConfigured = CHANNEL_ORDER.filter(
+    (c) => status[c as keyof typeof status] === "NOT_CONFIGURED",
+  );
   const metered = status.WHATSAPP === "LIVE" || status.SMS === "LIVE";
 
   const handleToggle = (cell: MatrixCell) => {
@@ -113,9 +131,8 @@ export function NotificationRulesCard({
     );
   };
 
-  const renderCell = (event: MatrixEvent, channel: MessageChannel) => {
-    const cell = event.channels.find((c) => c.channel === channel);
-    if (!cell) return <span className="text-navy/30">—</span>;
+  const renderSwitch = (event: MatrixEvent, cell: MatrixCell, channel: MessageChannel) => {
+    const label = CHANNEL_LABELS[channel];
     if (cell.locked) {
       return (
         <span
@@ -123,13 +140,12 @@ export function NotificationRulesCard({
           tabIndex={0}
           title="Invoices are sent by email or the buyer portal only"
           aria-label="Invoices are sent by email or the buyer portal only"
-          className="inline-flex rounded text-navy/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500"
+          className="inline-flex rounded text-navy/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500"
         >
           <Info className="h-4 w-4" aria-hidden="true" />
         </span>
       );
     }
-    const label = CHANNEL_LABELS[channel];
     if (channel !== "INTERNAL" && status[channel as keyof typeof status] === "NOT_CONFIGURED") {
       return (
         <MiniSwitch
@@ -142,33 +158,76 @@ export function NotificationRulesCard({
         />
       );
     }
-    if (cell.unavailable) return <span className="text-navy/30">—</span>;
+    if (cell.unavailable) return null;
     return (
-      <div className="flex flex-col items-center gap-1">
-        <MiniSwitch
-          checked={cell.enabled}
-          disabled={!isAdmin || toggle.isPending}
-          ariaLabel={`${event.label} via ${label}`}
-          onToggle={() => handleToggle(cell)}
-        />
-        {channel === "WHATSAPP" && cell.template && (
-          <Badge
-            variant={WA_STATUS_BADGE[cell.template.waApprovalStatus].variant}
-            label={WA_STATUS_BADGE[cell.template.waApprovalStatus].label}
-            className="whitespace-nowrap"
-          />
-        )}
-      </div>
+      <MiniSwitch
+        checked={cell.enabled}
+        disabled={!isAdmin || toggle.isPending}
+        ariaLabel={`${event.label} via ${label}`}
+        onToggle={() => handleToggle(cell)}
+      />
     );
   };
 
-  const groups = (["CUSTOMER", "STAFF"] as NotificationAudience[])
-    .map((audience) => ({ audience, events: live.filter((e) => e.audience === audience) }))
-    .filter((g) => g.events.length > 0);
+  const renderRow = (event: MatrixEvent) => {
+    const description = EVENT_DESCRIPTION[event.eventKey];
+    return (
+      <li
+        key={event.eventKey}
+        data-event-row
+        className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2 py-3"
+      >
+        <div className="min-w-0 flex-1 basis-56">
+          <div className="flex items-center gap-1.5">
+            <span className="text-sm text-navy">{event.label}</span>
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => onEdit(event)}
+                aria-label={`Edit ${event.label} email text`}
+                title="Edit email text"
+                className="relative rounded p-1 text-navy/60 before:absolute before:-inset-2 before:content-[''] hover:bg-surface-raised hover:text-navy"
+              >
+                <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+            )}
+          </div>
+          {description && <p className="mt-0.5 text-xs text-navy/70">{description}</p>}
+          <div className="mt-1.5">
+            <Badge variant="neutral" label={AUDIENCE_LABEL[event.audience]} />
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+          {columns.map((channel) => {
+            const cell = event.channels.find((c) => c.channel === channel);
+            if (!cell) return null;
+            const control = renderSwitch(event, cell, channel);
+            if (!control) return null;
+            return (
+              <div key={channel} className="flex items-center gap-2">
+                <span className="text-xs text-navy/70">{CHANNEL_LABELS[channel]}</span>
+                {control}
+                {channel === "WHATSAPP" && cell.template && !cell.locked && (
+                  <Badge
+                    variant={WA_STATUS_BADGE[cell.template.waApprovalStatus].variant}
+                    label={WA_STATUS_BADGE[cell.template.waApprovalStatus].label}
+                    className="whitespace-nowrap"
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </li>
+    );
+  };
+
+  const customerEvents = live.filter((e) => e.audience === "CUSTOMER");
+  const staffEvents = live.filter((e) => e.audience === "STAFF");
 
   return (
     <Card title="Notification rules">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-navy/70">Choose which emails go out for each event.</p>
         {data.msgsMeter && metered && (
           <p className="whitespace-nowrap text-xs font-medium text-navy/70">
@@ -178,122 +237,95 @@ export function NotificationRulesCard({
           </p>
         )}
       </div>
-      {!isAdmin && (
-        <p className="mb-3 text-xs text-navy/50">Only admins can change notifications</p>
+
+      {sender && (
+        <div
+          data-sender-row
+          className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-surface-border bg-surface-raised/40 px-3 py-2 text-sm text-navy/70"
+        >
+          <span>{`Sending from: ${sender.label}`}</span>
+          {isAdmin && (
+            <>
+              <span aria-hidden="true">·</span>
+              <Link
+                href={CHANNEL_SETUP_HREF.EMAIL ?? "/settings?tab=email"}
+                className="font-medium text-brand-700 hover:underline"
+              >
+                {sender.kind === "default" ? "Use your own mailbox →" : "Change sender →"}
+              </Link>
+            </>
+          )}
+        </div>
       )}
 
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-surface-border text-left text-xs font-semibold uppercase tracking-wide text-navy/60">
-              <th scope="col" className="py-2 pr-2">
-                Event
-              </th>
-              <th scope="col" className="px-2 py-2">
-                Who receives this
-              </th>
-              {columns.map((channel) => {
-                const notSetUp =
-                  channel !== "INTERNAL" &&
-                  status[channel as keyof typeof status] === "NOT_CONFIGURED";
-                const href = CHANNEL_SETUP_HREF[channel];
-                return (
-                  <th key={channel} scope="col" className="px-2 py-2 text-center">
-                    {notSetUp ? (
-                      <div className="flex flex-col items-center normal-case">
-                        <span>{`${CHANNEL_LABELS[channel]} · Not set up`}</span>
-                        {href && (
-                          <Link
-                            href={href}
-                            className="text-[11px] font-medium text-brand-700 hover:underline"
-                          >
-                            {`Set up ${CHANNEL_LABELS[channel]}`}
-                          </Link>
-                        )}
-                      </div>
-                    ) : (
-                      CHANNEL_LABELS[channel]
-                    )}
-                  </th>
-                );
-              })}
-            </tr>
-          </thead>
-          {groups.map((group) => (
-            <tbody key={group.audience}>
-              <tr>
-                <th
-                  scope="rowgroup"
-                  colSpan={2 + columns.length}
-                  className="pb-1 pt-4 text-left text-xs font-semibold text-navy"
-                >
-                  {GROUP_TITLE[group.audience]}
-                </th>
-              </tr>
-              {group.events.map((event) => (
-                <tr
-                  key={event.eventKey}
-                  data-event-row
-                  className="border-b border-surface-border last:border-0"
-                >
-                  <td className="py-2 pr-2">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-navy">{event.label}</span>
-                      <button
-                        type="button"
-                        onClick={() => onEdit(event)}
-                        aria-label={`Edit ${event.label} template`}
-                        className="rounded p-1 text-navy/50 hover:bg-surface-raised hover:text-navy"
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </td>
-                  <td className="px-2 py-2">
-                    <Badge
-                      variant="neutral"
-                      label={AUDIENCE_LABEL[event.audience]}
-                      className="whitespace-nowrap"
-                    />
-                  </td>
-                  {columns.map((channel) => (
-                    <td key={channel} className="px-2 py-2 text-center align-middle">
-                      {renderCell(event, channel)}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          ))}
-        </table>
-      </div>
-
-      <div className="mt-3 space-y-1 text-xs text-navy/50">
-        <p>Invoices are emailed when you press Send on an invoice.</p>
-        <p>
-          Emails send from your connected mailbox, then your SMTP setup, then RouteFlow&apos;s
-          address.{" "}
-          <Link href="/settings?tab=email" className="font-medium text-brand-700 hover:underline">
-            Set up email
-          </Link>
+      {!isAdmin && (
+        <p className="mb-3 flex items-center gap-1.5 text-xs">
+          <Info className="h-3.5 w-3.5 flex-none text-navy/60" aria-hidden="true" />
+          <span className="text-navy/70">Only admins can change notifications</span>
         </p>
-        {!groups.some((g) => g.audience === "STAFF") && (
-          <p>Your team isn&apos;t emailed about orders yet. Team emails are coming soon.</p>
+      )}
+
+      {notConfigured.map((channel) => {
+        const href = CHANNEL_SETUP_HREF[channel];
+        return (
+          <p
+            key={channel}
+            className="mb-3 flex flex-wrap items-center gap-x-2 text-xs text-navy/70"
+          >
+            <span>{`${CHANNEL_LABELS[channel]} · Not set up`}</span>
+            {isAdmin && href && (
+              <Link href={href} className="font-medium text-brand-700 hover:underline">
+                {`Set up ${CHANNEL_LABELS[channel]}`}
+              </Link>
+            )}
+          </p>
+        );
+      })}
+
+      <div className="space-y-5">
+        {customerEvents.length > 0 && (
+          <section aria-labelledby="notif-group-customer">
+            <h3 id="notif-group-customer" className="text-xs font-semibold text-navy">
+              {GROUP_TITLE.CUSTOMER}
+            </h3>
+            <ul className="mt-1 max-w-3xl divide-y divide-surface-border">
+              {customerEvents.map(renderRow)}
+            </ul>
+          </section>
         )}
-        {notBuilt.length > 0 && (
-          <p>{`${joinList(notBuilt.map((c) => COMING_SOON_LABEL[c] ?? CHANNEL_LABELS[c]))}: coming soon`}</p>
-        )}
+
+        <section aria-labelledby="notif-group-staff">
+          <h3 id="notif-group-staff" className="text-xs font-semibold text-navy">
+            {GROUP_TITLE.STAFF}
+          </h3>
+          {staffEvents.length > 0 ? (
+            <ul className="mt-1 max-w-3xl divide-y divide-surface-border">
+              {staffEvents.map(renderRow)}
+            </ul>
+          ) : (
+            <p className="mt-1 text-xs text-navy/70">
+              Your team isn&apos;t emailed about orders yet — coming soon.
+            </p>
+          )}
+        </section>
       </div>
 
-      {comingSoon.length > 0 && (
+      <p className="mt-4 text-xs text-navy/70">
+        Invoices are emailed when you press Send on an invoice.
+      </p>
+
+      {(comingSoon.length > 0 || notBuilt.length > 0) && (
         <details className="mt-4 rounded-lg border border-surface-border px-3 py-2">
           <summary className="cursor-pointer text-xs font-semibold text-navy/70">
             Coming soon
           </summary>
-          <ul className="mt-2 space-y-1 text-sm text-navy/60">
+          <ul className="mt-2 space-y-1 text-sm text-navy/70">
             {comingSoon.map((event) => (
               <li key={event.eventKey}>{event.label}</li>
             ))}
+            {notBuilt.length > 0 && (
+              <li>{joinList(notBuilt.map((c) => COMING_SOON_LABEL[c] ?? CHANNEL_LABELS[c]))}</li>
+            )}
           </ul>
         </details>
       )}
