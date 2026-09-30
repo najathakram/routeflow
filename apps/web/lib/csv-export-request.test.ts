@@ -11,12 +11,14 @@ describe("exportErrorMessage", () => {
     await expect(exportErrorMessage(err)).resolves.toBe("from must be a date");
   });
 
-  it("falls back to the client message when the Blob is not JSON", async () => {
+  it("shows a fixed friendly line, never the raw client error, when the Blob is not JSON", async () => {
     const err = {
       message: "Request failed with status code 403",
       response: { status: 403, data: blobOf("<html>nope</html>") },
     };
-    await expect(exportErrorMessage(err)).resolves.toBe("Request failed with status code 403");
+    await expect(exportErrorMessage(err)).resolves.toBe(
+      "The export failed. Please try again or contact support.",
+    );
   });
 
   it("still handles plain-object bodies, the 429 line and a bare error", async () => {
