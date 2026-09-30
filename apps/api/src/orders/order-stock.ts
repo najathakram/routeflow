@@ -129,20 +129,29 @@ export async function decrementStockForSale(
     ),
   }));
 
+  // B920: the oversell check is per PRODUCT, never per line — two lines of one product that each fit
+  // in stock but together exceed it must 409 once, with ONE `lines[]` entry for the product. Sum the
+  // pieces per product FIRST (first-seen order); the decrement below reads the same map.
+  const qtyByProduct = new Map<string, number>();
+  for (const li of pieceLines) {
+    const sum = (qtyByProduct.get(li.productId) ?? 0) + li.pieces;
+    qtyByProduct.set(li.productId, Math.round(sum * 1000) / 1000);
+  }
+
   const oosItems: string[] = [];
   const oosLines: InsufficientStockLine[] = [];
-  for (const li of pieceLines) {
-    const p = lockedProducts.find((lp: any) => lp.id === li.productId);
-    if (p && Number(p.currentStock) < li.pieces) {
+  for (const [productId, requestedPieces] of qtyByProduct) {
+    const p = lockedProducts.find((lp: any) => lp.id === productId);
+    if (p && Number(p.currentStock) < requestedPieces) {
       oosItems.push(
-        `${p.name ?? li.productId} (available: ${Number(p.currentStock)}, requested: ${li.pieces})`,
+        `${p.name ?? productId} (available: ${Number(p.currentStock)}, requested: ${requestedPieces})`,
       );
       oosLines.push({
-        productId: li.productId,
+        productId,
         name: p.name ?? undefined,
         unit: pieceUnitLabel(p),
         available: Number(p.currentStock),
-        requested: li.pieces,
+        requested: requestedPieces,
       });
     }
   }
@@ -174,11 +183,6 @@ export async function decrementStockForSale(
   // tenantId (SUPER_ADMIN context) keeps the unscoped behaviour the ORM
   // call had in that same context.
   const stockTenantId = deps.tenantId;
-  const qtyByProduct = new Map<string, number>();
-  for (const li of pieceLines) {
-    const sum = (qtyByProduct.get(li.productId) ?? 0) + li.pieces;
-    qtyByProduct.set(li.productId, Math.round(sum * 1000) / 1000);
-  }
   const stockValues = Prisma.join(
     [...qtyByProduct.entries()].map(
       ([productId, qty]) => Prisma.sql`(${productId}::text, ${qty}::numeric)`,
