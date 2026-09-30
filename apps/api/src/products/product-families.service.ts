@@ -323,6 +323,12 @@ export class ProductFamiliesService {
     }
     // Range-check every price / cost BEFORE the transaction (a rounding overflow is a 400, never after locks + writes).
     for (const u of update) {
+      // An explicit null is not "omitted": it would write $0.00 tiers / a 0.0000 cost (Tier 1, #2881 r3).
+      if (u.pricePerUnit === null || u.standardCost === null) {
+        throw new BadRequestException(
+          "pricePerUnit and standardCost cannot be null; omit the field to leave it unchanged.",
+        );
+      }
       if (u.pricePerUnit !== undefined) money(u.pricePerUnit);
       if (u.standardCost !== undefined) cost4(u.standardCost);
     }

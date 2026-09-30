@@ -14,6 +14,8 @@ import { BadRequestException, ConflictException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { randomUUID } from "crypto";
 import { ProductFamiliesService } from "./product-families.service";
+import { InventoryService } from "../inventory/inventory.service";
+import { StockAlertService } from "../stock-alerts/stock-alert.service";
 import { assertSellableLines } from "./sellable-lines";
 import { AuditService } from "../audit/audit.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -43,6 +45,7 @@ describeDb("WS8 families API — real Postgres", () => {
   let prisma: PrismaService;
   let tenantCtx: TenantContextService;
   let service: ProductFamiliesService;
+  let inventory: InventoryService;
   const createdTenantIds: string[] = [];
 
   beforeAll(async () => {
@@ -53,12 +56,18 @@ describeDb("WS8 families API — real Postgres", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ProductFamiliesService,
+        InventoryService,
         AuditService,
+        {
+          provide: StockAlertService,
+          useValue: { fireForProducts: jest.fn().mockResolvedValue({ notified: 0 }) },
+        },
         { provide: PrismaService, useValue: prisma },
         { provide: RouteFlowGateway, useValue: { emitProductUpdated: jest.fn() } },
       ],
     }).compile();
     service = module.get(ProductFamiliesService);
+    inventory = module.get(InventoryService);
   });
 
   afterAll(async () => {
@@ -72,6 +81,10 @@ describeDb("WS8 families API — real Postgres", () => {
   });
 
   async function cleanupTenant(tenantId: string): Promise<void> {
+    await prisma.stockCountLine.deleteMany({ where: { tenantId } });
+    await prisma.stockCountSession.deleteMany({ where: { tenantId } });
+    await prisma.stockMovement.deleteMany({ where: { tenantId } });
+    await prisma.stockLot.deleteMany({ where: { tenantId } });
     await prisma.auditLog.deleteMany({ where: { tenantId } });
     // ProductBarcode cascades on Product delete; variants reference the family, so children first.
     await prisma.product.deleteMany({ where: { tenantId, parentProductId: { not: null } } });
@@ -304,6 +317,85 @@ describeDb("WS8 families API — real Postgres", () => {
       productIds: [fam.id],
     });
     expect(() => assertSellableLines([kid])).not.toThrow();
+  });
+
+  it("Opus #2881 r3 B1': a counted / cost-based FAMILY is a 400 through the REAL queries (commitStockCount, upsertStockCountLine, setCostBasis)", async () => {
+    const tenantId = await seedTenant("count");
+    const user = await prisma.user.create({
+      data: {
+        email: `${freshTenantSlug("u")}@example.invalid`,
+        username: `u-${randomUUID().slice(0, 8)}`,
+        role: "OPERATOR",
+        tenantId,
+      },
+    });
+    const created = await inTenant(tenantId, () =>
+      service.createFamily(
+        { family: { name: "CountFam" }, variants: [variant("Kid")] } as any,
+        ACTOR,
+      ),
+    );
+    const famId = created.family.id;
+    const refusedFamily = async (p: Promise<unknown>) => {
+      const err = await p.catch((e) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect((err as BadRequestException).getResponse()).toMatchObject({
+        code: "FAMILY_NOT_SELLABLE",
+      });
+    };
+    await inTenant(tenantId, async () => {
+      await refusedFamily(
+        inventory.commitStockCount(
+          {
+            sessionId: randomUUID(),
+            items: [{ productId: famId, countedQty: 5, unitCost: 1 }],
+          } as any,
+          user.id,
+        ),
+      );
+      const session = await prisma.stockCountSession.create({
+        data: { tenantId, startedById: user.id, name: "ws8 count" },
+      });
+      // the select path: upsertStockCountLine reads { id, kind, name, ... } from the real DB
+      await refusedFamily(
+        inventory.upsertStockCountLine(session.id, { productId: famId, countedQty: 5 } as any, {
+          sub: user.id,
+        }),
+      );
+      await refusedFamily(inventory.setCostBasis(famId, { unitCost: 2 } as any, user.id));
+    });
+    // nothing was written for the FAMILY
+    expect(await prisma.stockMovement.count({ where: { tenantId, productId: famId } })).toBe(0);
+    expect(await prisma.stockCountLine.count({ where: { tenantId, productId: famId } })).toBe(0);
+    // and a real VARIANT is still countable through the same entry (the guard refuses kind, not the path)
+    await inTenant(tenantId, () =>
+      inventory.setCostBasis(created.variants[0].id, { unitCost: 2 } as any, user.id),
+    );
+  });
+
+  it("Tier 1 money: an explicit null price / cost on an update row is a 400 and the row is untouched", async () => {
+    const tenantId = await seedTenant("null");
+    const created = await inTenant(tenantId, () =>
+      service.createFamily(
+        {
+          family: { name: "NullFam" },
+          variants: [variant("Kid", { pricePerUnit: "5.00", standardCost: "2" })],
+        } as any,
+        ACTOR,
+      ),
+    );
+    const id = created.variants[0].id;
+    for (const bad of [{ pricePerUnit: null }, { standardCost: null }]) {
+      await expect(
+        inTenant(tenantId, () =>
+          service.updateVariants(created.family.id, { update: [{ id, ...bad }] } as any, ACTOR),
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    }
+    const row = await prisma.product.findUniqueOrThrow({ where: { id } });
+    expect(Number(row.pricePerUnit)).toBe(5);
+    expect(Number(row.priceTier2)).toBe(5);
+    expect(Number(row.standardCost)).toBe(2);
   });
 
   it("SA-606a: variant cost lands in standardCost ONLY (never averageCost / a StockLot); an omitted cost inherits the family's", async () => {
