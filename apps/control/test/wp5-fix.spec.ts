@@ -221,6 +221,59 @@ describe("F2/F3: per-service relevance for W7; a service with no live deploy is 
     expect(out.prs[0].touches).toEqual({ api: true, web: true });
   });
 
+  it("N1: a newer reported DONE never blocks released (only regressive statuses overrule)", () => {
+    const out = rec.reconcile(
+      mkState([mkTask("RF-2", "code-complete")]),
+      {
+        prs: [mkPR({ mergeSha: m, mergedAt: ago(5 * H), filePaths: ["apps/web/x.ts"] })],
+        branches: [],
+        deploys: { api: { sha: nw, at }, web: { sha: nw, at }, failedShas: [] },
+        repoDir: dir,
+        watchPatterns: patterns,
+        reportedAt: { "RF-2": ago(1 * H) },
+      },
+      NOW,
+    );
+    expect(out.tasks["RF-2"].status).toMatchObject({ value: "released", source: "inferred" });
+  });
+
+  it("N1: a newer reported regression (in-progress after the merge) still blocks", () => {
+    const out = rec.reconcile(
+      mkState([mkTask("RF-2", "in-progress")]),
+      {
+        prs: [mkPR({ mergeSha: m, mergedAt: ago(5 * H) })],
+        branches: [],
+        deploys: { api: { sha: nw, at }, web: { sha: nw, at }, failedShas: [] },
+        repoDir: dir,
+        reportedAt: { "RF-2": "2026-01-12T09:30:00.000Z" },
+      },
+      NOW,
+    );
+    expect(out.tasks["RF-2"].status).toMatchObject({ value: "in-progress", source: "reported" });
+  });
+
+  it("N2: a web-only PR with web live reaches deployed:true, deployedAt, and merge-to-deploy metrics", () => {
+    const { pr } = go({ filePaths: ["apps/web/x.ts"] }, apiOldWebNew());
+    expect(pr.deployed).toBe(true);
+    expect(pr.deployedAt).toBe(at);
+    const row = prsMod.ledgerRows([], [pr], NOW)[0];
+    expect(row.deployed).toBe(true);
+    expect(row.deployedAt).toBe(at);
+    const mt = prsMod.prMetrics([pr], [{ id: "R1", from: null, to: null }], () => null);
+    expect(mt.R1.mergeToDeploy.median).not.toBeNull();
+  });
+
+  it("N4: unknown files (no detail yet) touch ALL services", () => {
+    const { pr } = go({ filePaths: [], files: 0 }, apiOldWebNew());
+    expect(pr.touches).toEqual({ api: true, web: true });
+  });
+
+  it("N4: a merged PR with no merge sha is deployed 'unknown' and never W7", () => {
+    const { pr } = go({ mergeSha: null, filePaths: ["apps/api/x.ts"] }, apiOldWebNew());
+    expect(pr.deployed).toBe("unknown");
+    expect(w7(pr)).toHaveLength(0);
+  });
+
   it("F3: a service with no live deploy reads unknown, not false", () => {
     const { out, pr } = go(
       { filePaths: ["apps/api/x.ts"] },
@@ -696,6 +749,20 @@ describe("runTick", () => {
     expect(r.warnings.join("|")).toMatch(/fetch failed/);
     expect(r.warnings.join("|")).toMatch(/probe 401/);
     expect(r.nextMs).toBe(300_000);
+  });
+});
+
+describe("N3: runTick honours the rate limit's resetAt", () => {
+  it("remaining 0 with resetAt in 20 min -> nextMs 20 min", async () => {
+    const reset = new Date(Date.parse(NOW) + 20 * MIN).toISOString();
+    const deps = {
+      github: {
+        poll: async () => ({ prs: [], branches: [], files: {} }),
+        state: { rateLimit: { remaining: 0, resetAt: reset } },
+      },
+      now: () => NOW,
+    };
+    expect((await poller.runTick(deps, 2)).nextMs).toBe(20 * MIN);
   });
 });
 

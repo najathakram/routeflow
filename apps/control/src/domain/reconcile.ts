@@ -99,7 +99,8 @@ const derived = <T>(value: T, ref: string | null): Derived<T> => ({
 
 /** Which services a PR's files touch; unknown patterns or a truncated file list touch everything. */
 function touchesOf(p: PR, wp: InferredInput["watchPatterns"]): { api: boolean; web: boolean } {
-  if (!wp || p.filesTruncated) return { api: true, web: true };
+  // no patterns, a truncated list, or no file list yet (detail not fetched): touch everything
+  if (!wp || p.filesTruncated || (p.filePaths ?? []).length === 0) return { api: true, web: true };
   const one = (globs: string[] | undefined): boolean => {
     if (!globs) return true;
     try {
@@ -126,23 +127,33 @@ export function reconcile(
   const prs: PR[] = [...inferred.prs]
     .sort((a, b) => a.pr - b.pr)
     .map((p) => {
-      if (p.state !== "merged" || !p.mergeSha) return { ...p, deployed: false };
+      if (p.state !== "merged") return { ...p, deployed: false };
+      const touches = touchesOf(p, inferred.watchPatterns);
+      if (!p.mergeSha) {
+        // a merged PR with no merge sha cannot be placed on a deploy: unknown, never "not deployed"
+        const unknown = { api: "unknown", web: "unknown" } as const;
+        perPrServices.set(p.pr, { ...unknown });
+        return { ...p, deployed: "unknown", touches, serviceDeployed: { ...unknown } };
+      }
       const api = onService(inferred.deploys, "api", p.mergeSha, inferred.repoDir);
       const web = onService(inferred.deploys, "web", p.mergeSha, inferred.repoDir);
-      perPrServices.set(p.pr, { api, web });
-      const deployed = combine([api, web]);
-      const next: PR = {
-        ...p,
-        deployed,
-        touches: touchesOf(p, inferred.watchPatterns),
-        serviceDeployed: { api, web },
+      // deployed combines over the TOUCHED services only; an untouched service is not waited on
+      const none = !touches.api && !touches.web;
+      const eff = {
+        api: none || touches.api ? api : true,
+        web: none || touches.web ? web : true,
       };
+      perPrServices.set(p.pr, eff);
+      const deployed = combine([eff.api, eff.web]);
+      const next: PR = { ...p, deployed, touches, serviceDeployed: { api, web } };
       delete next.deployedAt;
       if (deployed === true) {
         const at = Math.max(
-          toMs(inferred.deploys?.api?.at),
-          toMs(inferred.deploys?.web?.at),
-          toMs(p.mergedAt),
+          ...[
+            none || touches.api ? toMs(inferred.deploys?.api?.at) : NaN,
+            none || touches.web ? toMs(inferred.deploys?.web?.at) : NaN,
+            toMs(p.mergedAt),
+          ].filter(Number.isFinite),
         );
         if (Number.isFinite(at)) next.deployedAt = stamp(at);
       }
@@ -187,8 +198,13 @@ export function reconcile(
     // F1: a status the agent reported AFTER the merge (e.g. task.reopened) is a newer decision
     const reported =
       inferred.reportedAt && has(inferred.reportedAt, id) ? inferred.reportedAt[id] : null;
+    // only a REGRESSIVE newer status (reopened, started, blocked, reconsider, dropped) overrules;
+    // a newer done / code-complete never blocks advancing to released
     const overruled =
-      latest !== null && reported !== null && toMs(reported) > toMs(latest.mergedAt);
+      latest !== null &&
+      reported !== null &&
+      cur !== "code-complete" &&
+      toMs(reported) > toMs(latest.mergedAt);
     if (latest && !overruled && !DECISION.has(cur) && cur !== "released") {
       if (registerBug && !(cur === "code-complete")) {
         // the register says open: inference never writes it; only a badge (row 6)

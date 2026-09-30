@@ -331,7 +331,7 @@ export function createGithub(cfg: GithubConfig) {
       const data = await gql(buildListQuery(repo));
       const open = arr(dig(data, "repository", "pullRequests", "nodes")) as RawPR[];
       pollCount++;
-      if (pollCount % CLOSED_EVERY_N_POLLS === 0) {
+      if ((pollCount - 1) % CLOSED_EVERY_N_POLLS === 0) {
         const c = await gql(buildClosedQuery(repo));
         closedNodes = arr(dig(c, "repository", "pullRequests", "nodes")) as RawPR[];
       }

@@ -162,6 +162,7 @@ export async function runTick(
   const nextMs = nextIntervalMs(
     {
       remaining: deps.github.state.rateLimit.remaining,
+      resetAt: deps.github.state.rateLimit.resetAt ?? null,
       lastWebhookAt: deps.lastWebhookAt?.() ?? null,
     },
     deps.now(),

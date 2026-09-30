@@ -337,7 +337,7 @@ describe("T51/T52 the request plan per poll", () => {
 });
 
 describe("F6 amended budget: recent-closed query on every 4th poll only", () => {
-  it("polls 1-3 run no closed query, poll 4 runs exactly one (first:20, CLOSED+MERGED), poll 5 none", async () => {
+  it("the closed query runs on poll 1 and then every 4th poll only (polls 5, 9 ...)", async () => {
     const stub = makeStub();
     stub.list = [node(1, T0)];
     stub.closed = [{ ...node(2, T0), state: "MERGED" }];
@@ -348,7 +348,7 @@ describe("F6 amended budget: recent-closed query on every 4th poll only", () => 
       await c.poll();
       closedPerPoll.push(stub.count("closed"));
     }
-    expect(closedPerPoll).toEqual([0, 0, 0, 1, 0, 0, 0, 1]);
+    expect(closedPerPoll).toEqual([1, 0, 0, 0, 1, 0, 0, 0]);
   });
 
   it("the closed query is small, unfiltered by nothing else, and its PRs reach the result", async () => {
