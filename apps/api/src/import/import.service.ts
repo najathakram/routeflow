@@ -1376,7 +1376,11 @@ export class ImportService {
         }
         if (!productId && !skuHeldOnlyByInactive && description && description !== "Item") {
           const product = await this.prisma.forTenant().product.findFirst({
-            where: { isActive: true, name: { equals: description, mode: "insensitive" } },
+            where: {
+              isActive: true,
+              name: { equals: description, mode: "insensitive" },
+              kind: { not: "FAMILY" }, // a FAMILY parent is an organising row, never a sellable line
+            },
           });
           if (product) productId = product.id;
         }

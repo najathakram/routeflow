@@ -392,6 +392,19 @@ describe("WS7 importers: active-only lookups, retired codes, reasons on every sk
     expect(byNameActive.line.productId).toBe("B2");
   });
 
+  it("FAMILY: the invoice-line NAME fallback never links a FAMILY parent (an organising row, not a sellable product)", async () => {
+    invoicesCreated.length = 0;
+    store.length = 0;
+    store.push(row({ id: "FAM", name: "Mango", kind: "FAMILY" }));
+    const onlyFamily = await runInvoice({ "Item Name": "Mango" });
+    expect(onlyFamily.line.productId).toBeUndefined();
+
+    invoicesCreated.length = 0;
+    store.push(row({ id: "VAR", name: "Mango", kind: "VARIANT" }));
+    const withSellable = await runInvoice({ "Item Name": "Mango" });
+    expect(withSellable.line.productId).toBe("VAR");
+  });
+
   // ── I4-I7, I9: importProducts ────────────────────────────────────────────────────────────────
 
   const runProducts = (csv: string, dryRun = false) =>
