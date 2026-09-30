@@ -39,3 +39,4 @@ in `useOpenPurchaseOrders` always return zero rows for that leg; `lib/api/buyer.
 | [mobile/landing-2026-09-29-late.md](mobile/landing-2026-09-29-late.md) | Landing 2026-09-29 late (mobile): iOS scan-tray price modal sequencing (B901) |
 | [mobile/landing-2026-09-28-late.md](mobile/landing-2026-09-28-late.md) | Landing 2026-09-28 late: buyer custom lines skipped (B889), useNewUi flag, one-unit-sold surfaces, return-only-bought guard |
 | [mobile/catchup-2026-09-21.md](mobile/catchup-2026-09-21.md) | Catch-up 2026-09-21: `BlockedLinesModal`, `po-list-logic`, `selling-restricted` |
+| [mobile/landing-2026-09-30.md](mobile/landing-2026-09-30.md) | Catch-up 2026-09-30 (mobile): PO receive linePack |

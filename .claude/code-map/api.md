@@ -50,3 +50,4 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 | [api/landing-2026-09-28-afternoon.md](api/landing-2026-09-28-afternoon.md) | Landing batch 2026-09-28 afternoon (18 PRs after 2f8a155f): returns scan/override, invoice caps, onboarding S4/S5, mailbox outbox |
 | [api/landing-2026-09-28-morning.md](api/landing-2026-09-28-morning.md) | Landing batch 2026-09-28 morning (46 PRs after 3d9b027b): webhook claim, partial-invoice CAS, NSF tax, onboarding S1/S2, script guards |
 | [api/landing-2026-09-28-overnight.md](api/landing-2026-09-28-overnight.md) | Landing batch 2026-09-28 overnight (39 PRs a1ef8e7..3d9b027b + #2390): billing lock order/CAS/retry, customer-delete guards, after-commit emits, storage-key ownership, unit-line diffs, overdue zone + sweep, stable image URLs |
+| [api/landing-2026-09-30.md](api/landing-2026-09-30.md) | Catch-up 2026-09-30: #2185 import commercial cols, #2781 PO linePack, recipes, family price, tooling |

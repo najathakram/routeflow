@@ -403,3 +403,5 @@ TS config presets (JSON inheritance): `base.json` (es2022, strict, nodeNext), `n
 - **Modified `packages/types/`:** `api/products.ts` (unit prices `string|null`; `PutProductUnitsPayload` -> `CreateProductUnitPayload`/`UpdateProductUnitPayload`, #947); `api/us-states.ts` (comment only: AA/AE/AP/FM/MH/PW/UM out of scope); `index.ts` (+4 re-exports).
 - **Modified `packages/pricing/src/unit-levels.ts`:** `resolveUnitPrice` now delegates to new `resolveLevelPrice(input: ResolveLevelPriceInput)`; new `Numeric` type accepts Decimal/string; explicit price = positive number only; zero packPrice guard (#943/#947).
 - **Modified `packages/ui/src/web/`:** `Badge.tsx` (`children` now rendered, #946); `Modal.tsx` (+`scroll` 92vh cap, `onOpenAutoFocus`, `onCloseAutoFocus`, #1062/#1115). ui + eslint-config `package.json`: dep bumps (#972).
+
+- See also [packages/landing-2026-09-30.md](packages/landing-2026-09-30.md) (catch-up: import DTOs, B894 spec).
