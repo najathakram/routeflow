@@ -40,8 +40,9 @@ interface EstProduct {
   unitsPerBox: number | null;
   imageKeys: string[];
   isActive: boolean;
-  portalVisible?: boolean;
-  parent?: { portalVisible: boolean } | null;
+  kind: string;
+  portalVisible: boolean;
+  parent: { portalVisible: boolean } | null;
 }
 
 /**
@@ -83,6 +84,7 @@ export class ReplenishmentService {
                 unitsPerBox: true,
                 imageKeys: true,
                 isActive: true,
+                kind: true,
                 portalVisible: true,
                 parent: { select: { portalVisible: true } },
               },
