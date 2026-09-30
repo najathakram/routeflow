@@ -178,6 +178,17 @@ describe("OrdersService.create — sell by a unit (units_v1, 4b-2b)", () => {
     expect(prisma.order.create).not.toHaveBeenCalled();
   });
 
+  it("WS8: a FAMILY container on a line is a 400 FAMILY_NOT_SELLABLE, for staff too, and nothing is written", async () => {
+    prisma.product.findMany.mockResolvedValue([{ ...PRODUCT, kind: "FAMILY" }]);
+    const err = await create([{ productId: "prod-1", qty: 1 }]).catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse()).toMatchObject({
+      code: "FAMILY_NOT_SELLABLE",
+      productIds: ["prod-1"],
+    });
+    expect(prisma.order.create).not.toHaveBeenCalled();
+  });
+
   it("an unknown unit, boxes beside a unit, and a unit on a custom line are 400s that write nothing", async () => {
     for (const items of [
       [{ productId: "prod-1", qty: 1, unitLabel: "Bogus" }],
