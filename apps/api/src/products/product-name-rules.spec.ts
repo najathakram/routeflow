@@ -62,6 +62,8 @@ describe("assertNameFree", () => {
       response: {
         code: "NAME_TAKEN",
         message: nameTakenMessage("Apple", false),
+        field: "name",
+        value: "Apple",
         productId: "h",
         productName: "apple",
       },

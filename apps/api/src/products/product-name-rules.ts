@@ -64,6 +64,9 @@ export async function assertNameFree(
     message: input.reactivating
       ? `Can't reactivate: an active product named "${name}" already exists. Rename one of them first.`
       : nameTakenMessage(name, parentProductId != null),
+    // Uniform with CODE_TAKEN (SA/lead ruling): the same flat keys, the field being "name".
+    field: "name",
+    value: name,
     productId: holder.id,
     productName: holder.name,
   });
@@ -88,6 +91,8 @@ export function mapNameUniqueViolation(e: unknown, name: string, hasParent: bool
       throw new ConflictException({
         code: API_ERROR_CODES.NAME_TAKEN,
         message: nameTakenMessage(name, hasParent),
+        field: "name",
+        value: name,
       });
     }
   }
