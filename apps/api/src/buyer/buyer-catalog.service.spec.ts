@@ -129,6 +129,9 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
       variants: [
         {
           id: "v1",
+          isActive: true,
+          kind: "STANDARD",
+          portalVisible: true,
           variantName: "Large",
           sku: "V1",
           unit: "ea",
@@ -167,7 +170,17 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
       isActive: true,
       trackedCategoryId: null,
       variants: [
-        { id: "v1", variantName: "Large", sku: "V1", unit: "ea", pricePerUnit: 10, priceTier3: 8 },
+        {
+          id: "v1",
+          isActive: true,
+          kind: "STANDARD",
+          portalVisible: true,
+          variantName: "Large",
+          sku: "V1",
+          unit: "ea",
+          pricePerUnit: 10,
+          priceTier3: 8,
+        },
       ],
     });
 
@@ -191,8 +204,24 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
       isActive: true,
       trackedCategoryId: null,
       variants: [
-        { id: "v1", variantName: "Large", unit: "ea", pricePerUnit: 10, isActive: true },
-        { id: "v2", variantName: "Discontinued", unit: "ea", pricePerUnit: 10, isActive: false },
+        {
+          id: "v1",
+          kind: "STANDARD",
+          portalVisible: true,
+          variantName: "Large",
+          unit: "ea",
+          pricePerUnit: 10,
+          isActive: true,
+        },
+        {
+          id: "v2",
+          kind: "STANDARD",
+          portalVisible: true,
+          variantName: "Discontinued",
+          unit: "ea",
+          pricePerUnit: 10,
+          isActive: false,
+        },
       ],
     });
 
@@ -207,15 +236,56 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
     );
   });
 
+  const VISIBLE = {
+    id: "p1",
+    name: "Widget",
+    isActive: true,
+    kind: "STANDARD",
+    portalVisible: true,
+    parent: null,
+  };
+
+  it("getFavorites: a favourite the tenant HID is kept as a 'No longer available online' stub, with no price (SA-606 M3)", async () => {
+    gated([]);
+    auths([]);
+    prisma.buyerFavorite.findMany.mockResolvedValue([
+      {
+        id: "f9",
+        productId: "p9",
+        createdAt: new Date(),
+        product: { ...VISIBLE, id: "p9", name: "Hidden Fave", portalVisible: false },
+      },
+      {
+        id: "f8",
+        productId: "p8",
+        createdAt: new Date(),
+        product: {
+          ...VISIBLE,
+          id: "p8",
+          name: "Under Hidden Parent",
+          parent: { portalVisible: false },
+        },
+      },
+    ]);
+    prisma.customerPrice.findMany.mockResolvedValue([]);
+    const res = (await service.getFavorites("ba1", "c1")) as any[];
+    expect(res).toHaveLength(2);
+    for (const r of res) {
+      expect(r).toMatchObject({ unavailable: true, unavailableText: "No longer available online" });
+      expect(r).not.toHaveProperty("buyerPrice");
+    }
+  });
+
   it("getFavorites filters out products in a locked category", async () => {
     gated([{ id: "cat-alc", name: "Alcohol" }]);
     auths([]);
     prisma.buyerFavorite.findMany.mockResolvedValue([
-      { id: "f1", productId: "p1", product: { isActive: true, trackedCategoryId: "cat-alc" } },
+      { id: "f1", productId: "p1", product: { ...VISIBLE, trackedCategoryId: "cat-alc" } },
       {
         id: "f2",
         productId: "p2",
-        product: { isActive: true, trackedCategoryId: null, imageKeys: [] },
+        createdAt: new Date(),
+        product: { ...VISIBLE, id: "p2", trackedCategoryId: null, imageKeys: [] },
       },
     ]);
     prisma.customerPrice.findMany.mockResolvedValue([]);

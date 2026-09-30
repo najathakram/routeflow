@@ -351,8 +351,10 @@ export class BuyerCatalogService {
     // only sorts isActive desc), every other buyer surface lists active products
     // only, and such a row would quote a price whose link dead-ends on this
     // endpoint's own isActive 404.
-    const activeVariants: any[] = ((product as any).variants ?? []).filter(
-      (v: any) => v.isActive !== false && v.portalVisible !== false,
+    // The visibility twin (never an inline copy of the rule, L-167): a variant shows only when sellable, visible
+    // and its parent (this product, already visible) is visible.
+    const activeVariants: any[] = ((product as any).variants ?? []).filter((v: any) =>
+      isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, { ...v, parent: { portalVisible: true } }),
     );
     // Tier overrides for the parent AND every variant row in one query: a variant
     // carrying its own CustomerPrice must price identically here and on its own
@@ -432,13 +434,10 @@ export class BuyerCatalogService {
    */
   async getFavorites(buyerAccountId: string, customerId: string) {
     const favorites = await this.prisma.forTenant().buyerFavorite.findMany({
-      where: {
-        buyerAccountId,
-        customerId,
-        product: buyerVisibleProductWhere(NO_BUYER_RESTRICTIONS),
-      },
+      // SA-606 M3: hidden favourites are KEPT (as "no longer available online" stubs) — only the read below decides.
+      where: { buyerAccountId, customerId },
       include: {
-        product: true,
+        product: { include: { parent: { select: { portalVisible: true } } } },
       },
       orderBy: { createdAt: "desc" },
     });
@@ -446,11 +445,16 @@ export class BuyerCatalogService {
     // Filter out inactive products + W7-gated regulated products (categories the
     // buyer isn't licensed for) so favorites never leak a hidden product.
     const { hiddenIds } = await this.visibility.computeGate(customerId);
-    const activeFavorites = favorites.filter(
+    const liveFavorites = favorites.filter(
       (f) =>
         f.product.isActive &&
         !(f.product.trackedCategoryId && hiddenIds.has(f.product.trackedCategoryId)),
     );
+    // The ONE visibility twin decides: a favourite the tenant hid (or whose parent is hidden) is a stub, not a price.
+    const visible = (f: (typeof liveFavorites)[number]) =>
+      isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, f.product as any);
+    const activeFavorites = liveFavorites.filter(visible);
+    const unavailableFavorites = liveFavorites.filter((f) => !visible(f));
 
     // Load customer pricing tier + overrides
     const customer = await this.prisma
@@ -468,9 +472,18 @@ export class BuyerCatalogService {
     const cpMap = new Map(cpOverrides.map((cp) => [cp.productId, cp.pricingTier]));
     const priceHist = await this.getRememberedPrices(customerId);
 
-    return activeFavorites.map((f) => {
+    const stubs = unavailableFavorites.map((f) => ({
+      id: f.id,
+      productId: f.productId,
+      name: f.product.name,
+      unavailable: true as const,
+      unavailableText: "No longer available online",
+      createdAt: f.createdAt,
+    }));
+    const live = activeFavorites.map((f) => {
       const effectiveTier = cpMap.get(f.productId) ?? defaultTier;
       return {
+        unavailable: false as const,
         id: f.id,
         productId: f.productId,
         name: f.product.name,
@@ -490,6 +503,7 @@ export class BuyerCatalogService {
         createdAt: f.createdAt,
       };
     });
+    return [...live, ...stubs].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
   }
 
   /**
@@ -502,11 +516,9 @@ export class BuyerCatalogService {
     tenantId: string,
   ) {
     // Verify the product exists and is active
-    const product = await this.prisma
-      .forTenant()
-      .product.findFirst({
-        where: buyerVisibleProductWhere(NO_BUYER_RESTRICTIONS, { id: productId }),
-      });
+    const product = await this.prisma.forTenant().product.findFirst({
+      where: buyerVisibleProductWhere(NO_BUYER_RESTRICTIONS, { id: productId }),
+    });
     if (!product) throw new NotFoundException("Product not found");
 
     try {
