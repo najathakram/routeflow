@@ -2,6 +2,7 @@ import { ConflictException } from "@nestjs/common";
 import { Prisma, UserRole } from "@prisma/client";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { recordSaleMovement } from "../inventory/sale-movement";
+import type { InsufficientStockLine } from "@routeflow/types";
 import { linePieceQty } from "./line-piece-qty";
 
 /**
@@ -85,6 +86,18 @@ const toPieces = (li: StockLineUnits, qty: unknown, livePack: unknown): number =
  * implementation — see REG-B283. Must be called from inside the caller's
  * transaction (the FOR UPDATE lock is only meaningful there).
  */
+/**
+ * The unit noun for a stock-shortfall line. `available`/`requested` count PIECES, and for a boxed
+ * product `Product.unit` names the PACK ("Box", "case"), so sending it would make "Only 10 Box"
+ * overstate stock by unitsPerBox. Only when the product is not packed (unitsPerBox null or <= 1)
+ * is `unit` the piece unit; otherwise omit it and clients say "pieces".
+ */
+function pieceUnitLabel(p: { unit?: string | null; unitsPerBox?: unknown }): string | undefined {
+  const upb = p.unitsPerBox == null ? null : Number(p.unitsPerBox);
+  if (upb != null && upb > 1) return undefined;
+  return p.unit ?? undefined;
+}
+
 export async function decrementStockForSale(
   deps: OrderStockDeps,
   tx: any,
@@ -103,7 +116,7 @@ export async function decrementStockForSale(
 
   const lockedProducts = await tx.product.findMany({
     where: { id: { in: productIds } },
-    select: { id: true, name: true, currentStock: true, unitsPerBox: true },
+    select: { id: true, name: true, unit: true, currentStock: true, unitsPerBox: true },
   });
   // B703 (SA-136b): each line in PIECES, once — the oversell check, the decrement and the SALE row
   // all read this one number (a 2-box line of a 12-pack is 24, never 2).
@@ -116,20 +129,41 @@ export async function decrementStockForSale(
     ),
   }));
 
-  const oosItems: string[] = [];
+  // B920: the oversell check is per PRODUCT, never per line — two lines of one product that each fit
+  // in stock but together exceed it must 409 once, with ONE `lines[]` entry for the product. Sum the
+  // pieces per product FIRST (first-seen order); the decrement below reads the same map.
+  const qtyByProduct = new Map<string, number>();
   for (const li of pieceLines) {
-    const p = lockedProducts.find((lp: any) => lp.id === li.productId);
-    if (p && Number(p.currentStock) < li.pieces) {
+    const sum = (qtyByProduct.get(li.productId) ?? 0) + li.pieces;
+    qtyByProduct.set(li.productId, Math.round(sum * 1000) / 1000);
+  }
+
+  const oosItems: string[] = [];
+  const oosLines: InsufficientStockLine[] = [];
+  for (const [productId, requestedPieces] of qtyByProduct) {
+    const p = lockedProducts.find((lp: any) => lp.id === productId);
+    if (p && Number(p.currentStock) < requestedPieces) {
       oosItems.push(
-        `${p.name ?? li.productId} (available: ${Number(p.currentStock)}, requested: ${li.pieces})`,
+        `${p.name ?? productId} (available: ${Number(p.currentStock)}, requested: ${requestedPieces})`,
       );
+      oosLines.push({
+        productId,
+        name: p.name ?? undefined,
+        unit: pieceUnitLabel(p),
+        available: Number(p.currentStock),
+        requested: requestedPieces,
+      });
     }
   }
   if (oosItems.length > 0) {
     if (isStaffRole) {
       deps.logger.warn(`Operator-initiated order will go below stock: ${oosItems.join("; ")}`);
     } else {
-      throw new ConflictException(`Insufficient stock: ${oosItems.join("; ")}`);
+      throw new ConflictException({
+        code: "INSUFFICIENT_STOCK",
+        message: `Insufficient stock: ${oosItems.join("; ")}`,
+        lines: oosLines,
+      });
     }
   }
 
@@ -149,11 +183,6 @@ export async function decrementStockForSale(
   // tenantId (SUPER_ADMIN context) keeps the unscoped behaviour the ORM
   // call had in that same context.
   const stockTenantId = deps.tenantId;
-  const qtyByProduct = new Map<string, number>();
-  for (const li of pieceLines) {
-    const sum = (qtyByProduct.get(li.productId) ?? 0) + li.pieces;
-    qtyByProduct.set(li.productId, Math.round(sum * 1000) / 1000);
-  }
   const stockValues = Prisma.join(
     [...qtyByProduct.entries()].map(
       ([productId, qty]) => Prisma.sql`(${productId}::text, ${qty}::numeric)`,
@@ -331,7 +360,7 @@ export async function settleStockForEdit(
   `;
   const products = await db.product.findMany({
     where: { id: { in: touched } },
-    select: { id: true, name: true, currentStock: true, unitsPerBox: true },
+    select: { id: true, name: true, unit: true, currentStock: true, unitsPerBox: true },
   });
   const pieces = (m: Map<string, Parts>, id: string) => {
     const { fixed, perPack } = m.get(id) ?? zero;
@@ -363,6 +392,7 @@ export async function settleStockForEdit(
     const violations: Array<{
       productId: string;
       name: string;
+      unit?: string;
       available: number;
       requested: number;
       delta: number;
@@ -373,6 +403,7 @@ export async function settleStockForEdit(
         violations.push({
           productId: inc.productId,
           name: p.name,
+          unit: pieceUnitLabel(p),
           available: Number(p.currentStock),
           requested: inc.requested,
           delta: inc.delta,
@@ -398,6 +429,14 @@ export async function settleStockForEdit(
           message:
             `Not enough stock for ${first.name} ` +
             `(available: ${first.available}, requested: ${first.requested}).`,
+          lines: violations.map((v) => ({
+            productId: v.productId,
+            name: v.name,
+            unit: v.unit,
+            available: v.available,
+            requested: v.requested,
+          })),
+          // legacy single-line fields (= lines[0]) for clients that predate lines[]
           productId: first.productId,
           available: first.available,
           requested: first.requested,

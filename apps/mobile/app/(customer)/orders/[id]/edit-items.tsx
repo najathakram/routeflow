@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { orderErrorMessage } from "../../../../lib/order-error-message";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -93,7 +94,7 @@ export default function BuyerEditItemsScreen() {
           }
           router.back();
         },
-        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Save failed."),
+        onError: (e: any) => showToast(orderErrorMessage(e, "Save failed.")),
       },
     );
   };

@@ -74,3 +74,5 @@ export interface LineComponentView {
   displayUnitPrice4: number | null;
   position: number;
 }
+
+export * from "./insufficient-stock";

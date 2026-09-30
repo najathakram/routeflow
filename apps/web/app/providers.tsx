@@ -9,6 +9,7 @@ import { ToastProvider, useToast } from "@routeflow/ui/web";
 import { I18nProvider } from "@/lib/i18n";
 import { ReAuthProvider } from "@/components/ReAuthProvider";
 import { PlanGateNotice } from "@/components/PlanGateNotice";
+import { insufficientStockSentence, parseInsufficientStock } from "@routeflow/types";
 
 function QueryProviders({ children }: { children: React.ReactNode }) {
   const { toast } = useToast();
@@ -62,6 +63,12 @@ function QueryProviders({ children }: { children: React.ReactNode }) {
             return;
           }
           if (data?.code && HANDLED_CODES.includes(data.code)) return;
+          // A stock shortfall reads as a sentence ("Only 4 Mango left."), never the server text.
+          const short = parseInsufficientStock(error);
+          if (short) {
+            toast({ title: insufficientStockSentence(short.lines), variant: "error" });
+            return;
+          }
           const message = data?.message || (error as Error)?.message || "Something went wrong";
           toast({ title: message, variant: "error" });
         },

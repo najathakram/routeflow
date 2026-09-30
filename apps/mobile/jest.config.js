@@ -50,6 +50,9 @@ module.exports = {
     // #2653: the shell bridge is pure TS (zod only) — resolve it to SOURCE, ahead of the ui stub.
     "^@routeflow/ui/shell-bridge$": "<rootDir>/../../packages/ui/src/shell-bridge.ts",
     "^@routeflow/ui/(.*)$": "<rootDir>/__tests__/__mocks__/@routeflow/ui.js",
+    // gap 05: pure, import-free helpers — resolve to SOURCE (the stub below can't carry them).
+    "^@routeflow/types/api/insufficient-stock$":
+      "<rootDir>/../../packages/types/api/insufficient-stock.ts",
     "^@routeflow/types$": "<rootDir>/__tests__/__mocks__/@routeflow/types.js",
   },
   // Avoid trying to transform node_modules (except socket.io-client which ships ESM)

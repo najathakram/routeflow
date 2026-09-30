@@ -5,6 +5,7 @@
  * Add-all-low (server-side box splits) + open-order card. NO prices on rows —
  * estimates carry none by design.
  */
+import { orderErrorMessage } from "../../lib/order-error-message";
 import { useState } from "react";
 import {
   ActivityIndicator,
@@ -45,9 +46,7 @@ function formatDate(d: string) {
 /** Surface a buyer create/add rejection — credit-limit, stock, or regulated-license
  * guards (P5-08b) 4xx with the server message. Mirrors the order-detail sibling. */
 function friendlyAddError(e: any): string {
-  return (
-    e?.response?.data?.message ?? e?.message ?? "Couldn't add to your order. Please try again."
-  );
+  return orderErrorMessage(e, "Couldn't add to your order. Please try again.");
 }
 
 const BAR_FILL: Record<ShelfEstimate["state"], "red" | "orange" | "brand"> = {
