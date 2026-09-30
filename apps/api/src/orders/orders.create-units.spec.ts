@@ -189,7 +189,8 @@ describe("OrdersService.create — sell by a unit (units_v1, 4b-2b)", () => {
     } as never);
     const line = orderData().lineItems.create[0];
     expect("unitLabel" in line).toBe(false);
-    expect(line).toMatchObject({ productId: "prod-1", unitsPerBox: 24 });
+    // a plain pack line: no unit, and no factor snapshot (snapshots only for a box-split or unit-aware line)
+    expect(line).toMatchObject({ productId: "prod-1", unitsPerBox: null, qty: 2 });
     expect(scopedUnits.findMany).not.toHaveBeenCalled();
     // The goal (owner #2780: a buyer's plain qty = the default selling unit) needs the SA's buyer unit-line design first.
   });
