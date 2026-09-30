@@ -5,7 +5,11 @@
  * the intents only, so a credit auto-applied on send was invisible on the order. One pure rule
  * (packages/types), shared by web and mobile.
  */
+import { readFileSync } from "fs";
+import { join } from "path";
 import {
+  AUTO_APPLIED_FLAG_MIGRATION,
+  AUTO_APPLIED_FLAG_SINCE,
   orderAppliedCredits,
   requestedLabel,
   type OrderAppliedCreditRow,
@@ -127,6 +131,7 @@ describe("orderAppliedCredits (#2404)", () => {
               amount: "9.00",
               creditNoteId: "cn-old",
               autoApplied: false,
+              createdAt: "2026-09-20T00:00:00.000Z",
               creditNote: {
                 id: "cn-old",
                 creditNoteNumber: "CN-OLD",
@@ -139,6 +144,7 @@ describe("orderAppliedCredits (#2404)", () => {
               amount: "4.00",
               creditNoteId: "cn-pick",
               autoApplied: false,
+              createdAt: "2026-09-20T00:00:00.000Z",
               creditNote: { id: "cn-pick", creditNoteNumber: "CN-PICK", autoApplied: true },
             },
           ],
@@ -276,5 +282,56 @@ describe("requestedLabel (#2600): say what happens to the rest of a partly-reque
   });
   it("no intent stays 'Up to remaining'", () => {
     expect(requestedLabel(pendingFor(null, 50), fmt)).toBe("Up to remaining");
+  });
+});
+
+describe("SA-551a: the legacy 'Automatic' fallback is dated", () => {
+  const one = (createdAt?: string | Date) =>
+    orderAppliedCredits({
+      invoices: [
+        {
+          id: "inv-1",
+          invoiceNumber: "INV-1",
+          status: "SENT",
+          payments: [
+            {
+              id: "p",
+              amount: "1.00",
+              creditNoteId: "cn",
+              autoApplied: false,
+              ...(createdAt === undefined ? {} : { createdAt }),
+              creditNote: { id: "cn", creditNoteNumber: "CN", autoApplied: true },
+            },
+          ],
+        },
+      ],
+    })[0];
+
+  it("(a) a post-cutoff manual payment on a once-swept note reads 'applied'", () => {
+    expect(sourceOf(one("2026-09-28T10:00:00.000Z"))).toBe("applied");
+    expect(sourceOf(one(new Date(Date.parse(AUTO_APPLIED_FLAG_SINCE) + 1)))).toBe("applied");
+  });
+  it("(b) a pre-cutoff payment with the note flag and no intent reads 'automatic'", () => {
+    expect(sourceOf(one("2026-09-20T00:00:00.000Z"))).toBe("automatic");
+  });
+  it("(c) an undated payment does not take the fallback", () => {
+    expect(sourceOf(one())).toBe("applied");
+  });
+  it("(d) the cutoff is a valid instant after the migration folder's timestamp and before now", () => {
+    const t = Date.parse(AUTO_APPLIED_FLAG_SINCE);
+    expect(Number.isNaN(t)).toBe(false);
+    expect(new Date(t).toISOString()).toBe(AUTO_APPLIED_FLAG_SINCE);
+    const m = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})_/.exec(AUTO_APPLIED_FLAG_MIGRATION)!;
+    const folder = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+    expect(folder).toBe(Date.parse("2026-09-27T04:30:00Z"));
+    expect(t).toBeGreaterThan(folder);
+    expect(t).toBeLessThan(Date.now());
+  });
+  it("(e) the documented migration adds InvoicePayment.autoApplied", () => {
+    const sql = readFileSync(
+      join(__dirname, "../../prisma/migrations", AUTO_APPLIED_FLAG_MIGRATION, "migration.sql"),
+      "utf8",
+    );
+    expect(sql).toMatch(/ALTER TABLE\s+"InvoicePayment"[\s\S]*ADD COLUMN[\s\S]*"autoApplied"/i);
   });
 });
