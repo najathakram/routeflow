@@ -3135,4 +3135,7 @@ describe("CustomersService", () => {
       expect(email.send).not.toHaveBeenCalled();
     });
   });
+
+  // sendPortalInvite's sentinel-email coverage lives in
+  // customers.portal-invite.spec.ts (extracted — this file is at its size-ratchet baseline).
 });
