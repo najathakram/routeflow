@@ -7,6 +7,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from "@nestjs/common";
 import { ApiBearerAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
@@ -17,6 +18,8 @@ import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { MessagingService } from "./messaging.service";
 import { MessagingConfigService } from "./messaging-config.service";
+import { MessagingDeliveriesService } from "./messaging-deliveries.service";
+import { EMAIL_DELIVERY_STATUS_VALUES, type EmailDeliveryStatus } from "@routeflow/types";
 import { SendMessageDto } from "./dto/send-message.dto";
 import { NotifyDto } from "./dto/notify.dto";
 import { UpdateRuleDto } from "./dto/update-rule.dto";
@@ -44,6 +47,7 @@ export class MessagingController {
   constructor(
     private readonly messaging: MessagingService,
     private readonly config: MessagingConfigService,
+    private readonly deliveries: MessagingDeliveriesService,
   ) {}
 
   @Post("threads/:customerId/messages")
@@ -122,6 +126,35 @@ export class MessagingController {
   @ApiOperation({ summary: "Quiet-hours + timezone messaging settings" })
   getSettings() {
     return this.config.getSettings();
+  }
+
+  // ─── Email delivery log + health (WS4) ───────────────────────────────────
+
+  @Get("deliveries")
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
+  @ApiOperation({
+    summary:
+      "Email delivery log, last 30 days (addresses masked for OPERATOR, full for TENANT_ADMIN)",
+  })
+  listDeliveries(
+    @CurrentUser() user: { role: string },
+    @Query("status") status?: string,
+    @Query("page") page?: string,
+    @Query("pageSize") pageSize?: string,
+  ) {
+    const ok = (EMAIL_DELIVERY_STATUS_VALUES as readonly string[]).includes(status ?? "");
+    return this.deliveries.list(user.role, {
+      status: ok ? (status as EmailDeliveryStatus) : undefined,
+      page: page ? Number(page) : undefined,
+      pageSize: pageSize ? Math.min(100, Number(pageSize)) : undefined,
+    });
+  }
+
+  @Get("delivery-health")
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
+  @ApiOperation({ summary: "Email delivery counts + fix keys for the last 7 days" })
+  deliveryHealth() {
+    return this.deliveries.health();
   }
 
   @Patch("settings")
