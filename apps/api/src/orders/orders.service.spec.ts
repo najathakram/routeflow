@@ -6855,7 +6855,7 @@ describe("OrdersService", () => {
       await service.updateOrderItems(
         "ord-1",
         { items: [{ productId: "prod-box-new", qty: 3 }] },
-        customerPayload,
+        customerPayload as never,
       );
 
       const created = prisma.orderItem.create.mock.calls[0][0].data;
@@ -6879,7 +6879,7 @@ describe("OrdersService", () => {
       await service.updateOrderItems(
         "ord-1",
         { items: [{ productId: "prod-box-new", qty: 24, boxes: 2 }] },
-        customerPayload,
+        customerPayload as never,
       );
 
       const created = prisma.orderItem.create.mock.calls[0][0].data;
