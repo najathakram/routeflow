@@ -2,6 +2,7 @@ import type { ProductUnitLevel } from "@routeflow/types";
 import { resolveUnitPrice } from "@routeflow/pricing";
 import {
   buildUnitOptions,
+  defaultStartOption,
   defaultUnitValue,
   marginFactorFor,
   unitLineSubtotal,
@@ -188,5 +189,22 @@ describe("defaultUnitValue (#2784) — mirrors web's, both on @routeflow/pricing
         { ...PALLET, isDefaultSelling: true },
       ]),
     ).toBe("Pallet");
+  });
+});
+
+describe("defaultStartOption (#2784): the option a NEW line starts on", () => {
+  const FLAGGED = { ...CASE, isDefaultSelling: true };
+
+  it("is the flagged default level's option", () => {
+    expect(defaultStartOption(product, [FLAGGED], 1, { hasUnit: false })?.value).toBe("Case");
+  });
+
+  it("is null when nothing is flagged, the line already holds a unit, or the price was typed", () => {
+    expect(defaultStartOption(product, [CASE], 1, { hasUnit: false })).toBeNull();
+    expect(defaultStartOption(product, [FLAGGED], 1, { hasUnit: true })).toBeNull();
+    expect(
+      defaultStartOption(product, [FLAGGED], 1, { hasUnit: false, priceEdited: true }),
+    ).toBeNull();
+    expect(defaultStartOption(product, [], 1, { hasUnit: false })).toBeNull();
   });
 });
