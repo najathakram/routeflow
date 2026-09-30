@@ -90,15 +90,21 @@ describe("isBuyerVisibleProduct (in-memory twin)", () => {
   it("every field is REQUIRED: a partial select is a compile error, not a silently visible product", () => {
     // Compile-time pin only: the calls live in a function that is never invoked.
     const compileOnly = () => {
-      // prettier-ignore
+      const noFlag = { id: "p", name: "n", isActive: true, kind: "STANDARD", parent: null };
+      const noKind = { id: "p", name: "n", isActive: true, portalVisible: true, parent: null };
+      const noParent = {
+        id: "p",
+        name: "n",
+        isActive: true,
+        kind: "STANDARD",
+        portalVisible: true,
+      };
       // @ts-expect-error portalVisible missing
-      assertBuyerMayOrder([{ id: "p", name: "n", isActive: true, kind: "STANDARD", parent: null }], new Set());
-      // prettier-ignore
+      assertBuyerMayOrder([noFlag], new Set());
       // @ts-expect-error kind missing
-      assertBuyerMayOrder([{ id: "p", name: "n", isActive: true, portalVisible: true, parent: null }], new Set());
-      // prettier-ignore
+      assertBuyerMayOrder([noKind], new Set());
       // @ts-expect-error parent missing (null = standalone must be explicit)
-      assertBuyerMayOrder([{ id: "p", name: "n", isActive: true, kind: "STANDARD", portalVisible: true }], new Set());
+      assertBuyerMayOrder([noParent], new Set());
     };
     expect(typeof compileOnly).toBe("function");
   });
