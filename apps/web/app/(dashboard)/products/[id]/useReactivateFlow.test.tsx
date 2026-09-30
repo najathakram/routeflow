@@ -42,6 +42,7 @@ function Harness({ onReactivated }: { onReactivated?: (id: string) => void }) {
   return (
     <>
       <button onClick={() => flow.start("p1")}>go</button>
+      <button onClick={() => flow.askDeactivate("p1", "Cola 6pk")}>off</button>
       {flow.dialog}
     </>
   );
@@ -100,5 +101,40 @@ describe("useReactivateFlow", () => {
     );
     expect(JSON.stringify(toast.mock.calls)).not.toMatch(/SQL exploded/);
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
+describe("useReactivateFlow — Deactivate confirm (moved out of the page, #2861)", () => {
+  it("asks first; Cancel sends nothing; Deactivate PATCHes {isActive:false} and toasts", async () => {
+    patch.mockResolvedValue({ data: {} });
+    renderWithProviders(<Harness />);
+    fireEvent.click(screen.getByText("off"));
+    expect(await screen.findByText(/Cola 6pk will be hidden from the catalog/)).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Cancel"));
+    expect(patch).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("off"));
+    fireEvent.click(await screen.findByRole("button", { name: "Deactivate" }));
+    await waitFor(() => expect(patch).toHaveBeenCalledWith("/products/p1", { isActive: false }));
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith(expect.objectContaining({ title: "Product deactivated" })),
+    );
+  });
+
+  it("CODES_CHANGED on deactivate -> the fixed sentence; CATALOG_TOO_LARGE is not special here; raw text never shown", async () => {
+    patch.mockRejectedValue({
+      response: { status: 409, data: { code: "CODES_CHANGED", message: "RAW SERVER TEXT" } },
+    });
+    renderWithProviders(<Harness />);
+    fireEvent.click(screen.getByText("off"));
+    fireEvent.click(await screen.findByRole("button", { name: "Deactivate" }));
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith({
+        title: "Couldn't deactivate this product",
+        description:
+          "Someone changed this product's codes at the same time. Refresh and try again.",
+        variant: "error",
+      }),
+    );
+    expect(JSON.stringify(toast.mock.calls)).not.toMatch(/RAW SERVER TEXT/);
   });
 });

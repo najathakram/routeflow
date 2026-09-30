@@ -161,9 +161,12 @@ describe("deactivateFailureToast — CODES_CHANGED on the deactivate/delete path
 describe("the deactivate / delete call sites use deactivateFailureToast (source pin)", () => {
   const read = (rel: string) => fs.readFileSync(path.join(__dirname, rel), "utf8");
 
-  it("product detail: header Deactivate, variant deactivate and Delete", () => {
+  it("product detail: variant deactivate and Delete (the header Deactivate lives in useReactivateFlow)", () => {
     const src = read("../app/(dashboard)/products/[id]/page.tsx");
-    expect((src.match(/deactivateFailureToast\(/g) ?? []).length).toBeGreaterThanOrEqual(3);
+    expect((src.match(/deactivateFailureToast\(/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect(read("../app/(dashboard)/products/[id]/useReactivateFlow.tsx")).toMatch(
+      /deactivateFailureToast\(/,
+    );
   });
   it("products list: bulk delete", () => {
     expect(read("../app/(dashboard)/products/page.tsx")).toMatch(/deactivateFailureToast\(/);

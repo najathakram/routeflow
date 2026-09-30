@@ -322,7 +322,6 @@ export default function ProductDetailPage() {
   const { data: tierLabels } = useTierLabels();
   const updateProduct = useUpdateProduct();
   const reactivateFlow = useReactivateFlow();
-  const [showDeactivateConfirm, setShowDeactivateConfirm] = React.useState(false);
   const createProduct = useCreateProduct();
   const deleteProduct = useDeleteProduct();
   const uploadImages = useUploadProductImages(id);
@@ -1047,26 +1046,6 @@ export default function ProductDetailPage() {
       )}
       {reactivateFlow.dialog}
       <ConfirmDialog
-        open={showDeactivateConfirm}
-        onClose={() => setShowDeactivateConfirm(false)}
-        onConfirm={() => {
-          setShowDeactivateConfirm(false);
-          updateProduct.mutate(
-            { id, isActive: false },
-            {
-              onSuccess: () => toast({ title: "Product deactivated", variant: "success" }),
-              onError: (err) =>
-                toast(deactivateFailureToast(err, "Couldn't deactivate this product")),
-            },
-          );
-        }}
-        title="Deactivate product?"
-        description={`${product.name} will be hidden from the catalog and its SKU and barcodes are released for other products. You can reactivate it later if they are still free.`}
-        confirmLabel="Deactivate"
-        variant="danger"
-        loading={updateProduct.isPending}
-      />
-      <ConfirmDialog
         open={showDeleteConfirm}
         onClose={() => setShowDeleteConfirm(false)}
         onConfirm={handleDeleteProduct}
@@ -1582,10 +1561,10 @@ export default function ProductDetailPage() {
                         variant="secondary"
                         onClick={() =>
                           product.isActive
-                            ? setShowDeactivateConfirm(true)
+                            ? reactivateFlow.askDeactivate(id, product.name)
                             : reactivateFlow.start(id)
                         }
-                        loading={updateProduct.isPending || reactivateFlow.isPending}
+                        loading={reactivateFlow.isPending}
                       >
                         {product.isActive ? "Deactivate" : "Activate"}
                       </Button>
