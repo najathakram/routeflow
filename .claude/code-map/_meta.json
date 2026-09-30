@@ -1,5 +1,5 @@
 {
-  "mappedSha": "e591739d67f732a17c0a8964366fa6c5d16af080",
+  "mappedSha": "62c62c6afa0da46a20fb9e03e1441f599f3788b1",
   "generatedAt": "2026-09-29T09:08:34.850Z",
   "layout": "split-2026-09-13",
   "areas": [
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1045,
-  "notes": "**2026-09-29 — early landings #2134, #2740, #2739, #2287, #2638, #2678, #2672, #2679, #2725, #2066, #2729 (docs-only bookkeeping).** New `api/landing-2026-09-29-early.md` and `mobile/landing-2026-09-29-early.md` (TOC rows in `api.md`/`mobile.md`). mappedSha -> d8ad4de3. No source changed. See CHANGELOG.md for the full landing list."
+  "notes": "**2026-09-29 — late landings #2753, #2758, #2102, #2760, #2763, #2761, #2752, #2749, #2756 (docs-only bookkeeping).** New `api/landing-2026-09-29-late.md` and `mobile/landing-2026-09-29-late.md`. mappedSha -> 62c62c6a. See CHANGELOG.md."
 }

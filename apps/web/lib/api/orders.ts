@@ -258,6 +258,8 @@ export type CreateOrderItem =
       boxes?: number;
       pieces?: number;
       unitPrice?: number;
+      /** #2696(c): required by the server when unitPrice moves off a special (tier) price. */
+      overrideReason?: string;
       notes?: string;
     }
   | {

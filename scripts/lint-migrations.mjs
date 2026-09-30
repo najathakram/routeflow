@@ -40,6 +40,7 @@
 // --all without --strict, which always exits 0 (informational only). 2 is reserved for "the
 // --base range could not be computed", so a broken range can never read as a clean run.
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -52,6 +53,20 @@ const MIGRATIONS_DIR = "apps/api/prisma/migrations";
 // Anchored to the repo root like SQUAWK_CONFIG/SQUAWK_BIN: a cwd-relative migrations path would
 // make the script report "no migrations in range" (exit 0) from any other directory.
 const MIGRATIONS_ABS = path.resolve(REPO_ROOT, MIGRATIONS_DIR);
+// SA-582a: applied-on-prod migrations cannot be edited, so the SET LOCAL wrap rule (and only that
+// rule) skips a file whose FOLDER NAME and migration.sql sha256 both match an entry here exactly.
+// An edited applied file (sha changed) is checked normally; an entry whose folder does not exist
+// yet simply matches nothing. Pinned by lint-migrations-script.spec.ts.
+const EXEMPT_TABLE = JSON.parse(
+  fs.readFileSync(path.resolve(__dirname, "lib/set-local-exempt-migrations.json"), "utf8"),
+);
+function isSetLocalExempt(file) {
+  const folder = path.basename(path.dirname(file));
+  const entry = EXEMPT_TABLE.find((e) => e.folder === folder);
+  if (!entry) return false;
+  const sha = createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+  return sha === entry.sha256;
+}
 const REASON_RE = /^--\s*reason:\s*\S/;
 const IGNORE_RE = /^--\s*squawk-ignore/;
 
@@ -151,16 +166,23 @@ function blankNonCode(sql) {
       blank(i, stop);
       i = stop;
     } else if (c === "'" || c === '"') {
+      // An E'..' string (Postgres escape syntax) treats a backslash as an escape, so `\'` does not
+      // close it; a plain '..' string and a "quoted identifier" only double their quote.
+      const escapes =
+        c === "'" && /[Ee]/.test(sql[i - 1] ?? "") && !/[A-Za-z0-9_]/.test(sql[i - 2] ?? "");
       let j = i + 1;
       while (j < sql.length) {
-        if (sql[j] === c && sql[j + 1] === c) j += 2;
+        if (escapes && sql[j] === "\\") j += 2;
+        else if (sql[j] === c && sql[j + 1] === c) j += 2;
         else if (sql[j] === c) break;
         else j++;
       }
       blank(i, Math.min(j + 1, sql.length));
       i = j + 1;
     } else if (c === "$") {
-      const m = /^\$[A-Za-z_]*\$/.exec(sql.slice(i));
+      // A dollar-quote tag may carry letters, digits and underscores after the first character:
+      // $$, $body$, $fn1$.
+      const m = /^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(i));
       if (m) {
         const end = sql.indexOf(m[0], i + m[0].length);
         const stop = end === -1 ? sql.length : end + m[0].length;
@@ -177,6 +199,7 @@ function blankNonCode(sql) {
 function checkSetLocalWrapped(files) {
   const errors = [];
   for (const file of files) {
+    if (isSetLocalExempt(file)) continue;
     const text = fs.readFileSync(file, "utf8");
     const code = blankNonCode(text);
     if (!/\bSET\s+LOCAL\b/i.test(code)) continue;
@@ -188,10 +211,13 @@ function checkSetLocalWrapped(files) {
       const stmt = raw.trim().replace(/\s+/g, " ").toUpperCase();
       const at = offset + (raw.length - raw.trimStart().length);
       offset += raw.length + 1;
-      if (stmt === "BEGIN" || stmt.startsWith("BEGIN ") || stmt.startsWith("START TRANSACTION")) {
+      if (/^(BEGIN|START TRANSACTION)\b/.test(stmt)) {
+        // BEGIN [WORK | TRANSACTION] [modes], START TRANSACTION [modes].
         inTxn = true;
         beginLine = lineAt(at);
-      } else if (stmt === "COMMIT" || stmt === "END" || stmt === "ROLLBACK") {
+      } else if (/^(COMMIT|END|ROLLBACK)( (WORK|TRANSACTION))?$/.test(stmt)) {
+        // COMMIT | END | ROLLBACK, each with an optional WORK / TRANSACTION. ROLLBACK TO SAVEPOINT
+        // (and COMMIT PREPARED) do not match: they leave the transaction open.
         inTxn = false;
       } else if (/^SET LOCAL\b/.test(stmt) && !inTxn) {
         errors.push(
