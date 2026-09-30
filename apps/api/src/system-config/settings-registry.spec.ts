@@ -202,7 +202,19 @@ describe("settings registry — every SystemConfig key the settings writers writ
     }).compile();
     controller = mod.get(SettingsController);
 
-    await controller.updateSettings({ taxRate: 5, logoUrl: "u" });
+    await controller.updateSettings({
+      taxRate: 5,
+      logoUrl: "u",
+      // Every other field the handler accepts is NOT tenant-editable: none may reach SystemConfig.
+      businessName: "b",
+      ownerName: "o",
+      email: "e@example.com",
+      street: "s",
+      city: "c",
+      state: "st",
+      zip: "z",
+      phone: "p",
+    });
     await controller.updateEmailSettings({
       fromName: "a",
       fromEmail: "a@example.com",
@@ -239,6 +251,13 @@ describe("settings registry — every SystemConfig key the settings writers writ
     expect(written.size).toBeGreaterThan(20);
     expect(written).toContain("route.defaultDepotLat");
     expect(written).toContain("margin.floor.category.SNACKS");
+  });
+
+  it("driving every settings.* field writes only settings.taxRate and settings.logoUrl", () => {
+    expect([...written].filter((k) => k.startsWith("settings.")).sort()).toEqual([
+      "settings.logoUrl",
+      "settings.taxRate",
+    ]);
   });
 
   it("every written key has a registry row", () => {
@@ -288,10 +307,23 @@ function listSourceFiles(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-const WRITE_CALL =
-  /\b(?:svc|systemConfig|systemConfigService)\.set\(|\.systemConfig\.(?:create|update|upsert)\(|\btx\.systemConfig\.(?:create|update|upsert)\(/;
-const DIRECT_SET =
-  /\b(?:svc|systemConfig|systemConfigService|this)\.set\(\s*(?:"([^"]+)"|`([^`$]*)(\$\{)?)/g;
+/** Receiver names a SystemConfigService is reached by; plus any field TYPED SystemConfigService. */
+const DEFAULT_RECEIVERS = ["svc", "systemConfig", "systemConfigService"];
+
+function receiversIn(src: string): string[] {
+  const typed = [...src.matchAll(/\b(\w+)\s*:\s*SystemConfigService\b/g)].map((m) => m[1]);
+  return [...new Set([...DEFAULT_RECEIVERS, ...typed])];
+}
+
+/** `recv.set(` for any receiver, `this.recv.set(` included (the `this.` prefix is optional). */
+function setCallRegex(src: string, flags = ""): RegExp {
+  const recv = [...receiversIn(src), "this"].join("|");
+  return new RegExp(`\\b(?:${recv})\\s*\\.\\s*set\\(\\s*`, flags);
+}
+
+// `systemConfig.create as any)(…)` and `.createMany(` are writers too: no `(` required after the verb.
+const PRISMA_WRITE = /systemConfig\s*\.\s*(?:create|update|upsert|createMany|updateMany)\b/;
+const RAW_SQL_WRITE = /(?:INSERT\s+INTO|UPDATE)\s+"?SystemConfig"?/i;
 const KEY_DECL =
   /(?:const|readonly)\s+[A-Za-z_]+(?:\s*:\s*[^=]+)?\s*=\s*"([a-z][A-Za-z_]*\.[A-Za-z_][A-Za-z_.]*)"/g;
 
@@ -302,16 +334,23 @@ const EXEMPT_KEY_PREFIXES: Record<string, string> = {
 };
 
 function isWriterFile(rel: string, src: string): boolean {
-  return (
-    WRITE_CALL.test(src) ||
-    (rel.endsWith("system-config/system-config.service.ts") && /this\.set\(/.test(src))
-  );
+  if (PRISMA_WRITE.test(src) || RAW_SQL_WRITE.test(src)) return true;
+  const recv = receiversIn(src).join("|");
+  if (new RegExp(`\\b(?:${recv})\\s*\\.\\s*set\\(`).test(src)) return true;
+  return rel.endsWith("system-config/system-config.service.ts") && /this\.set\(/.test(src);
+}
+
+/** First arguments of `set(` that are identifiers/constants, not literals (the key is indirect). */
+export function indirectKeyArgs(src: string): string[] {
+  const re = new RegExp(setCallRegex(src).source + "([A-Za-z_][\\w.]*)\\s*,", "g");
+  return [...new Set([...src.matchAll(re)].map((m) => m[1]))];
 }
 
 /** Keys (and template prefixes, marked with a trailing `*`) a file writes, by nets B and C. */
 export function scanKeys(src: string, namespaces: Set<string>): string[] {
   const found = new Set<string>();
-  for (const m of src.matchAll(DIRECT_SET)) {
+  const direct = new RegExp(setCallRegex(src).source + '(?:"([^"]+)"|`([^`$]*)(\\$\\{)?)', "g");
+  for (const m of src.matchAll(direct)) {
     if (m[1]) found.add(m[1]);
     else if (m[2] !== undefined) found.add(m[3] ? `${m[2]}*` : m[2]);
   }
@@ -372,9 +411,74 @@ describe("settings registry — structural source scan of every SystemConfig wri
     expect(missing).toEqual([]);
   });
 
+  /**
+   * Writers that pass the key through a variable / imported constant. Each identifier is listed
+   * with the registered keys it carries, so an indirect write is never invisible.
+   */
+  const INDIRECT_KEY_WRITERS: Record<string, Record<string, string[]>> = {
+    "tobacco/tobacco.service.ts": { TOBACCO_EXCLUDE_KEY: [TOBACCO_EXCLUDE_KEY] },
+    // static key constants inside SystemConfigService itself (the generic set(key) is a definition)
+    "system-config/system-config.service.ts": {
+      "SystemConfigService.REMITTANCE_KEY": ["remittance.config"],
+      "SystemConfigService.TIER_LABELS_KEY": ["pricing.tierLabels"],
+    },
+  };
+
+  it("every indirect (variable/constant) key a writer passes is declared and registered", () => {
+    const found: Record<string, string[]> = {};
+    for (const w of writers) {
+      const ids = indirectKeyArgs(w.src);
+      if (ids.length) found[w.rel] = ids.sort();
+    }
+    const declared = Object.fromEntries(
+      Object.entries(INDIRECT_KEY_WRITERS).map(([f, m]) => [f, Object.keys(m).sort()]),
+    );
+    expect(found).toEqual(declared);
+    for (const m of Object.values(INDIRECT_KEY_WRITERS)) {
+      for (const keys of Object.values(m))
+        for (const k of keys) expect(isRegisteredSettingKey(k)).toBe(true);
+    }
+  });
+
+  it("files that write through create/update with a `key` variable carry declared constants", () => {
+    // restrictions-settings writes [SYSTEM_CONFIG_ENABLED, SYSTEM_CONFIG_GOVERNING_ADDRESS] in a loop.
+    const r = writers.find(
+      (w) => w.rel === "restrictions-settings/restrictions-settings.service.ts",
+    )!;
+    expect(r.src).toMatch(/SYSTEM_CONFIG_ENABLED/);
+    expect(r.src).toMatch(/SYSTEM_CONFIG_GOVERNING_ADDRESS/);
+    for (const k of [SYSTEM_CONFIG_ENABLED, SYSTEM_CONFIG_GOVERNING_ADDRESS]) {
+      expect(isRegisteredSettingKey(k)).toBe(true);
+    }
+  });
+
   it("finds email.sendingDomain (defined as a constant in email.service.ts)", () => {
     const email = writers.find((w) => w.rel === "email/email.service.ts")!;
     expect(scanKeys(email.src, NAMESPACES)).toContain("email.sendingDomain");
+  });
+
+  it("planted writers are detected: the cast form, a renamed field, createMany, raw SQL", () => {
+    const rel = "planted/x.service.ts";
+    expect(
+      isWriterFile(
+        rel,
+        "await (this.prisma.forTenant().systemConfig.create as any)({ data: { key, value } });",
+      ),
+    ).toBe(true);
+    const renamed =
+      'constructor(private readonly config: SystemConfigService) {}\n  async a() { await this.config.set("planted.viaRename", "1"); }';
+    expect(isWriterFile(rel, renamed)).toBe(true);
+    expect(scanKeys(renamed, NAMESPACES)).toContain("planted.viaRename");
+    expect(isWriterFile(rel, "await tx.systemConfig.createMany({ data: rows });")).toBe(true);
+    expect(
+      isWriterFile(rel, 'await db.$executeRaw`INSERT INTO "SystemConfig" (key) VALUES (${k})`;'),
+    ).toBe(true);
+    expect(
+      isWriterFile(rel, "const v = await this.prisma.forTenant().systemConfig.findFirst({});"),
+    ).toBe(false);
+    expect(
+      indirectKeyArgs('await this.config2.set(someKey, "v");  await this.svc.set(K.X, "v");'),
+    ).toEqual(["K.X"]);
   });
 
   it("planted misses are caught: a direct literal, a template prefix, a constant in a known namespace", () => {
