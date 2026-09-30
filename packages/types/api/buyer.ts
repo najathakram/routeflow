@@ -244,7 +244,7 @@ export interface BuyerProduct {
 
 /** GET /buyer/favorites — NOT a BuyerProduct: `id` is the favorite row's id; the product is
  *  `productId`. `thumbnailUrl` is always null here (thumbnails resolve in the catalog). */
-export interface BuyerFavoriteProduct {
+export interface BuyerFavoriteAvailable {
   id: string;
   productId: string;
   name: string;
@@ -256,7 +256,21 @@ export interface BuyerFavoriteProduct {
   imageKeys: string[];
   unitsPerBox: number | null;
   createdAt: string;
+  unavailable: false;
 }
+
+/** A favourite the tenant hid from the buyer portal (SA-606 M3): name only, no price, not orderable. */
+export interface BuyerFavoriteUnavailable {
+  id: string;
+  productId: string;
+  name: string;
+  createdAt: string;
+  unavailable: true;
+  /** "No longer available online". */
+  unavailableText: string;
+}
+
+export type BuyerFavoriteProduct = BuyerFavoriteAvailable | BuyerFavoriteUnavailable;
 
 // ─── Orders (#2703, SA-562/562a: server truth, one declaration) ────────────────
 
