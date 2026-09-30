@@ -12,10 +12,10 @@ import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NumberingService } from "../import/numbering.service";
 import { IdempotencyService } from "../common/idempotency.service";
 import { tenantTimeZone } from "../common/tenant-time-zone";
-import { retryOnTxConflict, txConflictState } from "../common/tx-retry";
+import { retryOnTxConflict } from "../common/tx-retry";
 import { CreditNotesService } from "./credit-notes.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { cnBad, cnConflict, codeOf, messageOf } from "./credit-note-errors";
+import { asReadableConflict, cnBad, cnConflict, codeOf, messageOf } from "./credit-note-errors";
 
 export interface ReissueInput {
   amount: number;
@@ -305,7 +305,7 @@ export class CreditNoteReissueService {
         ),
       );
     } catch (err) {
-      throw this.asReadableConflict(err);
+      throw asReadableConflict(err, this.logger);
     }
 
     if (outcome.replayed) return this.replay(outcome.stored, fingerprint);
@@ -352,35 +352,6 @@ export class CreditNoteReissueService {
     if (d.getTime() <= Date.now())
       throw cnBad(API_ERROR_CODES.CREDIT_NOTE_EXPIRY_PAST, "expiresAt must be in the future");
     return d;
-  }
-
-  /**
-   * Exhausted serialization retries (40001 / 40P01 / P2034) and a number collision (P2002) are
-   * 409s with create()'s wording, never a raw 500. Everything else propagates unchanged.
-   */
-  private asReadableConflict(err: unknown): unknown {
-    if (txConflictState(err))
-      return cnConflict(
-        API_ERROR_CODES.CREDIT_NOTE_CHANGED_CONCURRENTLY,
-        "Another change to this credit note or its invoice was in progress. Nothing was changed; please retry.",
-      );
-    if ((err as { code?: string })?.code === "P2002") {
-      // Like create(): only the creditNoteNumber constraint is a "number conflict"; log the real
-      // target either way and let any other unique violation propagate untouched.
-      const meta = (err as { meta?: { target?: unknown } }).meta;
-      const target = Array.isArray(meta?.target)
-        ? meta.target.join(",")
-        : typeof meta?.target === "string"
-          ? meta.target
-          : "";
-      this.logger.warn(`Credit note reissue failed code=P2002 target=${target}`);
-      if (target === "" || target.includes("creditNoteNumber"))
-        return cnConflict(
-          API_ERROR_CODES.CREDIT_NOTE_CHANGED_CONCURRENTLY,
-          "Credit note number conflict — please retry.",
-        );
-    }
-    return err;
   }
 
   /**
