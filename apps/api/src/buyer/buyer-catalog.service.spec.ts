@@ -9,6 +9,10 @@ import { StorageService } from "../storage/storage.service";
 import { OrdersService } from "../orders/orders.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { buyerVisibleProductWhere } from "./buyer-product-visibility";
+
+// The one shared buyer-visibility clause getCatalog always appends to findAll's andWhere.
+const VIS = buyerVisibleProductWhere();
 
 describe("BuyerCatalogService — W7 visibility gate", () => {
   let service: BuyerCatalogService;
@@ -58,6 +62,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
     const res = (await service.getCatalog({}, "c1")) as any;
     expect(products.findAll).toHaveBeenCalledWith(expect.anything(), {
       excludeTrackedCategoryIds: ["cat-alc"],
+      andWhere: [VIS],
     });
     expect(res.hiddenCategories).toEqual([{ id: "cat-alc", name: "Alcohol", status: "NONE" }]);
   });
@@ -66,7 +71,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
     gated([{ id: "cat-alc", name: "Alcohol" }]);
     auths([{ trackedCategoryId: "cat-alc", status: "VERIFIED", expiresAt: future }]);
     const res = (await service.getCatalog({}, "c1")) as any;
-    expect(products.findAll).toHaveBeenCalledWith(expect.anything(), undefined);
+    expect(products.findAll).toHaveBeenCalledWith(expect.anything(), { andWhere: [VIS] });
     expect(res.hiddenCategories).toEqual([]);
   });
 
@@ -90,7 +95,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
     gated([]); // no regulated program
     const res = (await service.getCatalog({}, "c1")) as any;
     expect(prisma.customerAuthorization.findMany).not.toHaveBeenCalled();
-    expect(products.findAll).toHaveBeenCalledWith(expect.anything(), undefined);
+    expect(products.findAll).toHaveBeenCalledWith(expect.anything(), { andWhere: [VIS] });
     expect(res.hiddenCategories).toEqual([]);
   });
 
@@ -317,7 +322,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
         // limit 0 = fetch-all: a page boundary would drop cart lines, and the
         // cart prices anything missing at 0.
         expect.objectContaining({ page: 1, limit: 0 }),
-        { andWhere: [{ id: { in: ["p9", "p42"] } }] },
+        { andWhere: [{ id: { in: ["p9", "p42"] } }, VIS] },
       );
     });
 
@@ -327,7 +332,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
       await service.getCatalog({ ids: ["p9"] }, "c1");
       expect(products.findAll).toHaveBeenCalledWith(expect.anything(), {
         excludeTrackedCategoryIds: ["cat-alc"],
-        andWhere: [{ id: { in: ["p9"] } }],
+        andWhere: [{ id: { in: ["p9"] } }, VIS],
       });
     });
 
@@ -335,7 +340,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
       gated([]);
       await service.getCatalog({ collection: "new" }, "c1");
       expect(products.findAll).toHaveBeenCalledWith(expect.anything(), {
-        andWhere: [{ isNew: true }],
+        andWhere: [{ isNew: true }, VIS],
       });
     });
 
@@ -349,7 +354,10 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
       ]);
       await service.getCatalog({ collection: "deals" }, "c1");
       expect(products.findAll).toHaveBeenCalledWith(expect.anything(), {
-        andWhere: [{ OR: [{ isDeal: true }, { category: "Beverages" }, { id: { in: ["p1"] } }] }],
+        andWhere: [
+          { OR: [{ isDeal: true }, { category: "Beverages" }, { id: { in: ["p1"] } }] },
+          VIS,
+        ],
       });
     });
 
@@ -359,7 +367,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
         { scope: "ALL", category: null, productIds: [] },
       ]);
       await service.getCatalog({ collection: "deals" }, "c1");
-      expect(products.findAll).toHaveBeenCalledWith(expect.anything(), { andWhere: [{}] });
+      expect(products.findAll).toHaveBeenCalledWith(expect.anything(), { andWhere: [{}, VIS] });
     });
 
     it("collection=usuals filters to ids with replenishment orderCount >= 2", async () => {
@@ -371,7 +379,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
       ]);
       await service.getCatalog({ collection: "usuals" }, "c1");
       expect(products.findAll).toHaveBeenCalledWith(expect.anything(), {
-        andWhere: [{ id: { in: ["p1", "p3"] } }],
+        andWhere: [{ id: { in: ["p1", "p3"] } }, VIS],
       });
     });
 
@@ -384,7 +392,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
         select: { productId: true },
       });
       expect(products.findAll).toHaveBeenCalledWith(expect.anything(), {
-        andWhere: [{ id: { in: ["p9", "p2"] } }],
+        andWhere: [{ id: { in: ["p9", "p2"] } }, VIS],
       });
     });
 
@@ -392,7 +400,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
       gated([]);
       await service.getCatalog({ collection: "favorites" }, "c1");
       expect(prisma.buyerFavorite.findMany).not.toHaveBeenCalled();
-      expect(products.findAll).toHaveBeenCalledWith(expect.anything(), undefined);
+      expect(products.findAll).toHaveBeenCalledWith(expect.anything(), { andWhere: [VIS] });
     });
 
     it("sort=best orders by replenishment orderCount desc, then estDaysLeft asc, no-history last; fetches all + paginates manually", async () => {
@@ -413,8 +421,8 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
       const res = (await service.getCatalog({ sort: "best" }, "c1")) as any;
 
       expect(products.findAll).toHaveBeenCalledWith(
-        { search: undefined, category: undefined, isActive: true, page: 1, limit: 0 },
-        undefined,
+        { search: undefined, category: undefined, page: 1, limit: 0 },
+        { andWhere: [VIS] },
       );
       expect(res.data.map((p: any) => p.id)).toEqual(["p2", "p1", "p3"]);
       expect(res.meta).toEqual({ total: 3, page: 1, limit: 20, totalPages: 1 });
@@ -442,7 +450,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
         productCount.mockImplementation(async ({ where }: any) => {
           if (where.isNew === true) return 4; // newCount
           if (where.id?.in) return where.id.in.includes("p1") ? 2 : 1; // usuals : favorites
-          if (where.AND) return 3; // deals
+          if (where.AND?.[0]?.AND) return 3; // deals ({ AND: [baseWhere, dealsWhere] })
           return 9; // total (baseWhere only)
         });
 
@@ -460,12 +468,13 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
         ];
         for (const call of productCount.mock.calls as any[]) {
           const where = call[0].where;
-          const gate = where.OR ?? where.AND?.[0]?.OR;
+          // baseWhere = AND[isActive, portalVisible, parentOR, gate]; deals nests it one level down.
+          const gate = (where.AND?.[0]?.AND ?? where.AND)?.[3]?.OR;
           expect(gate).toEqual(NULL_SAFE_GATE);
           expect(where.trackedCategoryId).toBeUndefined();
         }
         const groupByWhere = (productGroupBy.mock.calls[0] as any[])[0].where;
-        expect(groupByWhere.OR).toEqual(NULL_SAFE_GATE);
+        expect(groupByWhere.AND[3].OR).toEqual(NULL_SAFE_GATE);
         expect(groupByWhere.trackedCategoryId).toBeUndefined();
 
         expect(res.lockedCategories).toEqual([{ id: "cat-x", name: "Tobacco", status: "NONE" }]);
