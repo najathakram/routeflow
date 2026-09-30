@@ -59,6 +59,9 @@ describe("registers stay untouched", () => {
       expect(text).not.toMatch(
         /writeFile|appendFile|createWriteStream|unlinkSync|renameSync|\brmSync|mkdirSync/,
       );
+      expect(text).not.toMatch(
+        /execFileSync\([^)]*["'`](push|commit|add|rm|mv|reset|checkout|fetch|clone|config|update-ref|branch|tag|apply|merge|rebase|stash|gc)["'`]/,
+      );
     }
   });
 });
