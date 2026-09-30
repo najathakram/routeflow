@@ -81,14 +81,18 @@ export function isBuyerVisibleBase(p: Parameters<typeof isBuyerVisibleProduct>[1
   return isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, p);
 }
 
-/** The product facts the refusal reads: a hidden product is named in the 409 body. */
+/**
+ * The product facts the refusal reads. `kind`, `portalVisible` and `parent` are REQUIRED (SA-612): a caller whose select
+ * forgets them is a compile error, never a silently orderable product (the old defaults failed open).
+ */
 interface OrderableProduct {
   id: string;
-  name?: string;
-  isActive?: boolean | null;
-  kind?: string | null;
-  portalVisible?: boolean | null;
-  parent?: { portalVisible?: boolean | null } | null;
+  name: string;
+  isActive: boolean;
+  kind: string;
+  portalVisible: boolean;
+  /** The loaded parent (null = standalone). */
+  parent: { portalVisible: boolean } | null;
 }
 
 /**
@@ -105,22 +109,12 @@ export function assertBuyerMayOrder(
   heldProductIds: ReadonlySet<string>,
 ): void {
   const hidden = products.filter(
-    (p) =>
-      p.isActive !== false &&
-      !heldProductIds.has(p.id) &&
-      !isBuyerVisibleBase({
-        id: p.id,
-        isActive: true,
-        kind: p.kind ?? "STANDARD",
-        // A missing flag is judged on the loaded row; callers load the full row (+ parent) so it is never absent.
-        portalVisible: p.portalVisible !== false,
-        parent: p.parent ? { portalVisible: p.parent.portalVisible !== false } : null,
-      }),
+    (p) => p.isActive && !heldProductIds.has(p.id) && !isBuyerVisibleBase(p),
   );
   if (hidden.length === 0) return;
   const blockedLines: BuyerBlockedLine[] = hidden.map((p) => ({
     productId: p.id,
-    productName: p.name ?? "An item",
+    productName: p.name,
     reason: "HIDDEN_FROM_PORTAL",
   }));
   throw new ConflictException({
