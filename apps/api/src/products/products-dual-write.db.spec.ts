@@ -20,6 +20,7 @@ import { AddonService } from "../billing/addon.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
+import { FeatureOverrideService } from "../billing/feature-override.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
@@ -72,6 +73,8 @@ describeDb("#2728 M1 catalog dual write — real Postgres", () => {
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
         entitlementAuthorityFromEntitlements,
+        // #2185: the reorder gate's deny body reads admin overrides.
+        { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         {
           provide: PlanCatalogService,
           useValue: { upgradeTargetForFlag: jest.fn().mockResolvedValue(null) },
