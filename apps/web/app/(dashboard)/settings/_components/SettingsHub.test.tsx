@@ -112,6 +112,17 @@ describe("SettingsHub regroup", () => {
     },
   );
 
+  it("a query spanning two fields ('defaults service') lists nothing, so the card stays hidden", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    fireEvent.change(screen.getByLabelText("Search settings"), {
+      target: { value: "defaults service" },
+    });
+    expect(
+      screen.queryAllByRole("link").some((l) => l.getAttribute("href") === "#route-defaults"),
+    ).toBe(false);
+    expect(screen.queryByText("route-defaults-card")).not.toBeInTheDocument();
+  });
+
   it("hides the route defaults card when the search matches nothing", () => {
     renderWithProviders(<SettingsHub isAdmin />);
     fireEvent.change(screen.getByLabelText("Search settings"), { target: { value: "zzzzqq" } });
