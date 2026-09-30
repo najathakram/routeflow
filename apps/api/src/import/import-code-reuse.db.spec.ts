@@ -2,8 +2,8 @@
  * WS7 I12 (SA-603a), NEED-DB. The importers respect one-ACTIVE-holder-per-code on real Postgres:
  *   1. deactivate A(X) -> importing X CREATES a new product B(X) (never an update of the inactive A)
  *   2. re-importing X UPDATES B and leaves A untouched (A stays inactive, its retired code intact)
- *   3. an import racing a reactivation of A: exactly ONE of {B holds X, A holds X} wins; the loser
- *      is reported with a reason (the import row is skipped, never a raw 500 / P2002, never silent)
+ *   3. reactivate-then-import updates A; import-then-reactivate gives the reactivation a readable
+ *      409 CODE_TAKEN (two strictly sequential cases; a true concurrent race is U-units' lock specs)
  *
  * Authored, never executed on the PC (builders post NEED-DB; the prover owns `npm run local:test:db`).
  * Own throwaway `qa-ws7-<run>` tenant gated by `assertTestTenant`, same harness as
@@ -13,6 +13,8 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { ConfigService } from "@nestjs/config";
 import { randomUUID } from "crypto";
+import { ConflictException } from "@nestjs/common";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { ImportService } from "./import.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
@@ -163,11 +165,45 @@ describeDb(
       expect(Number(aAfter2?.pricePerUnit)).toBe(3);
     });
 
-    it("I12c: an import racing a reactivation of A -> exactly one holder of the code; the loser row has a reason", async () => {
-      const code = `${RUN}-RACE`;
+    // I12c. A reactivation of A(X) and an import row for X can interleave only two legitimate ways,
+    // and each is asserted STRICTLY SEQUENTIALLY here (no Promise.all, so nothing is racy):
+    //   (i)  reactivate first -> A holds X again -> the import row UPDATES A (never a second holder);
+    //   (ii) import first     -> B(X) now holds X  -> reactivating A is a readable 409 CODE_TAKEN.
+    // A truly concurrent race is serialized by U-units' per-code locks and proved by their lock-order
+    // specs; this file does not re-prove it.
+    it("I12c(i): reactivate A first, then import X -> the import UPDATES A (no new product)", async () => {
+      const code = `${RUN}-RACE1`;
       const a = await inTenant(() =>
         productsService.create({
-          name: `${RUN} Racer A`,
+          name: `${RUN} Racer A1`,
+          sku: code,
+          pricePerUnit: 2,
+          unit: "unit",
+        } as any),
+      );
+      createdProductIds.push(a.id);
+      await inTenant(() => productsService.remove(a.id));
+      await inTenant(() => productsService.update(a.id, { isActive: true } as any));
+
+      const run = await importCsv(`Item Name,SKU,Rate
+${RUN} Racer A1,${code},4
+`);
+      expect(run.created).toBe(0);
+      expect(run.updated).toBe(1);
+      expect(run.skippedRows).toEqual([]);
+
+      const holders = await prisma.product.findMany({
+        where: { tenantId, sku: code, isActive: true },
+      });
+      expect(holders.map((h) => h.id)).toEqual([a.id]);
+      expect(Number(holders[0].pricePerUnit)).toBe(4);
+    });
+
+    it("I12c(ii): import X first (creates B), then reactivating A is a readable CODE_TAKEN 409", async () => {
+      const code = `${RUN}-RACE2`;
+      const a = await inTenant(() =>
+        productsService.create({
+          name: `${RUN} Racer A2`,
           sku: code,
           pricePerUnit: 2,
           unit: "unit",
@@ -176,35 +212,33 @@ describeDb(
       createdProductIds.push(a.id);
       await inTenant(() => productsService.remove(a.id));
 
-      const [imp, react] = await Promise.allSettled([
-        importCsv(`Item Name,SKU,Rate\n${RUN} Racer B,${code},4\n`),
-        inTenant(() => productsService.update(a.id, { isActive: true } as any)),
-      ]);
-      const b = await byName(`${RUN} Racer B`);
+      const run = await importCsv(`Item Name,SKU,Rate
+${RUN} Racer B2,${code},4
+`);
+      expect(run.created).toBe(1);
+      const b = await byName(`${RUN} Racer B2`);
+      expect(b).not.toBeNull();
       if (b) createdProductIds.push(b.id);
-      const aNow = await prisma.product.findUnique({ where: { id: a.id } });
 
+      let thrown: unknown;
+      try {
+        await inTenant(() => productsService.update(a.id, { isActive: true } as any));
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeInstanceOf(ConflictException);
+      expect((thrown as ConflictException).getResponse()).toMatchObject({
+        code: API_ERROR_CODES.CODE_TAKEN,
+        field: "sku",
+        value: code,
+        productId: b?.id,
+      });
+      const aNow = await prisma.product.findUnique({ where: { id: a.id } });
+      expect(aNow?.isActive).toBe(false);
       const holders = await prisma.product.findMany({
         where: { tenantId, sku: code, isActive: true },
       });
-      // The one-active-holder invariant holds no matter who won.
-      expect(holders.length).toBeLessThanOrEqual(1);
-
-      const importWon = holders.some((h) => h.id === b?.id);
-      const reactivateWon = holders.some((h) => h.id === a.id) && aNow?.isActive === true;
-      expect(importWon !== reactivateWon).toBe(true); // exactly one wins
-
-      if (importWon) {
-        // The reactivation lost: a readable 409, never a raw error.
-        expect(react.status).toBe("rejected");
-      } else {
-        // The import lost: the import itself resolved (no throw) with the row skipped WITH a reason.
-        expect(imp.status).toBe("fulfilled");
-        const result = (imp as PromiseFulfilledResult<Awaited<ReturnType<typeof importCsv>>>).value;
-        expect(result.skipped).toBe(1);
-        expect(result.skippedRows[0]?.reason).toMatch(/already used by an active item/);
-        expect(result.errors[0]).toMatch(/already used by an active item/);
-      }
+      expect(holders.map((h) => h.id)).toEqual([b?.id]);
     });
   },
 );

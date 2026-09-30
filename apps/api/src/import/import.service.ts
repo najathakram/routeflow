@@ -1170,6 +1170,9 @@ export class ImportService {
       const customerName = (first["Customer Name"] || first["Company Name"] || "").trim();
       if (!customerName) {
         skipped++;
+        errors.push(
+          `Invoice ${(first["Invoice Number"] || "").trim() || (first["Invoice ID"] || "").trim() || "(no id)"}: missing customer name`,
+        );
         continue;
       }
 
@@ -1257,6 +1260,7 @@ export class ImportService {
 
       if (!customer) {
         skipped++;
+        errors.push(`Invoice ${customerName}: customer could not be resolved`);
         continue;
       }
 
@@ -1321,6 +1325,8 @@ export class ImportService {
 
       // Build line items; try to match product by SKU
       const itemsData: any[] = [];
+      // N3: buffered per invoice; only an invoice that is actually CREATED contributes them.
+      const groupWarnings: string[] = [];
       for (const row of invoiceRows) {
         const description = (row["Item Name"] || "").replace(/[\n\r]+/g, " ").trim() || "Item";
         const qty = parseImportNumber(row["Quantity"] || "1") || 1;
@@ -1335,6 +1341,7 @@ export class ImportService {
         // WS7 (SA-603a): ACTIVE-ONLY matching. Legacy inactive rows may still hold a live code; an
         // inactive-only hit is no match (line imported unlinked, with a warning), never a link.
         let productId: string | undefined;
+        let skuHeldOnlyByInactive = false;
         if (sku) {
           const product = await this.prisma.forTenant().product.findFirst({
             where: { isActive: true, sku: { equals: sku, mode: "insensitive" } },
@@ -1359,12 +1366,15 @@ export class ImportService {
             select: { id: true },
           });
           if (inactive) {
-            lineWarnings.push(
+            // B2 ruling: the SKU is the stronger identity; a same-name link could pick the wrong
+            // product, so the name fallback below is skipped and the line stays unlinked.
+            skuHeldOnlyByInactive = true;
+            groupWarnings.push(
               `Invoice ${numberFromSource || customerName}: SKU ${sku} matches only an inactive item; line not linked`,
             );
           }
         }
-        if (!productId && description && description !== "Item") {
+        if (!productId && !skuHeldOnlyByInactive && description && description !== "Item") {
           const product = await this.prisma.forTenant().product.findFirst({
             where: { isActive: true, name: { equals: description, mode: "insensitive" } },
           });
@@ -1655,6 +1665,7 @@ export class ImportService {
         }
 
         imported++;
+        lineWarnings.push(...groupWarnings);
       } catch (e: any) {
         // #2468: a deliberate refusal is reported by its reason, not the generic "import failed".
         if (e instanceof ImportRowRefused)

@@ -20,7 +20,7 @@
  * today's code (`./import-reasons` is pinned in import-reasons.spec.ts).
  */
 import { Test } from "@nestjs/testing";
-import { ConflictException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
 import { ImportService } from "./import.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
@@ -289,6 +289,44 @@ describe("WS7 importers: active-only lookups, retired codes, reasons on every sk
     );
   });
 
+  it("B2: SKU held only by inactive A + an ACTIVE product with the SAME NAME -> line NOT linked to the namesake, warning present", async () => {
+    store.push(row({ id: "A", name: "Old", sku: "X-1", isActive: false }));
+    store.push(row({ id: "B", name: "Unmatched Line" }));
+    const { r, line, messages } = await runInvoice({ SKU: "X-1" });
+    expect(r.imported).toBe(1);
+    expect(line.productId).toBeUndefined();
+    expect(messages).toEqual(
+      expect.arrayContaining([expect.stringContaining("SKU X-1 matches only an inactive item")]),
+    );
+  });
+
+  it("N3: an invoice that FAILS to create contributes no inactive-SKU warning", async () => {
+    store.push(row({ id: "A", name: "Old", sku: "X-1", isActive: false }));
+    prisma.invoice.create.mockRejectedValueOnce(new Error("boom"));
+    const { r, messages } = await runInvoice({ SKU: "X-1" });
+    expect(r.imported).toBe(0);
+    expect(r.skipped).toBe(1);
+    expect((r as any).warnings).toBeUndefined();
+    expect(messages.join(" | ")).not.toContain("matches only an inactive item");
+  });
+
+  it("N4: a group with no customer name is skipped WITH a reason in errors", async () => {
+    const { r } = await runInvoice({ "Customer Name": "", "Invoice Number": "INV-7002" });
+    expect(r.skipped).toBe(1);
+    expect(r.imported).toBe(0);
+    expect(r.errors).toEqual(["Invoice INV-7002: missing customer name"]);
+  });
+
+  it("N4: a customer that cannot be resolved is skipped WITH a reason in errors", async () => {
+    prisma.customer.findFirst.mockResolvedValue(null);
+    prisma.user.findFirst.mockResolvedValue(null);
+    prisma.tenantTransaction.mockResolvedValueOnce(undefined);
+    const { r } = await runInvoice({});
+    expect(r.skipped).toBe(1);
+    expect(r.imported).toBe(0);
+    expect(r.errors).toEqual(["Invoice Acme Corp: customer could not be resolved"]);
+  });
+
   it("I3: unitSku held only by inactive A -> unlinked + warning; the name fallback is active-only", async () => {
     store.push(row({ id: "A", name: "Old", unitSku: "U-9", isActive: false }));
     const unit = await runInvoice({ SKU: "U-9" });
@@ -398,8 +436,13 @@ describe("WS7 importers: active-only lookups, retired codes, reasons on every sk
 
   it("I6: dry-run (assertIdentityAvailable) gives the same verdict as the real run", async () => {
     productsService.create.mockRejectedValue(conflictOf(API_ERROR_CODES.CODE_TAKEN, "sku"));
+    // The REAL dry-run shape: assertIdentityAvailable throws a coded 400 (products.service.ts).
     productsService.assertIdentityAvailable.mockRejectedValue(
-      conflictOf(API_ERROR_CODES.CODE_TAKEN, "sku"),
+      new BadRequestException({
+        code: API_ERROR_CODES.CODE_TAKEN,
+        field: "sku",
+        message: "SKU already exists",
+      }),
     );
     const csv = "Item Name,SKU,Rate\nNew Thing,S-1,5\n";
     const real = await runProducts(csv);
