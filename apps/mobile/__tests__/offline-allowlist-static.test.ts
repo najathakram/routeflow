@@ -74,7 +74,9 @@ describe("offline allow-list static guard (B923)", () => {
       const text = [...files]
         .map((f) => fs.readFileSync(path.resolve(__dirname, "..", f), "utf8"))
         .join("\n");
-      expect({ entry: e.pattern.source, hasKey: /idempotency-?key/i.test(text) }).toEqual({
+      // comments must not satisfy the check
+      const code = text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+      expect({ entry: e.pattern.source, hasKey: /idempotency-?key/i.test(code) }).toEqual({
         entry: e.pattern.source,
         hasKey: true,
       });

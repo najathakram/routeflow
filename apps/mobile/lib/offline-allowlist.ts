@@ -50,9 +50,9 @@ export const OFFLINE_SAFE_ENDPOINTS: readonly OfflineSafeEntry[] = [
     method: "POST",
     pattern: /^\/returns\/inline\/capture$/,
     reason: "An inline return captured with the order must survive a lost connection.",
-    replaySafety: "idempotency-key",
+    replaySafety: "idempotent-by-contract",
     replayNote:
-      "Idempotency-Key header (inline-return-submit-key); a replay collapses onto the original capture.",
+      "Deduped on the returnKey in the request body (inline-return-submit-key), not a header; a replay collapses onto the original capture.",
   },
   {
     method: "PATCH",
@@ -83,7 +83,7 @@ export const OFFLINE_SAFE_ENDPOINTS: readonly OfflineSafeEntry[] = [
     reason: "An at-the-door order change raised offline must not be lost.",
     replaySafety: "idempotent-by-contract",
     replayNote:
-      "A duplicate request for the same line is de-duplicated by the server's change-request rules.",
+      "NOT de-duplicated server-side today (change-requests.service create has no key or unique constraint): a replay after a lost response can create a second PENDING request. Open follow-up: client key + server dedupe, or move to online-only.",
   },
   {
     method: "POST",
