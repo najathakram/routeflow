@@ -1,6 +1,7 @@
 import * as React from "react";
 import { fireEvent, screen, within } from "@testing-library/react";
 import { renderWithProviders } from "@/test-utils/render";
+import { OFF_HUB_SCREENS, SETTINGS_REGISTRY, type SettingRow } from "@routeflow/types";
 import { SettingsHub } from "./SettingsHub";
 
 const restrictions = jest.fn();
@@ -156,5 +157,78 @@ describe("SettingsHub readiness banner", () => {
       expect(screen.queryByRole("status")).not.toBeInTheDocument();
       unmount();
     }
+  });
+});
+
+describe("settings registry — every configurable setting has a screen (WS5)", () => {
+  /** Screens that cannot be opened from the hub: missing from the hub and not declared off-hub. */
+  function orphanScreens(
+    rows: SettingRow[],
+    hubHrefs: Set<string>,
+    hasAnchor: (id: string) => boolean,
+  ) {
+    return rows
+      .filter((r) => r.screen)
+      .filter((r) => {
+        const s = r.screen!;
+        if (s in OFF_HUB_SCREENS) return false;
+        if (s.startsWith("#")) return !hasAnchor(s.slice(1));
+        return !hubHrefs.has(s);
+      })
+      .map((r) => `${r.key} -> ${r.screen}`);
+  }
+
+  function hubHrefs(): Set<string> {
+    return new Set(
+      screen
+        .getAllByRole("link")
+        .map((l) => l.getAttribute("href"))
+        .filter((h): h is string => !!h),
+    );
+  }
+
+  it("every registry screen is reachable from the hub (or declared off-hub)", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    expect(
+      orphanScreens(SETTINGS_REGISTRY, hubHrefs(), (id) => !!document.getElementById(id)),
+    ).toEqual([]);
+  });
+
+  it("a row pointing at a screen nobody can open is reported", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    const planted: SettingRow = {
+      key: "planted.setting",
+      home: "systemConfig",
+      kind: "config",
+      status: "live",
+      screen: "/settings?tab=does-not-exist",
+    };
+    expect(orphanScreens([planted], hubHrefs(), (id) => !!document.getElementById(id))).toEqual([
+      "planted.setting -> /settings?tab=does-not-exist",
+    ]);
+  });
+
+  it("an in-hub anchor that is not mounted is reported", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    const planted: SettingRow = {
+      key: "planted.anchor",
+      home: "systemConfig",
+      kind: "config",
+      status: "live",
+      screen: "#nope",
+    };
+    expect(
+      orphanScreens([planted], hubHrefs(), (id) => !!document.getElementById(id)),
+    ).toHaveLength(1);
+  });
+
+  it("operators reach every non-admin-only hub screen in the registry", () => {
+    renderWithProviders(<SettingsHub isAdmin={false} />);
+    const missing = orphanScreens(
+      SETTINGS_REGISTRY.filter((r) => !r.adminOnly),
+      hubHrefs(),
+      (id) => !!document.getElementById(id),
+    );
+    expect(missing).toEqual([]);
   });
 });

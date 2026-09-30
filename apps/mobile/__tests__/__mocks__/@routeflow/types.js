@@ -28,6 +28,7 @@ module.exports = {
   PREF: {
     lowStockDigestEnabled: "lowStockDigestEnabled",
     pushEnabled: "pushEnabled",
+    staffOrderEmail: "staffOrderEmail",
     locale: "locale",
     billLastSupplierId: "bill.lastSupplierId",
     paymentLastMethod: "payment.lastMethod",
