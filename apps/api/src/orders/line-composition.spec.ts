@@ -224,15 +224,17 @@ describe("syncLineCompositions (order side)", () => {
       qtyOnly?: boolean;
       unitLabel?: string | null;
       qty?: number;
+      /** Split-shaped line override: loose pieces (default 0). Ignored for qtyOnly. */
+      pieces?: number;
     } = {},
   ) {
     const boxes = opts.boxes ?? 2;
     const lineRow = {
       id: "li-1",
       productId: "recipe-p",
-      qty: opts.qtyOnly ? (opts.qty ?? boxes) : boxes * 24,
+      qty: opts.qtyOnly ? (opts.qty ?? boxes) : (opts.qty ?? boxes * 24),
       boxes: opts.qtyOnly ? null : boxes,
-      pieces: opts.qtyOnly ? null : 0,
+      pieces: opts.qtyOnly ? null : (opts.pieces ?? 0),
       unitsPerBox: opts.qtyOnly ? null : 24,
       unitLabel: opts.unitLabel ?? null,
       subtotal: 30,
@@ -372,6 +374,37 @@ describe("syncLineCompositions (order side)", () => {
     (port.activeRecipeFor as jest.Mock).mockResolvedValue(null);
     await syncLineCompositions(tx as never, ["li-1"], ctx);
     expect(tx.orderItemComponent.createMany).not.toHaveBeenCalled();
+  });
+
+  describe("split-shaped lines: composition never reinterprets qty (SA-593g pins)", () => {
+    it("boxes 3, pieces 0, qty 72, pack 24 composes: components sum 72, FIXED", async () => {
+      const { tx, ctx } = fixture({ boxes: 3, pieces: 0, qty: 72 });
+      await syncLineCompositions(tx as never, ["li-1"], ctx);
+      const data = tx.orderItemComponent.createMany.mock.calls[0][0].data;
+      expect(data.map((r: { qty: number }) => r.qty)).toEqual([36, 36]);
+      expect(data.reduce((a: number, r: { qty: number }) => a + r.qty, 0)).toBe(72);
+      expect(tx.orderItem.update).toHaveBeenCalledWith({
+        where: { id: "li-1" },
+        data: { compositionMode: "FIXED", recipeId: "rec-2", recipeVersion: 2 },
+      });
+    });
+
+    it("loose pieces (boxes 0, pieces 3, qty 3) -> 400 FIXED_WHOLE_BOXES, nothing written", async () => {
+      const { tx, ctx } = fixture({ boxes: 0, pieces: 3, qty: 3 });
+      await expect(syncLineCompositions(tx as never, ["li-1"], ctx)).rejects.toMatchObject({
+        status: 400,
+        response: { code: API_ERROR_CODES.FIXED_WHOLE_BOXES },
+      });
+      expect(tx.orderItemComponent.createMany).not.toHaveBeenCalled();
+      expect(tx.orderItem.update).not.toHaveBeenCalled();
+    });
+
+    it("boxes-only (boxes 3, pieces 0, qty 72) composes the same 3 packs", async () => {
+      const { tx, ctx } = fixture({ boxes: 3, qty: 72 });
+      await syncLineCompositions(tx as never, ["li-1"], ctx);
+      const data = tx.orderItemComponent.createMany.mock.calls[0][0].data;
+      expect(data.reduce((a: number, r: { qty: number }) => a + r.qty, 0)).toBe(72);
+    });
   });
 
   describe("qty-only (selling-unit) RECIPE line: qty whole packs (SA-593e fold 2)", () => {
