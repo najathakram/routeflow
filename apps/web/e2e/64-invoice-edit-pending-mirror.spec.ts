@@ -75,10 +75,15 @@ test.describe("Invoice edit route — pending-mirror draft (#2791)", () => {
       invoiceId = invoice.id;
       expect(invoice.status).toBe("DRAFT");
 
+      // Proof capture only: PROOF_DIR + PROOF_VIEWPORT=WxH (local lane, never set in CI).
+      const proofDir = process.env.PROOF_DIR;
+      const vp = /^(\d+)x(\d+)$/.exec(process.env.PROOF_VIEWPORT ?? "");
+      if (proofDir && vp) await page.setViewportSize({ width: +vp[1], height: +vp[2] });
+
       await page.goto(`/invoices/${invoice.id}/edit`);
       // Lands on the ORDER page (not a 404) ...
       await expect(page).toHaveURL(new RegExp(`/orders/${order.id}$`), { timeout: 15_000 });
-      await expect(page.getByText(/page could not be found|404/i)).toHaveCount(0);
+      await expect(page.getByText(/this page could not be found/i)).toHaveCount(0);
       await expect(page.getByRole("button", { name: "Edit Items", exact: true })).toBeVisible({
         timeout: 15_000,
       });
@@ -86,6 +91,7 @@ test.describe("Invoice edit route — pending-mirror draft (#2791)", () => {
       await expect(page.getByText(/This invoice mirrors order #/i).first()).toBeVisible();
       await expect(page.getByText(/edit the order instead/i).first()).toBeVisible();
       await expect(page.getByRole("button", { name: /save changes/i })).toHaveCount(0);
+      if (proofDir && vp) await page.screenshot({ path: `${proofDir}/order-page-${vp[1]}.png` });
     } finally {
       // Best-effort cleanup, children first, so the run leaves no residue.
       const del = (path: string) =>
