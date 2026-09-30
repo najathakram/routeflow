@@ -30,6 +30,37 @@ describeDb("#2775 (SA-598 P1) — Google link CAS on real Postgres", () => {
   const run = randomUUID().slice(0, 8);
   const slugA = assertTestTenant(`qa-google-${run}-a`, "google-oauth-cas.db.spec.ts");
   let tenantAId = "";
+  const extraTenantIds: string[] = [];
+
+  // Shared service builder for the single-caller cases (no barrier). Redis is stubbed as in the
+  // interleave cases above; the shim forwards to the real DB except where a case overrides it.
+  function buildService(shim: Record<string, unknown>, emailSend: jest.Mock) {
+    const config = {
+      get: (k: string) =>
+        k === "jwt"
+          ? { secret: "s", refreshSecret: "r", expiresIn: "15m", refreshExpiresIn: "30d" }
+          : undefined,
+    } as unknown as ConfigService;
+    const service = new GoogleOAuthService(
+      shim as any,
+      {
+        sign: jest.fn(() => "signed"),
+        decode: jest.fn(() => ({ exp: Math.floor(Date.now() / 1000) + 3600 })),
+      } as unknown as JwtService,
+      config,
+      { send: emailSend } as any,
+      { claimsFor: jest.fn().mockResolvedValue(null) } as any,
+    );
+    (service as any).redis?.disconnect?.();
+    (service as any).redis = {
+      set: async () => "OK",
+      getdel: async () => null,
+      eval: async () => null,
+      on: () => undefined,
+      disconnect: () => undefined,
+    };
+    return service;
+  }
 
   beforeAll(async () => {
     pool = new Pool({ connectionString: requireLocalDatabaseUrl() });
@@ -38,9 +69,10 @@ describeDb("#2775 (SA-598 P1) — Google link CAS on real Postgres", () => {
   }, 60_000);
 
   afterAll(async () => {
-    if (tenantAId) {
-      await raw.user.deleteMany({ where: { tenantId: tenantAId } });
-      await raw.tenant.deleteMany({ where: { id: tenantAId } });
+    const ids = [tenantAId, ...extraTenantIds].filter(Boolean);
+    if (ids.length) {
+      await raw.user.deleteMany({ where: { tenantId: { in: ids } } });
+      await raw.tenant.deleteMany({ where: { id: { in: ids } } });
     }
     await raw?.$disconnect();
     await pool?.end();
@@ -255,5 +287,148 @@ describeDb("#2775 (SA-598 P1) — Google link CAS on real Postgres", () => {
     const after = await raw.user.findUnique({ where: { id: user.id } });
     expect([subA, subB]).toContain(after?.googleId);
     expect(emailSend).toHaveBeenCalledTimes(1); // only the winner sends the linked email
+  });
+
+  it("SA-599b (a) (cross-tenant): the staff CAS write is scoped by tenantId, so a mis-scoped row resolved for tenant B writes nothing", async () => {
+    // U lives in tenant A (googleId null). The shim's email-fallback `user.findFirst` returns U's
+    // row with tenantId rewritten to tenant B (a stale / mis-scoped resolution); the DB row stays
+    // in A. With `extraWhere: { tenantId: staffUser.tenantId }` the CAS is
+    // `updateMany({ id: U.id, tenantId: B, googleId: null })` -> 0 rows -> casLinkProviderId
+    // re-reads U (still googleId null, so no mismatch) and returns linked=false: the call resolves
+    // (session issued for the real row), googleId stays null, nothing is emailed. Removing
+    // `extraWhere: { tenantId }` from the staff CAS makes the write match on { id, googleId: null }
+    // alone and land -> googleId becomes set -> the null assertion below goes RED (F2 verifies
+    // the revert-red).
+    const slugB = assertTestTenant(`qa-google-${run}-b`, "google-oauth-cas.db.spec.ts");
+    const tenantBId = (
+      await raw.tenant.create({ data: { slug: slugB, name: `Google QA B ${run}` } })
+    ).id;
+    extraTenantIds.push(tenantBId);
+    const sub = `google-sub-${run}-xtenant`;
+    const user = await raw.user.create({
+      data: {
+        tenantId: tenantAId,
+        email: `xtenant-${run}@example.test`,
+        username: `xtenant-${run}`,
+        role: "OPERATOR",
+      },
+    });
+
+    let rewrote = 0;
+    const updateManyWheres: unknown[] = [];
+    const prismaShim = {
+      user: {
+        findUnique: (args: Prisma.UserFindUniqueArgs) => raw.user.findUnique(args),
+        findFirst: async (args: Prisma.UserFindFirstArgs) => {
+          const row = await raw.user.findFirst(args);
+          if ((args.where as any)?.email && row) {
+            rewrote += 1;
+            return { ...row, tenantId: tenantBId };
+          }
+          return row;
+        },
+        updateMany: (args: Prisma.UserUpdateManyArgs) => {
+          updateManyWheres.push(args.where);
+          return raw.user.updateMany(args);
+        },
+        update: (args: Prisma.UserUpdateArgs) => raw.user.update(args),
+      },
+      tenant: { findFirst: (args: Prisma.TenantFindFirstArgs) => raw.tenant.findFirst(args) },
+      refreshToken: { upsert: jest.fn().mockResolvedValue({}) },
+    };
+    const emailSend = jest.fn().mockResolvedValue(undefined);
+    const service = buildService(prismaShim, emailSend);
+
+    await service.findOrCreateUser({
+      type: "tenant",
+      tenantSlug: slugA,
+      googleId: sub,
+      email: user.email,
+    } as any);
+
+    expect(rewrote).toBe(1); // the mis-scoped resolution really happened
+    expect(updateManyWheres).toEqual([{ id: user.id, tenantId: tenantBId, googleId: null }]);
+    const after = await raw.user.findUnique({ where: { id: user.id } });
+    expect(after?.googleId).toBeNull(); // the scoped CAS matched 0 rows: no link written
+    expect(after?.tenantId).toBe(tenantAId);
+    expect(emailSend).not.toHaveBeenCalled();
+  });
+
+  it("same-sub quiet (staff path): a second sign-in with the SAME sub does not error, re-link, or send anything", async () => {
+    const sub = `google-sub-${run}-same`;
+    const user = await raw.user.create({
+      data: {
+        tenantId: tenantAId,
+        email: `same-${run}@example.test`,
+        username: `same-${run}`,
+        role: "OPERATOR",
+      },
+    });
+    let updateManyCalls = 0;
+    const prismaShim = {
+      user: {
+        findUnique: (args: Prisma.UserFindUniqueArgs) => raw.user.findUnique(args),
+        findFirst: (args: Prisma.UserFindFirstArgs) => raw.user.findFirst(args),
+        updateMany: (args: Prisma.UserUpdateManyArgs) => {
+          updateManyCalls += 1;
+          return raw.user.updateMany(args);
+        },
+        update: (args: Prisma.UserUpdateArgs) => raw.user.update(args),
+      },
+      tenant: { findFirst: (args: Prisma.TenantFindFirstArgs) => raw.tenant.findFirst(args) },
+      refreshToken: { upsert: jest.fn().mockResolvedValue({}) },
+    };
+    const emailSend = jest.fn().mockResolvedValue(undefined);
+    const service = buildService(prismaShim, emailSend);
+    const profile = {
+      type: "tenant",
+      tenantSlug: slugA,
+      googleId: sub,
+      email: user.email,
+    } as any;
+
+    await service.findOrCreateUser(profile); // first call wins: links the sub
+    expect((await raw.user.findUnique({ where: { id: user.id } }))?.googleId).toBe(sub);
+    expect(updateManyCalls).toBe(1);
+
+    await expect(service.findOrCreateUser(profile)).resolves.toMatchObject({ kind: "staff" });
+    expect((await raw.user.findUnique({ where: { id: user.id } }))?.googleId).toBe(sub);
+    expect(updateManyCalls).toBe(1); // the second call resolved by sub: no second CAS write
+    // The staff link path sends no email at all (only linkGoogleAccount notifies).
+    expect(emailSend).not.toHaveBeenCalled();
+  });
+
+  it("same-sub quiet (linkGoogleAccount): first call links and emails once; the repeat with the same sub is refused and sends nothing", async () => {
+    const sub = `google-sub-${run}-same-link`;
+    const user = await raw.user.create({
+      data: {
+        tenantId: tenantAId,
+        email: `samelink-${run}@example.test`,
+        username: `samelink-${run}`,
+        role: "OPERATOR",
+      },
+    });
+    const prismaShim = {
+      user: {
+        findUnique: (args: Prisma.UserFindUniqueArgs) => raw.user.findUnique(args),
+        findFirst: (args: Prisma.UserFindFirstArgs) => raw.user.findFirst(args),
+        updateMany: (args: Prisma.UserUpdateManyArgs) => raw.user.updateMany(args),
+      },
+    };
+    const emailSend = jest.fn().mockResolvedValue(undefined);
+    const service = buildService(prismaShim, emailSend);
+    const profile = {
+      linkUserId: user.id,
+      googleId: sub,
+      email: user.email,
+      type: "tenant",
+    } as any;
+
+    await service.linkGoogleAccount(profile);
+    expect(emailSend).toHaveBeenCalledTimes(1);
+    // The pre-check sees googleId already set and refuses (google_already_linked) before any write.
+    await expect(service.linkGoogleAccount(profile)).rejects.toThrow("google_already_linked");
+    expect((await raw.user.findUnique({ where: { id: user.id } }))?.googleId).toBe(sub);
+    expect(emailSend).toHaveBeenCalledTimes(1); // no duplicate notification
   });
 });
