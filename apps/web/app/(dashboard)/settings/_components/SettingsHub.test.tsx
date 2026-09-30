@@ -98,6 +98,12 @@ describe("SettingsHub regroup", () => {
     expect(screen.getByText("route-defaults-card")).toBeInTheDocument();
   });
 
+  it("hides the route defaults card when the search matches nothing", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    fireEvent.change(screen.getByLabelText("Search settings"), { target: { value: "zzzzqq" } });
+    expect(screen.queryByText("route-defaults-card")).not.toBeInTheDocument();
+  });
+
   it("search 'depot' -> click the result -> the route defaults card is still rendered", () => {
     renderWithProviders(<SettingsHub isAdmin />);
     fireEvent.change(screen.getByLabelText("Search settings"), { target: { value: "depot" } });

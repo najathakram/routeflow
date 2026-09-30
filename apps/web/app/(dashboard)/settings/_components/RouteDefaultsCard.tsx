@@ -43,9 +43,11 @@ function depotContext(data?: {
   depotLng?: number | null;
   depotAddress?: string | null;
 }): string {
-  if (data?.depotAddress) return `Routes currently start from ${data.depotAddress}.`;
+  // Routing uses the saved coordinates first; GET always fills depotAddress from the business
+  // address, so the address is only the honest answer when no depot is saved.
   if (data?.depotLat != null && data?.depotLng != null)
     return `Routes currently start from ${data.depotLat}, ${data.depotLng}.`;
+  if (data?.depotAddress) return `Routes currently start from ${data.depotAddress}.`;
   return "No depot is set yet.";
 }
 

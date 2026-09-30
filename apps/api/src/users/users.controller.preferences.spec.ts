@@ -104,6 +104,15 @@ describe("PATCH/GET users/me/preferences — typed lowStockDigestEnabled", () =>
     expect([...PREFERENCE_KEYS].sort()).toEqual(Object.values(PREF).sort());
   });
 
+  it("apps/mobile's jest stub of @routeflow/types carries the same PREF (it is hand-copied)", () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const stub = require("../../../mobile/__tests__/__mocks__/@routeflow/types.js") as Record<
+      string,
+      unknown
+    >;
+    expect(stub.PREF).toEqual(PREF);
+  });
+
   it("every shared client key has a validator in the DTO (none falls through unvalidated)", () => {
     const validated = new Set(
       getMetadataStorage()

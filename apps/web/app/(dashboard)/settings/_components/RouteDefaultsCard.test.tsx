@@ -56,8 +56,20 @@ describe("RouteDefaultsCard", () => {
     expect(screen.getByText(/currently start from 33\.9, -118\.2/i)).toBeInTheDocument();
   });
 
-  it("prefers the business address as the depot context", async () => {
+  it("shows the SAVED coordinates even when GET also returns the business address", async () => {
+    // GET always fills depotAddress from the business address, but routing uses the saved
+    // route.defaultDepotLat/Lng first — the card must say where routes really start.
     get.mockResolvedValue({ data: { ...SETTINGS, depotAddress: "1 Main St, Springfield" } });
+    renderWithProviders(<RouteDefaultsCard />);
+    await field(/depot latitude/i);
+    expect(screen.getByText(/currently start from 33\.9, -118\.2/i)).toBeInTheDocument();
+    expect(screen.queryByText(/1 main st/i)).not.toBeInTheDocument();
+  });
+
+  it("falls back to the business address only when no depot is saved", async () => {
+    get.mockResolvedValue({
+      data: { ...SETTINGS, depotLat: null, depotLng: null, depotAddress: "1 Main St, Springfield" },
+    });
     renderWithProviders(<RouteDefaultsCard />);
     await field(/depot latitude/i);
     expect(screen.getByText(/currently start from 1 main st, springfield/i)).toBeInTheDocument();

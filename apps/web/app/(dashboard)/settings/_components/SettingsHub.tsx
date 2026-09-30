@@ -49,6 +49,10 @@ const RESTRICTIONS_ITEM: HubItem = {
   href: "/settings/restrictions",
 };
 
+/** What the search matches for the Route defaults card (kept in step with its hub item). */
+const ROUTE_DEFAULTS_TEXT =
+  "route defaults service time start time speed depot location orders & stock";
+
 const GROUPS: HubGroup[] = [
   {
     key: "business",
@@ -335,9 +339,11 @@ export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
         </div>
       )}
 
-      <div id="route-defaults" className="max-w-3xl">
-        <RouteDefaultsCard />
-      </div>
+      {(!q || ROUTE_DEFAULTS_TEXT.includes(q)) && (
+        <div id="route-defaults" className="max-w-3xl">
+          <RouteDefaultsCard />
+        </div>
+      )}
 
       {/* My account footer */}
       {(!q || "my account password sessions sign-in".includes(q)) && (
