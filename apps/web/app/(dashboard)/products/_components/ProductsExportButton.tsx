@@ -103,7 +103,7 @@ export function ProductsExportButton({
           role="dialog"
           aria-label="Export products"
           data-testid="products-export-popover"
-          className="absolute right-0 z-30 mt-2 w-72 space-y-3 rounded-lg border border-slate-200 bg-white p-3 shadow-lg"
+          className="absolute left-0 z-30 mt-2 w-[min(20rem,calc(100vw-2rem))] space-y-3 sm:left-auto sm:right-0 rounded-lg border border-slate-200 bg-white p-3 shadow-lg"
         >
           <p className="text-xs text-slate-500">
             Sales stats period (units sold, net sales, last sold date).

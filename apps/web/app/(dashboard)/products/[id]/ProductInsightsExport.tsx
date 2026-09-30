@@ -70,7 +70,7 @@ export function ProductInsightsExport({ productId, sku }: { productId: string; s
           max={to || undefined}
           onChange={(e) => setFrom(e.target.value)}
           data-testid="product-insights-export-from"
-          className="block rounded border border-slate-200 px-2 py-1 text-sm"
+          className="block w-40 rounded border border-slate-200 px-2 py-1 text-sm"
         />
       </label>
       <label className="space-y-1">
@@ -81,7 +81,7 @@ export function ProductInsightsExport({ productId, sku }: { productId: string; s
           min={from || undefined}
           onChange={(e) => setTo(e.target.value)}
           data-testid="product-insights-export-to"
-          className="block rounded border border-slate-200 px-2 py-1 text-sm"
+          className="block w-40 rounded border border-slate-200 px-2 py-1 text-sm"
         />
       </label>
       <Button
