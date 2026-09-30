@@ -489,6 +489,17 @@ describe("Notifications page — grouped list (#1965)", () => {
     expect(within(strip).queryByRole("link")).toBeNull();
   });
 
+  it("T25 (deploy skew) a payload WITHOUT channelStatus renders the page without throwing and omits the rules section", () => {
+    state.config = makeConfig({ channelStatus: undefined });
+    renderWithProviders(<NotificationsSettingsTab />);
+    // the rest of the tab still renders
+    expect(screen.getByText("Quiet hours")).toBeInTheDocument();
+    expect(screen.getByText("Push notifications")).toBeInTheDocument();
+    // channel availability is unknown, so the rules list is not shown (and nothing throws)
+    expect(screen.queryByText("Notification rules")).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: /order confirmed/i })).toBeNull();
+  });
+
   it("T13b the health strip renders nothing when the endpoint has no data", () => {
     renderWithProviders(<NotificationsSettingsTab />);
     expect(screen.queryByText(/last 7 days/i)).not.toBeInTheDocument();

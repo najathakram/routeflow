@@ -1393,7 +1393,7 @@ export class InventoryService {
    * currentStock is written as an increment, but the average is derived from
    * the read - the lock is what keeps that read consistent with the write.
    */
-  private async lockProducts(tx: Prisma.TransactionClient, productIds: Iterable<string>) {
+  async lockProducts(tx: Prisma.TransactionClient, productIds: Iterable<string>) {
     const tenantId = this.prisma.getTenantId();
     for (const productId of [...new Set(productIds)].sort()) {
       await tx.$executeRaw`SELECT id FROM "Product" WHERE id = ${productId} AND "tenantId" = ${tenantId} FOR UPDATE`;

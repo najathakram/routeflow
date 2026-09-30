@@ -99,7 +99,10 @@ export function NotificationRulesCard({
 }) {
   const { toast } = useToast();
   const toggle = useToggleRule();
-  const status = data.channelStatus;
+  // A payload from an API that predates channelStatus (web/API deploy skew): channel availability is
+  // unknown, so the rules list is not shown at all rather than guessed at or thrown on.
+  const status = data.channelStatus as MessagingConfig["channelStatus"] | undefined;
+  if (!status) return null;
 
   const triggered = data.events.filter((e) => e.hasTrigger);
   const comingSoon = data.events.filter((e) => !e.hasTrigger);
