@@ -55,6 +55,7 @@ import {
 } from "./overdue-sweep.service";
 import { tenantTimeZone } from "../common/tenant-time-zone";
 import * as fs from "fs";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import * as path from "path";
 
 describe("#2520 — persisted OVERDUE in the tenant zone", () => {
@@ -105,6 +106,7 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(false) } },
         InvoicesService,
         {
           provide: SellingRestrictionsService,

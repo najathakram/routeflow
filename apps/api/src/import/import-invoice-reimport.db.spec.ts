@@ -16,6 +16,7 @@ import { randomUUID } from "crypto";
 import { Client } from "pg";
 import { InvoiceStatus } from "@prisma/client";
 import { ImportService } from "./import.service";
+import { ProductsService } from "../products/products.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
@@ -51,6 +52,18 @@ describeDb(
           ImportService,
           NumberingService,
           ExternalRefService,
+          // #2185 (B858/B859): ImportService routes product writes through ProductsService; this
+          // suite never reaches a product write, so the stub only satisfies DI.
+          {
+            provide: ProductsService,
+            useValue: {
+              create: jest.fn().mockResolvedValue({ id: "prod-1" }),
+              update: jest.fn().mockResolvedValue({ id: "prod-1" }),
+              emitCatalogBulkChanged: jest.fn(),
+              assertCanFlagTobacco: jest.fn().mockResolvedValue(undefined),
+              assertMsrpAllowed: jest.fn().mockResolvedValue(undefined),
+            },
+          },
           // #2093: importInvoices flags banned lines (never blocks); ALLOW keeps this suite's rows unflagged.
           {
             provide: SellingRestrictionsService,
