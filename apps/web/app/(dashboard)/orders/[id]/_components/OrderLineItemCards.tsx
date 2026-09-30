@@ -43,6 +43,7 @@ export function lineRowProps(li: OrderItem, orderStatus: string): LineItemRowRea
     showDeliveryProgress: DELIVERY_PROGRESS_STATUSES.has(orderStatus),
     note: li.notes ?? null,
     custom: !li.productId,
+    components: li.components ?? null,
   };
 }
 
