@@ -27,6 +27,10 @@
 //   HOLDERS_CHANGED — `body.code` of the 409 when `deactivateHolderIds` was sent on a reactivation but NOTHING blocks it any
 //                    more (`holders: []`). A set that is merely stale/wrong answers with the conflict shape instead
 //                    (CODE_TAKEN / BARCODE_TAKEN / NAME_TAKEN) carrying the CURRENT `holders[]` (SA-603i).
+//   FAMILY_NOT_SELLABLE — `body.code` of the 400 when a FAMILY container (kind FAMILY) is named on an order, invoice,
+//                    estimate or PO line; `productIds` names them (WS8: a family is non-stocked and non-sellable).
+//   FAMILY_ROWS_CONFLICT — `body.code` of the 409 from POST /products/families and PATCH /products/:id/variants: `rows` lists
+//                    EVERY conflicting row (see FamilyRowsConflictError), never just the first.
 //   NAME_TAKEN     — `body.code` of the 409 when reactivating a product whose name an ACTIVE product of
 //                    the same scope now holds (SA-603a/b); body carries the holder's `productId`/`productName`.
 //   RECIPE_IMMUTABLE — `body.code` of the 409 when a recipe that is ACTIVE or RETIRED is edited
@@ -67,6 +71,8 @@ export const API_ERROR_CODES = {
   CODE_TAKEN: "CODE_TAKEN",
   NAME_TAKEN: "NAME_TAKEN",
   HOLDERS_CHANGED: "HOLDERS_CHANGED",
+  FAMILY_NOT_SELLABLE: "FAMILY_NOT_SELLABLE",
+  FAMILY_ROWS_CONFLICT: "FAMILY_ROWS_CONFLICT",
   RECIPE_IMMUTABLE: "RECIPE_IMMUTABLE",
   RECIPE_CATEGORY_LOCKED: "RECIPE_CATEGORY_LOCKED",
   RECIPE_FAMILY_LOCKED: "RECIPE_FAMILY_LOCKED",
