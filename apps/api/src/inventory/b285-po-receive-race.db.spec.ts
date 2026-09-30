@@ -156,7 +156,9 @@ describeDb("B285 — PO receive vs concurrent writers — real Postgres, separat
         });
         await prisma.purchaseOrder.deleteMany({ where: { tenantId } });
         const vb = await prisma.vendorBill.findMany({ where: { tenantId }, select: { id: true } });
-        await prisma.vendorBillItem.deleteMany({ where: { billId: { in: vb.map((b) => b.id) } } });
+        await prisma.vendorBillItem.deleteMany({
+          where: { vendorBillId: { in: vb.map((b) => b.id) } },
+        });
         await prisma.vendorBill.deleteMany({ where: { tenantId } });
         await prisma.stockLot.deleteMany({ where: { tenantId } });
         await prisma.stockMovement.deleteMany({ where: { tenantId } });
