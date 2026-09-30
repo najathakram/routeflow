@@ -55,7 +55,7 @@ import {
   restoreProductCodes,
 } from "./product-code-release";
 import { assertNameFree, mapNameUniqueViolation } from "./product-name-rules";
-import { deactivateReactivationHolders } from "./product-reactivation-holders";
+import { resolveReactivationConflicts } from "./product-reactivation-holders";
 import { recipeReferenceGroupers } from "./recipe-references";
 import { lockAndAssertRecipeGuards } from "./recipe-update-guard";
 import {
@@ -1247,9 +1247,10 @@ export class ProductsService {
       const claims = codeClaims(dto, existing);
       const reactivating = existing.isActive === false && data.isActive === true;
       const deactivating = existing.isActive !== false && data.isActive === false;
-      if (reactivating && dto.deactivateHolderIds?.length) {
-        // One tx: deactivate exactly the products blocking this reactivation (409 HOLDERS_CHANGED otherwise).
-        await deactivateReactivationHolders(tx, {
+      if (reactivating) {
+        // SA-603i: any ACTIVE holder of a retired code / the name is a 409 listing ALL of them; with
+        // `deactivateHolderIds` exactly that set is deactivated in this tx (lock order codes -> name -> rows).
+        await resolveReactivationConflicts(tx, {
           tenantId,
           productId: id,
           name: dto.name ?? existing.name,

@@ -223,7 +223,7 @@ describe("ProductsService — code release wiring (SA-603a)", () => {
     );
     prisma.product.findMany.mockResolvedValue([]);
     prisma.productBarcode.findMany.mockResolvedValue([]);
-    // No active holder exists, so the exact set is EMPTY: a non-empty request is refused (HOLDERS_CHANGED).
+    // No active holder exists, so the exact set is EMPTY: a non-empty request is refused (HOLDERS_CHANGED, holders []).
     await expect(
       service.update("prod-1", { isActive: true, deactivateHolderIds: ["nobody"] } as any),
     ).rejects.toMatchObject({ response: { code: "HOLDERS_CHANGED" } });

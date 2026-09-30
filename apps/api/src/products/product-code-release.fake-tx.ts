@@ -8,6 +8,7 @@ export type ProductRow = {
   name: string;
   isActive: boolean;
   parentProductId?: string | null;
+  kind?: string;
   sku: string | null;
   barcode: string | null;
   unitSku: string | null;

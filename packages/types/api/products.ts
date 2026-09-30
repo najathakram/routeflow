@@ -256,31 +256,34 @@ export interface RecipeDto {
   components: RecipeComponentDto[];
 }
 
-// ─── Reuse API 409 bodies (SA-603a; flat, one shape for codes and names) ───────────────────────────────
-/** 409 when a sku / barcode / unit code is held by another ACTIVE product. `productId`/`productName` = the holder. */
-export interface ProductCodeTakenError {
-  /** BARCODE_TAKEN keeps its pre-existing code for a barcode; CODE_TAKEN for sku and unitSku. */
-  code: "CODE_TAKEN" | "BARCODE_TAKEN";
-  message: string;
-  field: "sku" | "barcode" | "unitSku";
+// ─── Reuse API 409 bodies (SA-603a/603i; flat keys, one shape for codes and names) ───────────────────
+/** One ACTIVE product blocking a reactivation, for one code or the name. */
+export interface ProductReactivationHolder {
+  /** BARCODE_TAKEN for a barcode (SA-572b keeps its code); CODE_TAKEN for sku / unitSku; NAME_TAKEN for the name. */
+  code: "CODE_TAKEN" | "BARCODE_TAKEN" | "NAME_TAKEN";
+  field: "sku" | "barcode" | "unitSku" | "name";
   value: string;
   productId: string;
   productName: string;
+  /** Present when this holder can NOT be deactivated in the one call (a FAMILY, or it has ACTIVE variants). */
+  blocked?: "HAS_ACTIVE_VARIANTS";
 }
 
-/** 409 when a name is held by another ACTIVE product of the same scope (reactivate, create, rename). */
-export interface ProductNameTakenError {
-  code: "NAME_TAKEN";
+/**
+ * 409 when reactivating (or creating / renaming) hits an ACTIVE holder. The top-level keys repeat `holders[0]` (the fixed
+ * copy maps from them); `holders` is the COMPLETE set the server derived, which is exactly what `deactivateHolderIds`
+ * must equal on the one-call resolution. A barcode conflict also carries SA-572b's `barcode` key.
+ */
+export interface ProductCodeTakenError extends ProductReactivationHolder {
   message: string;
-  field: "name";
-  value: string;
-  productId: string;
-  productName: string;
+  barcode?: string;
+  holders?: ProductReactivationHolder[];
 }
+export type ProductNameTakenError = ProductCodeTakenError & { code: "NAME_TAKEN"; field: "name" };
 
-/** 409 when `deactivateHolderIds` is not EXACTLY the active products blocking the reactivation. */
+/** 409 when `deactivateHolderIds` was sent but NOTHING blocks the reactivation any more. */
 export interface ProductHoldersChangedError {
   code: "HOLDERS_CHANGED";
   message: string;
-  holders: Array<{ productId: string; productName: string }>;
+  holders: [];
 }
