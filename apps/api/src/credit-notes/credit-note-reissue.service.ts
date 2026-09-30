@@ -213,6 +213,11 @@ export class CreditNoteReissueService {
               true,
             );
 
+            // #2848 / SA-608f: the marker again, under the lock. deleteInvoice may have committed it
+            // between the pre-check and here, and then a capped edit would be wrong: it must refuse.
+            if (await hasSourceDeletedMarker(tx, id))
+              throw new ConflictException(SOURCE_DELETED_MESSAGE);
+
             // SA-608c (a), again under the lock: deleteInvoice may have unlinked the note since the
             // pre-read, which would turn a sourced edit into an uncapped standalone one.
             const cur = await tx.creditNote.findUnique({

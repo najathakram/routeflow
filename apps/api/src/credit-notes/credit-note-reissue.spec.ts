@@ -281,6 +281,18 @@ describe("CreditNoteReissueService (#2648)", () => {
         noWrites();
       });
 
+      it("#2848 (SA-608f): the marker is ALSO checked inside the tx, so a concurrent deleteInvoice refuses rather than caps", async () => {
+        // The pre-check sees no marker; by the time the tx holds the locks, deleteInvoice has committed it.
+        prisma.auditLog.findFirst.mockResolvedValueOnce(null).mockResolvedValue({ id: "al-1" });
+        await expect(
+          service.reissue("cn-old", { amount: 10 }, "k", "u"), // sourced at pre-read, <= the old amount
+        ).rejects.toThrow(
+          new ConflictException("This credit's source invoice was deleted; it can't be edited."),
+        );
+        expect(creditNotes.insertCreditNoteInTx).not.toHaveBeenCalled();
+        expect(idem.save).not.toHaveBeenCalled();
+      });
+
       it("a sourced note is not subject to the no-invoice cap", async () => {
         await service.reissue("cn-old", { amount: 9999 }, "k", "u"); // OLD is $50 with invoiceId
         expect(creditNotes.insertCreditNoteInTx).toHaveBeenCalledTimes(1);
