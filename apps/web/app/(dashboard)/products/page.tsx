@@ -42,6 +42,12 @@ import { RegulatedScopeTabs } from "@/components/RegulatedScopeTabs";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { QuickEditCell, type EditRecord } from "./_components/QuickEditCell";
 import { SectionEditCell } from "./_components/SectionEditCell";
+import {
+  PortalBulkButtons,
+  PortalHiddenBadge,
+  PortalHiddenFilter,
+} from "./_components/PortalVisibilityControls";
+import { portalBadge, portalVisibleFilterParam } from "@/lib/product-portal-visibility-ui";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -73,6 +79,8 @@ interface ApiProduct {
   variantName?: string | null;
   variants?: ApiProduct[];
   parent?: ApiProduct | null;
+  /** Buyer-portal flag (hidden products never reach buyers). */
+  portalVisible?: boolean;
   isFeatured?: boolean;
   isNew?: boolean;
   isDeal?: boolean;
@@ -87,9 +95,11 @@ interface ApiProduct {
 
 // Merchandising badge row (P5-01) — reused by grid card + table cell.
 function MerchBadges({ product }: { product: ApiProduct }) {
-  if (!product.isFeatured && !product.isNew && !product.isDeal) return null;
+  if (!product.isFeatured && !product.isNew && !product.isDeal && !portalBadge(product))
+    return null;
   return (
     <span className="inline-flex flex-wrap items-center gap-1">
+      <PortalHiddenBadge product={product} />
       {product.isFeatured && (
         <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold bg-brand-50 text-brand-700 ring-1 ring-brand-200">
           Featured
@@ -739,6 +749,7 @@ export default function ProductsPage() {
   const [showGroupAsVariants, setShowGroupAsVariants] = React.useState(false);
   const [showAssignToSection, setShowAssignToSection] = React.useState(false);
   const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = React.useState(false);
+  const [hiddenOnly, setHiddenOnly] = React.useState(false);
   const [page, setPage] = useUrlPage();
   const [pageSize, setPageSize] = React.useState(50);
   const hasMsrpAddon = useHasAddon(MSRP_ADDON);
@@ -1030,7 +1041,7 @@ export default function ProductsPage() {
     setShowBulkDeleteConfirm(false);
     setShowAssignToSection(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, debouncedSearch, categoryFilter, stockFilter, sectionFilter, pageSize]);
+  }, [page, debouncedSearch, categoryFilter, stockFilter, sectionFilter, pageSize, hiddenOnly]);
 
   const {
     data: result,
@@ -1041,6 +1052,7 @@ export default function ProductsPage() {
     category: categoryFilter || undefined,
     stockStatus: (stockFilter || undefined) as any,
     section: sectionFilter || undefined,
+    ...portalVisibleFilterParam(hiddenOnly),
     page,
     limit: pageSize, // 0 = all
     includeVariants: true,
@@ -1312,6 +1324,8 @@ export default function ProductsPage() {
           />
         </div>
 
+        <PortalHiddenFilter checked={hiddenOnly} onChange={setHiddenOnly} />
+
         {/* Per-page selector */}
         <div className="w-36">
           <Select
@@ -1383,6 +1397,7 @@ export default function ProductsPage() {
                 Assign to type…
               </Button>
             )}
+            <PortalBulkButtons selected={selected} onDone={() => setSelected(new Set())} />
             <Button
               variant="danger"
               leftIcon={<Trash2 className="h-4 w-4" />}
