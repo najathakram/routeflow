@@ -4,9 +4,10 @@ import * as React from "react";
 import Link from "next/link";
 import {
   Building2,
-  Users as UsersIcon,
+  ShoppingBag,
+  Truck,
+  Bell,
   Wallet,
-  Database,
   Sparkles,
   ShieldCheck,
   UserCircle,
@@ -14,6 +15,8 @@ import {
   Search as SearchIcon,
 } from "lucide-react";
 import { Card, Input, cn } from "@routeflow/ui/web";
+import { ReadinessBanner } from "./ReadinessBanner";
+import { RouteDefaultsCard } from "./RouteDefaultsCard";
 
 /**
  * Settings hub — the grouped-card landing for /settings (full-hub redesign). Every
@@ -40,11 +43,21 @@ type HubGroup = {
   items: HubItem[];
 };
 
+const RESTRICTIONS_ITEM: HubItem = {
+  label: "Selling restrictions",
+  desc: "Block restricted products by the customer's state",
+  href: "/settings/restrictions",
+};
+
+/** What the search matches for the Route defaults card (kept in step with its hub item). */
+const ROUTE_DEFAULTS_TEXT =
+  "route defaults service time start time speed depot location orders & stock";
+
 const GROUPS: HubGroup[] = [
   {
     key: "business",
-    title: "Business profile",
-    blurb: "Your company identity on documents and the portal.",
+    title: "Business & team",
+    blurb: "Your company identity and the people in your workspace.",
     icon: Building2,
     items: [
       {
@@ -52,31 +65,18 @@ const GROUPS: HubGroup[] = [
         desc: "Name, address, logo & default tax rate",
         href: "/settings?tab=profile",
       },
-    ],
-  },
-  {
-    key: "team",
-    title: "Team",
-    blurb: "The people in your workspace and how they're notified.",
-    icon: UsersIcon,
-    items: [
       {
         label: "User management",
         desc: "Operators & drivers, roles, passwords",
         href: "/settings?tab=users",
       },
-      {
-        label: "Notifications",
-        desc: "Event rules, message templates & quiet hours",
-        href: "/settings?tab=notifications",
-      },
     ],
   },
   {
-    key: "finance",
-    title: "Finance",
-    blurb: "Invoicing, costing, payouts and your plan.",
-    icon: Wallet,
+    key: "selling",
+    title: "Selling & catalog",
+    blurb: "Pricing, invoicing, restrictions and bringing your catalog in.",
+    icon: ShoppingBag,
     items: [
       {
         label: "Invoicing",
@@ -89,15 +89,7 @@ const GROUPS: HubGroup[] = [
         desc: "Remit-to & payment instructions",
         href: "/settings?tab=remittance",
       },
-      { label: "Plan & billing", desc: "Subscription, usage & add-ons", href: "/settings/billing" },
-    ],
-  },
-  {
-    key: "data",
-    title: "Data & import",
-    blurb: "Bring your data in and set up email delivery.",
-    icon: Database,
-    items: [
+      RESTRICTIONS_ITEM,
       {
         label: "Import data",
         desc: "CSV importers, numbering & finish setup",
@@ -108,15 +100,62 @@ const GROUPS: HubGroup[] = [
         desc: "Move from Zoho, QuickBooks, CSV or paper",
         href: "/settings/migration",
       },
+    ],
+  },
+  {
+    key: "orders",
+    title: "Orders & stock",
+    blurb: "How orders, routes and bills are handled day to day.",
+    icon: Truck,
+    items: [
+      {
+        label: "Route defaults",
+        desc: "Service time, start time, speed & depot location",
+        href: "#route-defaults",
+      },
       {
         label: "Batch invoice import",
         desc: "Scan a stack of bills/photos into invoices",
         href: "/settings/batch-import",
       },
+    ],
+  },
+  {
+    key: "notifications",
+    title: "Notifications",
+    blurb: "What gets sent, to whom, and from where.",
+    icon: Bell,
+    items: [
+      {
+        label: "Notifications",
+        desc: "Event rules, message templates, quiet hours & low-stock digest",
+        href: "/settings?tab=notifications",
+      },
       {
         label: "Email (SMTP)",
         desc: "Sender identity & delivery settings",
         href: "/settings?tab=email",
+      },
+    ],
+  },
+  {
+    key: "compliance",
+    title: "Compliance",
+    blurb: "Regulated products, licensing and reporting.",
+    icon: ShieldCheck,
+    items: [
+      {
+        label: "Regulated sections",
+        desc: "Tracked categories, tax rules & subcategories",
+        href: "/settings?tab=regulated",
+        show: "admin",
+      },
+      RESTRICTIONS_ITEM,
+      {
+        label: "Product labels",
+        desc: "Restriction categories applied to products",
+        href: "/settings/product-categories",
+        show: "admin",
       },
     ],
   },
@@ -139,29 +178,12 @@ const GROUPS: HubGroup[] = [
     ],
   },
   {
-    key: "compliance",
-    title: "Compliance",
-    blurb: "Regulated products, licensing and reporting.",
-    icon: ShieldCheck,
+    key: "billing",
+    title: "Billing",
+    blurb: "Your subscription, usage and add-ons.",
+    icon: Wallet,
     items: [
-      {
-        label: "Regulated sections",
-        desc: "Tracked categories, tax rules & subcategories",
-        href: "/settings?tab=regulated",
-        show: "admin",
-      },
-      {
-        label: "Selling restrictions",
-        desc: "Block restricted products by the customer's state",
-        href: "/settings/restrictions",
-        show: "admin",
-      },
-      {
-        label: "Product labels",
-        desc: "Restriction categories applied to products",
-        href: "/settings/product-categories",
-        show: "admin",
-      },
+      { label: "Plan & billing", desc: "Subscription, usage & add-ons", href: "/settings/billing" },
     ],
   },
 ];
@@ -228,7 +250,7 @@ export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
       {/* Header + search */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-navy/60">
-          Manage your workspace, team, finances, data and integrations.
+          Manage your business, selling rules, orders, notifications and integrations.
         </p>
         <div className="relative w-full sm:w-72">
           <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-navy/40" />
@@ -241,6 +263,8 @@ export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
           />
         </div>
       </div>
+
+      <ReadinessBanner isAdmin={isAdmin} />
 
       {/* Frequently used */}
       {!q && (
@@ -303,11 +327,21 @@ export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
                 </div>
               );
             return (
-              <div key={g.key} className="mb-4 break-inside-avoid">
+              <div
+                key={g.key}
+                data-testid={`settings-group-${g.key}`}
+                className="mb-4 break-inside-avoid"
+              >
                 {content}
               </div>
             );
           })}
+        </div>
+      )}
+
+      {(!q || ROUTE_DEFAULTS_TEXT.includes(q)) && (
+        <div id="route-defaults" className="max-w-3xl">
+          <RouteDefaultsCard />
         </div>
       )}
 
