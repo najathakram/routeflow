@@ -38,6 +38,7 @@ import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-aut
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import {
   assertPartialRequestShape,
   bumpInvoicedQtyCas,
@@ -94,6 +95,7 @@ describe("partial invoices: the invoicedQty bump is a compare-and-set (#2070, SA
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(false) } },
         InvoicesService,
         {
           provide: SellingRestrictionsService,
