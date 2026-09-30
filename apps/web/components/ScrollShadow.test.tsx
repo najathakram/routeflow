@@ -83,4 +83,58 @@ describe("ScrollShadow", () => {
       expect(hint(side).className).toMatch(/pointer-events-none/);
     }
   });
+
+  it("the fades inherit the wrapper's rounded corners (B919: square fades bled past a rounded table)", () => {
+    render(
+      <ScrollShadow className="rounded-xl">
+        <div>x</div>
+      </ScrollShadow>,
+    );
+    for (const side of ["left", "right"] as const) {
+      expect(hint(side).className).toMatch(/rounded-\[inherit\]/);
+    }
+  });
+
+  it("the scroller is a labelled, keyboard-focusable region ONLY while it overflows", () => {
+    render(
+      <ScrollShadow
+        scrollLabel="Recent orders"
+        scrollerProps={{ "data-testid": "scroller" } as React.HTMLAttributes<HTMLDivElement>}
+      >
+        <div>wide</div>
+      </ScrollShadow>,
+    );
+    // fits: no region semantics, not a tab stop
+    act(() => {
+      setGeometry(scroller(), { scrollWidth: 390, clientWidth: 390, scrollLeft: 0 });
+      fireEvent.scroll(scroller());
+    });
+    expect(scroller()).not.toHaveAttribute("tabindex");
+    expect(scroller()).not.toHaveAttribute("role");
+    expect(scroller()).not.toHaveAttribute("aria-label");
+
+    // overflows: focusable region with the caller's label
+    act(() => {
+      setGeometry(scroller(), { scrollWidth: 900, clientWidth: 390, scrollLeft: 0 });
+      fireEvent.scroll(scroller());
+    });
+    expect(scroller()).toHaveAttribute("tabindex", "0");
+    expect(scroller()).toHaveAttribute("role", "region");
+    expect(scroller()).toHaveAttribute("aria-label", "Recent orders");
+  });
+
+  it("without a scrollLabel an overflowing scroller still gets a generic accessible name", () => {
+    render(
+      <ScrollShadow
+        scrollerProps={{ "data-testid": "scroller" } as React.HTMLAttributes<HTMLDivElement>}
+      >
+        <div>wide</div>
+      </ScrollShadow>,
+    );
+    act(() => {
+      setGeometry(scroller(), { scrollWidth: 900, clientWidth: 390, scrollLeft: 0 });
+      fireEvent.scroll(scroller());
+    });
+    expect(scroller()).toHaveAttribute("aria-label", "Scrollable content");
+  });
 });

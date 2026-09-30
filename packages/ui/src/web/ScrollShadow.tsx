@@ -8,6 +8,8 @@ export interface ScrollShadowProps {
   className?: string;
   /** Classes for the inner scroller; `overflow-x-auto` is always applied. */
   scrollerClassName?: string;
+  /** Accessible name of the scroller while it overflows (it becomes a focusable region). */
+  scrollLabel?: string;
   /** Extra props for the scroller element (data-*, aria-*, ref-free). */
   scrollerProps?: React.HTMLAttributes<HTMLDivElement>;
   children: React.ReactNode;
@@ -23,19 +25,25 @@ const EDGE = 2; // px of tolerance for sub-pixel scroll positions
 export function ScrollShadow({
   className,
   scrollerClassName,
+  scrollLabel,
   scrollerProps,
   children,
 }: ScrollShadowProps) {
   const scrollerRef = React.useRef<HTMLDivElement>(null);
-  const [edges, setEdges] = React.useState({ left: false, right: false });
+  const [edges, setEdges] = React.useState({ left: false, right: false, overflows: false });
 
   const measure = React.useCallback(() => {
     const el = scrollerRef.current;
     if (!el) return;
     const max = el.scrollWidth - el.clientWidth;
     const left = el.scrollLeft > EDGE;
-    const right = max > EDGE && el.scrollLeft < max - EDGE;
-    setEdges((prev) => (prev.left === left && prev.right === right ? prev : { left, right }));
+    const overflows = max > EDGE;
+    const right = overflows && el.scrollLeft < max - EDGE;
+    setEdges((prev) =>
+      prev.left === left && prev.right === right && prev.overflows === overflows
+        ? prev
+        : { left, right, overflows },
+    );
   }, []);
 
   React.useEffect(() => {
@@ -54,6 +62,11 @@ export function ScrollShadow({
     <div className={cn("relative", className)}>
       <div
         {...rest}
+        // A scrollable region must be reachable and named for keyboard / screen-reader users, but only
+        // while it actually overflows (otherwise it would be a pointless tab stop).
+        {...(edges.overflows
+          ? { tabIndex: 0, role: "region", "aria-label": scrollLabel ?? "Scrollable content" }
+          : {})}
         ref={scrollerRef}
         className={cn("overflow-x-auto", scrollerClassName, extraClass)}
         onScroll={(e) => {
@@ -67,13 +80,13 @@ export function ScrollShadow({
         aria-hidden="true"
         data-scroll-hint="left"
         data-visible={edges.left ? "true" : "false"}
-        className="pointer-events-none absolute inset-y-0 left-0 w-8 bg-gradient-to-r from-navy/15 to-transparent opacity-0 transition-opacity data-[visible=true]:opacity-100"
+        className="pointer-events-none absolute inset-y-0 left-0 w-8 rounded-[inherit] bg-gradient-to-r from-navy/15 to-transparent opacity-0 transition-opacity data-[visible=true]:opacity-100"
       />
       <div
         aria-hidden="true"
         data-scroll-hint="right"
         data-visible={edges.right ? "true" : "false"}
-        className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-navy/15 to-transparent opacity-0 transition-opacity data-[visible=true]:opacity-100"
+        className="pointer-events-none absolute inset-y-0 right-0 w-8 rounded-[inherit] bg-gradient-to-l from-navy/15 to-transparent opacity-0 transition-opacity data-[visible=true]:opacity-100"
       />
     </div>
   );

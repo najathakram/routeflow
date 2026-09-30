@@ -21,16 +21,7 @@ import {
   Briefcase,
   type LucideIcon,
 } from "lucide-react";
-import {
-  StatCard,
-  Badge,
-  Table,
-  Button,
-  Card,
-  cn,
-  EmptyState,
-  ScrollShadow,
-} from "@routeflow/ui/web";
+import { StatCard, Badge, Table, Button, Card, cn, EmptyState } from "@routeflow/ui/web";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
 import { fmtCalendarDate } from "@/lib/formatting";
@@ -1104,7 +1095,7 @@ export default function DashboardPage() {
               }
             />
           ) : (
-            <ScrollShadow className="-mx-6 -mb-6">
+            <div className="-mx-6 -mb-6">
               <Table
                 data={recentOrders}
                 columns={orderColumns}
@@ -1117,7 +1108,7 @@ export default function DashboardPage() {
                   />
                 }
               />
-            </ScrollShadow>
+            </div>
           )}
         </Card>
       )}

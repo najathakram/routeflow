@@ -38,6 +38,8 @@ describe("/dashboard overflow (B919)", () => {
 
   it("the Recent Orders header wraps and its table shell scrolls", () => {
     expect(src).toMatch(/<div className="mb-4 flex flex-wrap items-center justify-between gap-2">/);
-    expect(src).toMatch(/<ScrollShadow className="-mx-6 -mb-6">/);
+    // the shared Table is ALREADY a ScrollShadow: wrapping it in a second one doubled the fades
+    expect(src).toMatch(/<div className="-mx-6 -mb-6">\s*<Table/);
+    expect(src).not.toMatch(/<ScrollShadow className="-mx-6 -mb-6">/);
   });
 });
