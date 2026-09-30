@@ -14,7 +14,14 @@ import { SystemConfigModule } from "../system-config/system-config.module";
 import { GatewaysModule } from "../gateways/gateways.module";
 
 @Module({
-  imports: [AuthModule, StorageModule, BillingModule, SystemConfigModule, GatewaysModule, SalesFactsModule],
+  imports: [
+    AuthModule,
+    StorageModule,
+    BillingModule,
+    SystemConfigModule,
+    GatewaysModule,
+    SalesFactsModule,
+  ],
   controllers: [ProductsController, ProductUnitsController, RecipesController],
   providers: [ProductsService, ProductUnitsService, RecipesService, ProductsExportService],
   exports: [ProductsService],
