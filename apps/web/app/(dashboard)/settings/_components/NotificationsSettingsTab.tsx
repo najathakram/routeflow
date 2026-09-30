@@ -18,6 +18,7 @@ import { useNotificationsStatus, useSendTestNotification } from "@/lib/api/notif
 import { MiniSwitch } from "./MiniSwitch";
 import { NotificationRulesCard } from "./NotificationRulesCard";
 import { DeliveryHealthStrip } from "./DeliveryHealthStrip";
+import { useEmailSender } from "./useEmailSender";
 import {
   useMessagingConfig,
   useUpdateTemplate,
@@ -81,6 +82,7 @@ export function NotificationsSettingsTab() {
   const { user } = useAuth();
   const isAdmin = user?.role === "TENANT_ADMIN";
   const { data, isLoading, isError, refetch } = useMessagingConfig();
+  const { sender } = useEmailSender(isAdmin);
 
   const [openEventKey, setOpenEventKey] = React.useState<string | null>(null);
   const [selectedChannel, setSelectedChannel] = React.useState<MessageChannel | null>(null);
@@ -103,17 +105,22 @@ export function NotificationsSettingsTab() {
   };
 
   if (isError && !data) {
+    // Only the rules fetch failed: the push card is independent and keeps rendering. (Quiet hours
+    // is read from the same /messaging/config response, so it cannot render without it.)
     return (
-      <Card title="Notification rules">
-        <div className="flex flex-wrap items-center gap-3">
-          <p role="alert" className="text-sm text-navy">
-            Couldn&apos;t load notification settings.
-          </p>
-          <Button variant="secondary" size="sm" onClick={() => refetch()}>
-            Retry
-          </Button>
-        </div>
-      </Card>
+      <div className="space-y-5">
+        <Card title="Notification rules">
+          <div className="flex flex-wrap items-center gap-3">
+            <p role="alert" className="text-sm text-navy">
+              Couldn&apos;t load notification settings.
+            </p>
+            <Button variant="secondary" size="sm" className="min-h-11" onClick={() => refetch()}>
+              Retry
+            </Button>
+          </div>
+        </Card>
+        <PushStatusCard />
+      </div>
     );
   }
 
@@ -138,9 +145,9 @@ export function NotificationsSettingsTab() {
           Couldn&apos;t refresh notification settings.
         </p>
       )}
-      <DeliveryHealthStrip />
+      <DeliveryHealthStrip isAdmin={isAdmin} />
 
-      <NotificationRulesCard data={data} isAdmin={isAdmin} onEdit={openEditor} />
+      <NotificationRulesCard data={data} isAdmin={isAdmin} sender={sender} onEdit={openEditor} />
 
       <QuietHoursCard settings={data.settings} isAdmin={isAdmin} />
 

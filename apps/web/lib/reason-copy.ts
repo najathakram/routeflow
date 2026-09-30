@@ -44,22 +44,45 @@ export interface DeliveryHealth {
 
 const GENERIC = "Not sent for a reason we couldn't identify.";
 
-const DELIVERY_REASON_COPY: Record<DeliveryReasonCode, string> = {
-  RULE_OFF: "Skipped because this notification is switched off.",
-  NO_RECIPIENT: "Skipped because the customer has no email address.",
-  OPTED_OUT: "Skipped because the recipient opted out.",
-  NO_FROM_ADDRESS: "Not sent because no sending email address is set up.",
-  MAILBOX_REVOKED: "Not sent because the connected mailbox lost access. Reconnect it.",
-  SMTP_AUTH: "Not sent because the email account sign-in was rejected.",
-  TRANSPORT_ERROR: "Not sent because of an email delivery problem.",
-  RECIPIENT_REJECTED: "Not sent because the recipient's mail server rejected the message.",
-  UNKNOWN: GENERIC,
+/** One closed clause per reason; `skipped` = we chose not to send (vs. tried and failed). */
+const DELIVERY_REASON_CLAUSE: Record<DeliveryReasonCode, { clause: string; skipped: boolean }> = {
+  RULE_OFF: { clause: "this notification is switched off", skipped: true },
+  NO_RECIPIENT: { clause: "the customer has no email address", skipped: true },
+  OPTED_OUT: { clause: "the recipient opted out", skipped: true },
+  NO_FROM_ADDRESS: { clause: "no sending email address is set up", skipped: false },
+  MAILBOX_REVOKED: { clause: "the connected mailbox lost access", skipped: false },
+  SMTP_AUTH: { clause: "the email account sign-in was rejected", skipped: false },
+  TRANSPORT_ERROR: { clause: "of an email delivery problem", skipped: false },
+  RECIPIENT_REJECTED: {
+    clause: "the recipient's mail server rejected the message",
+    skipped: false,
+  },
+  UNKNOWN: { clause: "", skipped: false },
 };
 
+const knownReason = (code: string): code is DeliveryReasonCode =>
+  Object.prototype.hasOwnProperty.call(DELIVERY_REASON_CLAUSE, code);
+
 export function describeDeliveryReason(code: string): string {
-  return Object.prototype.hasOwnProperty.call(DELIVERY_REASON_COPY, code)
-    ? DELIVERY_REASON_COPY[code as DeliveryReasonCode]
-    : GENERIC;
+  if (!knownReason(code) || code === "UNKNOWN") return GENERIC;
+  const r = DELIVERY_REASON_CLAUSE[code];
+  return `${r.skipped ? "Skipped" : "Not sent"} because ${r.clause}.`;
+}
+
+/** "2 emails weren't sent: no sending email address is set up." (count in the sentence, no raw code). */
+export function describeDeliveryOutcome(code: string, count: number): string {
+  const one = count === 1;
+  const known = knownReason(code) && code !== "UNKNOWN" ? DELIVERY_REASON_CLAUSE[code] : null;
+  if (!known)
+    return `${count} ${one ? "email" : "emails"} ${one ? "wasn't" : "weren't"} sent for a reason we couldn't identify.`;
+  const verb = known.skipped
+    ? one
+      ? "was skipped"
+      : "were skipped"
+    : one
+      ? "wasn't sent"
+      : "weren't sent";
+  return `${count} ${one ? "email" : "emails"} ${verb}: ${known.clause}.`;
 }
 
 const DELIVERY_FIX_TARGET: Record<DeliveryFixLink, { label: string; href: string } | null> = {
