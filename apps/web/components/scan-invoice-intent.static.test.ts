@@ -5,7 +5,7 @@ const src = readFileSync(join(__dirname, "ScanInvoiceModal.tsx"), "utf8");
 
 describe("ScanInvoiceModal intent (scan-to-PO wiring)", () => {
   it("a new invoice defaults to raisePo=false: the vendor-bills entry is unchanged", () => {
-    expect(src).toMatch(/raisePo = false,\n\): InvoiceGroup/);
+    expect(src).toMatch(/raisePo = false,?\s*\): InvoiceGroup/);
     expect(src).toMatch(/intent = "bill"/);
   });
   it("purchase-order intent starts every invoice with raisePo on", () => {

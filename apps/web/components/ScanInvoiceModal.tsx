@@ -1687,8 +1687,8 @@ export function ScanInvoiceModal({
             <div className="p-6">
               <p className="mb-4 text-sm text-navy/70">
                 Upload vendor invoices — drop several PDFs to scan <b>each as its own invoice</b>{" "}
-                (one supplier bill per PDF), or photograph the pages of one invoice as images. Claude
-                will extract every line item and match them to your catalog.
+                (one supplier bill per PDF), or photograph the pages of one invoice as images.
+                Claude will extract every line item and match them to your catalog.
               </p>
               <div
                 onDragOver={(e) => {
