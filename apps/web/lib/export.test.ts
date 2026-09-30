@@ -46,6 +46,27 @@ describe("downloadCsv", () => {
     expect(lines[8]).toBe("");
   });
 
+  it("leaves numeric-looking strings alone (toFixed money) but still prefixes real leads", async () => {
+    const cap = captureBlob();
+    downloadCsv("a.csv", ["h"], [["-12.50"], ["+3"], ["7.00"], ["-cmd|' /C calc'!A0"], ["-1.2.3"]]);
+    const text = (await readText(cap.get())).replace(/^﻿/, "");
+    expect(text.split("\r\n").slice(1)).toEqual([
+      "-12.50",
+      "+3",
+      "7.00",
+      "'-cmd|' /C calc'!A0",
+      "'-1.2.3",
+    ]);
+  });
+
+  it("neutralises the full-width formula leads exactly like the server", async () => {
+    const cap = captureBlob();
+    downloadCsv("a.csv", ["h"], [["＝1"], ["＋1"], ["－1"], ["＠x"], ["\nx"]]);
+    const text = (await readText(cap.get())).replace(/^﻿/, "");
+    expect(text.split("\r\n").slice(1, 5)).toEqual(["'＝1", "'＋1", "'－1", "'＠x"]);
+    expect(text).toContain("\"'\nx\"");
+  });
+
   it("still escapes commas, quotes and newlines", async () => {
     const cap = captureBlob();
     downloadCsv("a.csv", ["h,1"], [['a "b"'], ["l1\nl2"]]);
