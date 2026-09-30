@@ -131,4 +131,33 @@ describe("ProductInsightsExport", () => {
     );
     expect(downloadCsvBlob).not.toHaveBeenCalled();
   });
+
+  it("surfaces the server message from a Blob error body", async () => {
+    get.mockRejectedValueOnce({
+      message: "Request failed with status code 403",
+      response: { status: 403, data: new Blob([JSON.stringify({ message: "Plan does not include analytics" })]) },
+    });
+    render(<ProductInsightsExport productId="p1" sku="SKU-1" />);
+    click();
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith(
+        expect.objectContaining({ description: "Plan does not include analytics" }),
+      ),
+    );
+  });
+
+  it("warns when the file ends with the export-failed line", async () => {
+    get.mockResolvedValue({
+      data: new Blob(["a\r\n\r\n# export failed: the file is incomplete\r\n"]),
+      headers: {},
+    });
+    render(<ProductInsightsExport productId="p1" sku="SKU-1" />);
+    click();
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "Export may be incomplete", variant: "warning" }),
+      ),
+    );
+    expect(downloadCsvBlob).toHaveBeenCalledTimes(1);
+  });
 });

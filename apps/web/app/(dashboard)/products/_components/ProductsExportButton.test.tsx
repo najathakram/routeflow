@@ -65,12 +65,12 @@ describe("ProductsExportButton", () => {
     expect(screen.queryByTestId("products-export-popover")).toBeNull();
     open();
     expect(screen.getByTestId("products-export-popover")).toBeInTheDocument();
-    expect(screen.getByTestId("products-export-from")).toHaveValue("2026-08-30");
+    expect(screen.getByTestId("products-export-from")).toHaveValue("2026-08-31");
     expect(screen.getByTestId("products-export-to")).toHaveValue("2026-09-29");
     fireEvent.click(screen.getByRole("button", { name: "7 days" }));
-    expect(screen.getByTestId("products-export-from")).toHaveValue("2026-09-22");
+    expect(screen.getByTestId("products-export-from")).toHaveValue("2026-09-23");
     fireEvent.click(screen.getByRole("button", { name: "90 days" }));
-    expect(screen.getByTestId("products-export-from")).toHaveValue("2026-07-01");
+    expect(screen.getByTestId("products-export-from")).toHaveValue("2026-07-02");
   });
 
   it("with nothing to export: toasts, sends no request and downloads no file", async () => {
@@ -156,5 +156,54 @@ describe("ProductsExportButton", () => {
         }),
       ),
     );
+  });
+
+  it("surfaces the server message from a Blob error body, never the raw status line", async () => {
+    get.mockRejectedValue({
+      message: "Request failed with status code 400",
+      response: {
+        status: 400,
+        data: new Blob([JSON.stringify({ message: "from must be on or before to" })]),
+      },
+    });
+    renderBtn();
+    open();
+    fireEvent.click(screen.getByTestId("products-export-download"));
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith(
+        expect.objectContaining({ description: "from must be on or before to" }),
+      ),
+    );
+  });
+
+  it("is disabled until the product list has loaded", () => {
+    render(<ProductsExportButton total={0} loading filters={FILTERS} />);
+    expect(screen.getByTestId("products-export-button")).toBeDisabled();
+  });
+
+  it.each([
+    ["# export failed: the file is incomplete\r\n"],
+    ["# truncated at 50000 rows\r\n"],
+  ])("still downloads but warns when the file ends with %j", async (tail) => {
+    const blob = new Blob(["Name\r\nA\r\n" + tail]);
+    get.mockResolvedValue({ data: blob });
+    renderBtn();
+    open();
+    fireEvent.click(screen.getByTestId("products-export-download"));
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "Export may be incomplete", variant: "warning" }),
+      ),
+    );
+    expect(downloadCsvBlob).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not warn on a complete file", async () => {
+    get.mockResolvedValue({ data: new Blob(["Name\r\nA\r\n"]) });
+    renderBtn();
+    open();
+    fireEvent.click(screen.getByTestId("products-export-download"));
+    await waitFor(() => expect(downloadCsvBlob).toHaveBeenCalledTimes(1));
+    expect(toast).not.toHaveBeenCalled();
   });
 });
