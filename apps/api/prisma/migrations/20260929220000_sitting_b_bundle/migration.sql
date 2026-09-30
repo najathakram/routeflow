@@ -20,11 +20,13 @@
 --      uses them (only app code, after the commit).
 --
 -- LOCK PROFILE per table (every acquisition is bounded by lock_timeout below):
---   "Product":         ADD COLUMN x4 metadata-only (brief ACCESS EXCLUSIVE); the two partial unique index
---                      builds hold a SHARE lock (writes blocked, reads fine) for the build, about a second
---                      at today's catalog size (partial, small keys); run off-peak.
---   "ProductBarcode":  ADD COLUMN + DROP NOT NULL, metadata-only (brief ACCESS EXCLUSIVE).
---   "EmailDelivery", "PolicyValue": new and empty; the FKs reference "Tenant" (brief SHARE ROW EXCLUSIVE).
+--   "Product":         the first ALTER TABLE takes ACCESS EXCLUSIVE and, because locks are held until COMMIT, it is
+--                      HELD through the two partial unique index builds to the end of this transaction: reads AND
+--                      writes on "Product" are blocked for the whole window. Expect about a second at today's
+--                      catalog size (small keys, partial indexes); run off-peak. lock_timeout bounds only the wait
+--                      to ACQUIRE each lock, not the time it is then held.
+--   "ProductBarcode":  ADD COLUMN + DROP NOT NULL, metadata-only (ACCESS EXCLUSIVE, held to COMMIT).
+--   "EmailDelivery", "PolicyValue": new and empty; the FKs take SHARE ROW EXCLUSIVE on "Tenant" (held to COMMIT).
 --   "NotificationEvent": a lock on the type only, no table.
 --
 -- Everything is additive except the ONE DROP NOT NULL (reason below) and the two IF EXISTS index drops.
@@ -68,7 +70,7 @@ ADD COLUMN     "retiredUnitSku" TEXT;
 -- prod (created 2026-05-04 by the migration folder 20260504000000_variant_name_per_parent, which is not
 -- in this repo); their names below were CONFIRMED against prod by the owner's STEP 0. IF EXISTS makes the drops a no-op on a database that never had them; drop and
 -- create sit in this ONE transaction so there is no window without a constraint. Both new indexes are
--- partial on small keys (a SHARE lock on "Product" for about a second at today's catalog size).
+-- partial on small keys (ACCESS EXCLUSIVE on "Product" held to COMMIT: see the lock profile in the header).
 -- Gates (SA-603b): the owner's count-only duplicate check returned 0 (STEP 0); F2's NO-DRIFT proof on fresh +
 -- seeded DBs runs on the final sha; if it fails these four statements are removed and the name check stays app-only.
 DROP INDEX IF EXISTS "Product_tenantId_name_root_key";

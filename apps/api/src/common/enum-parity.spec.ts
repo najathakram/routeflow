@@ -149,6 +149,8 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["RECIPE_STATUS_VALUES", "RecipeStatus"],
   // SA-603: EmailDeliveryStatus, mirrored immediately.
   ["EMAIL_DELIVERY_STATUS_VALUES", "EmailDeliveryStatus"],
+  // #2717 M3 (SA-572): CompositionMode, mirrored immediately — see the triage tripwire below.
+  ["COMPOSITION_MODE_VALUES", "CompositionMode"],
 ];
 
 describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
@@ -249,7 +251,9 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // `EMAIL_DELIVERY_STATUS_VALUES` + its `ENUM_TABLE` row (109 → 110).
 // Triage for PolicyScopeType (SA-138 phase 1, folded into the SA-603 bundle): brand-new enum,
 // mirrored as `POLICY_SCOPE_TYPE_VALUES` + its `ENUM_TABLE` row (110 → 111).
-const PINNED_PRISMA_ENUM_COUNT = 111;
+// Triage for CompositionMode (#2717 M3, SA-572): brand-new enum, mirrored as `COMPOSITION_MODE_VALUES` + its
+// `ENUM_TABLE` row (109 → 110); the SA-603 bundle's two (EmailDeliveryStatus, PolicyScopeType) follow (110 → 112).
+const PINNED_PRISMA_ENUM_COUNT = 112;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {

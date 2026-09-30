@@ -6,7 +6,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
-import type { TripEligibilityRow, TripOrigin } from "@routeflow/types";
+import type { LineComponentView, TripEligibilityRow, TripOrigin } from "@routeflow/types";
 export type { TripEligibilityRow, TripIneligibleReason, TripOrigin } from "@routeflow/types";
 
 export interface PaginationMeta {
@@ -439,6 +439,8 @@ export interface AdminInvoice {
     taxRate?: number | null;
     /** Per-line note carried from the order line (buyer-visible). */
     notes?: string | null;
+    /** #2717 M3: frozen sub-lines of a composed (mixed-pack) line; absent on a plain line. */
+    components?: LineComponentView[];
     /** BUY_N_GET_M snapshot: whole free selling units on this line. MUST be
      *  round-tripped by an items PATCH — the server replaces every line, so
      *  dropping it re-prices an agreed BOGO line to full. */
