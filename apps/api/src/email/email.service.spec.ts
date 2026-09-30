@@ -2217,6 +2217,28 @@ describe("redactAddresses — masks IP literals AND email addresses (keeps the d
     expect(redactAddresses("connect ECONNREFUSED ::1:587")).toContain("[address]");
   });
 
+  it("finishes fast on a hostile 50k string with no @ (no quadratic backtracking)", () => {
+    const hostile = "a".repeat(50_000);
+    const started = Date.now();
+    const out = redactAddresses(hostile);
+    expect(Date.now() - started).toBeLessThan(100);
+    expect(out.length).toBeLessThanOrEqual(4096);
+  });
+
+  it("stays fast on other pathological shapes (dots, dashes, colons, many '@')", () => {
+    for (const hostile of [
+      "a.".repeat(25_000),
+      "a-".repeat(25_000),
+      "1:".repeat(25_000),
+      "x@".repeat(25_000),
+      `${"a".repeat(49_000)}@`,
+    ]) {
+      const started = Date.now();
+      redactAddresses(hostile);
+      expect(Date.now() - started).toBeLessThan(100);
+    }
+  });
+
   it("handles an address and an IP together, and text with neither", () => {
     expect(redactAddresses("x@acme.example failed at 10.0.1.4")).toBe(
       "***@acme.example failed at [address]",

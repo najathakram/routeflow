@@ -178,20 +178,31 @@ export function mapSmtpError(
   return safe ? `The mail server refused the connection: ${safe}` : "The connection test failed.";
 }
 
+/** Upper bound on the text redactAddresses will scan (it runs on remote server responses). */
+const REDACT_MAX_INPUT = 4096;
+
 /**
  * Strip IPv4/IPv6 address literals AND email addresses (local part masked, domain kept) from
  * an error string (see mapSmtpError fallback; also the Resend error text we log).
- * The IPv6 pattern is intentionally NOT \b-anchored at the start and requires ≥2 colon
- * groups: that catches "::"-compressed forms Node actually emits (e.g. "::1:587",
- * ":::53408" for the unspecified address), which a \b-anchored, single-group-minimum
- * pattern would miss. Quantifiers stay bounded ({0,4}/{2,8}) so there is no ReDoS risk,
- * and over-redaction of address-shaped tokens in this fallback branch is acceptable.
+ *
+ * This runs on text a remote, tenant-controlled SMTP host chooses, so it must not be a
+ * ReDoS surface: the input is sliced to REDACT_MAX_INPUT first, and every quantifier is
+ * BOUNDED (email local part {1,64}, domain labels {1,63} x {1,8}; IPv6 groups {0,4}/{2,8}).
+ * An unbounded `[...]+@` pattern backtracks quadratically on a long no-`@` string (50k
+ * chars blocked the event loop for ~12 s). The IPv6 pattern is intentionally NOT
+ * \b-anchored at the start and requires >=2 colon groups: that catches "::"-compressed
+ * forms Node actually emits (e.g. "::1:587", ":::53408"), which a \b-anchored pattern would
+ * miss. Over-redaction of address-shaped tokens in this fallback branch is acceptable.
  */
 export function redactAddresses(msg: string): string {
   return (
     msg
+      .slice(0, REDACT_MAX_INPUT)
       // Email addresses: keep the domain (what an operator needs), mask the local part (PII).
-      .replace(/[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)/g, "***@$1")
+      .replace(
+        /[A-Za-z0-9._%+-]{1,64}@([A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){1,8})/g,
+        "***@$1",
+      )
       .replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, "[address]") // IPv4 (and IPv4-mapped tail)
       .replace(/(?:[0-9a-f]{0,4}:){2,8}[0-9a-f]{0,4}/gi, "[address]")
   ); // IPv6 incl. ::-compressed
