@@ -137,6 +137,9 @@ export class ProductFamiliesService {
             name: dto.family.name,
             unit: "each",
             pricePerUnit: familyPrice,
+            ...(dto.family.standardCost != null && dto.family.standardCost !== ""
+              ? { standardCost: roundUnitCost(Number(dto.family.standardCost)).toFixed(4) }
+              : {}),
             category: dto.family.category ?? null,
             description: dto.family.description ?? null,
             kind: "FAMILY",
@@ -148,7 +151,12 @@ export class ProductFamiliesService {
         for (const v of dto.variants) {
           // eslint-disable-next-line no-await-in-loop -- <= 200 rows, ordered, one tx
           const created = await tx.product.create({
-            data: this.variantData(family.id, v, dto.copyFamilyPrice ? familyPrice : undefined),
+            data: this.variantData(
+              family.id,
+              v,
+              dto.copyFamilyPrice ? familyPrice : undefined,
+              dto.family.standardCost,
+            ),
           });
           variants.push({ id: created.id, name: created.name });
           // eslint-disable-next-line no-await-in-loop
@@ -176,7 +184,9 @@ export class ProductFamiliesService {
     familyId: string,
     v: FamilyVariantDto,
     copiedPrice?: string,
+    familyCost?: string | null,
   ): Prisma.ProductUncheckedCreateInput {
+    const cost = v.standardCost ?? familyCost;
     const price = copiedPrice ?? money(v.pricePerUnit);
     return {
       name: v.name.trim(),
@@ -193,8 +203,8 @@ export class ProductFamiliesService {
       priceTier3: price,
       priceTier4: price,
       priceTier5: price,
-      ...(v.costPrice != null && v.costPrice !== ""
-        ? { standardCost: roundUnitCost(Number(v.costPrice)).toFixed(4) }
+      ...(cost != null && cost !== ""
+        ? { standardCost: roundUnitCost(Number(cost)).toFixed(4) }
         : {}),
       isActive: true,
     };
@@ -260,11 +270,15 @@ export class ProductFamiliesService {
       throw familyPriceAuthorityError(familyId);
     }
     const result = await this.prisma.tenantTransaction(async (tx: CatalogTx) => {
-      const family: { id: string; kind: string; pricePerUnit: unknown } | null =
-        await tx.product.findFirst({
-          where: { id: familyId, tenantId },
-          select: { id: true, kind: true, pricePerUnit: true },
-        });
+      const family: {
+        id: string;
+        kind: string;
+        pricePerUnit: unknown;
+        standardCost: unknown;
+      } | null = await tx.product.findFirst({
+        where: { id: familyId, tenantId },
+        select: { id: true, kind: true, pricePerUnit: true, standardCost: true },
+      });
       if (!family) throw new BadRequestException("Product not found");
       if (family.kind !== "FAMILY") throw new BadRequestException("This product is not a family.");
       const touchedIds = [...new Set([...update.map((u) => u.id), ...deactivate])];
@@ -365,6 +379,7 @@ export class ProductFamiliesService {
             familyId,
             v,
             authority ? money(String(family.pricePerUnit)) : undefined,
+            family.standardCost == null ? null : String(family.standardCost),
           ),
         });
         added.push(created.id);
@@ -397,8 +412,8 @@ export class ProductFamiliesService {
     if (u.unitSku !== undefined) data.unitSku = blank(u.unitSku);
     if (u.unitsPerBox !== undefined) data.unitsPerBox = u.unitsPerBox;
     if (u.pricePerUnit !== undefined) data.pricePerUnit = money(u.pricePerUnit);
-    if (u.costPrice !== undefined)
-      data.standardCost = roundUnitCost(Number(u.costPrice)).toFixed(4);
+    if (u.standardCost !== undefined)
+      data.standardCost = roundUnitCost(Number(u.standardCost)).toFixed(4);
     return data;
   }
 

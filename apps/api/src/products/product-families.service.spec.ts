@@ -70,10 +70,10 @@ describe("POST /products/families (createFamily)", () => {
     expect(gateway.emitProductUpdated).toHaveBeenCalledTimes(1);
   });
 
-  it("money: prices go through roundMoney, costPrice through roundUnitCost; the family price is copied ONLY when asked", async () => {
+  it("money: prices go through roundMoney, standardCost through roundUnitCost; the family price is copied ONLY when asked", async () => {
     const a = build();
     await a.service.createFamily(
-      dto([variant("A", { pricePerUnit: "1.005", costPrice: "2.12345" })], {
+      dto([variant("A", { pricePerUnit: "1.005", standardCost: "2.12345" })], {
         family: { name: "F", pricePerUnit: "9.99" },
       }),
       ACTOR,
@@ -284,6 +284,22 @@ describe("PATCH /products/:id/variants (updateVariants)", () => {
     expect(added).toMatchObject({ sku: "K1", kind: "VARIANT", parentProductId: "fam" });
     const k1Updates = tx.calls.filter((c) => c === "product.update:k1");
     expect(k1Updates).toHaveLength(2); // the release write, then the isActive write
+  });
+
+  it("SA-606a: family standardCost is inherited by a variant that omits its own; an own cost wins; never averageCost", async () => {
+    const a = build();
+    await a.service.createFamily(
+      dto([variant("A", {}), variant("B", { standardCost: "3.5" })], {
+        family: { name: "F", pricePerUnit: "9.99", standardCost: "2.00005" },
+      }),
+      ACTOR,
+    );
+    const kids = a.tx.products.filter(
+      (p) => (p as Record<string, unknown>).kind === "VARIANT",
+    ) as Array<Record<string, unknown>>;
+    expect(kids.find((p) => p.name === "A")).toMatchObject({ standardCost: "2.0001" });
+    expect(kids.find((p) => p.name === "B")).toMatchObject({ standardCost: "3.5000" });
+    expect(kids.every((p) => p.averageCost === undefined)).toBe(true);
   });
 
   it("M2 price authority: with mixed_packs ON a price EDIT is 409 FAMILY_PRICE_AUTHORITY and an added variant takes the FAMILY's price", async () => {

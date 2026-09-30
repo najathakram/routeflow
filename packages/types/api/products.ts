@@ -305,7 +305,8 @@ export interface FamilyVariantInput {
   unitSku?: string;
   unitsPerBox?: number;
   pricePerUnit: string;
-  costPrice?: string;
+  /** SA-606a: lands in standardCost only (never averageCost / a StockLot); omitted = inherits the family cost. */
+  standardCost?: string;
 }
 
 export interface CreateFamilyRequest {
@@ -315,6 +316,7 @@ export interface CreateFamilyRequest {
     description?: string;
     imageUrl?: string;
     pricePerUnit?: string;
+    standardCost?: string;
   };
   /** 1..200 rows. */
   variants: FamilyVariantInput[];

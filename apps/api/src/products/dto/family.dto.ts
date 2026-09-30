@@ -22,7 +22,9 @@ export class FamilyVariantDto {
   @IsOptional() @IsString() unitSku?: string;
   @IsOptional() @IsInt() @Min(1) unitsPerBox?: number;
   @Matches(MONEY, { message: "pricePerUnit must be non-negative" }) pricePerUnit: string;
-  @IsOptional() @Matches(MONEY, { message: "costPrice must be non-negative" }) costPrice?: string;
+  @IsOptional()
+  @Matches(MONEY, { message: "standardCost must be non-negative" })
+  standardCost?: string;
 }
 
 export class FamilyInfoDto {
@@ -33,6 +35,10 @@ export class FamilyInfoDto {
   @IsOptional()
   @Matches(MONEY, { message: "pricePerUnit must be non-negative" })
   pricePerUnit?: string;
+  /** SA-606a: optional family cost; a variant that omits its own standardCost inherits it (no copy flag). */
+  @IsOptional()
+  @Matches(MONEY, { message: "standardCost must be non-negative" })
+  standardCost?: string;
 }
 
 export class CreateFamilyDto {
@@ -58,7 +64,9 @@ export class FamilyVariantUpdateDto {
   @IsOptional()
   @Matches(MONEY, { message: "pricePerUnit must be non-negative" })
   pricePerUnit?: string;
-  @IsOptional() @Matches(MONEY, { message: "costPrice must be non-negative" }) costPrice?: string;
+  @IsOptional()
+  @Matches(MONEY, { message: "standardCost must be non-negative" })
+  standardCost?: string;
 }
 
 /** PATCH /products/:id/variants: ALL-OR-NOTHING; the TOTAL row count (add + update + deactivate) is capped at 200. */
