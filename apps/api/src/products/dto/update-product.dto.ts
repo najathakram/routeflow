@@ -8,6 +8,7 @@ import {
   IsString,
   IsUUID,
   MaxLength,
+  Min,
 } from "class-validator";
 import { Transform } from "class-transformer";
 import { CostingMethod } from "@prisma/client";
@@ -55,6 +56,9 @@ export class UpdateProductDto {
   // ⇒ an explicit null write); 0 is normalized to null service-side too.
   @IsOptional() @Transform(toOptionalMsrp) @IsDecimal() msrp?: string | null;
   @IsOptional() @IsInt() unitsPerBox?: number;
+  // Low-stock thresholds (B858: the CSV import updates them through this DTO, never raw prisma).
+  @IsOptional() @IsInt() @Min(0) reorderPoint?: number;
+  @IsOptional() @IsInt() @Min(0) reorderQty?: number;
   // Tolerant tiers: "" → absent, numbers coerced to strings ("" used to 400 the
   // whole save — see fix/tier-pricing-save).
   @IsOptional() @Transform(toOptionalDecimalString) @IsDecimal() priceTier2?: string;

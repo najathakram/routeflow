@@ -11,6 +11,8 @@ import { StorageService } from "../storage/storage.service";
 import { AddonService } from "../billing/addon.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
+import { FeatureOverrideService } from "../billing/feature-override.service";
+import { EntitlementsService } from "../billing/entitlements.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
@@ -65,6 +67,9 @@ describe("ProductsService", () => {
           provide: EntitlementAuthority,
           useValue: { can: jest.fn().mockResolvedValue(false) },
         },
+        // #2185: reorder gate deny-body collaborators.
+        { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
         {
           provide: PlanCatalogService,
           useValue: { upgradeTargetForFlag: jest.fn().mockResolvedValue(null) },
@@ -2253,6 +2258,9 @@ async function buildBulkDeleteProductsService(prisma: unknown): Promise<Products
       { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(false) } },
       { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
       { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(false) } },
+      // #2185: reorder gate (assertReorderAllowed) reads overrides + entitlements for its deny body.
+      { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+      { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
       {
         provide: PlanCatalogService,
         useValue: { upgradeTargetForFlag: jest.fn().mockResolvedValue(null) },

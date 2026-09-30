@@ -1,7 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import {
-  prorateLineSubtotal,
+  creditedThrough,
   roundMoney,
   regulatedUnitBasis,
   classifySaleAxis,
@@ -95,17 +95,11 @@ export interface PriceCorrectionLine {
 export function priceCorrectionTarget(
   newAmount: number,
   remainingQty: number,
-  line: Pick<PriceCorrectionLine, "qty" | "boxes" | "unitsPerBox" | "promoFreeUnits">,
+  line: Pick<PriceCorrectionLine, "qty">,
 ): number {
-  const freeUnitSize =
-    line.boxes != null && Number(line.unitsPerBox ?? 0) > 1 ? Number(line.unitsPerBox) : 1;
-  return prorateLineSubtotal(
-    newAmount,
-    remainingQty,
-    line.qty,
-    Number(line.promoFreeUnits ?? 0),
-    freeUnitSize,
-  );
+  // B894 (SA-576): LINEAR, the same slice rule as a return credit (priceMatchedChunk), so booked − returned
+  // credits nets to the target. The invoice's free-unit telescope is non-monotone and not additive.
+  return creditedThrough(newAmount, remainingQty, line.qty);
 }
 
 /**

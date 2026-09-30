@@ -2,7 +2,11 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { orderAppliedCredits, type OrderAppliedCreditsInput } from "@routeflow/types";
+import {
+  orderAppliedCredits,
+  requestedLabel,
+  type OrderAppliedCreditsInput,
+} from "@routeflow/types";
 import { formatMoney } from "@/lib/format";
 import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -83,11 +87,7 @@ export function AppliedCreditsPanel({
                   <span className="rounded bg-sunken px-1.5 py-0.5 font-medium text-navy/70">
                     Not yet applied
                   </span>
-                  <span>
-                    {row.requested != null
-                      ? `Requested ${formatMoney(row.requested)}`
-                      : "Up to remaining"}
-                  </span>
+                  <span>{requestedLabel(row, formatMoney)}</span>
                 </>
               )}
             </div>
