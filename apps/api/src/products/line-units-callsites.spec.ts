@@ -31,6 +31,11 @@ const BASELINE: Record<string, number> = {
   // orders.service.ts's replaceAll rebuild (see that file's own comment above) — same 5 reads,
   // same behavior, only relocated.
   "orders/replace-all-line-build.ts": 5,
+  // #2717 M3: ONE read of a COMPONENT product's pack (`p.unitsPerBox`) in buildComponentSnapshots,
+  // feeding synthesizeLegacyBarcodes for a held tenant's legacy unit barcode. It is a barcode
+  // synthesis input, never a line-factor decision (the line's own snapshot is planFixedComposition's
+  // input). Retires if the synthesis moves to a named non-line helper.
+  "orders/line-composition.ts": 1,
   // Three reads today (B717/SA-077 lowered this from 6; SA-068b's earlier note predicted 5, which
   // the hoist overtook — four reads in update()'s mapper became one). Do not read that history as
   // a forecast; what is left, and what retires each:

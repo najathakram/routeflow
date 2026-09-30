@@ -54,14 +54,32 @@ describe("/purchase-orders page", () => {
   it("sets the page title and offers New purchase order", () => {
     render(<PurchaseOrdersPage />);
     expect(setTitle).toHaveBeenCalledWith("Purchase Orders");
-    fireEvent.click(screen.getByRole("button", { name: "New purchase order" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "New purchase order" })[0]);
     expect(screen.getByRole("button", { name: "Create PO" })).toBeInTheDocument();
   });
 
-  it("shows manual-only empty copy that never promises invoice scanning", () => {
+  it("empty state: short title, separate description, and a New purchase order action — no scanning promise", () => {
     render(<PurchaseOrdersPage />);
-    expect(screen.getByText(/No purchase orders yet\. Create one/)).toBeInTheDocument();
+    expect(screen.getByText("No purchase orders yet")).toBeInTheDocument();
+    expect(
+      screen.getByText("Create one when you place an order with a supplier."),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/scan/i)).not.toBeInTheDocument();
+    // the empty state's own action opens the same create flow as the header button
+    const buttons = screen.getAllByRole("button", { name: "New purchase order" });
+    expect(buttons.length).toBeGreaterThanOrEqual(2);
+    fireEvent.click(buttons[buttons.length - 1]);
+    expect(screen.getByRole("button", { name: "Create PO" })).toBeInTheDocument();
+  });
+
+  it("every filter control has an accessible name and the dates have visible From / To labels", () => {
+    render(<PurchaseOrdersPage />);
+    expect(screen.getByRole("combobox", { name: "Status" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Supplier" })).toBeInTheDocument();
+    expect(screen.getByLabelText("From date")).toHaveAttribute("type", "date");
+    expect(screen.getByLabelText("To date")).toHaveAttribute("type", "date");
+    expect(screen.getByText("From")).toBeVisible();
+    expect(screen.getByText("To")).toBeVisible();
   });
 
   it("has a page header", () => {
@@ -215,6 +233,7 @@ describe("/purchase-orders page", () => {
     };
     render(<PurchaseOrdersPage />);
     expect(screen.getByText("Couldn't load purchase orders.")).toBeInTheDocument();
+    expect(screen.getByText("Check your connection and try again.")).toBeInTheDocument();
     expect(screen.queryByText(/boom|AxiosError/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(refetch).toHaveBeenCalled();

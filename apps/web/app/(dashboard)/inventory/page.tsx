@@ -1811,7 +1811,7 @@ export default function InventoryPage() {
             </p>
             {totalInventoryValue === 0 && (
               <span
-                title="Value is calculated from average cost per unit. Record purchase receipts in the Vendor Bills tab to populate costs."
+                title="Value is calculated from average cost per unit. Record purchase receipts in the Supplier Bills tab to populate costs."
                 className="cursor-help"
               >
                 <Info className="h-3.5 w-3.5 text-navy/30" />

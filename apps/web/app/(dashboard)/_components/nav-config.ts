@@ -2,7 +2,7 @@ import {
   BarChart2,
   BarChart3,
   Building2,
-  ClipboardCheck,
+  PackageCheck,
   ClipboardList,
   CreditCard,
   DollarSign,
@@ -64,7 +64,7 @@ export const OPERATOR_NAV: NavEntry[] = [
     children: [
       { kind: "leaf", label: "Inventory", href: "/inventory", icon: Layers },
       // Not plan-gated (never in PLAN_GATED_NAV): manual POs are core inventory, LITE keeps them.
-      { kind: "leaf", label: "Purchase Orders", href: "/purchase-orders", icon: ClipboardCheck },
+      { kind: "leaf", label: "Purchase Orders", href: "/purchase-orders", icon: PackageCheck },
       { kind: "leaf", label: "Products", href: "/products", icon: Package },
       { kind: "leaf", label: "Promotions", href: "/promotions", icon: Megaphone },
       { kind: "leaf", label: "Suppliers", href: "/suppliers", icon: Building2 },
@@ -143,4 +143,19 @@ export function defaultOpenGroup(nav: NavEntry[], pathname: string): string | nu
   );
   if (active) return active.label;
   return nav.some((e) => e.kind === "group" && e.label === "Warehouse") ? "Warehouse" : null;
+}
+
+/** The sidebar label for the operator route `pathname` sits under (longest matching leaf href), so
+ *  a lock card can name the feature the person actually clicked. */
+export function navLabelForPath(pathname: string): string | null {
+  let best: NavLeaf | null = null;
+  const consider = (leaf: NavLeaf) => {
+    const hit = pathname === leaf.href || pathname.startsWith(leaf.href + "/");
+    if (hit && (!best || leaf.href.length > best.href.length)) best = leaf;
+  };
+  for (const e of OPERATOR_NAV) {
+    if (e.kind === "leaf") consider(e);
+    else if (e.kind === "group") e.children.forEach(consider);
+  }
+  return (best as NavLeaf | null)?.label ?? null;
 }

@@ -87,14 +87,21 @@ describe("VendorBillsService — PO-linked bills (units/PO step 7)", () => {
   let prisma: ReturnType<typeof createMockPrisma>;
   let inventory: {
     recomputeProductInTx: jest.Mock;
+    lockProducts: jest.Mock;
     fireStockAlerts: jest.Mock;
     createDraftPurchaseOrderInTx: jest.Mock;
   };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // receive() re-reads the bill inside its transaction (B285 row lock): repeat the last bill read
+    prisma.vendorBill.findUnique.mockImplementation(
+      () =>
+        prisma.vendorBill.findUnique.mock.results.filter((r) => r.type === "return").at(-1)?.value,
+    );
     inventory = {
       recomputeProductInTx: jest.fn(),
+      lockProducts: jest.fn(),
       fireStockAlerts: jest.fn(),
       createDraftPurchaseOrderInTx: jest
         .fn()
