@@ -278,7 +278,9 @@ describe("EmailService.send — delivery ctx rows", () => {
 
   it("internal-placeholder refusal (delivered:false, transport:none) writes NO row", async () => {
     // ASSUMPTION: a `.invalid` recipient is the internal placeholder the service refuses to mail.
-    const mailbox = jest.fn().mockResolvedValue({ delivered: true, transport: "mailbox", id: "x" });
+    const mailbox = jest
+      .fn()
+      .mockResolvedValue({ delivered: false, transport: "mailbox", error: "refused" });
     const { svc, deliveries } = make(mailbox);
     const res = await svc.send({
       to: "placeholder@routeflow.invalid",

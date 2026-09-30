@@ -5,6 +5,11 @@ import * as nodemailer from "nodemailer";
 import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../common/encryption.service";
 import { MailboxSendService } from "./mailbox/mailbox-send.service";
+import {
+  EmailDeliveryService,
+  sanitizeDeliveryError,
+  type EmailDeliveryContext,
+} from "./email-delivery.service";
 import { mailboxRevokedCopy } from "./mailbox/mailbox-alert.copy";
 import { escapeHtml, safeLinkHref } from "../common/html-escape";
 // F03/R9: ONE original-price display decision shared with the PDF, so the two
@@ -333,6 +338,8 @@ export class EmailService {
     private readonly prisma: PrismaService,
     private readonly encryption: EncryptionService,
     private readonly mailboxSend: MailboxSendService,
+    // WS4: best-effort audit rows for sends that carry a `delivery` context.
+    private readonly deliveries: EmailDeliveryService,
   ) {
     const apiKey = this.config.get<string>("RESEND_API_KEY");
 
@@ -1098,8 +1105,55 @@ export class EmailService {
    * mock, tenant-SMTP failure → fallthrough → mock, and Resend API-level rejection
    * whose `result.error` was never inspected), which is why the UI said "sent" when
    * nothing went out.
+   *
+   * WS4: pass `delivery` to record exactly one `EmailDelivery` row (SENT/FAILED) for the attempt.
+   * The row write is best-effort and never changes the result; without `delivery` nothing is
+   * recorded (every existing caller is unchanged).
    */
-  async send(params: {
+  async send(
+    params: Parameters<EmailService["sendUnrecorded"]>[0] & { delivery?: EmailDeliveryContext },
+  ): Promise<Awaited<ReturnType<EmailService["sendUnrecorded"]>>> {
+    const { delivery, ...rest } = params;
+    if (!delivery) return this.sendUnrecorded(rest);
+
+    let result: Awaited<ReturnType<EmailService["sendUnrecorded"]>>;
+    try {
+      result = await this.sendUnrecorded(rest);
+    } catch (err) {
+      result = {
+        delivered: false,
+        transport: "none",
+        error: (err as Error)?.message ?? "Email send failed",
+      };
+    }
+    // `.invalid` is the reserved internal-placeholder TLD: nothing real was attempted, so no row.
+    if (!/\.invalid$/i.test(params.to.trim())) {
+      try {
+        await this.deliveries.record({
+          tenantId: delivery.tenantId,
+          kind: delivery.kind,
+          toAddress: params.to,
+          entityType: delivery.entityType,
+          entityId: delivery.entityId,
+          status: result.delivered ? "SENT" : "FAILED",
+          providerMessageId: result.delivered ? (result.id ?? null) : null,
+          error: result.delivered
+            ? null
+            : sanitizeDeliveryError(
+                result.error ?? result.smtpFallbackReason ?? "Email was not delivered",
+              ),
+          attempts: 1,
+          sentAt: result.delivered ? new Date() : null,
+        });
+      } catch {
+        // audit failure must never change the send result
+      }
+    }
+    return result;
+  }
+
+  /** The transport chain itself (mailbox, tenant SMTP, platform SMTP, Resend), no audit row. */
+  async sendUnrecorded(params: {
     to: string;
     subject: string;
     html: string;
