@@ -209,6 +209,9 @@ const RESERVED = new Set([
   "toString",
   "valueOf",
   "hasOwnProperty",
+  "isPrototypeOf",
+  "propertyIsEnumerable",
+  "toLocaleString",
 ]);
 export const ACK_KEY_RE = /^[A-Za-z0-9._:#/-]{1,120}$/;
 const ackKey: Check = (v) =>

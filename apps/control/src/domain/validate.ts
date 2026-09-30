@@ -26,13 +26,13 @@ export interface EventFile {
 export interface RegisterTask {
   id: string;
   status: Status;
-  release?: string | null;
+  release: string | null;
 }
 
 export interface ValidationContext {
   /** Register tasks with their status; preferred over `taskIds`. */
   tasks?: RegisterTask[];
-  /** Legacy: bare register ids, all treated as `planned`. */
+  /** @deprecated pass `tasks` with status; `taskIds` treats all as planned. */
   taskIds?: string[];
   releaseIds: string[];
   /** Denylist hook (WP3 wires the real one): returns the matched pattern, or null. */

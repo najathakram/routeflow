@@ -4,6 +4,7 @@
  */
 import * as fs from "fs";
 import * as path from "path";
+import type { RegisterTask } from "../src/domain/validate";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const V: any = require("../src/domain/validate");
@@ -137,6 +138,16 @@ describe("3. validator status model (register status + release.shipped cascade)"
   });
 });
 
+describe("3b. RegisterTask.release is required", () => {
+  it("a task without release is a type error; with release the cascade applies", () => {
+    // @ts-expect-error release is required when tasks is supplied
+    const bad: RegisterTask = { id: "F-11", status: "code-complete" };
+    expect(bad.id).toBe("F-11");
+    const ok: RegisterTask = { id: "F-11", status: "code-complete", release: "R2" };
+    expect(ok.release).toBe("R2");
+  });
+});
+
 describe("4. injectable denylist hook", () => {
   it("a hit becomes `denylist hit: <pattern>` at file:line", () => {
     const fl = raw(
@@ -158,17 +169,20 @@ describe("4. injectable denylist hook", () => {
 });
 
 describe("5. prototype safety", () => {
-  it.each(["__proto__", "constructor"])("waste.ack key %s is a validation error", (key) => {
-    const fl = raw(
-      files(),
-      "owner.jsonl",
-      line("owner", 4, "2026-01-10T11:20:00Z", "waste.ack", "owner", { key }),
-    );
-    const errors = run(fl, ctx());
-    expect(errors).toHaveLength(1);
-    expect(errors[0]).toMatchObject({ file: "owner.jsonl", line: 5 });
-    expect(errors[0].reason).toMatch(/key/);
-  });
+  it.each(["__proto__", "constructor", "isPrototypeOf", "propertyIsEnumerable", "toLocaleString"])(
+    "waste.ack key %s is a validation error",
+    (key) => {
+      const fl = raw(
+        files(),
+        "owner.jsonl",
+        line("owner", 4, "2026-01-10T11:20:00Z", "waste.ack", "owner", { key }),
+      );
+      const errors = run(fl, ctx());
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toMatchObject({ file: "owner.jsonl", line: 5 });
+      expect(errors[0].reason).toMatch(/key/);
+    },
+  );
   it("a normal ack key is fine", () => {
     const fl = raw(
       files(),
