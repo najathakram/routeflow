@@ -63,6 +63,7 @@ import {
   type InvoicePayment,
   type CheckStatus,
 } from "@/lib/api/invoices";
+import { isPendingMirrorInvoice } from "@/lib/invoice-pending-mirror";
 import { useParams, useRouter } from "next/navigation";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
@@ -1682,13 +1683,7 @@ export default function InvoiceDetailPage() {
   // The order-linked DRAFT that mirrors an un-delivered order: it auto-syncs to
   // the order and can't be edited or sent until the order is delivered. Edit the
   // order, not the invoice.
-  const isPendingMirror =
-    !!invoice.orderId &&
-    status === "DRAFT" &&
-    !invoice.deliveryBatchId &&
-    !!invoice.order &&
-    invoice.order.status !== "DELIVERED" &&
-    invoice.order.status !== "PARTIALLY_DELIVERED";
+  const isPendingMirror = isPendingMirrorInvoice({ ...invoice, status });
 
   const canRecordPayment =
     status === "SENT" || status === "VIEWED" || status === "PARTIAL" || status === "OVERDUE";
