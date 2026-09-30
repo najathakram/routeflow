@@ -8,10 +8,26 @@ import type {
 import { apiClient } from "../api-client";
 import type { buildRoutePatch } from "../settings-parity-logic";
 
+/**
+ * Admin settings writes never enter the offline queue (REG-B308 class): offline, the UI reports a
+ * failed save, so a queued replay would silently change a setting (e.g. turn selling restrictions
+ * OFF) later. `_skipOfflineQueue` is the api-client's per-request opt-out.
+ */
+const NO_OFFLINE_QUEUE = { _skipOfflineQueue: true } as object;
+
+export const patchRouteSettings = (body: ReturnType<typeof buildRoutePatch>) =>
+  apiClient.patch("/settings/route", body, NO_OFFLINE_QUEUE).then((r) => r.data);
+
+export const patchUserPreferences = (prefs: PreferencePatch) =>
+  apiClient.patch("/users/me/preferences", prefs, NO_OFFLINE_QUEUE).then((r) => r.data);
+
+export const patchRestrictionsSettings = (body: UpdateRestrictionsSettingsRequest) =>
+  apiClient.patch("/settings/restrictions", body, NO_OFFLINE_QUEUE).then((r) => r.data);
+
 export function useUpdateRouteSettings() {
   const qc = useQueryClient();
   return useMutation<unknown, Error, ReturnType<typeof buildRoutePatch>>({
-    mutationFn: (body) => apiClient.patch("/settings/route", body).then((r) => r.data),
+    mutationFn: patchRouteSettings,
     onSuccess: () => qc.invalidateQueries({ queryKey: ["route-settings"] }),
   });
 }
@@ -27,7 +43,7 @@ export function usePreferences() {
 export function useSavePreferences() {
   const qc = useQueryClient();
   return useMutation<Record<string, string>, Error, PreferencePatch>({
-    mutationFn: (prefs) => apiClient.patch("/users/me/preferences", prefs).then((r) => r.data),
+    mutationFn: patchUserPreferences,
     onSuccess: () => qc.invalidateQueries({ queryKey: ["user-preferences"] }),
   });
 }
@@ -43,7 +59,7 @@ export function useRestrictionsSettings() {
 export function useUpdateRestrictionsSettings() {
   const qc = useQueryClient();
   return useMutation<RestrictionsSettingsDto, Error, UpdateRestrictionsSettingsRequest>({
-    mutationFn: (body) => apiClient.patch("/settings/restrictions", body).then((r) => r.data),
+    mutationFn: patchRestrictionsSettings,
     onSuccess: () => qc.invalidateQueries({ queryKey: ["restrictions-settings"] }),
   });
 }

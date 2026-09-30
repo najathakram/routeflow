@@ -177,6 +177,31 @@ describe("selling restrictions entry", () => {
     expect(canEditSellingRules("DRIVER")).toBe(false);
   });
 
+  it("honours readiness.truncated like web: too large to check, ask support", () => {
+    const err = {
+      response: {
+        status: 409,
+        data: {
+          code: "SELLING_RESTRICTIONS_NOT_READY",
+          readiness: { truncated: true, customersWithoutAddress: 0 },
+        },
+      },
+    };
+    expect(notReadyMessage(err)).toMatch(/too large to check in one pass; ask support/);
+    const withCounts = {
+      response: {
+        status: 409,
+        data: {
+          code: "SELLING_RESTRICTIONS_NOT_READY",
+          readiness: { truncated: true, customersWithoutAddress: 2 },
+        },
+      },
+    };
+    const msg = notReadyMessage(withCounts)!;
+    expect(msg).toMatch(/too large to check/);
+    expect(msg).toMatch(/2 customers without an address/);
+  });
+
   it("turns the 409 SELLING_RESTRICTIONS_NOT_READY into a plain reason, never raw codes", () => {
     const err = {
       response: {

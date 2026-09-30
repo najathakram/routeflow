@@ -118,6 +118,8 @@ export function notReadyMessage(err: unknown): string | null {
   if (res?.status !== 409 || res.data?.code !== "SELLING_RESTRICTIONS_NOT_READY") return null;
   const r = res.data.readiness ?? {};
   const parts: string[] = [];
+  if (r.truncated)
+    parts.push("this workspace is too large to check in one pass; ask support before enabling");
   if (r.customersWithoutAddress > 0)
     parts.push(
       plural(
