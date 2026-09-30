@@ -7,6 +7,7 @@ import { Button } from "@routeflow/ui/web";
 import { AuthShell } from "@/components/auth";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { getInviteDetails, acceptInvite, getBuyerAccessToken } from "@/lib/buyer-auth";
+import { isInShell } from "@/lib/in-shell";
 
 // ─── Inline Google icon (no external requests) ────────────────────────────────
 function GoogleIcon({ className }: { className?: string }) {
@@ -113,6 +114,8 @@ export default function BuyerInvitePage() {
   // The backend reads invite_token from state, accepts the CustomerLink, and
   // redirects to /auth/google/callback?linked=true on success.
   const handleGoogleSignIn = async () => {
+    // #2653 / SA-542 Q3: never start Google inside the app shell (the CSS hides it; this guards it).
+    if (isInShell()) return;
     if (!invite?.slug) return;
     setGoogleLoading(true);
     setGoogleError(null);
@@ -235,7 +238,8 @@ export default function BuyerInvitePage() {
 
             {/* Google Sign-In — embeds invite_token in OAuth state for seamless linking */}
             {invite?.slug && (
-              <>
+              // #2653: hidden inside the app shell (app/shell.css); same flex-col gap as the parent.
+              <div data-google-signin className="flex flex-col gap-3">
                 {googleError && (
                   <p className="rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">
                     {googleError}
@@ -266,7 +270,7 @@ export default function BuyerInvitePage() {
                   <span className="text-xs text-navy/70">or</span>
                   <div className="h-px flex-1 bg-surface-border" />
                 </div>
-              </>
+              </div>
             )}
 
             <a

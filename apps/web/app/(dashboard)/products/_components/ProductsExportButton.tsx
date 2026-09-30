@@ -12,6 +12,7 @@ export interface ProductsExportFilters {
   search?: string;
   category?: string;
   stockStatus?: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
+  isActive?: boolean;
   section?: string;
 }
 
@@ -60,6 +61,7 @@ export function ProductsExportButton({
           search: filters.search || undefined,
           category: filters.category || undefined,
           stockStatus: filters.stockStatus || undefined,
+          isActive: filters.isActive,
           section: filters.section || undefined,
           from,
           to,

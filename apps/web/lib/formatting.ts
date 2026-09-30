@@ -122,3 +122,17 @@ export function isInternalEmail(email?: string | null): boolean {
   const e = email.toLowerCase();
   return e.endsWith("@placeholder.local") || e.endsWith("@imported.local");
 }
+
+/** The ONE empty-state copy for email fields — every render site uses this string. */
+export const NO_EMAIL_COPY = "No email";
+
+/**
+ * Render-side email gate (L-225 shared-helper shape): returns the email only when
+ * it is real — null for absent values AND for import sentinels, so every screen
+ * treats both identically as "no email on file". String sites render
+ * `displayEmail(e) ?? NO_EMAIL_COPY`; conditional sites hide on null.
+ * Mobile mirror: `lib/internal-email.ts`.
+ */
+export function displayEmail(email?: string | null): string | null {
+  return email && !isInternalEmail(email) ? email : null;
+}
