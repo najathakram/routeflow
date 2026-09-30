@@ -745,7 +745,12 @@ export function useUpdateRouteSettings() {
   return useMutation<
     RouteSettings,
     Error,
-    Partial<Pick<RouteSettings, "averageSpeedKmh" | "serviceTimeMinutes" | "defaultStartTime">>
+    Partial<
+      Pick<
+        RouteSettings,
+        "averageSpeedKmh" | "serviceTimeMinutes" | "defaultStartTime" | "depotLat" | "depotLng"
+      >
+    >
   >({
     mutationFn: (dto) => apiClient.patch("/settings/route", dto).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["route-settings"] }),
