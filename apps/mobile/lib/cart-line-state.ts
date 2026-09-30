@@ -55,6 +55,9 @@ export type LineState = {
    * the catalog price unit; computeLineSubtotal prorates loose pieces.
    */
   unitPrice?: number;
+  /** #2696(c): why `unitPrice` moves off a SPECIAL (tier) price — the server requires one there,
+   *  and a special line's override is only billed with it (`lineUnitFor`). */
+  overrideReason?: string;
   /** Optional per-line note — carried onto the invoice line (buyer-visible). */
   note?: string;
   /** Note input expanded for this row (note text survives collapse). */

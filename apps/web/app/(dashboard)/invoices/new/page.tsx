@@ -38,6 +38,13 @@ import {
   type CustomerPrice,
 } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
+import {
+  saleLineMovedOffSpecial,
+  saleLineNeedsReason,
+  saleLinePricing,
+  type SaleLinePricing,
+} from "@/lib/sale-line-pricing";
+import { reasonRequiredMessage } from "@/lib/staff-price-override";
 import { apiClient } from "@/lib/api-client";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { displayProductName } from "@/lib/product-display";
@@ -47,6 +54,7 @@ import { InlineCreateProductModal } from "@/components/InlineCreateProductModal"
 import { fmt, fmtCalendarDate } from "@/lib/formatting";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
 import {
+  isSpecialTier,
   computeLineSubtotal,
   getTierPrice,
   normalizeBoxesPieces,
@@ -195,6 +203,8 @@ function ProductSearchInput({
     unitPrice: string,
     avgCost?: number,
     unitsPerBox?: number,
+    /** #2696(c): the picked product itself — its tier ladder prices the line (SA-558e). */
+    product?: Record<string, unknown>,
     /** #2717 M4a-1: the level a SCAN resolved (undefined for a picker tap). */
     scanLevel?: SellLevel,
   ) => void;
@@ -239,6 +249,7 @@ function ProductSearchInput({
       String(p.pricePerUnit),
       p.averageCost ? parseFloat(String(p.averageCost)) : undefined,
       p.unitsPerBox ? Number(p.unitsPerBox) : undefined,
+      p,
       scanLevel,
     );
     setQuery(p.name);
@@ -396,6 +407,10 @@ interface LineItemState {
   /** UI-only qty entry mode for case-packed lines. NEVER submitted — the payload always
    *  carries {qty, boxes, pieces} and the per-case unitPrice. */
   sellBy?: "case" | "unit";
+  /** #2696(c) SA-558e: the one-rule inputs (tier price, list, special?) — see sale-line-pricing. */
+  pricing?: SaleLinePricing;
+  /** Why a New-sale line's price moves off the customer's special price (sent then). */
+  overrideReason?: string;
 }
 
 function createEmptyItem(): LineItemState {
@@ -798,6 +813,13 @@ export default function NewInvoicePage() {
     }
     return map;
   }, [customerPricesData, customer]);
+  // #2696(c): the tier the server prices each product at (CustomerPrice row, else the default).
+  const tierFor = (productId: string): number => {
+    const cp = ((customerPricesData ?? []) as CustomerPrice[]).find(
+      (c) => c.productId === productId,
+    );
+    return cp?.pricingTier ?? customer?.pricingTier ?? 1;
+  };
 
   // ── Auto-update due date when terms change ────────────────────────────────
 
@@ -887,7 +909,9 @@ export default function NewInvoicePage() {
     // Per-product tier override first, then the customer's own tier ladder —
     // a Tier-3 customer previously billed at LIST on every catalog add here.
     const customerTier = customer?.pricingTier ?? 1;
-    const tierLadderPrice = customerTier !== 1 ? getTierPrice(product, customerTier) : undefined;
+    const tierLadderPrice = isSpecialTier(customerTier)
+      ? getTierPrice(product, customerTier)
+      : undefined;
     const specialPrice: number | undefined = priceMap[product.id] ?? tierLadderPrice;
     const effectivePrice =
       specialPrice != null && Number.isFinite(specialPrice) && specialPrice !== listPrice
@@ -908,6 +932,7 @@ export default function NewInvoicePage() {
       taxable: false,
       regularPrice: effectivePrice !== listPrice ? listPrice : undefined,
       isSpecialPrice: effectivePrice !== listPrice,
+      pricing: saleLinePricing(product, tierFor(product.id)),
       avgCost: product.averageCost ? parseFloat(String(product.averageCost)) : undefined,
       category: product.category ?? undefined,
       unitsPerBox: upb,
@@ -1247,17 +1272,25 @@ export default function NewInvoicePage() {
    * otherwise a PENDING order + DRAFT invoice is created (sent now only when `send`).
    */
   function handleSubmitSale(send: boolean) {
+    const saleLines = items.filter((it) => it.productId && Number(it.qty) > 0);
+    // #2696(c) SA-558e: never send what the server refuses — a special price needs its reason.
+    const needsReason = saleLines.find(saleLineNeedsReason);
+    if (needsReason) {
+      toast({ title: reasonRequiredMessage(needsReason.description), variant: "error" });
+      return;
+    }
     // A sale must be made of real products (an order needs products).
-    const saleItems = items
-      .filter((it) => it.productId && Number(it.qty) > 0)
-      .map((it) => ({
-        productId: it.productId as string,
-        qty: Number(it.qty),
-        unitPrice: Number(it.unitPrice),
-        // Defense in depth (#1176 review): boxedUnitsPerBox() already keeps unitsPerBox out of
-        // item state for upb<=1, but a read site should never trust a single write-side guard.
-        ...((it.unitsPerBox ?? 0) > 1 ? { boxes: it.boxes ?? 0, pieces: it.pieces ?? 0 } : {}),
-      }));
+    const saleItems = saleLines.map((it) => ({
+      productId: it.productId as string,
+      qty: Number(it.qty),
+      unitPrice: Number(it.unitPrice),
+      ...(saleLineMovedOffSpecial(it) && it.overrideReason?.trim()
+        ? { overrideReason: it.overrideReason.trim() }
+        : {}),
+      // Defense in depth (#1176 review): boxedUnitsPerBox() already keeps unitsPerBox out of
+      // item state for upb<=1, but a read site should never trust a single write-side guard.
+      ...((it.unitsPerBox ?? 0) > 1 ? { boxes: it.boxes ?? 0, pieces: it.pieces ?? 0 } : {}),
+    }));
 
     const errs: Record<string, string> = {};
     if (!customer) errs.customer = "Please select a customer.";
@@ -1815,8 +1848,17 @@ export default function NewInvoicePage() {
                           setCreateProductTargetIdx(idx);
                           setCreateProductOpen(true);
                         }}
-                        onChange={(desc, pid, price, avgCost, unitsPerBox, scanLevel) => {
-                          const specialPrice = pid ? priceMap[pid] : undefined;
+                        onChange={(desc, pid, price, avgCost, unitsPerBox, product, scanLevel) => {
+                          // #2696(c) SA-558e: a picked product prices at the customer's TIER (the
+                          // server's own baseline) — list for a tier customer would be refused.
+                          const pricing =
+                            pid && product ? saleLinePricing(product, tierFor(pid)) : undefined;
+                          const specialPrice =
+                            pricing && pricing.tierPrice !== pricing.listPrice
+                              ? pricing.tierPrice
+                              : pid
+                                ? priceMap[pid]
+                                : undefined;
                           const effectivePrice =
                             specialPrice ?? (price ? parseFloat(price) : item.unitPrice);
                           const upb = boxedUnitsPerBox(unitsPerBox);
@@ -1824,6 +1866,8 @@ export default function NewInvoicePage() {
                             description: desc,
                             productId: pid || undefined,
                             unitPrice: effectivePrice,
+                            pricing,
+                            overrideReason: undefined,
                             regularPrice:
                               specialPrice !== undefined ? parseFloat(price) : undefined,
                             isSpecialPrice: specialPrice !== undefined,
@@ -1948,8 +1992,26 @@ export default function NewInvoicePage() {
                         min={0}
                         value={item.unitPrice}
                         onChange={(v) => updateItem(item.key, { unitPrice: v ?? 0 })}
+                        aria-label="Unit price"
                         className="h-9 w-full rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
                       />
+                      {/* #2696(c) SA-558e: off the customer's special price ⇒ a reason, as the
+                          server requires on a sale (pricing's decideStaffOverride). */}
+                      {isSale && saleLineMovedOffSpecial(item) && (
+                        <input
+                          type="text"
+                          maxLength={200}
+                          value={item.overrideReason ?? ""}
+                          onChange={(e) => updateItem(item.key, { overrideReason: e.target.value })}
+                          aria-label="Reason (required)"
+                          aria-invalid={saleLineNeedsReason(item)}
+                          placeholder="Reason (required)"
+                          className={cn(
+                            "mt-1 h-8 w-full rounded border bg-white px-2 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500",
+                            saleLineNeedsReason(item) ? "border-danger" : "border-surface-border",
+                          )}
+                        />
+                      )}
                       {item.unitsPerBox && item.unitsPerBox > 1 && item.unitPrice > 0 && (
                         <p className="text-[9px] text-navy/70 text-right mt-0.5">
                           ${perUnitPrice(item.unitPrice, item.unitsPerBox)?.toFixed(2)}/pc

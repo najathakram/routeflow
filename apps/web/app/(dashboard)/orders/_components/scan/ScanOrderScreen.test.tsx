@@ -938,10 +938,9 @@ describe("ScanOrderScreen", () => {
       expect(props.onClose).toHaveBeenCalledTimes(1);
     });
 
-    it("a SPECIAL-priced line gets no tap-to-price, so no editor can open (#2696 / B721)", () => {
+    it("a SPECIAL-priced line's price opens the editor too — an override needs a reason there (#2696(c))", () => {
       setup({ lines: [L({ priceType: "SPECIAL" }), L({ tempId: "t2", productId: "p2" })] });
-      expect(screen.queryByTestId("price-p1")).not.toBeInTheDocument();
-      fireEvent.click(screen.getByTestId("price-p2")); // a STANDARD line still opens it
+      fireEvent.click(screen.getByTestId("price-p1"));
       expect(screen.getByTestId("editor")).toBeInTheDocument();
     });
 

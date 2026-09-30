@@ -41,6 +41,8 @@ export interface MergeIncomingItem {
   boxes?: number;
   pieces?: number;
   unitPrice?: number;
+  /** #2696(c): the reason for a staff-typed price — travels with that price (SA-558d). */
+  overrideReason?: string;
   notes?: string;
 }
 
@@ -195,7 +197,11 @@ export function foldMergeItems(
     // operator's override with the client's freshly-resolved catalog price.
     // Incoming values only FILL what the existing line doesn't carry (and are
     // the only source for a brand-new merged line, handled above).
-    if (acc.unitPrice == null && item.unitPrice != null) acc.unitPrice = item.unitPrice;
+    if (acc.unitPrice == null && item.unitPrice != null) {
+      acc.unitPrice = item.unitPrice;
+      // #2696(c): the reason travels with the price it justifies (the filled-in one).
+      if (item.overrideReason) acc.overrideReason = item.overrideReason;
+    }
     if (!acc.notes && item.notes) acc.notes = item.notes;
   };
 
@@ -226,6 +232,10 @@ export function foldMergeItems(
         hadExisting: false,
         existingBoxAware: false,
         unitPrice: item.unitPrice,
+        // #2696(c) SA-558d: a new line is a staff create — its reason rides with its price.
+        ...(item.unitPrice != null && item.overrideReason
+          ? { overrideReason: item.overrideReason }
+          : {}),
         notes: item.notes ?? null,
       });
       continue;

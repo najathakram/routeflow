@@ -106,6 +106,8 @@ import { useProducts } from "@/lib/api/products";
 import {
   computeLineSubtotal,
   getTierPrice,
+  isSpecialTier,
+  needsOverrideReason,
   normalizeBoxesPieces,
   roundMoney,
 } from "@routeflow/pricing";
@@ -577,7 +579,7 @@ function isPriceOverridden(it: { unitPrice: number; basePrice: number }): boolea
  * initial resolved price, :1062) — undefined only defensively, where there is
  * no baseline to compare against and therefore nothing provably changed.
  */
-function needsSpecialTierReason(
+export function needsSpecialTierReason(
   it: {
     unitPrice: number;
     originalUnitPrice?: number;
@@ -592,8 +594,16 @@ function needsSpecialTierReason(
   isSpecial: boolean,
 ): boolean {
   const baseline = it.reasonBaselinePrice ?? it.originalUnitPrice;
-  const priceChanged = baseline != null && Math.abs(it.unitPrice - baseline) > 0.0001;
-  return !it.isUnlisted && isSpecial && priceChanged && !(it.overrideReason ?? "").trim();
+  if (it.isUnlisted || baseline == null) return false;
+  // #2696(c) SA-558b(4): the server's own predicate with THIS act's baseline — the stored price
+  // (and the reason on file, seeded into overrideReason) for an existing line, the tier price for
+  // an add or a substitution; ½¢ tolerance, the server's.
+  return needsOverrideReason({
+    overridePrice: it.unitPrice,
+    baselinePrice: baseline,
+    isSpecialTier: isSpecial,
+    hasReason: !!(it.overrideReason ?? "").trim(),
+  });
 }
 
 /**
@@ -1948,14 +1958,14 @@ export default function OrderDetailPage() {
     [cpMap, customerTier],
   );
   const isSpecialTierFor = React.useCallback(
-    (p: SubstituteOption) => (cpMap.get(p.id) ?? customerTier ?? 1) !== 1,
+    (p: SubstituteOption) => isSpecialTier(cpMap.get(p.id) ?? customerTier ?? 1),
     [cpMap, customerTier],
   );
   // B465: id-only variant for call sites that only have `productId` (an
   // EditItemState line, not a full SubstituteOption/product row) — same rule,
   // shared so the save-time guard below and the row's own render never drift.
   const isSpecialTierForProductId = React.useCallback(
-    (productId: string) => (cpMap.get(productId) ?? customerTier ?? 1) !== 1,
+    (productId: string) => isSpecialTier(cpMap.get(productId) ?? customerTier ?? 1),
     [cpMap, customerTier],
   );
   // units_v1: the EFFECTIVE numeric tier `OrderLineUnitPicker` needs (it resolves the ladder
