@@ -74,23 +74,37 @@ const MAX_STANDARD_COST = 999_999.9999;
  * instead of throwing a raw Prisma numeric-overflow error mid-transaction.
  */
 function boundedMoneyParser(max: number): CellParser {
-  return withBlankGuard((raw) => {
-    const cleaned = raw.replace(/[$,\s]/g, "");
-    if (!/^-?\d+(\.\d+)?$/.test(cleaned)) {
-      return { ok: false, reason: "not a number" };
-    }
-    const n = parseImportMoney(raw);
-    if (!Number.isFinite(n)) {
-      return { ok: false, reason: "not a number" };
-    }
-    if (n < 0) {
-      return { ok: false, reason: "must not be negative" };
-    }
-    if (n > max) {
-      return { ok: false, reason: `must be ${max} or less` };
-    }
-    return { ok: true, value: n };
-  });
+  return withBlankGuard((raw) => parseStrictMoneyCell(raw, { max }));
+}
+
+/**
+ * The ONE strict money-cell check, shared by the column registry above and the invoice importer
+ * (#2190): the (currency/comma/space-stripped) cell must be ENTIRELY numeric, then it is parsed by
+ * `parseImportMoney` and bounded to `max` (the Decimal(10,2) column by default). Callers own the
+ * blank check (blank = absent); this treats every string it is handed as a present cell. Invoice
+ * money may legitimately be negative (credits), so `allowNegative` lets that through — in which case
+ * the bound applies to the magnitude.
+ */
+export function parseStrictMoneyCell(
+  raw: string,
+  opts: { max?: number; allowNegative?: boolean } = {},
+): { ok: true; value: number } | { ok: false; reason: string } {
+  const max = opts.max ?? MAX_MONEY_10_2;
+  const cleaned = raw.replace(/[$,\s]/g, "");
+  if (!/^-?\d+(\.\d+)?$/.test(cleaned)) {
+    return { ok: false, reason: "not a number" };
+  }
+  const n = parseImportMoney(raw);
+  if (!Number.isFinite(n)) {
+    return { ok: false, reason: "not a number" };
+  }
+  if (n < 0 && !opts.allowNegative) {
+    return { ok: false, reason: "must not be negative" };
+  }
+  if (Math.abs(n) > max) {
+    return { ok: false, reason: `must be ${max} or less` };
+  }
+  return { ok: true, value: n };
 }
 
 const moneyParser: CellParser = boundedMoneyParser(MAX_MONEY_10_2);
