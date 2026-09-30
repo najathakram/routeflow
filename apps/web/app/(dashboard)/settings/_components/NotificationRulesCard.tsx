@@ -179,7 +179,7 @@ export function NotificationRulesCard({
         )}
       </div>
       {!isAdmin && (
-        <p className="mb-3 text-xs text-navy/50">Only admins can change notifications</p>
+        <p className="mb-3 text-xs text-navy/70">Only admins can change notifications</p>
       )}
 
       <div className="overflow-x-auto">
@@ -268,7 +268,7 @@ export function NotificationRulesCard({
         </table>
       </div>
 
-      <div className="mt-3 space-y-1 text-xs text-navy/50">
+      <div className="mt-3 space-y-1 text-xs text-navy/70">
         <p>Invoices are emailed when you press Send on an invoice.</p>
         <p>
           Emails send from your connected mailbox, then your SMTP setup, then RouteFlow&apos;s

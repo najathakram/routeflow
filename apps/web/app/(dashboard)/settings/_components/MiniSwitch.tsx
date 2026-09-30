@@ -40,7 +40,8 @@ export function MiniSwitch({
         disabled={disabled}
         onClick={ariaDisabled ? undefined : onToggle}
         className={cn(
-          "relative inline-flex h-5 w-9 flex-none items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+          // `before:` pads the hit area to 52x44 (WCAG 2.5.8) without changing the 36x20 visual.
+          "relative inline-flex h-5 w-9 flex-none items-center rounded-full transition-colors before:absolute before:-inset-x-2 before:-inset-y-3 before:content-[''] disabled:cursor-not-allowed disabled:opacity-50",
           ariaDisabled && "cursor-not-allowed opacity-40",
           checked ? "bg-brand-500" : "bg-navy/20",
         )}
