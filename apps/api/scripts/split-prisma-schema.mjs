@@ -264,6 +264,7 @@ const MODEL_DOMAIN = {
   IntakeFile: "platform",
   IntakeAccessToken: "platform",
   OrderAcceptance: "platform",
+  EmailDelivery: "platform",
 
   // ─── compliance ────────────────────────────────────────────────────────────
   TobaccoReport: "compliance",

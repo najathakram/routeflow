@@ -220,6 +220,8 @@ model Tenant {
   mailboxConnection        MailboxConnection?
   onboardingCase           OnboardingCase?
 
+  emailDeliveries EmailDelivery[]
+
   @@index([slug])
   @@index([status])
   @@index([deletedAt])

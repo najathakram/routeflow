@@ -83,6 +83,12 @@ model Product {
   // Optional retail-unit (inner piece) code; NULL ⇒ unit shares the case `sku`.
   // Read sites use `unitSku ?? sku`.
   unitSku              String?
+  // Spec 06: hide a product from the buyer portal; independent of selling restrictions.
+  portalVisible        Boolean       @default(true)
+  // SA-603: the codes released on deactivate (legacy column -> retired*); the full uniques are unchanged.
+  retiredSku           String?
+  retiredBarcode       String?
+  retiredUnitSku       String?
   unit                 String
   pricePerUnit         Decimal       @db.Decimal(10, 2)
   priceTier2           Decimal       @default(0) @db.Decimal(10, 2)
@@ -410,7 +416,9 @@ model ProductBarcode {
   id              String           @id @default(uuid())
   tenantId        String
   productId       String
-  code            String
+  // NULL = released on deactivate/reuse; NULLs are distinct under @@unique([tenantId, code, level]).
+  code            String?
+  retiredCode     String?
   symbology       BarcodeSymbology
   level           PackagingLevel
   origin          BarcodeOrigin    @default(ENTERED)

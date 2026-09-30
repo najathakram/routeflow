@@ -511,3 +511,7 @@ export type BarcodeOrigin = (typeof BARCODE_ORIGIN_VALUES)[number];
 // as one RECIPE product). DRAFT is editable; ACTIVE and RETIRED are immutable (I3).
 export const RECIPE_STATUS_VALUES = ["DRAFT", "ACTIVE", "RETIRED"] as const;
 export type RecipeStatus = (typeof RECIPE_STATUS_VALUES)[number];
+
+// SA-603: lifecycle of one outbound transactional email attempt (EmailDelivery.status).
+export const EMAIL_DELIVERY_STATUS_VALUES = ["QUEUED", "SENT", "FAILED", "BOUNCED", "WOULD_SEND", "OPTED_OUT"] as const;
+export type EmailDeliveryStatus = (typeof EMAIL_DELIVERY_STATUS_VALUES)[number];

@@ -23,6 +23,7 @@
 // apps/api/src/common/api-error-codes-parity.spec.ts, which `require`s THIS file.
 module.exports = {
   UserRole: {},
+  EMAIL_DELIVERY_STATUS_VALUES: ["QUEUED", "SENT", "FAILED", "BOUNCED", "WOULD_SEND", "OPTED_OUT"],
   VENDOR_BILL_STATUS_VALUES: ["DRAFT", "RECEIVED", "PARTIAL", "PAID", "OVERDUE", "VOID"],
   PURCHASE_ORDER_STATUS_VALUES: ["DRAFT", "SENT", "PARTIAL", "RECEIVED", "CLOSED"],
   // #2722: hand-copied; the parity sweep pins it to Prisma PaymentMethod (via enums.ts).
