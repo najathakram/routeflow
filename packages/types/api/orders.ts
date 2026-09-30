@@ -55,3 +55,22 @@ export interface UnitAwareLineInput {
  * ever treated as non-authoritative on resume.
  */
 export type DraftLinePriceSource = "history" | "operator";
+
+/**
+ * #2717 M3 (SA-572 A1, SA-589): one frozen component of a FIXED (mixed-pack) order or invoice line,
+ * as clients read it. `qty` is whole pieces of that component on THIS line. `displayUnitPrice4` is
+ * the stored 4-dp unit price (display only, never summed, taxed or credited: I5) or null; clients
+ * print it through the shared `componentSubLineText` from `@routeflow/pricing`. A plain line has no
+ * components (the array is absent or empty).
+ */
+export interface LineComponentView {
+  id?: string;
+  componentProductId: string;
+  name: string;
+  qty: number;
+  unitSku: string | null;
+  unitBarcode: string | null;
+  barcodeSymbology: string | null;
+  displayUnitPrice4: number | null;
+  position: number;
+}
