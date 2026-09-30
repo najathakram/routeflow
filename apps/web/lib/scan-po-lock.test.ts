@@ -16,8 +16,12 @@ describe("scanPoAccess", () => {
 });
 
 describe("isScanPlanLock", () => {
-  it("recognises a 403", () => {
-    expect(isScanPlanLock({ response: { status: 403 } })).toBe(true);
+  it("recognises the PLAN_GATE 403", () => {
+    expect(isScanPlanLock({ response: { status: 403, data: { code: "PLAN_GATE" } } })).toBe(true);
+  });
+  it("a bare 403 (role / add-on denial) is not a plan lock", () => {
+    expect(isScanPlanLock({ response: { status: 403 } })).toBe(false);
+    expect(isScanPlanLock({ response: { status: 403, data: { code: "ADDON_GATE" } } })).toBe(false);
   });
   it("ignores other errors", () => {
     expect(isScanPlanLock({ response: { status: 500 } })).toBe(false);

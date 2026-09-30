@@ -53,7 +53,7 @@ import { ProductCreateModal } from "./ProductCreateModal";
 import { displayProductName } from "@/lib/product-display";
 import { fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { roundMoney } from "@routeflow/pricing";
-import { RAISED_PO_NOTE, raisePoBlocker } from "@/lib/raise-po";
+import { RAISED_PO_NOTE, poIntentRefusal, raisePoBlocker } from "@/lib/raise-po";
 import { SCAN_LOCK_BODY, SCAN_LOCK_TITLE, isScanPlanLock } from "@/lib/scan-po-lock";
 import { buildVendorBillPayload } from "@/lib/scan-bill-payload";
 import { RaisePoToggle } from "./RaisePoToggle";
@@ -1335,6 +1335,12 @@ export function ScanInvoiceModal({
         // Blocked (not just "off") gets its own note below — the switch was ON but couldn't fire.
         const poBlockReason = inv.raisePo ? raisePoBlocker(inv.supplierId, billItems) : null;
         const raisesPo = inv.raisePo && !poBlockReason;
+        const refusal = poIntentRefusal(intent, inv.raisePo, poBlockReason);
+        if (refusal) {
+          // Nothing is posted: the scan was asked for a PO, and a bare received bill is not that.
+          patchInvoiceById(invoiceId, { error: refusal });
+          return { ok: false, duplicate: false, notes };
+        }
         const bill = await createBill.mutateAsync(
           buildVendorBillPayload(
             {
@@ -1428,10 +1434,12 @@ export function ScanInvoiceModal({
         });
         return { ok: false, duplicate: true, notes };
       }
-      const msg =
-        err?.response?.data?.message ||
-        err?.message ||
-        "Failed to create records. Please try again.";
+      const planLocked = intent === "purchase-order" && isScanPlanLock(err);
+      const msg = planLocked
+        ? SCAN_LOCK_BODY
+        : err?.response?.data?.message ||
+          err?.message ||
+          "Failed to create records. Please try again.";
       // Keep status "scanned" so the invoice stays editable + creatable.
       patchInvoiceById(invoiceId, { error: msg });
       return { ok: false, duplicate: false, notes };

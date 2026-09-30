@@ -21,4 +21,10 @@ describe("ScanInvoiceModal intent (scan-to-PO wiring)", () => {
     expect(src).toMatch(/intent === "purchase-order" && isScanPlanLock\(err\)/);
     expect(src).toMatch(/planLocked\s*\? SCAN_LOCK_BODY/);
   });
+  it("PO intent refuses to post a bare bill when the raise is off or blocked", () => {
+    expect(src).toMatch(/poIntentRefusal\(intent, inv\.raisePo, poBlockReason\)/);
+  });
+  it("a plan lock on the create step also reads as the lock copy", () => {
+    expect(src).toMatch(/planLocked\s*\? SCAN_LOCK_BODY\s*: err\?\.response/);
+  });
 });

@@ -42,7 +42,9 @@ export function ScanPoButton({ onDrafted }: { onDrafted: (poId: string) => void 
           onPurchaseOrderCreated={(po) => {
             void queryClient.invalidateQueries({ queryKey: ["inventory", "purchase-orders"] });
             toast({
-              title: `PO ${po.poNumber ?? ""} drafted — open it below`.replace("PO  ", "PO "),
+              title: po.poNumber
+                ? `PO ${po.poNumber} drafted — open it below`
+                : "Purchase order drafted — open it below",
               variant: "success",
             });
             onDrafted(po.id);

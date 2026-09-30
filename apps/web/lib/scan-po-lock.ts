@@ -13,8 +13,10 @@ export const SCAN_LOCK_TITLE = "Invoice scanning isn't on your plan";
 export const SCAN_LOCK_BODY =
   "Scanning a supplier invoice into a purchase order is part of a higher plan. You can still create purchase orders by hand on any plan.";
 
-/** True for the 403 the scan route answers with when the plan gate closes after the page loaded. */
+/** True for the PLAN_GATE 403 the scan/create routes answer with when the plan flag closes after
+ *  the page loaded. A bare 403 (a role denial, an add-on gate) is NOT a plan lock. */
 export function isScanPlanLock(err: unknown): boolean {
-  const status = (err as { response?: { status?: number } } | null)?.response?.status;
-  return status === 403;
+  const res = (err as { response?: { status?: number; data?: { code?: string } } } | null)
+    ?.response;
+  return res?.status === 403 && res?.data?.code === "PLAN_GATE";
 }
