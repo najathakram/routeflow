@@ -59,7 +59,7 @@ import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
 import { CustomerFormModal } from "../_components/CustomerFormModal";
 import { AuthorizationsTab } from "../_components/AuthorizationsTab";
-import { fmt, fmtDate } from "@/lib/formatting";
+import { fmt, fmtDate, isInternalEmail } from "@/lib/formatting";
 import { getTierPrice, computeMarginFraction, classifyMargin } from "@/lib/pricing";
 import { useMarginConfig } from "@/lib/api/margin";
 import {
@@ -1871,7 +1871,9 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                     {customer.displayName && (
                       <InfoRow icon={User} label="Display Name" value={customer.displayName} />
                     )}
-                    {customer.email && <InfoRow icon={Mail} label="Email" value={customer.email} />}
+                    {customer.email && !isInternalEmail(customer.email) && (
+                      <InfoRow icon={Mail} label="Email" value={customer.email} />
+                    )}
                     {customer.mobile && (
                       <InfoRow icon={Phone} label="Mobile" value={customer.mobile} />
                     )}
@@ -2467,7 +2469,10 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                       {portalStatus?.status === "ACTIVE" && portalStatus.buyerAccount && (
                         <div className="rounded-lg bg-surface-raised px-3 py-2 text-xs text-navy/70">
                           <p className="font-medium">{portalStatus.buyerAccount.name}</p>
-                          <p>{portalStatus.buyerAccount.email}</p>
+                          {portalStatus.buyerAccount.email &&
+                            !isInternalEmail(portalStatus.buyerAccount.email) && (
+                              <p>{portalStatus.buyerAccount.email}</p>
+                            )}
                         </div>
                       )}
 

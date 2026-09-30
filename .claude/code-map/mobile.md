@@ -495,4 +495,7 @@ status:"ISSUED"})` never runs unscoped; filters via `isCreditOpenForApply`; full
   voids the row, re-opens the invoice, non-taxable fee line + stored-total bump server-side).
 - **`(tabs)/invoices/[id].tsx`** — `ApplyAdvanceSheet` (wallet rows balance>0; first client for
   this action — web's `useApplyAdvanceToInvoice` is dead code). **`customers/[id].tsx`** —
-  Record-advance modal + "Record advance payment" row in Account standing.
+  Record-advance modal + "Record advance payment" row in Account standing. Import-sentinel
+  emails (`lib/internal-email.ts` `isInternalEmail`, mirror of api `common/internal-email.ts` +
+  web `lib/formatting.ts`; test `__tests__/internal-email.test.ts`) are treated as no-email:
+  no Email quick-action (mailto) and no Account Email row.

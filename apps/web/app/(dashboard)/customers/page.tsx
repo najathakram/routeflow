@@ -752,7 +752,13 @@ export default function CustomersPage() {
                       <p className="text-xs text-navy/70 truncate">
                         Buyer account:{" "}
                         <span className="font-medium text-navy/80">
-                          {item.buyerAccount?.email ?? item.customer.email ?? "—"}
+                          {(item.buyerAccount?.email && !isInternalEmail(item.buyerAccount.email)
+                            ? item.buyerAccount.email
+                            : null) ??
+                            (item.customer.email && !isInternalEmail(item.customer.email)
+                              ? item.customer.email
+                              : null) ??
+                            "—"}
                         </span>
                         {item.buyerAccount?.name && (
                           <span className="ml-1 text-navy/70">({item.buyerAccount.name})</span>

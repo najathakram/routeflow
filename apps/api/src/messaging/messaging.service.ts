@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from "@nestjs/common";
 import { MessageChannel, MeterKey, NotificationEvent, UserRole, UserStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { MeterService } from "../billing/meter.service";
+import { isInternalEmail } from "../common/internal-email";
 import { MESSAGE_PROVIDER, type MessageProvider } from "./providers/message-provider.interface";
 import {
   isInvoicePolicyViolation,
@@ -69,7 +70,11 @@ export class MessagingService {
     channel: MessageChannel,
     customer: { phone: string | null; mobile: string | null; email: string | null },
   ): string {
-    if (channel === MessageChannel.EMAIL) return customer.email ?? "";
+    if (channel === MessageChannel.EMAIL) {
+      // Import sentinels (@imported.local / @placeholder.local) aren't real
+      // inboxes — treat them as no contact so the caller skips with NO_CONTACT.
+      return customer.email && !isInternalEmail(customer.email) ? customer.email : "";
+    }
     if (channel === MessageChannel.WHATSAPP || channel === MessageChannel.SMS) {
       return customer.phone ?? customer.mobile ?? "";
     }

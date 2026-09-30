@@ -152,6 +152,23 @@ describe("MessagingService (P6-2 engine)", () => {
     expect(res).toMatchObject({ outcome: "skipped", reason: "NO_CONTACT" });
   });
 
+  it.each(["acme_store@imported.local", "no-email+abc123@placeholder.local"])(
+    "EMAIL to the import sentinel %s is NO_CONTACT, not a doomed send",
+    async (sentinel) => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: "cust-1",
+        phone: "+15550001111",
+        mobile: null,
+        email: sentinel,
+        smsConsent: true,
+        waConsent: true,
+      });
+      const res = await send({ channel: MessageChannel.EMAIL });
+      expect(res).toMatchObject({ outcome: "skipped", reason: "NO_CONTACT" });
+      expect(provider.send).not.toHaveBeenCalled();
+    },
+  );
+
   describe("notify()", () => {
     it("dispatches only ENABLED rules and renders their template", async () => {
       prisma.notificationRule.findMany.mockResolvedValue([{ channel: MessageChannel.WHATSAPP }]);
