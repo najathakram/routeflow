@@ -103,7 +103,9 @@ describe("ProductInsightsExport", () => {
     get.mockReturnValue(new Promise((r) => (resolve = r)));
     render(<ProductInsightsExport productId="p1" sku="SKU-1" />);
     click();
-    await waitFor(() => expect(screen.getByTestId("product-insights-export-button")).toBeDisabled());
+    await waitFor(() =>
+      expect(screen.getByTestId("product-insights-export-button")).toBeDisabled(),
+    );
     expect(screen.getByTestId("product-insights-export-button")).toHaveTextContent("Exporting…");
     resolve({ data: new Blob(["x"]), headers: {} });
     await waitFor(() =>

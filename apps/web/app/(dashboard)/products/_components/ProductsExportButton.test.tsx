@@ -124,13 +124,20 @@ describe("ProductsExportButton", () => {
   });
 
   it("toasts Export failed with the message on an error", async () => {
-    get.mockRejectedValue({ message: "boom", response: { status: 500, data: { message: "db down" } } });
+    get.mockRejectedValue({
+      message: "boom",
+      response: { status: 500, data: { message: "db down" } },
+    });
     renderBtn();
     open();
     fireEvent.click(screen.getByTestId("products-export-download"));
     await waitFor(() =>
       expect(toast).toHaveBeenCalledWith(
-        expect.objectContaining({ title: "Export failed", description: "db down", variant: "error" }),
+        expect.objectContaining({
+          title: "Export failed",
+          description: "db down",
+          variant: "error",
+        }),
       ),
     );
     expect(downloadCsvBlob).not.toHaveBeenCalled();
