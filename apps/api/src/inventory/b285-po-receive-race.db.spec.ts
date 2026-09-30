@@ -164,8 +164,10 @@ describeDb("B285 — PO receive vs concurrent writers — real Postgres, separat
         await prisma.supplier.deleteMany({ where: { tenantId } });
         await prisma.user.deleteMany({ where: { tenantId } });
         await prisma.tenant.delete({ where: { id: tenantId } });
-      })().catch(() => {
-        // Best-effort: a failed cleanup must never mask a test's own pass/fail result.
+      })().catch((e: unknown) => {
+        // Never mask a test's own result, but never hide a leaked tenant either.
+        // eslint-disable-next-line no-console
+        console.error(`B285 spec cleanup failed for tenant ${tenantId}:`, e);
       });
     }
     await Promise.all(services.map((s) => s.prisma.$disconnect()));
@@ -257,7 +259,7 @@ describeDb("B285 — PO receive vs concurrent writers — real Postgres, separat
     const w = await seedWorld("a", 50, 2);
     const po = await sentPo(w, 20, 4);
     // the receive parks for up to 3s inside its txn; the sale (connection B) must contend with it
-    const barrier = new Barrier(2, 4000);
+    const barrier = new Barrier(2, 2500);
     holdReceiveAt(A, barrier);
 
     const receive = inTenant(A, w, () =>
@@ -282,7 +284,7 @@ describeDb("B285 — PO receive vs concurrent writers — real Postgres, separat
     void sale.then(() => {
       saleDoneAt = performance.now();
     });
-    await sawLockWait(2500);
+    await sawLockWait(1500);
     await Promise.all([receive, sale]);
     // the sale contended with the open receive: it could only finish once the receive had
     const blocked = saleDoneAt >= receiveDoneAt;
@@ -343,7 +345,7 @@ describeDb("B285 — PO receive vs concurrent writers — real Postgres, separat
       } as never),
     );
     expect(bill.purchaseOrder).toBeNull();
-    const barrier = new Barrier(2, 4000);
+    const barrier = new Barrier(2, 2500);
     holdReceiveAt(A, barrier);
 
     const receive = inTenant(A, w, () =>
@@ -355,7 +357,7 @@ describeDb("B285 — PO receive vs concurrent writers — real Postgres, separat
     );
     await barrier.parked;
     const billReceive = inTenant(B, w, () => B.bills.receive(bill.id, undefined, w.userId));
-    await sawLockWait(2500);
+    await sawLockWait(1500);
     await Promise.all([receive, billReceive]);
 
     const p = await productOf(w);
@@ -368,10 +370,60 @@ describeDb("B285 — PO receive vs concurrent writers — real Postgres, separat
         `stockAfter=[${moves.map((m) => m.stockAfter).join(",")}] ` +
         `avgAfter=[${moves.map((m) => m.avgCostAfter).join(",")}]`,
     );
+    const lotsC = await A.prisma.stockLot.findMany({ where: { tenantId: w.tenantId } });
+    expect(moves).toHaveLength(2);
+    expect(lotsC).toHaveLength(2);
     expect(Number(p.currentStock)).toBe(80);
     // (50*2 + 20*4 + 10*6) / 80 = 3 — the same under either serial order
     expect(Math.abs(Number(p.averageCost) - 3)).toBeLessThan(0.001);
     // each movement's snapshot is a real running total: the stockAfters are {70,80} or {60,80}
-    expect(Math.max(...moves.map((m) => Number(m.stockAfter)))).toBe(80);
+    const after = moves.map((m) => Number(m.stockAfter)).sort((x, y) => x - y);
+    expect([
+      [70, 80],
+      [60, 80],
+    ]).toContainEqual(after);
+    // the LAST writer's snapshot is the final average
+    const avgs = moves.map((m) => Number(m.avgCostAfter));
+    expect(Math.abs(Math.max(...avgs) - 3)).toBeLessThan(0.001);
+  });
+
+  it("(d) two concurrent receives of ONE unlinked bill post its stock exactly once", async () => {
+    const w = await seedWorld("d", 50, 2);
+    const bill: any = await inTenant(A, w, () =>
+      A.bills.create({
+        supplierId: w.supplierId,
+        billDate: "2026-09-01",
+        items: [{ productId: w.productId, description: "Widget", qty: 10, unitCost: 6 }],
+      } as never),
+    );
+    // both receives pass the pre-transaction idempotency guard before either opens its txn
+    const barrier = new Barrier(2, 1500);
+    for (const svc of [A, C]) {
+      const prismaSvc = svc.prisma as unknown as {
+        tenantTransaction: (...a: unknown[]) => Promise<unknown>;
+      };
+      const original = prismaSvc.tenantTransaction.bind(prismaSvc);
+      jest.spyOn(prismaSvc, "tenantTransaction").mockImplementation(async (...args: unknown[]) => {
+        await barrier.arrive();
+        return original(...args);
+      });
+    }
+
+    const settled = await Promise.allSettled([
+      inTenant(A, w, () => A.bills.receive(bill.id, undefined, w.userId)),
+      inTenant(C, w, () => C.bills.receive(bill.id, undefined, w.userId)),
+    ]);
+
+    const p = await productOf(w);
+    const lots = await A.prisma.stockLot.findMany({ where: { tenantId: w.tenantId } });
+    const moves = await A.prisma.stockMovement.findMany({ where: { tenantId: w.tenantId } });
+    console.log(
+      `B285(d) observed: fulfilled=${settled.filter((s) => s.status === "fulfilled").length} ` +
+        `stock=${p.currentStock} avg=${p.averageCost} lots=${lots.length} moves=${moves.length}`,
+    );
+    expect(settled.filter((s) => s.status === "fulfilled")).toHaveLength(1);
+    expect(Number(p.currentStock)).toBe(60);
+    expect(lots).toHaveLength(1);
+    expect(moves).toHaveLength(1);
   });
 });

@@ -1123,6 +1123,27 @@ export class VendorBillsService {
     });
 
     const updated = await this.prisma.tenantTransaction(async (tx) => {
+      // B285: serialise receives of ONE bill. The idempotency guard and the plan above were
+      // computed from a read taken outside this transaction, so two concurrent receives both
+      // passed it and both posted the full stock. Lock the bill row, then refuse if what we
+      // planned from is no longer the bill's receipt state.
+      const tenantId = this.prisma.getTenantId();
+      await tx.$executeRaw`SELECT id FROM "VendorBill" WHERE id = ${id} AND "tenantId" = ${tenantId} FOR UPDATE`;
+      const fresh = await tx.vendorBill.findUnique({
+        where: { id },
+        select: { receivedDate: true, items: { select: { id: true, qtyReceived: true } } },
+      });
+      const receiptState = (b: {
+        receivedDate: Date | null;
+        items: { id: string; qtyReceived: Prisma.Decimal | null }[];
+      }) =>
+        JSON.stringify([
+          b.receivedDate?.getTime() ?? null,
+          b.items.map((i) => [i.id, i.qtyReceived == null ? null : String(i.qtyReceived)]).sort(),
+        ]);
+      if (!fresh || receiptState(fresh) !== receiptState(bill)) {
+        throw new ConflictException("Bill was just received by someone else — reload it.");
+      }
       // Sync inventory for each line in the plan. The whole block works in
       // INVENTORY denomination: lineInventoryDelta converts a case-priced line
       // (packSize > 1) to pieces + per-piece cost so Product.averageCost keeps

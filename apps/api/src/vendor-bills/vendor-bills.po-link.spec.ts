@@ -94,6 +94,11 @@ describe("VendorBillsService — PO-linked bills (units/PO step 7)", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // receive() re-reads the bill inside its transaction (B285 row lock): repeat the last bill read
+    prisma.vendorBill.findUnique.mockImplementation(
+      () =>
+        prisma.vendorBill.findUnique.mock.results.filter((r) => r.type === "return").at(-1)?.value,
+    );
     inventory = {
       recomputeProductInTx: jest.fn(),
       lockProducts: jest.fn(),

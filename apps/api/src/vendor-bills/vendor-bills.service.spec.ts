@@ -116,6 +116,11 @@ describe("VendorBillsService", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // receive() re-reads the bill inside its transaction (B285 row lock): repeat the last bill read
+    prisma.vendorBill.findUnique.mockImplementation(
+      () =>
+        prisma.vendorBill.findUnique.mock.results.filter((r) => r.type === "return").at(-1)?.value,
+    );
     invoiceScan = graftInvoiceScan(prisma);
     dupMatch.findVendorBillDuplicate.mockReset();
     dupMatch.findVendorBillDuplicate.mockResolvedValue(null);
