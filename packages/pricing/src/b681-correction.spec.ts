@@ -60,6 +60,7 @@ describe("computeLineCorrection", () => {
         unitBasisQty: 60,
         netSales: 120,
         categoryTax: 0,
+        writtenAt: null,
       },
     ];
     const res = computeLineCorrection(rows, boxUnaware, null, 12);
@@ -77,6 +78,7 @@ describe("computeLineCorrection", () => {
         unitBasisQty: 5,
         netSales: 120,
         categoryTax: 0,
+        writtenAt: null,
       },
       {
         id: "r1",
@@ -85,6 +87,7 @@ describe("computeLineCorrection", () => {
         unitBasisQty: -5,
         netSales: -120,
         categoryTax: 0,
+        writtenAt: null,
       },
     ];
     const res = computeLineCorrection(rows, boxUnaware, sourceProvesPack12, 12);
@@ -110,6 +113,7 @@ describe("computeLineCorrection", () => {
         unitBasisQty: 5,
         netSales: 120,
         categoryTax: 0,
+        writtenAt: null,
       },
       {
         id: "r1",
@@ -118,6 +122,7 @@ describe("computeLineCorrection", () => {
         unitBasisQty: -30,
         netSales: -48,
         categoryTax: 0,
+        writtenAt: null,
       },
     ];
     const res = computeLineCorrection(rows, boxUnaware, sourceProvesPack12, 12);
@@ -141,6 +146,7 @@ describe("computeLineCorrection", () => {
         unitBasisQty: 5,
         netSales: 120,
         categoryTax: 0,
+        writtenAt: null,
       },
       {
         id: "r1",
@@ -149,6 +155,7 @@ describe("computeLineCorrection", () => {
         unitBasisQty: -60,
         netSales: -120,
         categoryTax: 0,
+        writtenAt: null,
       },
     ];
     const res = computeLineCorrection(rows, boxUnaware, sourceProvesPack12, 12);
@@ -168,6 +175,7 @@ describe("computeLineCorrection", () => {
         unitBasisQty: 5,
         netSales: 120,
         categoryTax: 0,
+        writtenAt: null,
       },
       {
         id: "r1",
@@ -176,6 +184,7 @@ describe("computeLineCorrection", () => {
         unitBasisQty: -20,
         netSales: -100,
         categoryTax: 0,
+        writtenAt: null,
       },
       {
         id: "r2",
@@ -184,6 +193,7 @@ describe("computeLineCorrection", () => {
         unitBasisQty: -25,
         netSales: -20,
         categoryTax: 0,
+        writtenAt: null,
       },
     ];
     const res = computeLineCorrection(rows, boxUnaware, sourceProvesPack12, 12);
@@ -208,6 +218,7 @@ describe("computeLineCorrection", () => {
         unitBasisQty: 5,
         netSales: 100,
         categoryTax: 0,
+        writtenAt: null,
       },
       {
         id: "r1",
@@ -216,6 +227,7 @@ describe("computeLineCorrection", () => {
         unitBasisQty: -5,
         netSales: -100,
         categoryTax: 0,
+        writtenAt: null,
         returnEvidence: {
           returnId: "ret1",
           kind: "inline" as const,
@@ -254,6 +266,7 @@ describe("computeLineCorrection", () => {
         unitBasisQty: 5,
         netSales: 120,
         categoryTax: 0,
+        writtenAt: null,
       },
       {
         // this one's own booked share genuinely matches its true pieces (24)
@@ -263,6 +276,7 @@ describe("computeLineCorrection", () => {
         unitBasisQty: -24,
         netSales: -48,
         categoryTax: 0,
+        writtenAt: null,
         returnEvidence: {
           returnId: "retA",
           kind: "standard" as const,
@@ -278,6 +292,7 @@ describe("computeLineCorrection", () => {
         unitBasisQty: -36,
         netSales: -72,
         categoryTax: 0,
+        writtenAt: null,
         returnEvidence: {
           returnId: "retB",
           kind: "inline" as const,
@@ -312,6 +327,7 @@ describe("computeLineCorrection", () => {
         unitBasisQty: 5,
         netSales: 100,
         categoryTax: 0,
+        writtenAt: null,
       },
       {
         id: "r1",
@@ -320,6 +336,7 @@ describe("computeLineCorrection", () => {
         unitBasisQty: -5,
         netSales: -100,
         categoryTax: 0,
+        writtenAt: null,
         returnEvidence: {
           returnId: "ret1",
           kind: "standard" as const,
@@ -348,6 +365,7 @@ describe("computeLineCorrection", () => {
         unitBasisQty: 5,
         netSales: 100,
         categoryTax: 0,
+        writtenAt: null,
       },
       {
         id: "r1",
@@ -356,6 +374,7 @@ describe("computeLineCorrection", () => {
         unitBasisQty: -60,
         netSales: -100,
         categoryTax: 0,
+        writtenAt: null,
         returnEvidence: {
           returnId: "ret1",
           kind: "inline" as const,
@@ -382,6 +401,7 @@ describe("computeLineCorrection", () => {
         unitBasisQty: 5,
         netSales: 100,
         categoryTax: 0,
+        writtenAt: null,
       },
       {
         id: "s2",
@@ -390,6 +410,7 @@ describe("computeLineCorrection", () => {
         unitBasisQty: 2,
         netSales: 48,
         categoryTax: 0,
+        writtenAt: null,
       },
       {
         id: "r1",
@@ -398,6 +419,7 @@ describe("computeLineCorrection", () => {
         unitBasisQty: -80,
         netSales: -148,
         categoryTax: 0,
+        writtenAt: null,
       },
     ];
     const res = computeLineCorrection(rows, boxUnaware, sourceProvesPack12, 12);
@@ -415,6 +437,7 @@ describe("computeLineCorrection", () => {
         unitBasisQty: 5,
         netSales: 120,
         categoryTax: 0,
+        writtenAt: null,
       },
       {
         id: "s2",
@@ -423,6 +446,7 @@ describe("computeLineCorrection", () => {
         unitBasisQty: 36,
         netSales: 72,
         categoryTax: 0,
+        writtenAt: null,
       },
     ];
     const res = computeLineCorrection(rows, boxUnaware, sourceProvesPack12, 12);
@@ -445,6 +469,7 @@ describe("computeLineCorrection", () => {
         unitBasisQty: 5,
         netSales: 120,
         categoryTax: 0,
+        writtenAt: null,
       },
     ];
     const res = computeLineCorrection(rows, boxUnaware, null, undefined);
@@ -462,6 +487,7 @@ describe("computeLineCorrection", () => {
         unitBasisQty: 5,
         netSales: 120,
         categoryTax: 0,
+        writtenAt: null,
       },
     ];
     const res = computeLineCorrection(rows, boxUnaware, sourceProvesPack12, 12, [

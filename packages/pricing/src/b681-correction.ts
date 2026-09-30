@@ -158,8 +158,9 @@ export interface B681Row {
   categoryTax: unknown;
   /** SA-609 (#2052): the ledger row's `createdAt` -- WHEN it was written, never `soldAt` (a back-datable
    *  business date). `classifySaleAxis` needs it to tell a box count from a never-boxed quantity on a
-   *  snapshot-less line whose product is un-boxed now. Optional only until the fix commit. */
-  writtenAt?: Date | string | null;
+   *  snapshot-less line whose product is un-boxed now. REQUIRED so tsc flags every caller; `null` =
+   *  unknown, read as pre-cutoff (reported, never corrected). */
+  writtenAt: Date | string | null;
   /** Only for a REVERSAL row whose own `returnId` is set. */
   returnEvidence?: B681ReturnEvidence;
 }
@@ -303,7 +304,12 @@ export function computeLineCorrection(
   const saleStates = sales.map((s) => ({
     row: s,
     result: classifySaleAxis(
-      { entryType: "SALE", qty: s.qty, unitBasisQty: s.unitBasisQty },
+      {
+        entryType: "SALE",
+        qty: s.qty,
+        unitBasisQty: s.unitBasisQty,
+        writtenAt: s.writtenAt ?? null,
+      },
       line,
       priorCorrections,
       productPackNow,

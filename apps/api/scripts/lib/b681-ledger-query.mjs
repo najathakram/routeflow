@@ -197,6 +197,8 @@ export function groupByLineKey(flatRows) {
       returnId: r.returnId,
       creditNoteId: r.creditNoteId,
       createdAt: r.createdAt,
+      // SA-609: the row's WRITE time, for classifySaleAxis (never soldAt, which can be back-dated).
+      writtenAt: r.createdAt,
     });
   }
   return lines;
