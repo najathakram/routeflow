@@ -1,3 +1,4 @@
+import { orderErrorMessage } from "../../../lib/order-error-message";
 import { useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -141,8 +142,7 @@ export default function CustomerOrderDetailScreen() {
               showToast("Order created");
               router.push(`/(customer)/orders/${newOrder.id}`);
             },
-            onError: (e: any) =>
-              showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+            onError: (e: any) => showToast(orderErrorMessage(e, "Try again.")),
           },
         ),
       { confirmText: "Reorder" },

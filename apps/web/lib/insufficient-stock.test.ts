@@ -9,7 +9,9 @@ const line = (name: string | undefined, available: number, requested = 9) => ({
 
 describe("insufficientStockSentence", () => {
   it("names what is left", () => {
-    expect(insufficientStockSentence([line("Mango 5ct", 4)])).toBe("Only 4 Mango 5ct left.");
+    expect(insufficientStockSentence([line("Mango 5ct", 4)])).toBe(
+      "Only 4 pieces of Mango 5ct left.",
+    );
   });
   it("says out of stock at zero (and at a negative count)", () => {
     expect(insufficientStockSentence([line("Mango 5ct", 0)])).toBe("Mango 5ct is out of stock.");
@@ -17,22 +19,30 @@ describe("insufficientStockSentence", () => {
   });
   it("joins several lines", () => {
     expect(insufficientStockSentence([line("Mango 5ct", 4), line("Lime", 2)])).toBe(
-      "Only 4 Mango 5ct and 2 Lime left.",
+      "Only 4 pieces of Mango 5ct and 2 pieces of Lime left.",
     );
     expect(insufficientStockSentence([line("Mango", 4), line("Lime", 2), line("Fig", 1)])).toBe(
-      "Only 4 Mango, 2 Lime and 1 Fig left.",
+      "Only 4 pieces of Mango, 2 pieces of Lime and 1 piece of Fig left.",
     );
   });
   it("mixes short and out-of-stock lines", () => {
     expect(insufficientStockSentence([line("Mango", 4), line("Lime", 0), line("Fig", 0)])).toBe(
-      "Only 4 Mango left. Lime and Fig are out of stock.",
+      "Only 4 pieces of Mango left. Lime and Fig are out of stock.",
+    );
+  });
+  it("uses the product's own unit label when it is not a generic piece", () => {
+    expect(insufficientStockSentence([{ ...line("Rice", 4), unit: "lb" }])).toBe(
+      "Only 4 lb of Rice left.",
+    );
+    expect(insufficientStockSentence([{ ...line("Mango 12ct", 10), unit: "each" }])).toBe(
+      "Only 10 pieces of Mango 12ct left.",
     );
   });
   it("keeps decimal quantities", () => {
-    expect(insufficientStockSentence([line("Rice", 2.5)])).toBe("Only 2.5 Rice left.");
+    expect(insufficientStockSentence([line("Rice", 2.5)])).toBe("Only 2.5 pieces of Rice left.");
   });
   it("falls back when a line has no name, and when there are no lines", () => {
-    expect(insufficientStockSentence([line(undefined, 3)])).toBe("Only 3 of an item left.");
+    expect(insufficientStockSentence([line(undefined, 3)])).toBe("Only 3 pieces of an item left.");
     expect(insufficientStockSentence([line(undefined, 0)])).toBe("An item is out of stock.");
     expect(insufficientStockSentence([])).toMatch(/aren't available/);
   });

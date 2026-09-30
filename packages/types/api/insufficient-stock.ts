@@ -5,6 +5,8 @@
 export interface InsufficientStockLine {
   productId: string;
   name?: string;
+  /** The product's unit label; `available`/`requested` count PIECES unless it says otherwise. */
+  unit?: string;
   available: number;
   requested: number;
 }
@@ -43,9 +45,7 @@ export function insufficientStockSentence(lines: InsufficientStockLine[]): strin
   const out = lines.filter((l) => l.available <= 0);
   const parts: string[] = [];
   if (left.length > 0) {
-    const list = left.map((l) =>
-      l.name?.trim() ? `${l.available} ${l.name.trim()}` : `${l.available} of an item`,
-    );
+    const list = left.map((l) => `${countWithUnit(l)} of ${l.name?.trim() || "an item"}`);
     parts.push(`Only ${joinAnd(list)} left.`);
   }
   if (out.length > 0) {
@@ -53,6 +53,14 @@ export function insufficientStockSentence(lines: InsufficientStockLine[]): strin
     parts.push(`${joinAnd(names)} ${names.length === 1 ? "is" : "are"} out of stock.`);
   }
   return parts.join(" ");
+}
+
+/** "10 pieces" / "1 piece" / "4 lb": stock counts pieces unless the product's own unit says
+ *  otherwise, so a box buyer is never told "Only 10" with no noun. */
+function countWithUnit(l: InsufficientStockLine): string {
+  const unit = l.unit?.trim();
+  const generic = !unit || /^(each|ea|piece|pieces|pc|pcs)$/i.test(unit);
+  return `${l.available} ${generic ? (l.available === 1 ? "piece" : "pieces") : unit}`;
 }
 
 function joinAnd(items: string[]): string {

@@ -210,7 +210,7 @@ describe("BuyerOrderDetailPage — order with a custom line (B586)", () => {
     fireEvent.click(screen.getByRole("button", { name: /edit items/i }));
     fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
 
-    expect(await screen.findByText("Only 4 Sample Cola 12oz left.")).toBeInTheDocument();
+    expect(await screen.findByText("Only 4 pieces of Sample Cola 12oz left.")).toBeInTheDocument();
     expect(screen.queryByText(/Not enough stock|available: 4/)).toBeNull();
   });
 

@@ -15,7 +15,13 @@ const warn = jest.fn();
 const deps: OrderStockDeps = { logger: { warn }, tenantId: "t-1" };
 const event = { orderId: "o-1", notes: "CREATE", performedById: "u-1" };
 
-type P = { id: string; name: string; currentStock: number; unitsPerBox: number | null };
+type P = {
+  id: string;
+  name: string;
+  unit?: string;
+  currentStock: number;
+  unitsPerBox: number | null;
+};
 
 function fakeTx(products: P[]) {
   const isSql = (v: any) => typeof v?.sql === "string" && Array.isArray(v?.values);
@@ -119,6 +125,18 @@ describe("decrementStockForSale (create + promotion) — coded, line-by-line 409
       ["mango", 5, 6],
       ["lime", 0, 2],
     ]);
+  });
+
+  it("carries the product's unit label so clients can name the unit", async () => {
+    const rice: P = { id: "rice", name: "Rice", unit: "lb", currentStock: 2, unitsPerBox: null };
+    const err = await caught(() =>
+      decrementStockForSale(deps, fakeTx([rice]), [{ productId: "rice", qty: 5 }], false, event),
+    );
+    expect((err.getResponse() as any).lines[0]).toMatchObject({
+      unit: "lb",
+      available: 2,
+      requested: 5,
+    });
   });
 
   it("staff still oversell with a warning (regression guard)", async () => {

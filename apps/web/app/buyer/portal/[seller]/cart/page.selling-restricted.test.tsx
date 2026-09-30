@@ -77,7 +77,7 @@ describe("buyer cart — SELLING_RESTRICTED", () => {
     });
     await place();
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Only 4 Hemp Gummies left. Lime is out of stock.",
+      "Only 4 pieces of Hemp Gummies left. Lime is out of stock.",
     );
     expect(screen.queryByText(/Insufficient stock|available: 4/)).toBeNull();
     expect(clearCart).not.toHaveBeenCalled();

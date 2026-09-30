@@ -50,7 +50,7 @@ it("toasts the sentence for a coded stock shortfall (create or edit path)", asyn
       },
     },
   });
-  expect(toasts).toEqual([{ title: "Only 4 Mango 5ct left.", variant: "error" }]);
+  expect(toasts).toEqual([{ title: "Only 4 pieces of Mango 5ct left.", variant: "error" }]);
 });
 
 it("other failures keep the server message", async () => {

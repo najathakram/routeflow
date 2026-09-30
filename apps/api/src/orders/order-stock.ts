@@ -104,7 +104,7 @@ export async function decrementStockForSale(
 
   const lockedProducts = await tx.product.findMany({
     where: { id: { in: productIds } },
-    select: { id: true, name: true, currentStock: true, unitsPerBox: true },
+    select: { id: true, name: true, unit: true, currentStock: true, unitsPerBox: true },
   });
   // B703 (SA-136b): each line in PIECES, once — the oversell check, the decrement and the SALE row
   // all read this one number (a 2-box line of a 12-pack is 24, never 2).
@@ -128,6 +128,7 @@ export async function decrementStockForSale(
       oosLines.push({
         productId: li.productId,
         name: p.name ?? undefined,
+        unit: p.unit ?? undefined,
         available: Number(p.currentStock),
         requested: li.pieces,
       });
@@ -343,7 +344,7 @@ export async function settleStockForEdit(
   `;
   const products = await db.product.findMany({
     where: { id: { in: touched } },
-    select: { id: true, name: true, currentStock: true, unitsPerBox: true },
+    select: { id: true, name: true, unit: true, currentStock: true, unitsPerBox: true },
   });
   const pieces = (m: Map<string, Parts>, id: string) => {
     const { fixed, perPack } = m.get(id) ?? zero;
@@ -375,6 +376,7 @@ export async function settleStockForEdit(
     const violations: Array<{
       productId: string;
       name: string;
+      unit?: string;
       available: number;
       requested: number;
       delta: number;
@@ -385,6 +387,7 @@ export async function settleStockForEdit(
         violations.push({
           productId: inc.productId,
           name: p.name,
+          unit: p.unit ?? undefined,
           available: Number(p.currentStock),
           requested: inc.requested,
           delta: inc.delta,
@@ -413,6 +416,7 @@ export async function settleStockForEdit(
           lines: violations.map((v) => ({
             productId: v.productId,
             name: v.name,
+            unit: v.unit,
             available: v.available,
             requested: v.requested,
           })),

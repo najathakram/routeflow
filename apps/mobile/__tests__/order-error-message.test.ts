@@ -15,7 +15,7 @@ const stock = (extra: object = {}) => ({
 describe("orderErrorMessage (gap 05)", () => {
   it("create path: a stock shortfall is a sentence, never the server text", () => {
     const msg = orderErrorMessage(stock(), "fallback");
-    expect(msg).toBe("Only 4 Mango 5ct left.");
+    expect(msg).toBe("Only 4 pieces of Mango 5ct left.");
     expect(msg).not.toMatch(/Insufficient stock|available:/);
   });
 
@@ -35,7 +35,7 @@ describe("orderErrorMessage (gap 05)", () => {
       "fallback",
     );
     expect(msg).not.toMatch(/Not enough stock|available:/);
-    expect(msg).toMatch(/^Only 4/);
+    expect(msg).toMatch(/^Only 4 pieces/);
   });
 
   it("several short lines and an out-of-stock line", () => {
@@ -48,7 +48,7 @@ describe("orderErrorMessage (gap 05)", () => {
       }),
       "x",
     );
-    expect(msg).toBe("Only 4 Mango left. Lime is out of stock.");
+    expect(msg).toBe("Only 4 pieces of Mango left. Lime is out of stock.");
   });
 
   it("any other failure keeps the server message, then the error message, then the fallback", () => {
