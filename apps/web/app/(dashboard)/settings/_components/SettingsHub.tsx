@@ -219,10 +219,11 @@ function HubLink({ item }: { item: HubItem }) {
 }
 
 /** The card shows exactly when its hub item is listed: same label + description + group title. */
-function routeDefaultsSearchText(): string {
+function routeDefaultsMatches(q: string): boolean {
   const group = GROUPS.find((g) => g.items.some((it) => it.href === ROUTE_DEFAULTS_HREF))!;
   const item = group.items.find((it) => it.href === ROUTE_DEFAULTS_HREF)!;
-  return `${item.label} ${item.desc} ${group.title}`.toLowerCase();
+  // Per field, like the hub's own filter — a query spanning two fields matches neither.
+  return [item.label, item.desc, group.title].some((t) => t.toLowerCase().includes(q));
 }
 
 export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
@@ -344,7 +345,7 @@ export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
         </div>
       )}
 
-      {(!q || routeDefaultsSearchText().includes(q)) && (
+      {(!q || routeDefaultsMatches(q)) && (
         <div id="route-defaults" className="max-w-3xl">
           <RouteDefaultsCard />
         </div>

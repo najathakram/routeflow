@@ -29,11 +29,33 @@ export interface SettingRow {
   adminOnly?: boolean;
 }
 
-/** SystemConfig BEHAVIOUR keys grandfathered from before SA-602 (no new ones may join). */
-export const LEGACY_SYSTEM_CONFIG_BEHAVIOUR_KEYS = [
-  "selling_restrictions.enabled",
-  "selling_restrictions.governing_address",
-  "invoice.depositCollectAtOrder",
+/**
+ * SystemConfig BEHAVIOUR keys grandfathered from before SA-602. FROZEN: a spec pins the exact key
+ * set, so "no new ones may join" is enforced, not a comment. Each carries why it is grandfathered
+ * and where it moves (the policy registry, #1337, R1.3 keys).
+ */
+export const LEGACY_SYSTEM_CONFIG_BEHAVIOUR: Record<string, { reason: string; target: string }> = {
+  "selling_restrictions.enabled": {
+    reason:
+      "Master on/off for selling restrictions; shipped as a SystemConfig switch before SA-602.",
+    target: "policy key (R1.3) once #1337 lands; moved per key with a backfill, never in bulk",
+  },
+  "selling_restrictions.governing_address": {
+    reason: "Billing-first vs shipping-first changes enforcement outcomes; written with .enabled.",
+    target: "policy key (R1.3) moving together with selling_restrictions.enabled",
+  },
+  "invoice.depositCollectAtOrder": {
+    reason: "Boolean tenant policy switch in SystemConfig since #465 (2026-08-27), before SA-602.",
+    target: "policy key (R1.3) under the invoicing area",
+  },
+};
+
+export const LEGACY_SYSTEM_CONFIG_BEHAVIOUR_KEYS = Object.keys(LEGACY_SYSTEM_CONFIG_BEHAVIOUR);
+
+/** The only keys allowed to carry status "moves to policy (PR-3)" (the credit enforce flags). */
+export const CREDIT_LIMIT_MOVING_KEYS = [
+  "credit_limit.enforce_new_orders",
+  "credit_limit.enforce_delivery",
 ] as const;
 
 /** Screens that live outside the settings hub link list, each with why it is still a screen. */
@@ -67,6 +89,7 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
     "smtpPassword",
     "smtpSecure",
   ].map((k) => cfg(`email.${k}`, "/settings?tab=email")),
+  cfg("email.sendingDomain", "/settings?tab=email"),
   cfg("anthropic.apiKey", "/settings?tab=integrations"),
   ...[
     "serviceTimeMinutes",
@@ -147,7 +170,7 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
     home: "userPref",
     kind: "preference",
     status: "pending WS4",
-    plannedSurface: "WS4 staff order email toggle (Notifications tab)",
+    plannedSurface: "WS4 staff order email toggle (My account → Email me about)",
     adminOnly: true,
   },
   {
@@ -155,7 +178,7 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
     home: "userPref",
     kind: "preference",
     status: "pending WS4",
-    screen: "/settings?tab=notifications",
+    plannedSurface: "WS4 staff buyer-change email toggle (My account → Email me about)",
     adminOnly: true,
   },
   {
@@ -210,6 +233,13 @@ export function validateSettingsRegistry(
     const hasSurface = !!r.screen || !!r.plannedSurface;
     if (!hasSurface) problems.push(`${r.key}: no screen and no plannedSurface`);
     if (r.screen && r.plannedSurface) problems.push(`${r.key}: has both screen and plannedSurface`);
+    const pending = r.status !== "live" && r.status !== "legacy";
+    if (pending && r.screen) problems.push(`${r.key}: pending rows cannot claim a screen`);
+    if (
+      r.status === "moves to policy (PR-3)" &&
+      !(CREDIT_LIMIT_MOVING_KEYS as readonly string[]).includes(r.key)
+    )
+      problems.push(`${r.key}: only the named credit_limit.* keys may be "moves to policy (PR-3)"`);
     if (r.plannedSurface && r.status === "live")
       problems.push(`${r.key}: live rows need a screen, not a plannedSurface`);
     if (r.home === "policy" && r.status !== "pending #1337" && r.status !== "live")
@@ -219,7 +249,7 @@ export function validateSettingsRegistry(
     if (r.home === "userPref" && r.kind !== "preference" && r.kind !== "memo")
       problems.push(`${r.key}: per-user home holds preferences only`);
     if (r.home === "systemConfig" && r.kind === "behaviour") {
-      const legacy = (LEGACY_SYSTEM_CONFIG_BEHAVIOUR_KEYS as readonly string[]).includes(r.key);
+      const legacy = r.key in LEGACY_SYSTEM_CONFIG_BEHAVIOUR;
       const moving = r.status === "moves to policy (PR-3)";
       if (!legacy && !moving)
         problems.push(
