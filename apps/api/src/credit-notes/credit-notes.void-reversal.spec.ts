@@ -3,6 +3,8 @@ import { BadRequestException } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { UserRole } from "@prisma/client";
 import { CreditNotesService } from "./credit-notes.service";
+import { codeOf } from "./credit-note-errors";
+import { API_ERROR_CODES as CODES } from "../common/api-error-codes";
 import { CreditNotesController } from "./credit-notes.controller";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
@@ -298,6 +300,37 @@ describe("CreditNotesService — SA-436 PR-2 void-with-reversal", () => {
       expect((err as Error).message).toMatch(msg);
       noWrites();
       expect(gateway.emitCreditNoteVoided).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["already void", () => armNote({ status: "VOID" }), CODES.CREDIT_NOTE_VOID_NOT_EDITABLE],
+      [
+        "backs a live return",
+        () => {
+          armNote();
+          prisma.return.findFirst.mockResolvedValue({ returnNumber: "RET-9" });
+        },
+        CODES.CREDIT_NOTE_RETURN_BACKED,
+      ],
+      [
+        "consumed beyond its applications",
+        () => armNote({ amountUsed: 75 }),
+        CODES.CREDIT_NOTE_CREDIT_CONSUMED,
+      ],
+    ])("PR-C: the refusal when %s carries its CREDIT_NOTE_* code", async (_n, arm, code) => {
+      arm();
+      prisma.invoicePayment.findMany.mockResolvedValue(livePayments);
+      const err = await service.voidWithReversal("cn-a", "user-7").catch((e: unknown) => e);
+      expect(codeOf(err)).toBe(code);
+    });
+
+    it("PR-C: a lost compare-and-set is CHANGED_CONCURRENTLY", async () => {
+      armNote();
+      armRestore();
+      prisma.creditNote.updateMany.mockResolvedValue({ count: 0 });
+      prisma.invoicePayment.findMany.mockResolvedValue(livePayments);
+      const err = await service.voidWithReversal("cn-a", "user-7").catch((e: unknown) => e);
+      expect(codeOf(err)).toBe(CODES.CREDIT_NOTE_CHANGED_CONCURRENTLY);
     });
 
     it("a lost compare-and-set (the note changed) refuses rather than half-voiding", async () => {

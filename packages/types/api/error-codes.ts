@@ -36,6 +36,18 @@
 //   FAMILY_PRICE_AUTHORITY — `body.code` of the 409 a variant price write answers while the
 //                    tenant's mixed_packs mode is on and the family owns the price; body carries
 //                    `familyId`.
+//   CREDIT_NOTE_*  — `body.code` of the credit-note edit / reissue / void refusals (#2648, #2848; the
+//                    SA-608 closed set). The client maps each to FIXED copy and never renders the
+//                    server message. 409: VOID_NOT_EDITABLE (the note is void), RETURN_BACKED (edit the
+//                    return instead), CREDIT_CONSUMED (credit used where a reversal cannot reach),
+//                    OVER_HEADROOM (the new amount exceeds what the source invoice still allows),
+//                    SOURCE_GONE (the source invoice is gone or no longer creditable), NO_SOURCE_CAP (a
+//                    note with no source invoice can't be increased), CHANGED_CONCURRENTLY (another
+//                    change was in progress, or the note changed mid-edit; retry), KEY_REUSED (the
+//                    Idempotency-Key was used for a different edit). 400: KEY_REQUIRED (no
+//                    Idempotency-Key), EXPIRY_PAST (the expiry is, or already was, in the past),
+//                    EXPIRY_NOT_EDITABLE (only an ISSUED note's expiry can change), LINES_REQUIRED (a
+//                    line-linked note must restate its lines), LINE_INVALID (a malformed credit line).
 
 export const API_ERROR_CODES = {
   ADDON_GATE: "ADDON_GATE",
@@ -55,8 +67,40 @@ export const API_ERROR_CODES = {
   RECIPE_VERSION_CONFLICT: "RECIPE_VERSION_CONFLICT",
   RECIPE_INVALID: "RECIPE_INVALID",
   FAMILY_PRICE_AUTHORITY: "FAMILY_PRICE_AUTHORITY",
+  CREDIT_NOTE_VOID_NOT_EDITABLE: "CREDIT_NOTE_VOID_NOT_EDITABLE",
+  CREDIT_NOTE_RETURN_BACKED: "CREDIT_NOTE_RETURN_BACKED",
+  CREDIT_NOTE_CREDIT_CONSUMED: "CREDIT_NOTE_CREDIT_CONSUMED",
+  CREDIT_NOTE_OVER_HEADROOM: "CREDIT_NOTE_OVER_HEADROOM",
+  CREDIT_NOTE_SOURCE_GONE: "CREDIT_NOTE_SOURCE_GONE",
+  CREDIT_NOTE_NO_SOURCE_CAP: "CREDIT_NOTE_NO_SOURCE_CAP",
+  CREDIT_NOTE_CHANGED_CONCURRENTLY: "CREDIT_NOTE_CHANGED_CONCURRENTLY",
+  CREDIT_NOTE_KEY_REUSED: "CREDIT_NOTE_KEY_REUSED",
+  CREDIT_NOTE_KEY_REQUIRED: "CREDIT_NOTE_KEY_REQUIRED",
+  CREDIT_NOTE_EXPIRY_PAST: "CREDIT_NOTE_EXPIRY_PAST",
+  CREDIT_NOTE_EXPIRY_NOT_EDITABLE: "CREDIT_NOTE_EXPIRY_NOT_EDITABLE",
+  CREDIT_NOTE_LINES_REQUIRED: "CREDIT_NOTE_LINES_REQUIRED",
+  CREDIT_NOTE_LINE_INVALID: "CREDIT_NOTE_LINE_INVALID",
 } as const;
 
 export type ApiErrorCode = (typeof API_ERROR_CODES)[keyof typeof API_ERROR_CODES];
 
 export const API_ERROR_CODE_VALUES = Object.values(API_ERROR_CODES) as readonly ApiErrorCode[];
+
+/** The closed set of credit-note refusal codes (#2648/#2848): the UI maps each to fixed copy. */
+export const CREDIT_NOTE_ERROR_CODES = [
+  API_ERROR_CODES.CREDIT_NOTE_VOID_NOT_EDITABLE,
+  API_ERROR_CODES.CREDIT_NOTE_RETURN_BACKED,
+  API_ERROR_CODES.CREDIT_NOTE_CREDIT_CONSUMED,
+  API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM,
+  API_ERROR_CODES.CREDIT_NOTE_SOURCE_GONE,
+  API_ERROR_CODES.CREDIT_NOTE_NO_SOURCE_CAP,
+  API_ERROR_CODES.CREDIT_NOTE_CHANGED_CONCURRENTLY,
+  API_ERROR_CODES.CREDIT_NOTE_KEY_REUSED,
+  API_ERROR_CODES.CREDIT_NOTE_KEY_REQUIRED,
+  API_ERROR_CODES.CREDIT_NOTE_EXPIRY_PAST,
+  API_ERROR_CODES.CREDIT_NOTE_EXPIRY_NOT_EDITABLE,
+  API_ERROR_CODES.CREDIT_NOTE_LINES_REQUIRED,
+  API_ERROR_CODES.CREDIT_NOTE_LINE_INVALID,
+] as const;
+
+export type CreditNoteErrorCode = (typeof CREDIT_NOTE_ERROR_CODES)[number];
