@@ -251,7 +251,11 @@ export function NotificationRulesCard({
                 href={CHANNEL_SETUP_HREF.EMAIL ?? "/settings?tab=email"}
                 className="font-medium text-brand-700 hover:underline"
               >
-                {sender.kind === "default" ? "Use your own mailbox →" : "Change sender →"}
+                {sender.kind !== "default"
+                  ? "Change sender →"
+                  : sender.mailboxAvailable
+                    ? "Use your own mailbox →"
+                    : "Set up email →"}
               </Link>
             </>
           )}
