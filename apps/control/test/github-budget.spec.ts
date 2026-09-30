@@ -76,7 +76,8 @@ describe("T51 the two queries (spec 5.6, A13 by node count)", () => {
     expect(q.query).not.toMatch(/\bfiles\b/);
     const s = sizes(q);
     expect(s.length).toBeGreaterThanOrEqual(1);
-    expect(Math.max(...s)).toBeLessThanOrEqual(40);
+    expect(Math.max(...s)).toBeLessThanOrEqual(100);
+    expect(q.query).toMatch(/states\s*:\s*\[\s*OPEN\s*\]/);
     for (const f of ["remaining", "resetAt", "cost"]) expect(q.query).toContain(f);
     expect(q.query).toMatch(/rateLimit/);
   });
@@ -105,7 +106,7 @@ describe("T51 the two queries (spec 5.6, A13 by node count)", () => {
     const list = Math.max(...sizes(asQ(buildListQuery(REPO))));
     const detail = Math.max(...sizes(asQ(buildDetailQuery(REPO, 1))));
     // 120 polls/h x (one list + 10 changed details); each request is 1 point for <= 100 nodes.
-    expect(list).toBeLessThanOrEqual(40);
+    expect(list).toBeLessThanOrEqual(100);
     expect(detail).toBeLessThanOrEqual(100);
     expect(120 * (1 + 10)).toBeLessThan(5000);
   });
@@ -117,7 +118,7 @@ interface Call {
   method: string;
   headers: Headers;
   body: any;
-  kind: "list" | "detail" | "branches" | "other";
+  kind: "list" | "closed" | "detail" | "branches" | "other";
   number?: number;
 }
 const node = (n: number, updatedAt: string, oid = `${n}`.padStart(40, "0")) => ({
@@ -138,6 +139,7 @@ const makeStub = () => {
   const stub = {
     calls: [] as Call[],
     list: [] as any[],
+    closed: [] as any[],
     files: {} as Record<number, any[]>,
     branches: [{ name: "feat/a", commit: { sha: "1".repeat(40) } }] as any[],
     etag: 'W/"v1"',
@@ -153,7 +155,14 @@ const makeStub = () => {
       if (u.includes("/graphql")) {
         const q: string = body.query;
         const isDetail = /\bfiles\b/.test(q);
-        const call: Call = { url: u, method, headers, body, kind: isDetail ? "detail" : "list" };
+        const isClosed = !isDetail && /CLOSED/.test(q);
+        const call: Call = {
+          url: u,
+          method,
+          headers,
+          body,
+          kind: isDetail ? "detail" : isClosed ? "closed" : "list",
+        };
         if (isDetail) {
           const n = Number(body.variables?.number ?? q.match(/number\s*:\s*(\d+)/)?.[1]);
           call.number = n;
@@ -179,7 +188,12 @@ const makeStub = () => {
             },
           });
         }
-        return json({ data: { rateLimit, repository: { pullRequests: { nodes: stub.list } } } });
+        return json({
+          data: {
+            rateLimit,
+            repository: { pullRequests: { nodes: isClosed ? stub.closed : stub.list } },
+          },
+        });
       }
       if (u.includes("/branches")) {
         stub.stubCalls({ url: u, method, headers, body, kind: "branches" });
@@ -286,7 +300,7 @@ describe("T51/T52 the request plan per poll", () => {
     const det = stub.calls.find((x) => x.kind === "detail")!;
     expect(
       Math.max(...sizes({ query: list.body.query, variables: list.body.variables ?? {} })),
-    ).toBeLessThanOrEqual(40);
+    ).toBeLessThanOrEqual(100);
     expect(list.body.query).not.toMatch(/\bfiles\b/);
     expect(sizes({ query: det.body.query, variables: det.body.variables ?? {} })).toContain(100);
   });
@@ -319,6 +333,42 @@ describe("T51/T52 the request plan per poll", () => {
     stub.list = [node(1, T1), node(2, T0)];
     await c.poll();
     expect(c.state.rateLimit.remaining).toBe(stub.lastRemaining);
+  });
+});
+
+describe("F6 amended budget: recent-closed query on every 4th poll only", () => {
+  it("polls 1-3 run no closed query, poll 4 runs exactly one (first:20, CLOSED+MERGED), poll 5 none", async () => {
+    const stub = makeStub();
+    stub.list = [node(1, T0)];
+    stub.closed = [{ ...node(2, T0), state: "MERGED" }];
+    const c = client(stub);
+    const closedPerPoll: number[] = [];
+    for (let i = 0; i < 8; i++) {
+      stub.reset();
+      await c.poll();
+      closedPerPoll.push(stub.count("closed"));
+    }
+    expect(closedPerPoll).toEqual([0, 0, 0, 1, 0, 0, 0, 1]);
+  });
+
+  it("the closed query is small, unfiltered by nothing else, and its PRs reach the result", async () => {
+    const stub = makeStub();
+    stub.list = [node(1, T0)];
+    stub.closed = [{ ...node(2, T0), state: "MERGED" }];
+    const c = client(stub);
+    let r: any;
+    for (let i = 0; i < 4; i++) r = await c.poll();
+    const q = stub.calls.find((x) => x.kind === "closed")!;
+    expect(q.body.query).toMatch(/CLOSED/);
+    expect(q.body.query).toMatch(/MERGED/);
+    expect(q.body.query).not.toMatch(/\bfiles\b/);
+    expect(
+      Math.max(...sizes({ query: q.body.query, variables: q.body.variables ?? {} })),
+    ).toBeLessThanOrEqual(20);
+    expect(r.prs.map((p: any) => p.number).sort()).toEqual([1, 2]);
+    // and they stay visible on the polls between closed queries
+    r = await c.poll();
+    expect(r.prs.map((p: any) => p.number).sort()).toEqual([1, 2]);
   });
 });
 
