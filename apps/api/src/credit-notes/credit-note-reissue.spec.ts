@@ -302,6 +302,15 @@ describe("CreditNoteReissueService (#2648)", () => {
         expect(idem.save).not.toHaveBeenCalled();
       });
 
+      it("#2848 (SA-608f) + PR-C: the IN-TX marker refusal also carries CREDIT_NOTE_SOURCE_GONE (409)", async () => {
+        prisma.auditLog.findFirst.mockResolvedValueOnce(null).mockResolvedValue({ id: "al-1" });
+        const err: any = await service
+          .reissue("cn-old", { amount: 10 }, "k", "u")
+          .catch((e: unknown) => e);
+        expect(err?.getStatus?.()).toBe(409);
+        expect(codeOf(err)).toBe(CODES.CREDIT_NOTE_SOURCE_GONE);
+      });
+
       it("#2848 + PR-C: a SOURCE_DELETED marker refusal carries CREDIT_NOTE_SOURCE_GONE (409)", async () => {
         prisma.creditNote.findFirst.mockResolvedValue({ ...ORPHAN });
         prisma.auditLog.findFirst.mockResolvedValue({ id: "al-1" });
