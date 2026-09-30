@@ -44,6 +44,10 @@
 //                    into whole boxes; a server tripwire, never a client-fixable input.
 //   COMPOSED_LINE_EDIT — `body.code` of the 409 when a DRAFT invoice edit changes a mixed-pack line
 //                    by anything other than whole boxes or a price (#2717 M3).
+//   INVENTORY_SETTING_INVALID — `body.code` of the 400 when PATCH /settings/inventory gets a
+//                    `buyerOversell` that is not exactly "off" or "backorder"; `details.field` names it.
+//   TENANT_CONTEXT_REQUIRED — `body.code` of the 403 when a tenant-scoped endpoint is called with no
+//                    tenant context (a SUPER_ADMIN not impersonating, a job): forTenant() would be unscoped.
 
 export const API_ERROR_CODES = {
   ADDON_GATE: "ADDON_GATE",
@@ -69,6 +73,8 @@ export const API_ERROR_CODES = {
   COMPONENT_SUM_MISMATCH: "COMPONENT_SUM_MISMATCH",
   COMPOSITION_CORRUPT: "COMPOSITION_CORRUPT",
   COMPOSED_LINE_EDIT: "COMPOSED_LINE_EDIT",
+  INVENTORY_SETTING_INVALID: "INVENTORY_SETTING_INVALID",
+  TENANT_CONTEXT_REQUIRED: "TENANT_CONTEXT_REQUIRED",
 } as const;
 
 export type ApiErrorCode = (typeof API_ERROR_CODES)[keyof typeof API_ERROR_CODES];

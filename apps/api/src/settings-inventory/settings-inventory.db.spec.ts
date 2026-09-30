@@ -65,10 +65,7 @@ describeDb("settings/inventory — real Postgres (WS9)", () => {
 
   async function seed() {
     seq += 1;
-    const slug = assertTestTenant(
-      `qa-invsettings-${RUN}-${seq}`,
-      "settings-inventory.db.spec.ts",
-    );
+    const slug = assertTestTenant(`qa-invsettings-${RUN}-${seq}`, "settings-inventory.db.spec.ts");
     const tenant = await prisma.tenant.create({ data: { slug, name: `Inv ${slug}` } });
     tenantIds.push(tenant.id);
     const user = await prisma.user.create({

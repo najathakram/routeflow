@@ -111,10 +111,10 @@ describe("GET /settings/inventory", () => {
 describe("PATCH /settings/inventory", () => {
   it("off → backorder: one set(), TENANT scope, the registry key, the value, a reason, the actor", async () => {
     const { controller, policies } = build();
-    const res = await controller.update(
-      { buyerOversell: "backorder" },
-      { ...admin, impersonatedBy: "sa1" } as JwtPayload,
-    );
+    const res = await controller.update({ buyerOversell: "backorder" }, {
+      ...admin,
+      impersonatedBy: "sa1",
+    } as JwtPayload);
     expect(policies.set).toHaveBeenCalledTimes(1);
     expect(policies.set).toHaveBeenCalledWith({
       tenantId: "t1",
