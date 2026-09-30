@@ -673,14 +673,20 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
         ),
       );
 
-    it("create: hidden standalone product => archived-style 400, nothing persisted; staff create succeeds", async () => {
+    /** SA-606 WS6: the buyer refusal is the existing 409 envelope naming the hidden product. */
+    const hiddenBody = (productId: string) => ({
+      code: "SELLING_RESTRICTED",
+      blockedLines: [expect.objectContaining({ productId, reason: "HIDDEN_FROM_PORTAL" })],
+    });
+
+    it("create: hidden standalone product => 409 SELLING_RESTRICTED (HIDDEN_FROM_PORTAL), nothing persisted; staff create succeeds", async () => {
       const f = await seedTenant("f-create-solo");
       // Positive control first: a VISIBLE product creates for the buyer (harness is sound).
       await expect(buyerCreate(f, f.V2.id)).resolves.toBeDefined();
       await setOne(f, f.S.id, false);
       const before = await counts(f);
-      await expect(buyerCreate(f, f.S.id)).rejects.toBeInstanceOf(BadRequestException);
-      await expect(buyerCreate(f, f.S.id)).rejects.toThrow(/archived/);
+      await expect(buyerCreate(f, f.S.id)).rejects.toBeInstanceOf(ConflictException);
+      await expect(buyerCreate(f, f.S.id)).rejects.toMatchObject({ response: hiddenBody(f.S.id) });
       expect(await counts(f)).toEqual(before);
 
       const staffOrder = await staffCreate(f, f.S.id);
@@ -688,19 +694,21 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
       expect((await counts(f)).orders).toBe(before.orders + 1);
     });
 
-    it("create: a product under a hidden PARENT => 400, nothing persisted; staff create succeeds", async () => {
+    it("create: a product under a hidden PARENT => 409 SELLING_RESTRICTED, nothing persisted; staff create succeeds", async () => {
       const f = await seedTenant("f-create-parent");
       await setOne(f, f.P.id, false);
       const before = await counts(f);
-      await expect(buyerCreate(f, f.V1.id)).rejects.toBeInstanceOf(BadRequestException);
-      await expect(buyerCreate(f, f.V1.id)).rejects.toThrow(/archived/);
+      await expect(buyerCreate(f, f.V1.id)).rejects.toBeInstanceOf(ConflictException);
+      await expect(buyerCreate(f, f.V1.id)).rejects.toMatchObject({
+        response: hiddenBody(f.V1.id),
+      });
       expect(await counts(f)).toEqual(before);
 
       await expect(staffCreate(f, f.V1.id)).resolves.toBeDefined();
       expect((await counts(f)).orders).toBe(before.orders + 1);
     });
 
-    it("updateOrderItems (buyer full replace): naming a hidden product or a product under a hidden parent => 400, rows unchanged", async () => {
+    it("updateOrderItems (buyer full replace): naming a hidden product or a product under a hidden parent => 409 SELLING_RESTRICTED HIDDEN_FROM_PORTAL, rows unchanged", async () => {
       const f = await seedTenant("f-update");
       const open = await raw.order.create({
         data: {
@@ -737,7 +745,7 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
           { productId: f.V2.id, qty: 12 },
           { productId: f.S.id, qty: 12 },
         ]),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      ).rejects.toMatchObject({ response: hiddenBody(f.S.id) });
       expect(await rows()).toEqual(before);
 
       await setOne(f, f.S.id, true);
@@ -747,7 +755,7 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
           { productId: f.V2.id, qty: 12 }, // V2 is itself under the hidden parent
           { productId: f.V1.id, qty: 12 },
         ]),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      ).rejects.toMatchObject({ response: hiddenBody(f.V1.id) });
       expect(await rows()).toEqual(before);
 
       // Unhidden again: the same edit is accepted (the refusal was the rule, not the harness).

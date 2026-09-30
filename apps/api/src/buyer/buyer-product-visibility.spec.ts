@@ -1,7 +1,8 @@
+import { ConflictException } from "@nestjs/common";
 import {
   buyerVisibleProductByIdWhere,
   buyerVisibleProductWhere,
-  firstNewHiddenProduct,
+  assertBuyerMayOrder,
   isBuyerVisibleProduct,
   NO_BUYER_RESTRICTIONS,
 } from "./buyer-product-visibility";
@@ -115,22 +116,59 @@ describe("isBuyerVisibleProduct (in-memory twin)", () => {
   });
 });
 
-describe("firstNewHiddenProduct (buyer replace-all gate)", () => {
-  const hidden = { id: "h", isActive: true, portalVisible: false };
-  const underHidden = { id: "v", isActive: true, parent: { portalVisible: false } };
-  const ok = { id: "o", isActive: true, portalVisible: true };
+describe("assertBuyerMayOrder (WS6 refusal: 409 SELLING_RESTRICTED, reason HIDDEN_FROM_PORTAL)", () => {
+  const ok = {
+    id: "o",
+    name: "Ok Item",
+    isActive: true,
+    kind: "STANDARD",
+    portalVisible: true,
+    parent: null,
+  };
+  const hidden = { ...ok, id: "h", name: "Hidden One", portalVisible: false };
+  const underHidden = { ...ok, id: "v", name: "Variant Two", parent: { portalVisible: false } };
+  const family = { ...ok, id: "f", name: "Family", kind: "FAMILY" };
+  const bodyOf = (fn: () => void) => {
+    try {
+      fn();
+    } catch (e) {
+      return (e as ConflictException).getResponse() as Record<string, any>;
+    }
+    return null;
+  };
 
-  it("returns a hidden or hidden-parent product the order does not already hold", () => {
-    expect(firstNewHiddenProduct([ok, hidden], new Set())).toBe(hidden);
-    expect(firstNewHiddenProduct([underHidden], new Set())).toBe(underHidden);
+  it("a visible product passes", () => {
+    expect(() => assertBuyerMayOrder([ok], new Set())).not.toThrow();
   });
 
-  it("lets a line the order already holds be echoed, and ignores visible products", () => {
-    expect(firstNewHiddenProduct([hidden, underHidden], new Set(["h", "v"]))).toBeUndefined();
-    expect(firstNewHiddenProduct([ok], new Set())).toBeUndefined();
+  it("names EVERY new hidden product in the existing buyer envelope, with reason only HIDDEN_FROM_PORTAL", () => {
+    const body = bodyOf(() => assertBuyerMayOrder([ok, hidden, underHidden, family], new Set()));
+    expect(body).toMatchObject({ code: "SELLING_RESTRICTED" });
+    expect(body!.blockedLines).toEqual([
+      { productId: "h", productName: "Hidden One", reason: "HIDDEN_FROM_PORTAL" },
+      { productId: "v", productName: "Variant Two", reason: "HIDDEN_FROM_PORTAL" },
+      { productId: "f", productName: "Family", reason: "HIDDEN_FROM_PORTAL" },
+    ]);
+    expect(typeof body!.message).toBe("string");
+    expect(body!.message).not.toMatch(/archived/i);
+    expect(Object.keys(body!.blockedLines[0]).sort()).toEqual([
+      "productId",
+      "productName",
+      "reason",
+    ]);
   });
 
-  it("does not turn an archived product into a refusal (archive rules stay as they were)", () => {
-    expect(firstNewHiddenProduct([{ id: "a", isActive: false }], new Set())).toBeUndefined();
+  it("is a 409 ConflictException, not a 400", () => {
+    expect(() => assertBuyerMayOrder([hidden], new Set())).toThrow(ConflictException);
+  });
+
+  it("a line the order already holds can be echoed (replace-all keeps held hidden lines)", () => {
+    expect(() => assertBuyerMayOrder([hidden, underHidden], new Set(["h", "v"]))).not.toThrow();
+  });
+
+  it("archived products are not judged here (the archived 400 rules stay as they were)", () => {
+    expect(() =>
+      assertBuyerMayOrder([{ ...ok, id: "a", isActive: false }], new Set()),
+    ).not.toThrow();
   });
 });
