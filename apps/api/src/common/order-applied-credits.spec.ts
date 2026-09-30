@@ -247,7 +247,7 @@ describe("orderAppliedCredits (#2404)", () => {
 
 describe("requestedLabel (#2600): say what happens to the rest of a partly-requested credit", () => {
   const fmt = (n: number) => `$${n.toFixed(2)}`;
-  const pendingFor = (amount: number | null, total?: number | null) =>
+  const pendingFor = (amount: number | null, total?: number | string | null) =>
     orderAppliedCredits({
       orderCreditNotes: [
         {
