@@ -203,6 +203,79 @@ describeDb("WS8 families API — real Postgres", () => {
     expect((await prisma.product.findUniqueOrThrow({ where: { id: k2.id } })).sku).toBe("K-2");
   });
 
+  it("Opus #2881 B2: a LEGACY inactive product still holding a LIVE code does not 500 a POST or a PATCH; the claim releases it", async () => {
+    const tenantId = await seedTenant("legacy");
+    const first = await inTenant(tenantId, () =>
+      service.createFamily(
+        { family: { name: "Old Fam" }, variants: [variant("OldKid", { sku: "LEG-1" })] } as any,
+        ACTOR,
+      ),
+    );
+    // pre-#2860 shape: deactivated WITHOUT a release, so the code is still live on the inactive row
+    await prisma.product.update({ where: { id: first.variants[0].id }, data: { isActive: false } });
+    const second = await inTenant(tenantId, () =>
+      service.createFamily(
+        { family: { name: "New Fam" }, variants: [variant("NewKid", { sku: "LEG-1" })] } as any,
+        ACTOR,
+      ),
+    );
+    expect(second.variants).toHaveLength(1);
+    const old = await prisma.product.findUniqueOrThrow({ where: { id: first.variants[0].id } });
+    expect(old.sku).toBeNull();
+    expect(old.retiredSku).toBe("LEG-1");
+    // the same through PATCH
+    await prisma.product.update({
+      where: { id: second.variants[0].id },
+      data: { isActive: false },
+    });
+    const third = await inTenant(tenantId, () =>
+      service.createFamily(
+        { family: { name: "Third Fam" }, variants: [variant("ThirdKid", { sku: "T-1" })] } as any,
+        ACTOR,
+      ),
+    );
+    await inTenant(tenantId, () =>
+      service.updateVariants(
+        third.family.id,
+        { update: [{ id: third.variants[0].id, sku: "LEG-1" }] } as any,
+        ACTOR,
+      ),
+    );
+    expect(
+      (await prisma.product.findUniqueOrThrow({ where: { id: third.variants[0].id } })).sku,
+    ).toBe("LEG-1");
+  });
+
+  it("Opus #2881 B3: an update row taking a code a SIBLING still holds is a 409 FAMILY_ROWS_CONFLICT, never a 500", async () => {
+    const tenantId = await seedTenant("swap");
+    const created = await inTenant(tenantId, () =>
+      service.createFamily(
+        {
+          family: { name: "SwapFam" },
+          variants: [variant("A", { sku: "SW-A" }), variant("B", { sku: "SW-B" })],
+        } as any,
+        ACTOR,
+      ),
+    );
+    const [a, b] = created.variants;
+    const body = await conflictOf(
+      inTenant(tenantId, () =>
+        service.updateVariants(
+          created.family.id,
+          {
+            update: [
+              { id: a.id, sku: "SW-B" },
+              { id: b.id, name: "B renamed" },
+            ],
+          } as any,
+          ACTOR,
+        ),
+      ),
+    );
+    expect(body.code).toBe("FAMILY_ROWS_CONFLICT");
+    expect((await prisma.product.findUniqueOrThrow({ where: { id: a.id } })).sku).toBe("SW-A");
+  });
+
   it("a FAMILY row read from the DB is refused as a sales line (400 FAMILY_NOT_SELLABLE); its variant is not", async () => {
     const tenantId = await seedTenant("sell");
     const created = await inTenant(tenantId, () =>
