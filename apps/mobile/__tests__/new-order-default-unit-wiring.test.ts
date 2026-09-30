@@ -14,12 +14,12 @@ const state = read("lib", "cart-line-state.ts");
 
 describe("mobile default selling unit wiring (#2784)", () => {
   it("the line state carries the UI-only flag", () => {
-    expect(state).toMatch(/startOnDefaultUnit\?: boolean/);
+    expect(state).toMatch(/startOnDefaultUnit\?: number/);
   });
 
   it("addOne flags ONLY a new line and only when asked; the row-tap action asks, the scan path does not", () => {
     expect(screen).toMatch(/startOnDefault\?: boolean/);
-    expect(screen).toMatch(/if \(isNew && startOnDefault\) line\.startOnDefaultUnit = true;/);
+    expect(screen).toMatch(/if \(isNew && startOnDefault\) line\.startOnDefaultUnit = line\.qty;/);
     expect(screen).toMatch(/add: \(id: string\) => addOne\(id, undefined, "BOX", true\)/);
     expect(screen).not.toMatch(/finishAccept[\s\S]{0,120}startOnDefault/);
   });
@@ -39,12 +39,18 @@ describe("mobile default selling unit wiring (#2784)", () => {
     expect(fn).toMatch(/startOnDefaultUnit: undefined/);
   });
 
-  it("Opus #2865 B2: CartRow only hands the flag on while the line is pristine (qty 1, no typed/operator price)", () => {
+  it("Opus #2865 B2/r2: CartRow hands the flag on only while the price is the operator's own AND untouched; it never guards on qty (a boxed qty is total pieces)", () => {
     expect(cartRow).toMatch(
       /startOnDefaultUnit=\{[\s\S]{0,260}line\.startOnDefaultUnit[\s\S]{0,260}\}/,
     );
     expect(cartRow).toMatch(/priceSource !== "operator"/);
-    expect(cartRow).toMatch(/\(line\.qty \?\? 0\) <= 1/);
     expect(cartRow).toMatch(/line\.unitPrice == null/);
+    expect(cartRow).not.toMatch(/line\.qty \?\? 0\) <= 1/);
+  });
+
+  it("Opus #2865 r2: the flag is the line's creation qty, and CartRow applies the default only while qty still equals it (no handler edits, no qty<=1 guard)", () => {
+    expect(state).toMatch(/startOnDefaultUnit\?: number/);
+    expect(screen).toMatch(/line\.startOnDefaultUnit = line\.qty/);
+    expect(cartRow).toMatch(/line\.startOnDefaultUnit === line\.qty/);
   });
 });

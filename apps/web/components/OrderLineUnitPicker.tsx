@@ -17,8 +17,9 @@ export interface OrderLineUnitPickerLine {
   unitPrice: number;
   priceType: "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL";
   /** #2784: the operator's own override fields: the start-on-default rule never touches a shaped line. */
-  qty?: number;
   discountedPrice?: number;
+  /** Informational only: on a boxed line this is TOTAL PIECES, so the start-on-default rule never guards on it. */
+  qty?: number;
   unitLabel?: string;
   packBase?: PackBase;
   tierPrices?: Parameters<typeof ladderProductOf>[0]["tierPrices"];
@@ -73,11 +74,11 @@ export function OrderLineUnitPicker({
   React.useEffect(() => {
     if (!startOnDefaultUnit || startedRef.current || options.length === 0) return;
     startedRef.current = true; // one shot per mount: the operator's later choice is never re-overridden
-    // Only a PRISTINE line (Opus #2865 B1): no unit, qty 1, no typed/discounted/manual price.
+    // Only a line whose price the operator has not shaped (Opus #2865 B1/r2). Qty is NOT a guard: on a boxed line it is total
+    // pieces (a fresh 1-box line is 24); the modal clears the flag in every qty/price handler instead.
     const shaped =
       !!line.unitLabel ||
       !!line.priceEdited ||
-      (line.qty ?? 1) > 1 ||
       line.discountedPrice != null ||
       line.priceType === "DISCOUNTED" ||
       line.priceType === "MANUAL";
@@ -93,7 +94,6 @@ export function OrderLineUnitPicker({
     tier,
     line.unitLabel,
     line.priceEdited,
-    line.qty,
     line.discountedPrice,
     line.priceType,
     onChange,

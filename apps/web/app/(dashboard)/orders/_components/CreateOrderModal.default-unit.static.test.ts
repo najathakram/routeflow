@@ -30,4 +30,21 @@ describe("CreateOrderModal default selling unit wiring (#2784)", () => {
     const fn = src.slice(src.indexOf("const setLineUnit"), src.indexOf("const setDiscountedPrice"));
     expect(fn).toMatch(/startOnDefaultUnit: false/);
   });
+
+  it("Opus #2865 r2: every qty / price handler CONSUMES the flag (qty is total pieces on a boxed line, so the picker cannot guard on it)", () => {
+    const slice = (a: string, b: string) => src.slice(src.indexOf(a), src.indexOf(b));
+    for (const [name, next] of [
+      ["const setQty", "const updateQty"],
+      ["const updateQty", "const setBoxes"],
+      ["const setBoxes", "const setPieces"],
+      ["const setPieces", "const setUnitQty"],
+      ["const setUnitQty", "const setSellBy"],
+      ["const setDiscountedPrice", "const setOverrideReason"],
+    ] as const) {
+      expect({ name, consumed: /startOnDefaultUnit: false/.test(slice(name, next)) }).toEqual({
+        name,
+        consumed: true,
+      });
+    }
+  });
 });

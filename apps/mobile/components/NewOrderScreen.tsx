@@ -793,7 +793,7 @@ function ProductPickView({
       // a PACK's own barcode split (SA-085f BLOCKER: box math on a unit line). upb <= 1 has no
       // box/unit distinction (R4): today's plain +1.
       const line = addScannedLevelToLine(prev, level, isBoxed, upb);
-      if (isNew && startOnDefault) line.startOnDefaultUnit = true;
+      if (isNew && startOnDefault) line.startOnDefaultUnit = line.qty;
       if (isNew && prefill != null) {
         line.unitPrice = prefill;
         // B755: tag this as a HISTORY pre-fill, not an operator override — resuming this

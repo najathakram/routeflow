@@ -792,14 +792,16 @@ export function CreateOrderModal({
   /** #2696 (b): a typed qty on a plain (non-case) line — a whole number, at least 1 (like the −). */
   const setQty = (tempId: string, value: number) => {
     const qty = Math.max(1, Number.isFinite(value) ? Math.trunc(value) : 1);
-    setLineItems((prev) => prev.map((li) => (li.tempId === tempId ? { ...li, qty } : li)));
+    setLineItems((prev) =>
+      prev.map((li) => (li.tempId === tempId ? { ...li, qty, startOnDefaultUnit: false } : li)),
+    );
   };
 
   const updateQty = (tempId: string, delta: number) => {
     setLineItems((prev) =>
       prev.map((li) => {
         if (li.tempId !== tempId) return li;
-        return { ...li, qty: Math.max(1, li.qty + delta) };
+        return { ...li, qty: Math.max(1, li.qty + delta), startOnDefaultUnit: false };
       }),
     );
   };
@@ -811,7 +813,12 @@ export function CreateOrderModal({
         const boxes = Math.max(0, isNaN(value) ? 0 : value);
         const pieces = li.pieces ?? 0;
         const qty = boxes * (li.unitsPerBox ?? 1) + pieces;
-        return { ...li, boxes, qty: Math.max(qty, boxes > 0 || pieces > 0 ? qty : 0) };
+        return {
+          ...li,
+          boxes,
+          qty: Math.max(qty, boxes > 0 || pieces > 0 ? qty : 0),
+          startOnDefaultUnit: false,
+        };
       }),
     );
   };
@@ -823,7 +830,7 @@ export function CreateOrderModal({
         const pieces = Math.max(0, isNaN(value) ? 0 : value);
         const boxes = li.boxes ?? 0;
         const qty = boxes * (li.unitsPerBox ?? 1) + pieces;
-        return { ...li, pieces, qty };
+        return { ...li, pieces, qty, startOnDefaultUnit: false };
       }),
     );
   };
@@ -836,7 +843,13 @@ export function CreateOrderModal({
       prev.map((li) => {
         if (li.tempId !== tempId) return li;
         const n = normalizeBoxesPieces({ qty: value, unitsPerBox: li.unitsPerBox });
-        return { ...li, boxes: n.boxes ?? 0, pieces: n.pieces ?? 0, qty: n.qty };
+        return {
+          ...li,
+          boxes: n.boxes ?? 0,
+          pieces: n.pieces ?? 0,
+          qty: n.qty,
+          startOnDefaultUnit: false,
+        };
       }),
     );
   };
@@ -885,13 +898,17 @@ export function CreateOrderModal({
             overrideReason: undefined,
             unitPrice: revertPrice,
             priceType: li.specialPrice != null ? "SPECIAL" : "STANDARD",
+            startOnDefaultUnit: false,
           };
         }
         // #2696(c): the server's own rule A (@routeflow/pricing decideStaffOverride) — within ½¢
         // of the special / list price is no override; below list DISCOUNTED, at/above MANUAL (an
         // upsell: the base is hidden from the customer server-side, shown green to the operator).
         const next = applyTypedPrice(li, value);
-        return next.discountedPrice == null ? { ...next, overrideReason: undefined } : next;
+        const consumed = { ...next, startOnDefaultUnit: false };
+        return consumed.discountedPrice == null
+          ? { ...consumed, overrideReason: undefined }
+          : consumed;
       }),
     );
   };

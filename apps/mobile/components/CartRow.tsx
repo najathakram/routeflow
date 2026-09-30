@@ -238,10 +238,10 @@ export function CartRow({
         }}
         product={product}
         tier={tier}
-        // Only while the line is pristine: qty 1, no typed/operator price (Opus #2865 B2).
+        // Only while no qty/price edit consumed the flag (the screen clears it) and no operator price (Opus #2865 B2/r2).
         startOnDefaultUnit={
-          !!line.startOnDefaultUnit &&
-          (line.qty ?? 0) <= 1 &&
+          line.startOnDefaultUnit != null &&
+          line.startOnDefaultUnit === line.qty &&
           line.priceSource !== "operator" &&
           line.unitPrice == null
         }
