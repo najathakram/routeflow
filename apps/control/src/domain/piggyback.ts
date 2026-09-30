@@ -20,6 +20,8 @@ export interface PiggybackItem {
 }
 
 const CAP = 8;
+const PRIO: Record<string, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
+const prio = (p: string) => (Object.prototype.hasOwnProperty.call(PRIO, p) ? PRIO[p] : 9);
 const SENSITIVE_TAG = "tier-1 — not bundleable";
 const cmp = (x: string, y: string) => (x < y ? -1 : x > y ? 1 : 0);
 
@@ -52,9 +54,11 @@ export function piggyback(
     (a, b) =>
       Number(a.sensitive) - Number(b.sensitive) ||
       b.score - a.score ||
-      cmp(a.priority, b.priority) ||
+      prio(a.priority) - prio(b.priority) ||
       cmp(a.id, b.id),
   );
-  const items = rows.slice(0, CAP);
-  return { items, count: items.filter((i) => !i.sensitive).length };
+  // the cap bounds the suggestions; sensitive holds are warnings and always stay
+  const normal = rows.filter((r) => !r.sensitive).slice(0, CAP);
+  const items = [...normal, ...rows.filter((r) => r.sensitive)];
+  return { items, count: normal.length };
 }

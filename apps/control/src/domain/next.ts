@@ -62,7 +62,7 @@ export function nextEligible(
     shipDate(t),
     rank(IMPACT, t.customerImpact, 3),
     rank(EFFORT, t.effort, 3),
-    -t.importance,
+    -(Number.isFinite(t.importance) ? t.importance : 0),
   ];
   const sorter = (a: TaskState, b: TaskState) => {
     const ka = key(a);

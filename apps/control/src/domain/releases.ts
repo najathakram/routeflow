@@ -16,7 +16,7 @@ export interface Readiness {
   moved: { from: string | null; to: string | null } | null;
 }
 
-const utcDay = (iso: string): number => Date.parse(iso.slice(0, 10));
+const utcDay = (iso: string): number => Math.floor(Date.parse(iso) / DAY_MS);
 
 export function releaseReadiness(
   state: Pick<ControlState, "tasks" | "releases">,
@@ -49,9 +49,11 @@ export function releaseReadiness(
   let s: ReadinessState = "IN PROGRESS";
   if (rel && rel.status.value === "shipped") s = "SHIPPED";
   else if (total > 0 && open === 0) s = "READY";
-  else if (rel && rel.shipDate.value !== null && openRatio > OPEN_RATIO) {
-    const daysLeft = (utcDay(rel.shipDate.value) - utcDay(now)) / DAY_MS;
-    if (daysLeft <= AT_RISK_DUE_SOON_DAYS) s = "AT RISK";
+  else if (rel && rel.shipDate.value !== null && /^\d{4}-\d{2}-\d{2}$/.test(rel.shipDate.value)) {
+    const daysLeft = utcDay(rel.shipDate.value) - utcDay(now);
+    if (daysLeft < 0 ? open > 0 : daysLeft <= AT_RISK_DUE_SOON_DAYS && openRatio > OPEN_RATIO) {
+      s = "AT RISK";
+    }
   }
   return { state: s, total, done, open, openRatio, moved };
 }
