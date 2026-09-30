@@ -59,6 +59,7 @@ describe("VendorBillsService — #2488 dueDate is the literal calendar day", () 
           provide: InventoryService,
           useValue: {
             recomputeProductInTx: jest.fn(),
+            lockProducts: jest.fn(),
             fireStockAlerts: jest.fn(),
             createDraftPurchaseOrderInTx: jest.fn(),
           },
