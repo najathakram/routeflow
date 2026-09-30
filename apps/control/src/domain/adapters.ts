@@ -4,6 +4,10 @@ import type { BaseRelease, BaseTask, Status } from "./types";
 export interface AdaptedTask extends BaseTask {
   sensitive?: boolean;
   sensitiveFor?: string[];
+  /** All PRs named by a "Fixed" register row (`pr` is the first). */
+  prs?: number[];
+  /** Campaign shard says fixed while the register row still reads Open (WP5 §5.7). */
+  registerLag?: boolean;
   source?: "register";
 }
 
@@ -52,6 +56,7 @@ export function locationAreas(location: string): string[] {
       p = p.slice(0, -1);
     }
     if (p.endsWith("/")) p += "**";
+    else if (!p.slice(p.lastIndexOf("/") + 1).includes(".")) p += "/**";
     if (!seen.has(p)) {
       seen.add(p);
       out.push(p);
@@ -80,21 +85,23 @@ export function featuresAsTasks(rows: Row[]): AdaptedTask[] {
   });
 }
 
-function bugStatus(register: string): { status: Status; pr?: number } {
+function bugStatus(register: string): { status: Status; pr?: number; prs?: number[] } {
   const t = register.trim().toLowerCase();
   const fixed = /^fixed\b/.exec(t);
   if (fixed) {
-    const n = /#(\d+)/.exec(register);
-    return n ? { status: "code-complete", pr: Number(n[1]) } : { status: "code-complete" };
+    const prs = [...register.matchAll(/#(\d+)/g)].map((m) => Number(m[1]));
+    return prs.length ? { status: "code-complete", pr: prs[0], prs } : { status: "code-complete" };
   }
   if (/^(cleared|refuted|already|duplicate)/.test(t)) return { status: "dropped" };
   return { status: "planned" };
 }
 
-export function bugsAsTasks(rows: Row[]): AdaptedTask[] {
+const SHARD_FIXED = new Set(["done", "already-fixed", "proven", "proven-pending-deploy"]);
+
+export function bugsAsTasks(rows: Row[], shards?: ReadonlyMap<string, Row>): AdaptedTask[] {
   return rows.map((r) => {
     const sev = str(r.severity).toLowerCase();
-    const { status, pr } = bugStatus(str(r.register));
+    const { status, pr, prs } = bugStatus(str(r.register));
     const t: AdaptedTask = {
       id: str(r.id),
       title: str(r.title),
@@ -106,12 +113,23 @@ export function bugsAsTasks(rows: Row[]): AdaptedTask[] {
       dependsOn: [],
       related: [],
       lane: null,
-      phase: typeof r.state === "string" ? r.state : null,
+      phase: null,
       sensitive: r.sensitive === true,
       sensitiveFor: strArr(r.sensitiveFor),
       source: "register",
     };
     if (pr !== undefined) t.pr = pr;
+    if (prs !== undefined) t.prs = prs;
+    const sh = shards?.get(t.id);
+    if (sh) {
+      const state = str(sh.state);
+      if (state) t.phase = state;
+      if (typeof sh.pr === "number" && t.pr === undefined) t.pr = sh.pr;
+      if (t.status === "planned" && SHARD_FIXED.has(state)) {
+        t.status = "code-complete";
+        t.registerLag = true;
+      }
+    }
     return t;
   });
 }
