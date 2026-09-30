@@ -1,5 +1,5 @@
 import * as React from "react";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { AnalyticsCsvButton } from "./AnalyticsCsvButton";
 
 let mockRole = "OPERATOR";
@@ -37,6 +37,14 @@ function readBlob(b: Blob): Promise<string> {
   });
 }
 
+function readBytes(b: Blob): Promise<ArrayBuffer> {
+  return new Promise((resolve) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result as ArrayBuffer);
+    r.readAsArrayBuffer(b);
+  });
+}
+
 describe("AnalyticsCsvButton", () => {
   it.each(["DRIVER", "CUSTOMER"])("renders nothing for %s", (role) => {
     mockRole = role;
@@ -71,8 +79,10 @@ describe("AnalyticsCsvButton", () => {
     render(<AnalyticsCsvButton slug="top-products" data={[ROW]} {...RANGE} />);
     fireEvent.click(screen.getByTestId("analytics-csv-top-products"));
     expect(anchors).toEqual(["analytics-top-products-2026-01-01-to-2026-01-31.csv"]);
-    const text = await readBlob(blobs[0]);
-    await waitFor(() => expect(text.startsWith("﻿Product,Revenue,Units sold")).toBe(true));
-    expect(text.split("\r\n")[1]).toBe("'=cmd,12.5,3");
+    const bytes = new Uint8Array(await readBytes(blobs[0]));
+    expect([...bytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+    const lines = (await readBlob(blobs[0])).split("\r\n"); // decoding drops the BOM
+    expect(lines[0]).toBe("Product,Revenue,Units sold");
+    expect(lines[1]).toBe("'=cmd,12.5,3");
   });
 });

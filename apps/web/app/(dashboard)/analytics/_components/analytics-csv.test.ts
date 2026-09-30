@@ -61,7 +61,13 @@ describe("analytics-csv column specs", () => {
     expect(s.headers).toEqual(["Product", "Stock", "Last movement", "Days inactive"]);
     expect(
       s.rows([
-        { id: "1", name: "A", currentStock: 5, lastMovement: "2026-03-04T10:20:30.000Z", daysInactive: 200 },
+        {
+          id: "1",
+          name: "A",
+          currentStock: 5,
+          lastMovement: "2026-03-04T10:20:30.000Z",
+          daysInactive: 200,
+        },
         { id: "2", name: "B", currentStock: 1, lastMovement: null, daysInactive: null },
       ]),
     ).toEqual([
@@ -105,8 +111,26 @@ describe("analytics-csv column specs", () => {
     ]);
     expect(
       s.rows([
-        { id: "1", name: "North", totalRuns: 10, completedRuns: 9, completionRate: 90, onTimeRate: 95, stopsPerHour: 6.5, avgRunDurationMinutes: 83 },
-        { id: "2", name: "South", totalRuns: 1, completedRuns: 0, completionRate: 0, onTimeRate: null, stopsPerHour: null, avgRunDurationMinutes: null },
+        {
+          id: "1",
+          name: "North",
+          totalRuns: 10,
+          completedRuns: 9,
+          completionRate: 90,
+          onTimeRate: 95,
+          stopsPerHour: 6.5,
+          avgRunDurationMinutes: 83,
+        },
+        {
+          id: "2",
+          name: "South",
+          totalRuns: 1,
+          completedRuns: 0,
+          completionRate: 0,
+          onTimeRate: null,
+          stopsPerHour: null,
+          avgRunDurationMinutes: null,
+        },
       ]),
     ).toEqual([
       ["North", 10, 9, 90, 95, 6.5, 83],
@@ -127,7 +151,16 @@ describe("analytics-csv column specs", () => {
     ]);
     expect(
       s.rows([
-        { id: "1", name: "Dee", totalDeliveries: 20, completedDeliveries: 19, completionRate: 95, onTimeRate: 80, stopsPerHour: 7, avgRunDurationMinutes: 61 },
+        {
+          id: "1",
+          name: "Dee",
+          totalDeliveries: 20,
+          completedDeliveries: 19,
+          completionRate: 95,
+          onTimeRate: 80,
+          stopsPerHour: 7,
+          avgRunDurationMinutes: 61,
+        },
       ]),
     ).toEqual([["Dee", 20, 19, 95, 80, 7, 61]]);
   });
