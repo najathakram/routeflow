@@ -1,6 +1,9 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { ConfigService } from "@nestjs/config";
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, INestApplication, ValidationPipe } from "@nestjs/common";
+import request from "supertest";
+import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { listenOnLoopback } from "../common/testing/listen-loopback";
 import { SettingsController } from "./settings.controller";
 import { SystemConfigService } from "./system-config.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -70,5 +73,57 @@ describe("SettingsController — PATCH/GET /settings/route depot", () => {
     const roles = Reflect.getMetadata("roles", SettingsController.prototype.updateRouteSettings);
     const classRoles = Reflect.getMetadata("roles", SettingsController);
     expect(roles ?? classRoles).toEqual(["OPERATOR"]);
+  });
+});
+
+describe("SettingsController — PATCH /settings/route over HTTP (real RolesGuard)", () => {
+  let app: INestApplication;
+  let role = "OPERATOR";
+  const svc = { get: jest.fn(async () => null), set: jest.fn(async () => undefined) };
+
+  beforeAll(async () => {
+    const mod = await Test.createTestingModule({
+      controllers: [SettingsController],
+      providers: [
+        { provide: SystemConfigService, useValue: svc },
+        { provide: ConfigService, useValue: { get: jest.fn() } },
+        { provide: PrismaService, useValue: createMockPrisma() },
+        { provide: EmailService, useValue: { send: jest.fn() } },
+      ],
+    })
+      .overrideGuard(JwtAuthGuard)
+      .useValue({
+        canActivate: (ctx: any) => {
+          ctx.switchToHttp().getRequest().user = { sub: "u-1", role };
+          return true;
+        },
+      })
+      .compile();
+    app = mod.createNestApplication();
+    app.useGlobalPipes(
+      new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }),
+    );
+    await listenOnLoopback(app);
+  });
+
+  afterAll(() => app.close());
+  beforeEach(() => jest.clearAllMocks());
+
+  it.each(["DRIVER", "CUSTOMER"])("%s is refused with 403 and nothing is written", async (r) => {
+    role = r;
+    await request(app.getHttpServer())
+      .patch("/settings/route")
+      .send({ serviceTimeMinutes: 20 })
+      .expect(403);
+    expect(svc.set).not.toHaveBeenCalled();
+  });
+
+  it.each(["OPERATOR", "TENANT_ADMIN"])("%s can save route defaults", async (r) => {
+    role = r;
+    await request(app.getHttpServer())
+      .patch("/settings/route")
+      .send({ serviceTimeMinutes: 20 })
+      .expect(200);
+    expect(svc.set).toHaveBeenCalledWith("route.serviceTimeMinutes", "20");
   });
 });

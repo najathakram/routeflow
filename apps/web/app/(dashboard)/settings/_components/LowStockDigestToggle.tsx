@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Loader2 } from "lucide-react";
 import { Button, Card, cn, useToast } from "@routeflow/ui/web";
+import { PREF } from "@routeflow/types";
 import { usePreferences, useSavePreferences } from "@/lib/api/users";
 
 /**
@@ -10,7 +11,7 @@ import { usePreferences, useSavePreferences } from "@/lib/api/users";
  * users/me/preferences as the string "true"/"false"; an absent value means ON
  * (only "false" opts out — see the API's low-stock-digest.service).
  */
-const KEY = "lowStockDigestEnabled";
+const KEY = PREF.lowStockDigestEnabled;
 
 export function LowStockDigestToggle() {
   const { toast } = useToast();

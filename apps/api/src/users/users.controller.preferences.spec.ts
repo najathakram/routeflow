@@ -10,7 +10,9 @@ import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { createMockPrisma } from "../testing/prisma-mock";
-import { PREFERENCE_KEYS } from "./dto/update-preferences.dto";
+import { PREF, PREFERENCE_KEYS, type PreferenceKey } from "@routeflow/types";
+import { getMetadataStorage } from "class-validator";
+import { UpdatePreferencesDto } from "./dto/update-preferences.dto";
 import { LOW_STOCK_DIGEST_PREF_KEY } from "../inventory/low-stock-digest.service";
 
 describe("PATCH/GET users/me/preferences — typed lowStockDigestEnabled", () => {
@@ -85,9 +87,10 @@ describe("PATCH/GET users/me/preferences — typed lowStockDigestEnabled", () =>
     },
   );
 
-  // Every key a client sends today (web + mobile grep, SA-602a). A new client key without a DTO
-  // entry must fail here.
-  const CLIENT_KEYS: Record<string, string> = {
+  // One valid sample per shared key. `Record<PreferenceKey, string>` makes a key added to
+  // `@routeflow/types` without a sample here a compile error; clients write through `PREF.*`
+  // and `PreferencePatch`, so the shared list IS the real client key set.
+  const CLIENT_KEYS: Record<PreferenceKey, string> = {
     lowStockDigestEnabled: "false",
     pushEnabled: "false",
     locale: "es",
@@ -95,8 +98,18 @@ describe("PATCH/GET users/me/preferences — typed lowStockDigestEnabled", () =>
     "payment.lastMethod": "ACH",
   };
 
-  it("DTO key list equals the client key list", () => {
+  it("the api allow-list is the shared client key list", () => {
     expect([...PREFERENCE_KEYS].sort()).toEqual(Object.keys(CLIENT_KEYS).sort());
+    expect([...PREFERENCE_KEYS].sort()).toEqual(Object.values(PREF).sort());
+  });
+
+  it("every shared client key has a validator in the DTO (none falls through unvalidated)", () => {
+    const validated = new Set(
+      getMetadataStorage()
+        .getTargetValidationMetadatas(UpdatePreferencesDto, "", false, false)
+        .map((m) => m.propertyName),
+    );
+    for (const k of PREFERENCE_KEYS) expect(validated.has(k)).toBe(true);
   });
 
   it.each(Object.entries(CLIENT_KEYS))("accepts client key %s=%s and stores it", async (k, v) => {

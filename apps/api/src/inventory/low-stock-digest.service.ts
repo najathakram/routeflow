@@ -1,3 +1,4 @@
+import { PREF } from "@routeflow/types";
 import { Injectable, Logger } from "@nestjs/common";
 import { CronExpression } from "@nestjs/schedule";
 import { LeaderCron } from "../common/cron-lock";
@@ -10,7 +11,7 @@ const FALLBACK_TIMEZONE = "America/New_York";
 
 /** The `UserPreference.key` a tenant admin's opt-out is stored under (N4). Missing row =
  * enabled, same convention as `notifications.service.ts`'s `pushEnabled` (B04). */
-export const LOW_STOCK_DIGEST_PREF_KEY = "lowStockDigestEnabled";
+export const LOW_STOCK_DIGEST_PREF_KEY = PREF.lowStockDigestEnabled;
 
 interface LowStockItem {
   name: string;
