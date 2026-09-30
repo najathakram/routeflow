@@ -231,6 +231,19 @@ function collect(
       into.unresolved.push(`...${el.expression.text}`);
       return;
     }
+    // A spread of a CALL is unreadable (`...helper()`), unless it is a method over a literal array
+    // (`...[A, B].map(...)`, a stub list whose named classes are read below).
+    const spread = unwrapExpr(el.expression);
+    if (
+      ts.isCallExpression(spread) &&
+      !(
+        ts.isPropertyAccessExpression(spread.expression) &&
+        ts.isArrayLiteralExpression(unwrapExpr(spread.expression.expression))
+      )
+    ) {
+      into.unresolved.push(`...${spread.getText(sf).slice(0, 40)}`);
+      return;
+    }
     return collect(el.expression, sf, fileName, readFile, into, depth + 1);
   }
   if (ts.isParenthesizedExpression(el) || ts.isAsExpression(el) || ts.isSatisfiesExpression(el)) {
@@ -304,6 +317,104 @@ function isStubOnlyParameter(name: string, from: ts.Node): boolean {
   return false;
 }
 
+const unwrapExpr = (e: ts.Expression): ts.Expression => {
+  while (ts.isAsExpression(e) || ts.isSatisfiesExpression(e) || ts.isParenthesizedExpression(e)) {
+    e = e.expression;
+  }
+  return e;
+};
+
+/** Read-only array methods: they cannot add a provider. */
+const READ_ONLY_ARRAY_MEMBERS = new Set([
+  "length",
+  "map",
+  "some",
+  "every",
+  "find",
+  "filter",
+  "includes",
+  "indexOf",
+  "forEach",
+  "slice",
+  "join",
+]);
+
+type LocalArray = { elements: ts.Expression[] } | { unresolvable: string };
+
+/**
+ * A `const/let providers = [...]` declared in an enclosing scope of `from` (the nearest wins), with
+ * every `providers.push(...)` in that scope folded in (the union: a conditional push counts). It is
+ * read ONLY when every reference to the name is one of: a `.push(...)` call, a read-only member
+ * (`.length`, `.map`, `.some`, ...), or the `providers` property itself (`{ providers }` /
+ * `providers: providers`). Any other use (unshift, splice, a reassignment, an index write, passing
+ * it to a helper, ...) could change what is provided, so it is UNRESOLVABLE and reported, never
+ * skipped. Returns null when no such declaration exists in an enclosing scope.
+ */
+function resolveLocalArray(id: ts.Identifier, from: ts.Node): LocalArray | null {
+  const name = id.text;
+  let scope: ts.Node | null = null;
+  let decl: ts.VariableDeclaration | null = null;
+  for (let anc: ts.Node | undefined = from.parent; anc && !decl; anc = anc.parent) {
+    if (
+      ts.isFunctionLike(anc) &&
+      anc.parameters.some((q) => ts.isIdentifier(q.name) && q.name.text === name)
+    ) {
+      return null; // a parameter of that name shadows anything outside
+    }
+    const statements: readonly ts.Statement[] | undefined =
+      ts.isBlock(anc) || ts.isSourceFile(anc) || ts.isModuleBlock(anc)
+        ? anc.statements
+        : ts.isCaseClause(anc) || ts.isDefaultClause(anc)
+          ? anc.statements
+          : undefined;
+    if (!statements) continue;
+    for (const st of statements) {
+      if (!ts.isVariableStatement(st)) continue;
+      const d = st.declarationList.declarations.find(
+        (x) => ts.isIdentifier(x.name) && x.name.text === name,
+      );
+      if (d) {
+        decl = d;
+        scope = anc;
+        break;
+      }
+    }
+  }
+  if (!decl || !scope) return null;
+  const init = decl.initializer ? unwrapExpr(decl.initializer) : null;
+  if (!init || !ts.isArrayLiteralExpression(init)) {
+    return { unresolvable: `${name} = ${init ? init.getText().slice(0, 40) : "(no initializer)"}` };
+  }
+  const elements: ts.Expression[] = [...init.elements];
+  let unsafe: string | null = null;
+  const visit = (n: ts.Node) => {
+    if (unsafe) return;
+    if (ts.isIdentifier(n) && n.text === name && n !== decl!.name) {
+      const par = n.parent;
+      if (ts.isPropertyAccessExpression(par) && par.name === n) return; // `x.providers`, not ours
+      if (ts.isPropertyAssignment(par) && par.name === n) return; // the key `providers:`
+      if (ts.isShorthandPropertyAssignment(par) && par.name === n) return; // `{ providers }`
+      if (ts.isPropertyAssignment(par) && par.initializer === n) return; // `providers: providers`
+      if (ts.isPropertyAccessExpression(par) && par.expression === n) {
+        const member = par.name.text;
+        const call = par.parent;
+        if (member === "push" && ts.isCallExpression(call) && call.expression === par) {
+          elements.push(...call.arguments);
+          return;
+        }
+        if (READ_ONLY_ARRAY_MEMBERS.has(member)) return;
+        unsafe = `${name}.${member}`;
+        return;
+      }
+      unsafe = `${name} (${ts.SyntaxKind[par.kind]})`;
+      return;
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(scope);
+  return unsafe ? { unresolvable: `${name} is mutated or passed on: ${unsafe}` } : { elements };
+}
+
 export function analyseSpec(
   fileNameIn: string,
   sourceText: string,
@@ -338,13 +449,22 @@ export function analyseSpec(
       if (ts.isIdentifier(init) && isStubOnlyParameter(init.text, node)) {
         // Value stubs only: nothing in it can be a real service, and nothing to resolve.
       } else if (ts.isIdentifier(init)) {
-        // `providers: SOME_CONST` — read the const when it is an array, else it is unresolvable.
-        const resolved = resolveConst(init.text, sf, fileName, readFile);
-        if (resolved && ts.isArrayLiteralExpression(resolved.node)) {
-          init = resolved.node;
-          at = { sf: resolved.sourceFile, fileName: resolved.fileName };
+        // `providers: NAME` / `{ providers }`. First a same-scope `const providers = [...]` (with its
+        // `.push(...)`s); then a top-level / imported const array; anything else is unresolvable.
+        const local = resolveLocalArray(init, node);
+        if (local && "elements" in local) {
+          for (const el of local.elements) collect(el, sf, fileName, readFile, into);
+          init = ts.factory.createArrayLiteralExpression([]); // already collected
+        } else if (local) {
+          into.unresolved.push(local.unresolvable);
         } else {
-          into.unresolved.push(init.text);
+          const resolved = resolveConst(init.text, sf, fileName, readFile);
+          if (resolved && ts.isArrayLiteralExpression(resolved.node)) {
+            init = resolved.node;
+            at = { sf: resolved.sourceFile, fileName: resolved.fileName };
+          } else {
+            into.unresolved.push(init.text);
+          }
         }
       } else if (!ts.isArrayLiteralExpression(init)) {
         into.unresolved.push(init.getText(sf).slice(0, 60));

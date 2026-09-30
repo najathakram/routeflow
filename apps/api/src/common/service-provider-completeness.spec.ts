@@ -301,6 +301,127 @@ describe("negative controls: the analysis fails a spec that leaves a dependency 
     ).toEqual(["/a/x.spec.ts", "/a/z.spec.ts"]);
   });
 
+  describe("a same-scope `const providers = [...]` with `providers.push(...)` (family-price.spec's shape)", () => {
+    const base = `[ProductsService, { provide: PrismaService, useValue: {} }, { provide: EntitlementAuthority, useValue: {} }]`;
+    const withPush = (
+      arr: string,
+      extra: string,
+      use = "Test.createTestingModule({ providers })",
+    ) =>
+      `async function build(mode: string) {
+         const providers: any[] = ${arr};
+         ${extra}
+         const mod = await ${use}.compile();
+       }`;
+
+    it("PASSES when the const array is complete, and a conditional push adds a further provider", () => {
+      expect(
+        run(
+          withPush(
+            base,
+            "if (mode !== 'absent') providers.push({ provide: FeatureConfigService, useValue: {} });",
+          ),
+        ),
+      ).toEqual([]);
+    });
+
+    it("FAILS when a constructor token is missing from the const array (and no push supplies it)", () => {
+      const missing = run(
+        withPush(
+          "[ProductsService, { provide: PrismaService, useValue: {} }]",
+          "providers.push({ provide: Other, useValue: {} });",
+        ),
+      );
+      expect(missing).toHaveLength(1);
+      expect(missing[0].missing).toEqual(["EntitlementAuthority"]);
+    });
+
+    it("counts a token that only a (conditional) push provides (the union of the array and its pushes)", () => {
+      expect(
+        run(
+          withPush(
+            "[ProductsService, { provide: PrismaService, useValue: {} }]",
+            "if (mode) providers.push({ provide: EntitlementAuthority, useValue: {} });",
+          ),
+        ),
+      ).toEqual([]);
+    });
+
+    it("reads the family-price shape: `providers.length ? { providers } : {}` and an `as` cast", () => {
+      expect(
+        run(
+          withPush(
+            `${base} as any[]`,
+            "",
+            "Test.createTestingModule(providers.length ? { providers } : {})",
+          ),
+        ),
+      ).toEqual([]);
+      expect(
+        run(
+          withPush(
+            "[ProductsService, { provide: PrismaService, useValue: {} }]",
+            "",
+            "Test.createTestingModule(providers.length ? { providers } : {})",
+          ),
+        ),
+      ).toHaveLength(1);
+    });
+
+    it("read-only uses of the array are fine (.length, .map, .some, .includes)", () => {
+      expect(
+        run(
+          withPush(
+            base,
+            "const n = providers.length; const m = providers.map((p) => p); providers.some(Boolean); providers.includes(1);",
+          ),
+        ),
+      ).toEqual([]);
+    });
+
+    it("push with several arguments, and with a spread of a readable const array", () => {
+      expect(
+        run(`const EXTRA = [{ provide: EntitlementAuthority, useValue: {} }];
+             function b() { const providers = [ProductsService, { provide: PrismaService, useValue: {} }];
+               providers.push(...EXTRA, { provide: Z, useValue: 1 }); return Test.createTestingModule({ providers }); }`),
+      ).toEqual([]);
+    });
+
+    it("the nearest enclosing declaration wins: two functions each with their own `providers` are judged separately", () => {
+      const missing = run(`
+        function ok() { const providers = ${base}; return Test.createTestingModule({ providers }); }
+        function bad() { const providers = [ProductsService, { provide: PrismaService, useValue: {} }]; return Test.createTestingModule({ providers }); }`);
+      expect(missing).toHaveLength(1);
+      expect(missing[0].line).toBe(3);
+    });
+
+    it.each([
+      ["unshift", "providers.unshift(Other);"],
+      ["splice", "providers.splice(0, 1);"],
+      ["reassignment", "providers = other;"],
+      ["an index write", "providers[0] = Other;"],
+      ["passed to a helper", "addMore(providers);"],
+      ["a push of an unresolvable spread", "providers.push(...someHelper());"],
+      ["concat assigned back", "providers = providers.concat(more);"],
+    ])("FAILS LOUDLY when the array is mutated another way: %s", (_label, extra) => {
+      const found = run(
+        withPush(base.replace("EntitlementAuthority", "EntitlementAuthority"), extra).replace(
+          "const providers",
+          "let providers",
+        ),
+      );
+      expect(found).toHaveLength(1);
+      expect(found[0].service).toMatch(/unresolvable providers/);
+    });
+
+    it("an initializer that is not an array literal fails loudly (never skipped)", () => {
+      const found = run(
+        `function b() { const providers = buildProviders(); return Test.createTestingModule({ providers }); } const s = ProductsService;`,
+      );
+      expect(found[0]?.service).toMatch(/unresolvable providers/);
+    });
+  });
+
   it("speed pin: a spec importing several provider classes parses only ITSELF, and asking again parses nothing (parse cache; class imports are never opened as ASTs)", () => {
     const reads: string[] = [];
     const rf: ReadFile = (f) => {
