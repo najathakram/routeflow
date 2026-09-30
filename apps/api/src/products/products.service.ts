@@ -14,7 +14,11 @@ import { StorageService } from "../storage/storage.service";
 import { compressImage } from "../storage/compress.util";
 import { AddonService } from "../billing/addon.service";
 import { SystemConfigService } from "../system-config/system-config.service";
+import { EntitlementsService } from "../billing/entitlements.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
+import { FeatureOverrideService } from "../billing/feature-override.service";
+import { buildPlanFlagDenial } from "../billing/plan-flag-denial";
+import { isDarkFlag } from "../billing/plan-flag-policy";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { FeatureConfigService } from "../billing/feature-config.service";
@@ -29,11 +33,11 @@ import {
 import { UpdateProductDto } from "./dto/update-product.dto";
 import { BulkAssignParentDto } from "./dto/bulk-assign-parent.dto";
 import { BulkSetMsrpDto } from "./dto/bulk-set-msrp.dto";
-import { ListProductsDto, StockStatusFilter } from "./dto/list-products.dto";
+import { ListProductsDto } from "./dto/list-products.dto";
 import { ImportProductsDto } from "./dto/import-products.dto";
 import { isValidItemType, isValidUom, templateByKey } from "../regulated/template-registry";
 import { normalizeScanCode, pickBestScanMatch } from "../common/barcode-normalize";
-import { buildScanSearchOr } from "./scan-search";
+import { buildProductListWhere } from "./product-list-where";
 import { assertPackKeepsLevelsValid } from "./unit-pack-rules";
 import { isMsrpBelowWholesale, wholesalePerPiece } from "../common/msrp";
 import { TOBACCO_CATEGORY_NAME, isTobaccoCategoryName } from "../common/tobacco-category";
@@ -109,9 +113,13 @@ export class ProductsService {
     private readonly storage: StorageService,
     private readonly addonService: AddonService,
     private readonly systemConfig: SystemConfigService,
-    private readonly authority: EntitlementAuthority,
+    // Kept alongside `authority`: buildPlanFlagDenial (the forecasting gate's denial body) reads it.
+    private readonly entitlements: EntitlementsService,
     private readonly planCatalog: PlanCatalogService,
     private readonly gateway: RouteFlowGateway,
+    // #2198/#2241: the ONE EntitlementAuthority (MSRP + forecasting gates).
+    private readonly authority: EntitlementAuthority,
+    private readonly featureOverrides: FeatureOverrideService,
     // #2717 M2 (SA-574 Q5): the `mixed_packs` mode read. Optional on purpose — FeatureConfigModule is
     // global, so production always has it; a missing provider reads as mode "off" (no authority).
     @Optional() private readonly featureConfig?: FeatureConfigService,
@@ -136,13 +144,19 @@ export class ProductsService {
     }
   }
 
+  /** Public wrapper so a bulk-write caller (e.g. CSV import) can fire ONE coalesced
+   * catalog-changed event after its own loop, instead of one per row. */
+  emitCatalogBulkChanged(): void {
+    this.emitProductChanged(null, "bulk");
+  }
+
   /**
    * MSRP writes are flag-gated INSIDE the service, not on the whole route —
    * gating the whole create/update PATCH would 403 an ordinary product edit for
    * a tenant that never touches MSRP. Callers only invoke this when the DTO
    * actually carries an `msrp` key.
    */
-  private async assertMsrpAllowed(): Promise<void> {
+  async assertMsrpAllowed(): Promise<void> {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) return; // no tenant context (e.g. SUPER_ADMIN) — nothing to gate
     // #2198: the ONE evaluation point the flag.msrp route guard uses (overrides + live-mode resolver).
@@ -154,6 +168,49 @@ export class ProductsService {
       addonMonthlyPrice: null,
     }));
     throw new ForbiddenException(buildPlanGateBody("flag.msrp", upgrade));
+  }
+
+  /**
+   * Reorder Point / Reorder Qty are a flag.forecasting feature: their original writer,
+   * PATCH /inventory/products/:id/reorder-settings, is @RequirePlanFlag("flag.forecasting").
+   * Every other writer (create, update, the bulk import, the CSV importer's file gate) asks
+   * THIS, which makes the same decision PlanFlagGuard makes for that route — the
+   * EntitlementAuthority verdict, overrides and the DARK_PLAN_FLAGS courtesy allow included — so
+   * no writer is an ungated side door. Called only when the payload carries either field.
+   */
+  async assertReorderAllowed(): Promise<void> {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) return; // no tenant context (e.g. SUPER_ADMIN) — nothing to gate
+    if (await this.authority.can(tenantId, "flag.forecasting")) {
+      // Ships DARK (DARK_PLAN_FLAGS, PLAN_FLAG_ENFORCEMENT off): the authority allowed by the
+      // courtesy, so log the would-deny from ITS OWN resolver (preset + grants − denies — no second
+      // plan-lookup path) to make the blast radius readable before the flag is enforced.
+      if (isDarkFlag("flag.forecasting")) {
+        try {
+          const resolved = await this.authority.resolveAll(tenantId);
+          if (resolved?.byKey.get("flag.forecasting")?.effective === false) {
+            this.logger.warn(
+              `reorder gate would deny (dark): flag=flag.forecasting tenant=${tenantId}`,
+            );
+          }
+        } catch {
+          // Observation only: a resolver failure never turns an allowed write into a refusal.
+        }
+      }
+      return;
+    }
+    // The guard's own deny-body builder (override DENY → no upgrade CTA; unresolvable →
+    // PLAN_GATE_UNAVAILABLE), so this 403 can never drift from the inventory route's.
+    throw await buildPlanFlagDenial(
+      {
+        featureOverrides: this.featureOverrides,
+        entitlements: this.entitlements,
+        catalog: this.planCatalog,
+        logger: this.logger,
+      },
+      tenantId,
+      "flag.forecasting",
+    );
   }
 
   /**
@@ -174,7 +231,7 @@ export class ProductsService {
    * addon. Clearing the flag is always allowed so a tenant whose addon was
    * revoked can still un-flag products.
    */
-  private async assertCanFlagTobacco(isTobacco?: boolean) {
+  async assertCanFlagTobacco(isTobacco?: boolean) {
     if (isTobacco !== true) return;
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) return; // SUPER_ADMIN context
@@ -257,89 +314,7 @@ export class ProductsService {
     const limit = fetchAll ? 10_000 : limitRaw;
     const skip = (page - 1) * limit;
 
-    const where: any = {};
-    if (query.search) {
-      where.OR = [
-        { name: { contains: query.search, mode: "insensitive" } },
-        { sku: { contains: query.search, mode: "insensitive" } },
-        { barcode: { contains: query.search, mode: "insensitive" } },
-        { unitSku: { contains: query.search, mode: "insensitive" } },
-      ];
-    } else if (query.scanCode) {
-      // Scan-fallback rung: same four columns, but contains-matched against
-      // EVERY normalizeScanCode candidate instead of the raw decode — the raw
-      // string misses whenever this camera's decode differs from the stored
-      // shape (iOS 13-digit vs a 12-digit code kept in the product name).
-      // OR: [] when the code yields no candidates — matches nothing, correctly.
-      where.OR = buildScanSearchOr(query.scanCode);
-    }
-    if (query.category) where.category = query.category;
-    if (query.isActive !== undefined) where.isActive = query.isActive;
-    if (query.isTobacco !== undefined) where.isTobacco = query.isTobacco;
-    // W7 buyer gate: exclude regulated categories the buyer isn't licensed for (set
-    // internally by BuyerCatalogService — never from buyer input). In the query so
-    // pagination counts stay correct.
-    if (opts?.excludeTrackedCategoryIds?.length) {
-      // Hide license-gated categories WITHOUT hiding untracked products.
-      // Prisma's `notIn` never matches NULL rows, so the previous bare filter
-      // (`trackedCategoryId: { notIn: [...] }`) made every product with NO
-      // tracked category vanish the moment a tenant had one requiresLicense
-      // category — on a live tenant that hid 1,757 of 1,823 products from
-      // every unlicensed buyer. NULL must be allowed back in explicitly.
-      // AND-pushed (not where.trackedCategoryId) so it can't collide with the
-      // regulated fold-in below or a search OR.
-      where.AND = [
-        ...((where.AND as Record<string, unknown>[] | undefined) ?? []),
-        {
-          OR: [
-            { trackedCategoryId: null },
-            { trackedCategoryId: { notIn: opts.excludeTrackedCategoryIds } },
-          ],
-        },
-      ];
-    }
-
-    // Regulated-section filter ("any" | "none" | <sectionId>). When the internal
-    // buyer-catalog exclusion already occupies where.trackedCategoryId, fold this
-    // clause into AND so BOTH apply.
-    if (query.section) {
-      const clause =
-        query.section === "any" ? { not: null } : query.section === "none" ? null : query.section;
-      if (where.trackedCategoryId !== undefined) {
-        where.AND = [...(where.AND ?? []), { trackedCategoryId: clause }];
-      } else {
-        where.trackedCategoryId = clause;
-      }
-    }
-
-    // Server-side stock-status filtering so pagination counts are accurate
-    if (query.stockStatus === StockStatusFilter.OUT_OF_STOCK) {
-      // "Out" = inactive OR zero/negative stock. Keep it as its own disjunction
-      // AND-ed with any search OR — reusing `where.OR` would merge the two into a
-      // single OR, so every out-of-stock product would match regardless of the
-      // search text (and every search hit would show even if in stock).
-      const outOfStock = [{ isActive: false }, { currentStock: { lte: 0 } }];
-      if (where.OR) {
-        where.AND = [...(where.AND ?? []), { OR: where.OR }, { OR: outOfStock }];
-        delete where.OR;
-      } else {
-        where.OR = outOfStock;
-      }
-    } else if (query.stockStatus === StockStatusFilter.LOW) {
-      where.isActive = true;
-      // lte:5 covers 0, negatives, and low stock; null check invalid for Decimal in Prisma 7.7
-      where.currentStock = { lte: 5 };
-    } else if (query.stockStatus === StockStatusFilter.IN_STOCK) {
-      where.isActive = true;
-      where.currentStock = { gt: 5 };
-    }
-
-    // Internal-only extra AND clauses (buyer catalog v2 smart collections —
-    // set by BuyerCatalogService, never from client input). Folded via AND so
-    // they compose with the search OR and the stock-status OR.
-    if (opts?.andWhere?.length) {
-      where.AND = [...(where.AND ?? []), ...opts.andWhere];
-    }
+    const where: any = buildProductListWhere(query, opts);
 
     // Always include `parent` so the web can compose "<Parent> - <Variant>"
     // display names for line items. The parent row is small (no nested
@@ -620,28 +595,87 @@ export class ProductsService {
     return pickBestScanMatch(matches, candidates);
   }
 
-  async create(dto: CreateProductDto) {
+  /**
+   * Read-only identity checks shared by create() and update(), public so a preview (the CSV
+   * import dry run) can ask the same questions without writing. Name uniqueness is scoped by
+   * parent, matching the partial unique indexes (variant_name_per_parent): a standalone product
+   * is unique among standalone products, a variant among its siblings. A case sku / barcode must
+   * not collide with another product's sku|barcode (resp.) or unit code — a sku equal to another
+   * product's barcode stays allowed (pre-existing; findByBarcode ranks barcode > sku). A unit code
+   * must not collide with ANY product's sku/barcode/unitSku. `excludeId` is the product being
+   * updated. Throws exactly what create()/update() always threw.
+   */
+  async assertIdentityAvailable(
+    p: {
+      name?: string;
+      parentProductId?: string | null;
+      sku?: string;
+      barcode?: string;
+      unitSku?: string | null;
+    },
+    excludeId?: string,
+  ): Promise<void> {
+    const db = this.prisma.forTenant().product;
+    const notSelf = excludeId ? { id: { not: excludeId } } : {};
+    if (p.name !== undefined) {
+      const nameTaken = await db.findFirst({
+        where: {
+          name: { equals: p.name, mode: "insensitive" },
+          ...notSelf,
+          parentProductId: p.parentProductId ?? null,
+        },
+        select: { id: true },
+      });
+      if (nameTaken) {
+        throw new ConflictException(
+          p.parentProductId
+            ? `A variant named "${p.name}" already exists for this product`
+            : `A product named "${p.name}" already exists`,
+        );
+      }
+    }
+    if (p.sku) {
+      const clash = await db.findFirst({
+        where: { OR: [{ sku: p.sku }, { unitSku: p.sku }], ...notSelf },
+      });
+      if (clash) throw new BadRequestException("SKU already exists");
+    }
+    if (p.barcode) {
+      const clash = await db.findFirst({
+        where: { OR: [{ barcode: p.barcode }, { unitSku: p.barcode }], ...notSelf },
+      });
+      if (clash) throw new BadRequestException("Barcode already exists");
+    }
+    if (p.unitSku) {
+      const clash = await db.findFirst({
+        where: {
+          OR: [{ unitSku: p.unitSku }, { sku: p.unitSku }, { barcode: p.unitSku }],
+          ...notSelf,
+        },
+        select: { id: true },
+      });
+      if (clash) {
+        throw new BadRequestException(
+          "Unit code already used by another product's SKU, barcode, or unit code",
+        );
+      }
+    }
+  }
+
+  async create(dto: CreateProductDto, options?: { suppressEmit?: boolean }) {
     await this.assertCanFlagTobacco(dto.isTobacco);
     if (dto.msrp !== undefined) await this.assertMsrpAllowed();
-    // Name uniqueness is scoped by parent, matching the partial unique
-    // indexes in the DB (see prisma/migrations/.../variant_name_per_parent).
-    //   - Standalone product → unique among other STANDALONE products.
-    //   - Variant            → unique among siblings of the same parent.
-    // Two flavors named "Strawberry" under different parents are allowed.
-    const parentScope = dto.parentProductId
-      ? { parentProductId: dto.parentProductId }
-      : { parentProductId: null };
-    const nameTaken = await this.prisma.forTenant().product.findFirst({
-      where: { name: { equals: dto.name, mode: "insensitive" }, ...parentScope },
-      select: { id: true },
-    });
-    if (nameTaken) {
-      throw new ConflictException(
-        dto.parentProductId
-          ? `A variant named "${dto.name}" already exists for this product`
-          : `A product named "${dto.name}" already exists`,
-      );
+    if (dto.reorderPoint !== undefined || dto.reorderQty !== undefined) {
+      await this.assertReorderAllowed();
     }
+    // Name (scoped by parent) and sku/barcode/unitSku collisions — see assertIdentityAvailable.
+    await this.assertIdentityAvailable({
+      name: dto.name,
+      parentProductId: dto.parentProductId ?? null,
+      sku: dto.sku,
+      barcode: dto.barcode,
+      unitSku: dto.unitSku,
+    });
     // Auto-generate a SKU if none supplied: first 3 alpha chars of name + 4 hex digits
     if (!dto.sku) {
       const prefix = dto.name
@@ -654,40 +688,6 @@ export class ProductsService {
         .toUpperCase()
         .padStart(4, "0");
       dto.sku = `${prefix}-${suffix}`;
-    } else {
-      // A case sku must not collide with another product's sku or unit code
-      // (the unit code is what the customer invoice prints, so a sku equal to it
-      // would resolve a scan to the wrong product). unitSku is a new all-null
-      // column, so this widening can't retroactively reject existing catalogs.
-      // We deliberately do NOT reject a sku that equals another product's barcode:
-      // that was always allowed, findByBarcode ranks barcode > sku so it still
-      // resolves deterministically, and blocking it would 400 edits on existing data.
-      const existing = await this.prisma.forTenant().product.findFirst({
-        where: { OR: [{ sku: dto.sku }, { unitSku: dto.sku }] },
-      });
-      if (existing) throw new BadRequestException("SKU already exists");
-    }
-    if (dto.barcode) {
-      // Symmetric to the sku check: reject a barcode colliding with another
-      // product's barcode or unit code, but not its case sku (pre-existing behavior).
-      const existing = await this.prisma.forTenant().product.findFirst({
-        where: { OR: [{ barcode: dto.barcode }, { unitSku: dto.barcode }] },
-      });
-      if (existing) throw new BadRequestException("Barcode already exists");
-    }
-    // A unit code must not collide with ANY product's sku/barcode/unitSku — it's a
-    // scannable identity in the same namespace, so an ambiguous match would resolve
-    // to the wrong product.
-    if (dto.unitSku) {
-      const clash = await this.prisma.forTenant().product.findFirst({
-        where: { OR: [{ unitSku: dto.unitSku }, { sku: dto.unitSku }, { barcode: dto.unitSku }] },
-        select: { id: true },
-      });
-      if (clash) {
-        throw new BadRequestException(
-          "Unit code already used by another product's SKU, barcode, or unit code",
-        );
-      }
     }
     // Variant creation inherits the parent family's defaults for every field the
     // DTO left unset — price tiers, category, case size, costing method, standard
@@ -853,6 +853,9 @@ export class ProductsService {
             // 0/negative are normalized to null (never rendered as $0.00).
             msrp: normalizeMsrpForWrite(dto.msrp),
             unitsPerBox: resolvedUnitsPerBox,
+            // B858: part of the one create write — never a follow-up update (atomic).
+            reorderPoint: dto.reorderPoint,
+            reorderQty: dto.reorderQty,
             parentProductId: dto.parentProductId ?? null,
             variantName: dto.variantName ?? null,
             trackedCategoryId: regulated.trackedCategoryId,
@@ -874,79 +877,34 @@ export class ProductsService {
       });
       return row;
     });
-    this.emitProductChanged(created.id, "created");
+    if (!options?.suppressEmit) this.emitProductChanged(created.id, "created");
     return created;
   }
 
   async update(id: string, dto: UpdateProductDto, options?: { suppressEmit?: boolean }) {
     await this.assertCanFlagTobacco(dto.isTobacco);
     if (dto.msrp !== undefined) await this.assertMsrpAllowed();
+    if (dto.reorderPoint !== undefined || dto.reorderQty !== undefined) {
+      await this.assertReorderAllowed();
+    }
     const existing = await this.findOne(id);
     // #2533: a PATCH may only reorder/drop this product's own images (400 before any write).
     if (dto.imageKeys !== undefined) assertImageKeysReorder(id, existing.imageKeys, dto.imageKeys);
-    if (dto.name || dto.parentProductId !== undefined) {
-      // The product's effective parent is the dto value if provided (could be
-      // null to promote a variant to standalone), otherwise the existing one.
-      // The check has to use this effective parent, otherwise reparenting +
-      // renaming in one PATCH would check the WRONG scope.
-      const effectiveParentId =
-        dto.parentProductId !== undefined ? dto.parentProductId : existing.parentProductId;
-      const effectiveName = dto.name ?? existing.name;
-      const parentScope = effectiveParentId
-        ? { parentProductId: effectiveParentId }
-        : { parentProductId: null };
-      const nameTaken = await this.prisma.forTenant().product.findFirst({
-        where: {
-          name: { equals: effectiveName, mode: "insensitive" },
-          id: { not: id },
-          ...parentScope,
-        },
-        select: { id: true },
-      });
-      if (nameTaken) {
-        throw new ConflictException(
-          effectiveParentId
-            ? `A variant named "${effectiveName}" already exists for this product`
-            : `A product named "${effectiveName}" already exists`,
-        );
-      }
-    }
-    if (dto.sku) {
-      // Reject a case sku colliding with another product's sku or unit code (see
-      // create() — unitSku widening is safe on the new column; sku↔barcode is left
-      // as-is to avoid retroactively breaking existing catalogs).
-      const existing = await this.prisma.forTenant().product.findFirst({
-        where: {
-          OR: [{ sku: dto.sku }, { unitSku: dto.sku }],
-          id: { not: id },
-        },
-      });
-      if (existing) throw new BadRequestException("SKU already exists");
-    }
-    if (dto.barcode) {
-      const existing = await this.prisma.forTenant().product.findFirst({
-        where: {
-          OR: [{ barcode: dto.barcode }, { unitSku: dto.barcode }],
-          id: { not: id },
-        },
-      });
-      if (existing) throw new BadRequestException("Barcode already exists");
-    }
-    // Same cross-namespace collision check as create() — a unit code must not
-    // collide with any OTHER product's sku/barcode/unitSku.
-    if (dto.unitSku) {
-      const clash = await this.prisma.forTenant().product.findFirst({
-        where: {
-          OR: [{ unitSku: dto.unitSku }, { sku: dto.unitSku }, { barcode: dto.unitSku }],
-          id: { not: id },
-        },
-      });
-      if (clash) {
-        throw new BadRequestException(
-          "Unit code already used by another product's SKU, barcode, or unit code",
-        );
-      }
-    }
+    // The product's effective parent is the dto value if provided (could be null to promote a
+    // variant to standalone), otherwise the existing one — so reparenting + renaming in one
+    // PATCH checks the RIGHT scope. The name is only re-checked when it or the parent moves.
+    const renamedOrReparented = !!dto.name || dto.parentProductId !== undefined;
+    await this.assertIdentityAvailable(
+      {
+        name: renamedOrReparented ? (dto.name ?? existing.name) : undefined,
+        parentProductId:
+          dto.parentProductId !== undefined ? dto.parentProductId : existing.parentProductId,
+        sku: dto.sku,
+        barcode: dto.barcode,
+        unitSku: dto.unitSku,
+      },
+      id,
+    );
     // ── Compliance-pack sync: an isTobacco-only PATCH (the mobile quick-toggle)
     // is sugar for a Tobacco-type assign/unassign. When the request also carries
     // an explicit trackedCategoryId, the category wins and the mirror derivation
@@ -1588,6 +1546,10 @@ export class ProductsService {
     skipped: number;
     errors: Array<{ row: number; name: string; reason: string }>;
   }> {
+    // Same flag.forecasting gate as every other reorder writer — the whole batch is refused
+    // before any write when one item carries a reorder point.
+    if (dto.items.some((item) => item.reorderPoint != null)) await this.assertReorderAllowed();
+
     let created = 0;
     let skipped = 0;
     const errors: Array<{ row: number; name: string; reason: string }> = [];
