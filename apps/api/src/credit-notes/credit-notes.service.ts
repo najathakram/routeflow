@@ -374,6 +374,7 @@ export class CreditNotesService {
       amount: number;
       reason?: string | null;
       expiresAt: Date | null;
+      autoApplyExcluded?: boolean; // SA-608: the reissue carries the old note's exclusion over
     },
     cnItemsData: any[],
     tenantId: string | null,
@@ -388,6 +389,7 @@ export class CreditNotesService {
         reason: data.reason,
         status: "ISSUED",
         expiresAt: data.expiresAt,
+        ...(data.autoApplyExcluded ? { autoApplyExcluded: true } : {}),
       },
     });
     const created = { ...row, customer };
