@@ -245,3 +245,70 @@ describe("money seam: the relabelled triple prices correctly through the EXISTIN
     ).toBe(52.5);
   });
 });
+
+describe("resolveLineUnits — honourDefaultSelling (#2784, SA-601 buyer qty-only lines)", () => {
+  const flaggedCase: LadderUnit = { ...caseRow, isDefaultSelling: true };
+  const opts = { honourDefaultSelling: true };
+
+  it("a line with NO requested unit resolves to the flagged default level", () => {
+    expect(resolveLineUnits(boxed, [flaggedCase], undefined, null, opts)).toEqual({
+      unitsPerBox: 288,
+      unitLabel: "Case",
+      kind: "level",
+    });
+  });
+
+  it("an explicit unit ALWAYS wins: a named level, the named Piece, and an explicit null/'' = the pack", () => {
+    expect(
+      resolveLineUnits(boxed, [flaggedCase, pieceRow], { unitLabel: "Piece" }, null, opts),
+    ).toEqual({
+      unitsPerBox: 1,
+      unitLabel: "Piece",
+      kind: "piece",
+    });
+    expect(resolveLineUnits(boxed, [flaggedCase], { unitLabel: null }, null, opts)).toEqual({
+      unitsPerBox: 24,
+      unitLabel: null,
+      kind: "pack",
+    });
+    expect(resolveLineUnits(boxed, [flaggedCase], { unitLabel: "" }, null, opts).kind).toBe("pack");
+  });
+
+  it("a rewrite of a line that already carries a unit keeps ITS snapshot (rule 2), not the default", () => {
+    const held = { unitLabel: "Piece", unitsPerBox: 1 };
+    expect(resolveLineUnits(boxed, [flaggedCase, pieceRow], undefined, held, opts)).toEqual({
+      unitsPerBox: 1,
+      unitLabel: "Piece",
+      kind: "piece",
+    });
+  });
+
+  it("no flagged level -> today's pack line", () => {
+    expect(resolveLineUnits(boxed, [caseRow], undefined, null, opts)).toEqual({
+      unitsPerBox: 24,
+      unitLabel: null,
+      kind: "pack",
+    });
+  });
+
+  it("WITHOUT the option (staff / driver arms, SA-593g) the flag is ignored: byte-identical pack", () => {
+    expect(resolveLineUnits(boxed, [flaggedCase], undefined, null)).toEqual({
+      unitsPerBox: 24,
+      unitLabel: null,
+      kind: "pack",
+    });
+    expect(
+      resolveLineUnits(boxed, [flaggedCase], undefined, null, { honourDefaultSelling: false }).kind,
+    ).toBe("pack");
+  });
+
+  it("a flagged Piece on a product with no pack size stays the plain pack (no unit-aware line)", () => {
+    const each = { unit: "Each", pricePerUnit: 3 };
+    const flaggedPiece: LadderUnit = { ...pieceRow, isDefaultSelling: true };
+    expect(resolveLineUnits(each, [flaggedPiece], undefined, null, opts)).toEqual({
+      unitsPerBox: 0,
+      unitLabel: null,
+      kind: "pack",
+    });
+  });
+});
