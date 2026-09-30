@@ -12,7 +12,7 @@
  * findOrCreateUser takes an already-verified profile, so no Google token verification is stubbed.
  */
 import { randomUUID } from "crypto";
-import { ConflictException } from "@nestjs/common";
+import { ConflictException, ForbiddenException } from "@nestjs/common";
 import type { ConfigService } from "@nestjs/config";
 import type { JwtService } from "@nestjs/jwt";
 import { GoogleOAuthService } from "./google-oauth.service";
@@ -430,5 +430,76 @@ describeDb("#2775 (SA-598 P1) — Google link CAS on real Postgres", () => {
     await expect(service.linkGoogleAccount(profile)).rejects.toThrow("google_already_linked");
     expect((await raw.user.findUnique({ where: { id: user.id } }))?.googleId).toBe(sub);
     expect(emailSend).toHaveBeenCalledTimes(1); // no duplicate notification
+  });
+
+  it("real P2002 (staff CAS): a googleId unique violation raised by Postgres itself surfaces as google_id_taken and writes nothing", async () => {
+    // U1 (tenant A) already owns sub S. U2 (tenant A, googleId null) has email E2. The shim makes
+    // the sub-first lookup miss (returns null for the `googleId` query) while the REAL DB still
+    // holds U1 with S, so the resolver falls through to the email lookup and picks U2. The CAS
+    // `updateMany({ id: U2, tenantId: A, googleId: null }, data: { googleId: S })` then hits the
+    // REAL unique index User(tenantId, googleId): a driver-adapter P2002 (quoted field names),
+    // which guardGoogleIdTaken must map to ForbiddenException("google_id_taken").
+    const sub = `google-sub-${run}-p2002`;
+    const u1 = await raw.user.create({
+      data: {
+        tenantId: tenantAId,
+        email: `p2002-owner-${run}@example.test`,
+        username: `p2002-owner-${run}`,
+        role: "OPERATOR",
+        googleId: sub,
+      },
+    });
+    const u2 = await raw.user.create({
+      data: {
+        tenantId: tenantAId,
+        email: `p2002-target-${run}@example.test`,
+        username: `p2002-target-${run}`,
+        role: "OPERATOR",
+      },
+    });
+
+    let subLookupsSkipped = 0;
+    const casErrors: unknown[] = [];
+    const prismaShim = {
+      user: {
+        findUnique: (args: Prisma.UserFindUniqueArgs) => raw.user.findUnique(args),
+        findFirst: async (args: Prisma.UserFindFirstArgs) => {
+          if ((args.where as any)?.googleId) {
+            subLookupsSkipped += 1;
+            return null; // hide U1 from the sub-first lookup; the DB still holds it
+          }
+          return raw.user.findFirst(args);
+        },
+        updateMany: async (args: Prisma.UserUpdateManyArgs) => {
+          try {
+            return await raw.user.updateMany(args);
+          } catch (e) {
+            casErrors.push(e);
+            throw e;
+          }
+        },
+        update: (args: Prisma.UserUpdateArgs) => raw.user.update(args),
+      },
+      tenant: { findFirst: (args: Prisma.TenantFindFirstArgs) => raw.tenant.findFirst(args) },
+      refreshToken: { upsert: jest.fn().mockResolvedValue({}) },
+    };
+    const emailSend = jest.fn().mockResolvedValue(undefined);
+    const service = buildService(prismaShim, emailSend);
+
+    await expect(
+      service.findOrCreateUser({
+        type: "tenant",
+        tenantSlug: slugA,
+        googleId: sub,
+        email: u2.email,
+      } as any),
+    ).rejects.toThrow(new ForbiddenException("google_id_taken"));
+
+    expect(subLookupsSkipped).toBe(1);
+    expect(casErrors).toHaveLength(1); // the real DB raised the violation
+    expect((casErrors[0] as { code?: string }).code).toBe("P2002");
+    expect((await raw.user.findUnique({ where: { id: u2.id } }))?.googleId).toBeNull();
+    expect((await raw.user.findUnique({ where: { id: u1.id } }))?.googleId).toBe(sub);
+    expect(emailSend).not.toHaveBeenCalled();
   });
 });
