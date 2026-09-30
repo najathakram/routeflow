@@ -244,6 +244,12 @@ export async function lockCodesOfProducts(
  * fields released. Call BEFORE the `isActive` write, never after it: it takes this product's code locks FIRST and then its row
  * lock (house order), so a row already locked by the `isActive` UPDATE would invert the order and deadlock (Opus #2860 B1).
  */
+const codesChanged = () =>
+  new ConflictException({
+    code: API_ERROR_CODES.CODES_CHANGED,
+    message: "This product's codes changed while it was being saved. Try again.",
+  });
+
 export async function releaseProductCodes(
   tx: CatalogTx,
   input: {
@@ -266,12 +272,16 @@ export async function releaseProductCodes(
     where: { tenantId, productId, code: { not: null } },
     select: { code: true },
   });
-  await lockBarcodeCodes(tx, tenantId, [
-    peek.sku,
-    peek.barcode,
-    peek.unitSku,
-    ...rowCodes.map((r) => r.code),
-  ]);
+  const preLock = [peek.sku, peek.barcode, peek.unitSku, ...rowCodes.map((r) => r.code)];
+  if (input.lockedCodes) {
+    // Opus #2860 r3 B1: check the PRE-LOCK peek against the caller's set BEFORE taking any lock. A stale set that then
+    // locked the new code here (after the caller's row locks) would be a late, inverted-order acquisition: a deadlock
+    // that CODES_CHANGED after the fact cannot prevent.
+    if (preLock.some((c) => typeof c === "string" && c.trim() && !input.lockedCodes!.has(c))) {
+      throw codesChanged();
+    }
+  }
+  await lockBarcodeCodes(tx, tenantId, preLock);
   await lockProductRow(tx, tenantId, productId);
   const p: ProductCodes | null = await tx.product.findFirst({
     where: { id: productId, tenantId },
@@ -280,12 +290,7 @@ export async function releaseProductCodes(
   if (!p) return { released: [], freed: [] };
   if (input.lockedCodes) {
     const live = await peekProductCodes(tx, tenantId, productId);
-    if (live.some((c) => !input.lockedCodes!.has(c))) {
-      throw new ConflictException({
-        code: API_ERROR_CODES.CODES_CHANGED,
-        message: "This product's codes changed while it was being saved. Try again.",
-      });
-    }
+    if (live.some((c) => !input.lockedCodes!.has(c))) throw codesChanged();
   }
   const done = await releaseLive(tx, tenantId, p);
   return { released: done.fields, freed: done.freed };

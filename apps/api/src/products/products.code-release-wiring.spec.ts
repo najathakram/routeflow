@@ -111,6 +111,31 @@ describe("ProductsService — code release wiring (SA-603a)", () => {
     expect(order.indexOf("release")).toBeLessThan(order.indexOf("flip"));
   });
 
+  it("r3 B2 probe: remove() takes ONE sorted lock set for every code of the product BEFORE the release", async () => {
+    const self = { ...BASE, sku: "OLD1", barcode: "Z9" };
+    prisma.product.findUnique.mockResolvedValue(self as any);
+    prisma.orderItem.count.mockResolvedValue(0);
+    prisma.product.update.mockResolvedValue({ ...self, isActive: false } as any);
+    holderLookup(self);
+    prisma.productBarcode.findMany.mockResolvedValue([]);
+    const events: string[] = [];
+    const lockSpy = jest.fn((strings: TemplateStringsArray, ...v: unknown[]) => {
+      if (v[0] === "product-barcode") events.push(String(v[1]).split(":")[1]);
+      return Promise.resolve(0);
+    });
+    prisma.tenantTransaction.mockImplementation((fn: any) =>
+      fn({ ...prisma, $executeRaw: lockSpy, $queryRaw: jest.fn().mockResolvedValue([]) }),
+    );
+
+    await service.remove("prod-1");
+
+    let n = 1;
+    while (n < events.length && events[n] > events[n - 1]) n += 1;
+    const first = events.slice(0, n);
+    expect(first).toEqual(expect.arrayContaining(["OLD1", "Z9"]));
+    for (const k of events.slice(n)) expect(first).toContain(k);
+  });
+
   it("B2 probe: update() takes its code locks as ONE sorted set up front; every later lock is a subset (no inverted order)", async () => {
     const self = { ...BASE, sku: "OLD1", barcode: "Z9" };
     prisma.product.findUnique.mockResolvedValue(self as any);

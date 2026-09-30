@@ -2051,7 +2051,13 @@ describe("ProductsService", () => {
 // stake in this scenario, so unlike the tenancy specs this fake does not need
 // to route through the real _wrapTxWithTenant.
 
-type FakeProductRow = { id: string; name: string; isActive: boolean };
+type FakeProductRow = {
+  id: string;
+  name: string;
+  isActive: boolean;
+  tenantId?: string;
+  sku?: string | null;
+};
 type FakeRefRow = {
   id: string;
   productId: string;
@@ -2083,10 +2089,13 @@ function refWhereMatches(row: any, where?: any): boolean {
 }
 
 function makeBulkDeleteReferenceStore() {
+  const advisoryLocks: string[] = [];
   const products: FakeProductRow[] = [
-    { id: "prod-a", name: "Product A", isActive: true },
-    { id: "prod-b", name: "Product B", isActive: true },
-    { id: "prod-c", name: "Product C", isActive: true },
+    { id: "prod-a", name: "Product A", isActive: true, tenantId: "test-tenant" },
+    // B and D carry codes (M1 / A1) so the clearAll lock-set probe below can tell ONE sorted set from per-product locks.
+    { id: "prod-b", name: "Product B", isActive: true, tenantId: "test-tenant", sku: "M1" },
+    { id: "prod-c", name: "Product C", isActive: true, tenantId: "test-tenant" },
+    { id: "prod-d", name: "Product D", isActive: true, tenantId: "test-tenant", sku: "A1" },
   ];
   // A: an in-flight order item — the ACTIVE reference that must SKIP it.
   // B: a SETTLED order item plus a historical invoice line — references, but
@@ -2100,7 +2109,10 @@ function makeBulkDeleteReferenceStore() {
     { id: "oi-1", productId: "prod-a", status: "CONFIRMED", order: { status: "CONFIRMED" } },
     { id: "oi-2", productId: "prod-b", status: "DELIVERED", order: { status: "DELIVERED" } },
   ];
-  const invoiceItems: FakeRefRow[] = [{ id: "ii-1", productId: "prod-b" }];
+  const invoiceItems: FakeRefRow[] = [
+    { id: "ii-1", productId: "prod-b" },
+    { id: "ii-2", productId: "prod-d" },
+  ];
   // C: no rows anywhere — the reference-free, hard-delete case.
 
   // Relation name (as it appears on `Product` in schema.prisma) → the seeded rows behind it.
@@ -2240,13 +2252,16 @@ function makeBulkDeleteReferenceStore() {
     tenantTransaction: jest.fn((fn: (tx: unknown) => unknown) =>
       fn({
         ...models,
-        $executeRaw: jest.fn().mockResolvedValue(0),
+        $executeRaw: jest.fn((_s: TemplateStringsArray, ...v: unknown[]) => {
+          if (v[0] === "product-barcode") advisoryLocks.push(String(v[1]).split(":")[1]);
+          return Promise.resolve(0);
+        }),
         $queryRaw: jest.fn().mockResolvedValue([]),
       }),
     ),
   };
 
-  return { products, orderItems, invoiceItems, prisma };
+  return { products, orderItems, invoiceItems, prisma, advisoryLocks };
 }
 
 async function buildBulkDeleteProductsService(prisma: unknown): Promise<ProductsService> {
@@ -2320,5 +2335,26 @@ describe("bulkDelete — REG-B24 / T-B24a (reference classification guard)", () 
 
     // C: no references anywhere — hard-deleted, the row itself is gone.
     expect(products.find((p) => p.id === "prod-c")).toBeUndefined();
+  });
+});
+
+describe("clearAll soft-delete lock set (Opus #2860 r3 B2): ONE sorted set, never per-product", () => {
+  it("soft-deleting B{M1} and D{A1}: the first ascending batch covers EVERY code and nothing new is locked later", async () => {
+    const { prisma, products, advisoryLocks } = makeBulkDeleteReferenceStore();
+    const service = await buildBulkDeleteProductsService(prisma);
+    await service.bulkDelete(["prod-b", "prod-d"]);
+    expect(
+      products
+        .filter((p) => !p.isActive)
+        .map((p) => p.id)
+        .sort(),
+    ).toEqual(["prod-b", "prod-d"]);
+    // First batch = the maximal ascending prefix (one sorted lockBarcodeCodes call)...
+    let n = 1;
+    while (n < advisoryLocks.length && advisoryLocks[n] > advisoryLocks[n - 1]) n += 1;
+    const first = advisoryLocks.slice(0, n);
+    expect(first).toEqual(expect.arrayContaining(["A1", "M1"]));
+    // ...and every later lock is a re-lock of a code already held. The old per-product order (M1 | A1) fails this.
+    for (const k of advisoryLocks.slice(n)) expect(first).toContain(k);
   });
 });

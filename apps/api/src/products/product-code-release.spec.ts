@@ -95,6 +95,18 @@ describe("lockCodesOfProducts (clearAll's ONE sorted lock set, capped)", () => {
 });
 
 describe("releaseProductCodes lockedCodes (Opus #2860 R1)", () => {
+  it("r3 B1: a code outside the caller's set is refused BEFORE any lock is issued (a late lock would deadlock)", async () => {
+    const tx = makeTx({ products: [product({ id: "p1", sku: "S1", barcode: "NEW" })] });
+    const err = await releaseProductCodes(tx, {
+      tenantId: T,
+      productId: "p1",
+      lockedCodes: new Set(["S1"]), // NEW appeared after the caller locked
+    }).catch((e) => e);
+    expect(err.getResponse()).toMatchObject({ code: "CODES_CHANGED" });
+    expect(tx.calls).not.toContain("lock:code");
+    expect(tx.calls.some((c) => c.startsWith("lock:row"))).toBe(false);
+  });
+
   it("a live code that was NOT in the caller's locked set is a 409 CODES_CHANGED and nothing is written", async () => {
     const tx = makeTx({ products: [product({ id: "p1", sku: "S1", barcode: "B1" })] });
     const err = await releaseProductCodes(tx, {
