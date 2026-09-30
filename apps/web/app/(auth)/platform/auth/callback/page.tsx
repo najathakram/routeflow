@@ -15,6 +15,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   google_already_linked:
     "Your account already has a Google account connected. Remove the existing connection first.",
   google_id_taken: "This Google account is already linked to a different user.",
+  google_account_mismatch:
+    "This Google account doesn't match the one already linked to this email. Sign in with your linked Google account or your password.",
   oauth_cancelled: "Sign-in was cancelled. Please try again.",
   unknown_error: "An unexpected error occurred. Please try again.",
 };
