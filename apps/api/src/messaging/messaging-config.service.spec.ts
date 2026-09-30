@@ -408,7 +408,7 @@ describe("MessagingConfigService (P6-6)", () => {
 
       // Every INTERNAL event today is also a NO_TRIGGER event, so the `channel !== INTERNAL`
       // exemption in unavailabilityReason is currently unreachable — this pins that fact.
-      // When the first INTERNAL event gains a firing site (leaves NO_TRIGGER_EVENTS), this
+      // When the first INTERNAL event gains a firing site (leaves NOTIFICATION_TRIGGERS (absent)), this
       // assertion fails and the exemption needs a real NO_TRANSPORT test.
       const internalCells = result.events.flatMap((e) =>
         e.channels.filter((c) => c.channel === MessageChannel.INTERNAL),

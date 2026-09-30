@@ -39,7 +39,7 @@ export const EVENT_CHANNELS: Record<NotificationEvent, MessageChannel[]> = {
   [NotificationEvent.LOW_STOCK]: [INTERNAL],
   [NotificationEvent.FAILED_DELIVERY]: [INTERNAL],
   [NotificationEvent.PAYMENT_FAILED_NSF]: [INTERNAL],
-  // Post-dated check payments PR-1: no firing site yet (see NO_TRIGGER_EVENTS
+  // Post-dated check payments PR-1: no firing site yet (see NOTIFICATION_TRIGGERS (absent)
   // below) — entry exists only so this Record stays exhaustive over
   // NotificationEvent.
   [NotificationEvent.CHECK_RETURNED]: [INTERNAL],
@@ -111,7 +111,7 @@ export const DEFAULT_TEMPLATES: Record<NotificationEvent, { label: string; body:
 
 /** Cells seeded enabled=true — PORTAL/EMAIL (free, un-metered, consent-less).
  *  Every metered/consented channel (WA/SMS) seeds OFF, and so does every
- *  INTERNAL ops alert below (NO_TRIGGER_EVENTS) — seeding a key ON that can
+ *  INTERNAL ops alert below (NOTIFICATION_TRIGGERS (absent)) — seeding a key ON that can
  *  never fire is B180 (cause-ruling.md §2/Check).
  *
  *  N1 (2026-09-16): the four order-status events default their EMAIL cell ON
@@ -345,7 +345,7 @@ export class MessagingConfigService {
   ): MatrixCell["unavailable"] {
     if (hasNoTrigger(eventKey)) return "NO_TRIGGER";
     // The `channel !== INTERNAL` exemption is currently unreachable: every INTERNAL event is
-    // in NO_TRIGGER_EVENTS above, so this line never sees channel === INTERNAL today. Kept for
+    // in NOTIFICATION_TRIGGERS (absent) above, so this line never sees channel === INTERNAL today. Kept for
     // the first wired INTERNAL event; pinned by the NO_TRANSPORT spec in
     // messaging-config.service.spec.ts.
     if (channel !== INTERNAL && !this.provider.transports(channel)) return "NO_TRANSPORT";
