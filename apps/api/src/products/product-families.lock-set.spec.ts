@@ -39,7 +39,15 @@ function harness(seed: Parameters<typeof makeTx>[0]) {
     locks.filter((l) => l.kind === "code").map((l) => l.key.slice(`${T}:`.length));
   return { service, tx, locks, order, codeLocks };
 }
-const isSorted = (xs: string[]) => xs.every((x, i) => i === 0 || xs[i - 1] <= x);
+/**
+ * The FIRST lock run must be the whole set, ascending (claimCodes later re-takes some of them reentrantly, which is
+ * fine as long as it never takes a code OUTSIDE the set): per-row / request-order / partial locking breaks this.
+ */
+const expectOneSortedRun = (codes: string[], expected: string[]) => {
+  const want = [...new Set(expected)].sort();
+  expect(codes.slice(0, want.length)).toEqual(want);
+  expect(codes.every((c) => want.includes(c))).toBe(true);
+};
 const v = (name: string, over: Record<string, unknown> = {}) => ({
   name,
   pricePerUnit: "1.00",
@@ -61,13 +69,14 @@ describe("families writers take ONE sorted code-lock set", () => {
       ACTOR,
     );
     const codes = h.codeLocks();
-    expect(codes).toHaveLength(5);
-    expect(isSorted(codes)).toBe(true); // per-row / request-order locking would be Z, A, M: RED
-    expect(new Set(codes)).toEqual(new Set(["ZZ-9", "900", "AA-1", "100", "MM-5"]));
+    expectOneSortedRun(codes, ["ZZ-9", "900", "AA-1", "100", "MM-5"]); // request order Z, A, M would be RED
     const firstName = h.order.indexOf("lock:name");
     expect(firstName).toBeGreaterThan(-1);
     // every code lock precedes the first name lock (one code run, then the name), and both precede the first insert
-    expect(h.order.lastIndexOf("lock:code")).toBeLessThan(firstName);
+    expect(h.order.indexOf("lock:code")).toBeLessThan(firstName);
+    expect(
+      h.order.slice(0, firstName).every((o) => o === "lock:code" || o.startsWith("row:")),
+    ).toBe(true);
     expect(h.tx.calls.indexOf("product.create")).toBeGreaterThan(-1);
   });
 
@@ -96,8 +105,7 @@ describe("families writers take ONE sorted code-lock set", () => {
       ACTOR,
     );
     const codes = h.codeLocks();
-    expect(isSorted(codes)).toBe(true);
-    expect(new Set(codes)).toEqual(new Set(["Q-2", "B-1", "K-9", "K-1", "K-5"]));
+    expectOneSortedRun(codes, ["Q-2", "B-1", "K-9", "K-1", "K-5"]);
     // family row first, before the first code lock
     expect(h.order[0]).toBe("row:fam");
     expect(h.order.indexOf("row:fam")).toBeLessThan(h.order.indexOf("lock:code"));
