@@ -1,10 +1,11 @@
-import { Type } from "class-transformer";
+import { Transform, Type } from "class-transformer";
 import {
   ArrayMaxSize,
   ArrayMinSize,
   IsArray,
   IsBoolean,
   IsInt,
+  IsNotEmpty,
   IsOptional,
   IsString,
   Matches,
@@ -12,11 +13,15 @@ import {
   ValidateNested,
 } from "class-validator";
 
-const MONEY = /^\d+(\.\d+)?$/;
+// Decimal(10,2): at most 8 integer digits, so an over-range value is a 400, never a DB overflow 500.
+const MONEY = /^\d{1,8}(\.\d+)?$/;
+
+const trimmed = ({ value }: { value: unknown }) =>
+  typeof value === "string" ? value.trim() : value;
 
 /** One variant row of POST /products/families and the `add` rows of PATCH /products/:id/variants. */
 export class FamilyVariantDto {
-  @IsString() name: string;
+  @Transform(trimmed) @IsString() @IsNotEmpty() name: string;
   @IsOptional() @IsString() sku?: string;
   @IsOptional() @IsString() barcode?: string;
   @IsOptional() @IsString() unitSku?: string;
@@ -28,10 +33,9 @@ export class FamilyVariantDto {
 }
 
 export class FamilyInfoDto {
-  @IsString() name: string;
+  @Transform(trimmed) @IsString() @IsNotEmpty() name: string;
   @IsOptional() @IsString() category?: string;
   @IsOptional() @IsString() description?: string;
-  @IsOptional() @IsString() imageUrl?: string;
   @IsOptional()
   @Matches(MONEY, { message: "pricePerUnit must be non-negative" })
   pricePerUnit?: string;
@@ -56,7 +60,7 @@ export class CreateFamilyDto {
 /** An `update` row: the variant id + any subset of the editable fields (kind is never editable). */
 export class FamilyVariantUpdateDto {
   @IsString() id: string;
-  @IsOptional() @IsString() name?: string;
+  @IsOptional() @Transform(trimmed) @IsString() @IsNotEmpty() name?: string;
   @IsOptional() @IsString() sku?: string;
   @IsOptional() @IsString() barcode?: string;
   @IsOptional() @IsString() unitSku?: string;

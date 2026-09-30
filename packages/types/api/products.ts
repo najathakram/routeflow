@@ -314,7 +314,6 @@ export interface CreateFamilyRequest {
     name: string;
     category?: string;
     description?: string;
-    imageUrl?: string;
     pricePerUnit?: string;
     standardCost?: string;
   };

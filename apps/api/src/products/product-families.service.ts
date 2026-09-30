@@ -3,6 +3,7 @@ import {
   ConflictException,
   Injectable,
   Logger,
+  NotFoundException,
   Optional,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
@@ -18,6 +19,7 @@ import {
   familyGridConflicts,
   nameTakenBy,
   type FamilyCodeInput,
+  type FamilyNameInput,
 } from "./product-family-conflicts";
 import {
   lockBarcodeCodes,
@@ -25,8 +27,20 @@ import {
   syncProductBarcodesFromLegacy,
   type CatalogTx,
 } from "./product-catalog-sync";
-import { peekProductCodes, releaseProductCodes, type CodeField } from "./product-code-release";
-import { familyPriceAuthorityError, readFamilyPriceMode } from "./family-price";
+import {
+  claimCodes,
+  peekProductCodes,
+  releaseProductCodes,
+  type CodeField,
+} from "./product-code-release";
+import {
+  FAMILY_PRICE_COLUMNS,
+  familyPriceAuthorityError,
+  familyPricesForNewVariant,
+  lockFamilyRow,
+  readFamilyPriceMode,
+  type FamilyPriceColumn,
+} from "./family-price";
 import { lockProductName } from "./product-name-rules";
 import type {
   CreateFamilyDto,
@@ -44,6 +58,7 @@ import type {
 const CODE_FIELDS: readonly CodeField[] = ["sku", "barcode", "unitSku"];
 const MAX_ROWS = 200;
 export const FAMILY_CREATED_ACTION = "product.family_created";
+export const FAMILY_VARIANTS_UPDATED_ACTION = "product.family_variants_updated";
 
 const blank = (v: string | undefined | null): string | null =>
   typeof v === "string" && v.trim().length > 0 ? v : null;
@@ -82,6 +97,7 @@ export class ProductFamiliesService {
   private codeInputs(
     rows: ReadonlyArray<{
       row: number | "family";
+      id?: string;
       sku?: string;
       barcode?: string;
       unitSku?: string;
@@ -91,7 +107,7 @@ export class ProductFamiliesService {
     for (const r of rows) {
       for (const field of CODE_FIELDS) {
         const value = blank(r[field]);
-        if (value) out.push({ row: r.row, field, value });
+        if (value) out.push({ row: r.row, field, value, ...(r.id ? { ownerId: r.id } : {}) });
       }
     }
     return out;
@@ -105,6 +121,7 @@ export class ProductFamiliesService {
     }
     const variantRows = dto.variants.map((v, i) => ({ row: i, ...v }));
     const familyPrice = money(dto.family.pricePerUnit);
+    const familyName = dto.family.name.trim();
     const run = () =>
       this.prisma.tenantTransaction(async (tx: CatalogTx) => {
         const codes = this.codeInputs(variantRows);
@@ -114,7 +131,7 @@ export class ProductFamiliesService {
           tenantId,
           codes.map((c) => c.value),
         );
-        await lockProductName(tx, tenantId, null, dto.family.name);
+        await lockProductName(tx, tenantId, null, familyName);
         const conflicts: FamilyRowConflict[] = [
           ...familyGridConflicts(
             variantRows.map((v) => ({
@@ -127,14 +144,25 @@ export class ProductFamiliesService {
           ),
           ...(await codeTakenBy(tx, tenantId, codes)),
           ...(await nameTakenBy(tx, tenantId, [
-            { row: "family", name: dto.family.name, parentProductId: null },
+            { row: "family", name: familyName, parentProductId: null },
           ])),
         ];
         if (conflicts.length > 0) throw this.rowsConflict(conflicts);
+        // #2860 claim semantics (Opus #2881 B2): a legacy INACTIVE holder still holds its code LIVE; release it (one
+        // audit row) before the insert instead of answering a raw P2002.
+        for (const v of variantRows) {
+          // eslint-disable-next-line no-await-in-loop
+          await claimCodes(tx, {
+            tenantId,
+            productId: null,
+            actorId,
+            codes: this.codeInputs([v]).map((c) => ({ field: c.field, value: c.value })),
+          });
+        }
 
         const family = await tx.product.create({
           data: {
-            name: dto.family.name,
+            name: familyName,
             unit: "each",
             pricePerUnit: familyPrice,
             ...(dto.family.standardCost != null && dto.family.standardCost !== ""
@@ -173,21 +201,27 @@ export class ProductFamiliesService {
     try {
       result = await run();
     } catch (e) {
-      await this.reattribute(e, tenantId, variantRows, dto.family.name, null);
+      await this.reattribute(e, tenantId, this.codeInputs(variantRows), [
+        { row: "family", name: familyName, parentProductId: null },
+      ]);
       throw e;
     }
-    await this.afterWrite(actorId, result.family.id, { variantCount: result.variants.length });
+    await this.afterWrite(actorId, result.family.id, FAMILY_CREATED_ACTION, {
+      variantCount: result.variants.length,
+    });
     return result;
   }
 
   private variantData(
     familyId: string,
     v: FamilyVariantDto,
-    copiedPrice?: string,
+    prices?: string | Record<FamilyPriceColumn, Prisma.Decimal>,
     familyCost?: string | null,
   ): Prisma.ProductUncheckedCreateInput {
     const cost = blank(v.standardCost) ?? familyCost;
-    const price = copiedPrice ?? money(v.pricePerUnit);
+    const own = typeof prices === "string" ? prices : money(v.pricePerUnit);
+    const col = (c: FamilyPriceColumn): string =>
+      prices && typeof prices !== "string" ? prices[c].toString() : own;
     return {
       name: v.name.trim(),
       variantName: v.name.trim(),
@@ -198,11 +232,11 @@ export class ProductFamiliesService {
       barcode: blank(v.barcode),
       unitSku: blank(v.unitSku),
       unitsPerBox: v.unitsPerBox ?? null,
-      pricePerUnit: price,
-      priceTier2: price,
-      priceTier3: price,
-      priceTier4: price,
-      priceTier5: price,
+      pricePerUnit: col("pricePerUnit"),
+      priceTier2: col("priceTier2"),
+      priceTier3: col("priceTier3"),
+      priceTier4: col("priceTier4"),
+      priceTier5: col("priceTier5"),
       ...(cost != null && cost !== ""
         ? { standardCost: roundUnitCost(Number(cost)).toFixed(4) }
         : {}),
@@ -214,17 +248,15 @@ export class ProductFamiliesService {
   private async reattribute(
     e: unknown,
     tenantId: string,
-    variantRows: ReadonlyArray<FamilyVariantDto & { row: number }>,
-    familyName: string | null,
-    parentProductId: string | null,
+    codes: readonly FamilyCodeInput[],
+    names: ReadonlyArray<FamilyNameInput>,
+    excludeProductIds: readonly string[] = [],
   ): Promise<void> {
     if (!(e instanceof Prisma.PrismaClientKnownRequestError) || e.code !== "P2002") return;
     const db = this.prisma.forTenant() as unknown as CatalogTx;
     const conflicts = [
-      ...(await codeTakenBy(db, tenantId, this.codeInputs(variantRows))),
-      ...(familyName
-        ? await nameTakenBy(db, tenantId, [{ row: "family", name: familyName, parentProductId }])
-        : []),
+      ...(await codeTakenBy(db, tenantId, codes, { excludeProductIds })),
+      ...(await nameTakenBy(db, tenantId, names, { excludeProductIds })),
     ];
     if (conflicts.length > 0) throw this.rowsConflict(conflicts);
   }
@@ -232,12 +264,13 @@ export class ProductFamiliesService {
   private async afterWrite(
     actorId: string | null,
     productId: string,
+    action: string,
     meta: Record<string, unknown>,
   ) {
     await this.audit.log({
       tenantId: this.prisma.getTenantId(),
       userId: actorId,
-      action: FAMILY_CREATED_ACTION,
+      action,
       entityType: "Product",
       entityId: productId,
       meta,
@@ -264,136 +297,173 @@ export class ProductFamiliesService {
       throw new BadRequestException(`At most ${MAX_ROWS} rows per request.`);
     }
     // M2 price authority: while mixed_packs is ON the family owns the variants' price, so a price EDIT is a 409 and an
-    // added variant takes the family's price (never a price of its own).
+    // added variant takes the family's five columns (never a price of its own).
     const authority = (await readFamilyPriceMode(this.featureConfig, tenantId)) === "on";
     if (authority && update.some((u) => u.pricePerUnit !== undefined)) {
       throw familyPriceAuthorityError(familyId);
     }
-    const result = await this.prisma.tenantTransaction(async (tx: CatalogTx) => {
-      const family: {
-        id: string;
-        kind: string;
-        pricePerUnit: unknown;
-        standardCost: Prisma.Decimal | null;
-      } | null = await tx.product.findFirst({
-        where: { id: familyId, tenantId },
-        select: { id: true, kind: true, pricePerUnit: true, standardCost: true },
-      });
-      if (!family) throw new BadRequestException("Product not found");
-      if (family.kind !== "FAMILY") throw new BadRequestException("This product is not a family.");
-      const touchedIds = [...new Set([...update.map((u) => u.id), ...deactivate])];
-      const mine: Array<{ id: string }> = touchedIds.length
-        ? await tx.product.findMany({
-            where: { tenantId, parentProductId: familyId, id: { in: touchedIds } },
-            select: { id: true },
-          })
-        : [];
-      const foreign = touchedIds.filter((id) => !mine.some((m) => m.id === id));
-      if (foreign.length > 0) {
-        throw new BadRequestException(
-          "Every updated or deactivated id must be a variant of this family.",
-        );
-      }
+    const touchedIds = [...new Set([...update.map((u) => u.id), ...deactivate])];
+    const addRows = add.map((v, i) => ({ row: i, ...v }));
+    const updRows = update.map((u, i) => ({ row: add.length + i, ...u }));
+    const codes = this.codeInputs([...addRows, ...updRows]);
+    const nameInputs = [
+      ...addRows.map((r) => ({ row: r.row, name: r.name.trim(), parentProductId: familyId })),
+      ...updRows
+        .filter((r) => r.name)
+        .map((r) => ({
+          row: r.row,
+          name: (r.name as string).trim(),
+          parentProductId: familyId,
+          excludeId: r.id,
+        })),
+    ];
 
-      const addRows = add.map((v, i) => ({ row: i, ...v }));
-      const updRows = update.map((u, i) => ({ row: add.length + i, ...u }));
-      const codes = this.codeInputs([...addRows, ...updRows]);
-      // ONE sorted lock call: the codes written AND every code of the variants being changed/deactivated.
-      const held: string[] = [];
-      for (const id of touchedIds) {
-        // eslint-disable-next-line no-await-in-loop -- a bounded set, before any lock is taken
-        held.push(...(await peekProductCodes(tx, tenantId, id)));
-      }
-      await lockBarcodeCodes(tx, tenantId, [...codes.map((c) => c.value), ...held]);
-      for (const n of new Set([
-        ...addRows.map((r) => r.name),
-        ...updRows.filter((r) => r.name).map((r) => r.name as string),
-      ])) {
-        // eslint-disable-next-line no-await-in-loop
-        await lockProductName(tx, tenantId, familyId, n);
-      }
-      const conflicts: FamilyRowConflict[] = [
-        ...familyGridConflicts(
-          [...addRows, ...updRows]
-            .filter((r) => r.name != null)
-            .map((r) => ({
-              row: r.row,
-              name: r.name as string,
-              sku: r.sku,
-              barcode: r.barcode,
-              unitSku: r.unitSku,
-            })),
-        ),
-        ...(await codeTakenBy(tx, tenantId, codes, { excludeProductIds: touchedIds })),
-        ...(await nameTakenBy(
-          tx,
-          tenantId,
-          [
-            ...addRows.map((r) => ({ row: r.row, name: r.name, parentProductId: familyId })),
-            ...updRows
-              .filter((r) => r.name)
+    const run = () =>
+      this.prisma.tenantTransaction(async (tx: CatalogTx) => {
+        // House order (Opus #2881 B4): the family row FIRST (an add must not race propagateFamilyPrice), then every code
+        // in ONE sorted call, then the name locks (sorted), then the touched rows in id order.
+        await lockFamilyRow(tx, tenantId, familyId);
+        const family: {
+          id: string;
+          kind: string;
+          standardCost: Prisma.Decimal | null;
+        } | null = await tx.product.findFirst({
+          where: { id: familyId, tenantId },
+          select: { id: true, kind: true, standardCost: true },
+        });
+        if (!family) {
+          throw new NotFoundException({
+            code: API_ERROR_CODES.FAMILY_NOT_FOUND,
+            message: "Product family not found.",
+          });
+        }
+        if (family.kind !== "FAMILY") {
+          throw new BadRequestException("This product is not a family.");
+        }
+        const mine: Array<{ id: string }> = touchedIds.length
+          ? await tx.product.findMany({
+              where: { tenantId, parentProductId: familyId, id: { in: touchedIds } },
+              select: { id: true },
+            })
+          : [];
+        const foreign = touchedIds.filter((id) => !mine.some((m) => m.id === id));
+        if (foreign.length > 0) {
+          throw new BadRequestException(
+            "Every updated or deactivated id must be a variant of this family.",
+          );
+        }
+
+        // ONE sorted lock call: the codes written AND every code of the variants being changed/deactivated.
+        const held: string[] = [];
+        for (const id of touchedIds) {
+          // eslint-disable-next-line no-await-in-loop -- a bounded set, before any lock is taken
+          held.push(...(await peekProductCodes(tx, tenantId, id)));
+        }
+        const lockList = [...codes.map((c) => c.value), ...held].filter((c) => c.trim().length > 0);
+        await lockBarcodeCodes(tx, tenantId, lockList);
+        const lockedCodes = new Set(lockList);
+        const nameKeys = [...new Set(nameInputs.map((n) => n.name.toLowerCase()))].sort();
+        for (const key of nameKeys) {
+          const name = nameInputs.find((n) => n.name.toLowerCase() === key)!.name;
+          // eslint-disable-next-line no-await-in-loop -- sorted, reentrant name locks
+          await lockProductName(tx, tenantId, familyId, name);
+        }
+        for (const id of [...touchedIds].sort()) {
+          // eslint-disable-next-line no-await-in-loop -- id order: two PATCHes on one family cannot deadlock
+          await lockProductRow(tx, tenantId, id);
+        }
+
+        const conflicts: FamilyRowConflict[] = [
+          ...familyGridConflicts(
+            [...addRows, ...updRows]
+              .filter((r) => r.name != null)
               .map((r) => ({
                 row: r.row,
                 name: r.name as string,
-                parentProductId: familyId,
-                excludeId: r.id,
+                sku: r.sku,
+                barcode: r.barcode,
+                unitSku: r.unitSku,
               })),
-          ].filter((n) => !deactivate.includes((n as { excludeId?: string }).excludeId ?? "")),
-        )),
-      ];
-      if (conflicts.length > 0) throw this.rowsConflict(conflicts);
+          ),
+          ...(await codeTakenBy(tx, tenantId, codes, { excludeProductIds: deactivate })),
+          ...(await nameTakenBy(tx, tenantId, nameInputs, { excludeProductIds: deactivate })),
+        ];
+        if (conflicts.length > 0) throw this.rowsConflict(conflicts);
 
-      // Writes: deactivate first (codes released BEFORE the isActive write, SA-603a), then updates, then adds.
-      for (const id of [...deactivate].sort()) {
-        // eslint-disable-next-line no-await-in-loop
-        await releaseProductCodes(tx, { tenantId, productId: id });
-        // eslint-disable-next-line no-await-in-loop
-        await tx.product.update({ where: { id }, data: { isActive: false } });
-      }
-      for (const u of update) {
-        // eslint-disable-next-line no-await-in-loop
-        await lockProductRow(tx, tenantId, u.id);
-        // eslint-disable-next-line no-await-in-loop
-        await tx.product.update({ where: { id: u.id }, data: this.variantPatch(u) });
-        if (u.barcode !== undefined || u.unitsPerBox !== undefined) {
+        // Writes: deactivate first (codes released BEFORE the isActive write, SA-603a, under the locks taken above).
+        for (const id of [...deactivate].sort()) {
           // eslint-disable-next-line no-await-in-loop
-          const row: { barcode: string | null; unitsPerBox: number | null } =
-            await tx.product.findFirst({
-              where: { id: u.id, tenantId },
-              select: { barcode: true, unitsPerBox: true },
+          await releaseProductCodes(tx, { tenantId, productId: id, lockedCodes });
+          // eslint-disable-next-line no-await-in-loop
+          await tx.product.update({ where: { id }, data: { isActive: false } });
+        }
+        // #2860 claim semantics (Opus #2881 B2): a legacy INACTIVE holder of a code still holds it LIVE, so the claim
+        // releases it (one audit row) before the write instead of hitting the unique index.
+        for (const r of [...updRows, ...addRows]) {
+          const claimed = this.codeInputs([r]).map((c) => ({ field: c.field, value: c.value }));
+          // eslint-disable-next-line no-await-in-loop
+          await claimCodes(tx, {
+            tenantId,
+            productId: "id" in r ? (r as { id: string }).id : null,
+            actorId,
+            codes: claimed,
+          });
+        }
+        for (const u of update) {
+          // eslint-disable-next-line no-await-in-loop
+          await tx.product.update({ where: { id: u.id }, data: this.variantPatch(u) });
+          if (u.barcode !== undefined || u.unitsPerBox !== undefined) {
+            // eslint-disable-next-line no-await-in-loop
+            const row: { barcode: string | null; unitsPerBox: number | null } =
+              await tx.product.findFirst({
+                where: { id: u.id, tenantId },
+                select: { barcode: true, unitsPerBox: true },
+              });
+            // eslint-disable-next-line no-await-in-loop
+            await syncProductBarcodesFromLegacy(tx, {
+              tenantId,
+              productId: u.id,
+              barcode: row.barcode,
+              unitsPerBox: row.unitsPerBox,
             });
+          }
+        }
+        const familyPrices =
+          authority && add.length > 0
+            ? await familyPricesForNewVariant(tx, { tenantId, familyId, dto: {} })
+            : undefined;
+        const added: string[] = [];
+        for (const v of add) {
+          // eslint-disable-next-line no-await-in-loop
+          const created = await tx.product.create({
+            data: this.variantData(
+              familyId,
+              v,
+              familyPrices,
+              family.standardCost == null ? null : family.standardCost.toString(),
+            ),
+          });
+          added.push(created.id);
           // eslint-disable-next-line no-await-in-loop
           await syncProductBarcodesFromLegacy(tx, {
             tenantId,
-            productId: u.id,
-            barcode: row.barcode,
-            unitsPerBox: row.unitsPerBox,
+            productId: created.id,
+            barcode: blank(v.barcode),
+            unitsPerBox: v.unitsPerBox ?? null,
           });
         }
-      }
-      const added: string[] = [];
-      for (const v of add) {
-        // eslint-disable-next-line no-await-in-loop
-        const created = await tx.product.create({
-          data: this.variantData(
-            familyId,
-            v,
-            authority ? money(String(family.pricePerUnit)) : undefined,
-            family.standardCost == null ? null : family.standardCost.toString(),
-          ),
-        });
-        added.push(created.id);
-        // eslint-disable-next-line no-await-in-loop
-        await syncProductBarcodesFromLegacy(tx, {
-          tenantId,
-          productId: created.id,
-          barcode: blank(v.barcode),
-          unitsPerBox: v.unitsPerBox ?? null,
-        });
-      }
-      return { added, updated: update.map((u) => u.id), deactivated: deactivate };
-    });
-    await this.afterWrite(actorId, familyId, {
+        return { added, updated: update.map((u) => u.id), deactivated: deactivate };
+      });
+
+    let result;
+    try {
+      result = await run();
+    } catch (e) {
+      // The P2002 backstop (Opus #2881 B3): a unique-index hit that slipped past the locks answers the same 409.
+      await this.reattribute(e, tenantId, codes, nameInputs, deactivate);
+      throw e;
+    }
+    await this.afterWrite(actorId, familyId, FAMILY_VARIANTS_UPDATED_ACTION, {
       added: result.added.length,
       updated: result.updated.length,
       deactivated: result.deactivated.length,
@@ -411,7 +481,12 @@ export class ProductFamiliesService {
     if (u.barcode !== undefined) data.barcode = blank(u.barcode);
     if (u.unitSku !== undefined) data.unitSku = blank(u.unitSku);
     if (u.unitsPerBox !== undefined) data.unitsPerBox = u.unitsPerBox;
-    if (u.pricePerUnit !== undefined) data.pricePerUnit = money(u.pricePerUnit);
+    if (u.pricePerUnit !== undefined) {
+      // Authority off: create sets all five columns to the price, so an edit moves all five (Opus #2881 B5) — a
+      // tier-2..5 customer must not keep being billed the old price.
+      const price = money(u.pricePerUnit);
+      for (const c of FAMILY_PRICE_COLUMNS) data[c] = price;
+    }
     if (u.standardCost !== undefined)
       data.standardCost = roundUnitCost(Number(u.standardCost)).toFixed(4);
     return data;
@@ -419,6 +494,10 @@ export class ProductFamiliesService {
 
   /** GET /products/sku-available: advisory only (the write is the authority), through the SAME codeTakenBy. */
   async skuAvailable(code: string, excludeProductId?: string) {
+    if (typeof code !== "string" || code.trim().length === 0) {
+      // An empty code would OR-match every product; answer a 400 instead of a random product's name.
+      throw new BadRequestException("A code is required.");
+    }
     const tenantId = this.tenant();
     const db = this.prisma.forTenant() as unknown as CatalogTx;
     for (const field of CODE_FIELDS) {

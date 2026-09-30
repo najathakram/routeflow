@@ -8,6 +8,8 @@ export interface FamilyCodeInput {
   row: number | "family";
   field: CodeField;
   value: string;
+  /** The existing product this value is being written onto (its own holding is not a conflict). */
+  ownerId?: string;
 }
 
 export interface FamilyNameInput {
@@ -82,12 +84,14 @@ export async function codeTakenBy(
   codes: readonly FamilyCodeInput[],
   opts?: { excludeProductIds?: readonly string[] },
 ): Promise<FamilyRowConflict[]> {
+  // Only rows the SAME write deactivates (released before the claim) and the row's OWN id are excluded: a sibling that
+  // merely stays in the request still holds its code until its own write, so taking it is a real conflict (Opus #2881 B3).
   const exclude = new Set(opts?.excludeProductIds ?? []);
   const out: FamilyRowConflict[] = [];
   for (const c of codes) {
     // eslint-disable-next-line no-await-in-loop -- a bounded grid, each code under the caller's lock
     const holders = await findCodeHolders(tx, tenantId, null, c.field, c.value);
-    const active = holders.find((h) => h.isActive && !exclude.has(h.id));
+    const active = holders.find((h) => h.isActive && !exclude.has(h.id) && h.id !== c.ownerId);
     if (active) {
       out.push({
         row: c.row,
@@ -106,17 +110,21 @@ export async function nameTakenBy(
   tx: CatalogTx,
   tenantId: string,
   names: readonly FamilyNameInput[],
+  opts?: { excludeProductIds?: readonly string[] },
 ): Promise<FamilyRowConflict[]> {
   const out: FamilyRowConflict[] = [];
+  const gone = [...(opts?.excludeProductIds ?? [])];
   for (const n of names) {
     // eslint-disable-next-line no-await-in-loop
     const holder: { id: string } | null = await tx.product.findFirst({
       where: {
         tenantId,
         isActive: true,
-        name: { equals: n.name, mode: "insensitive" },
+        name: { equals: n.name.trim(), mode: "insensitive" },
         parentProductId: n.parentProductId,
-        ...(n.excludeId ? { id: { not: n.excludeId } } : {}),
+        ...(n.excludeId || gone.length > 0
+          ? { id: { notIn: [...gone, ...(n.excludeId ? [n.excludeId] : [])] } }
+          : {}),
       },
       select: { id: true },
     });
