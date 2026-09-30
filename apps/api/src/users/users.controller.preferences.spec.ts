@@ -94,6 +94,7 @@ describe("PATCH/GET users/me/preferences — typed lowStockDigestEnabled", () =>
     lowStockDigestEnabled: "false",
     pushEnabled: "false",
     staffOrderEmail: "false",
+    staffBuyerChangeEmail: "false",
     locale: "es",
     "bill.lastSupplierId": "sup-123",
     "payment.lastMethod": "ACH",
@@ -133,6 +134,8 @@ describe("PATCH/GET users/me/preferences — typed lowStockDigestEnabled", () =>
   });
 
   it.each([
+    ["staffBuyerChangeEmail", "yes"],
+    ["staffBuyerChangeEmail", null],
     ["staffOrderEmail", "yes"],
     ["staffOrderEmail", null],
     ["pushEnabled", "yes"],

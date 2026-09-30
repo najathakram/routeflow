@@ -29,6 +29,7 @@ module.exports = {
     lowStockDigestEnabled: "lowStockDigestEnabled",
     pushEnabled: "pushEnabled",
     staffOrderEmail: "staffOrderEmail",
+    staffBuyerChangeEmail: "staffBuyerChangeEmail",
     locale: "locale",
     billLastSupplierId: "bill.lastSupplierId",
     paymentLastMethod: "payment.lastMethod",

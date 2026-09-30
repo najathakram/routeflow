@@ -151,6 +151,14 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
     adminOnly: true,
   },
   {
+    key: PREF.staffBuyerChangeEmail,
+    home: "userPref",
+    kind: "preference",
+    status: "pending WS4",
+    screen: "/settings?tab=notifications",
+    adminOnly: true,
+  },
+  {
     key: PREF.pushEnabled,
     home: "userPref",
     kind: "preference",
