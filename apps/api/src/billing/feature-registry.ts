@@ -266,6 +266,10 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
     billing: { skus: [], selfService: false },
     defaultGranted: false,
   },
+  // The SEND path (MailboxSendService.trySend) is gated on this key too, though it is not an HTTP
+  // route and so is not in `routes`: it shares the guard's decision (addon-access.ts) — dark = send
+  // + would-deny warning, enforced = `addon_required` (EmailService falls through to the next
+  // transport). Covered by mailbox-send.addon-gate.spec.ts.
   {
     key: "email.connected_mailbox",
     kind: "boolean",

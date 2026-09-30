@@ -254,7 +254,9 @@ function providers(respond: (url: string) => unknown): ProviderCall[] {
 }
 
 function build(db: StandInDb) {
-  const service = new MailboxSendService(db.client, encryption, config);
+  const service = new MailboxSendService(db.client, encryption, config, {
+    decide: jest.fn().mockResolvedValue({ outcome: "granted", overrides: new Map() }),
+  } as any);
   const alerts: MailboxStateChange[] = [];
   service.onStateChange((change) => {
     alerts.push(change);

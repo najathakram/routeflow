@@ -115,7 +115,9 @@ function build(conn: Row, updateManyCounts: number[] = [1]) {
     },
   };
   prisma.$transaction = jest.fn(async (fn: (tx: unknown) => unknown) => fn(prisma));
-  const service = new MailboxSendService(prisma, encryption, config);
+  const service = new MailboxSendService(prisma, encryption, config, {
+    decide: jest.fn().mockResolvedValue({ outcome: "granted", overrides: new Map() }),
+  } as any);
   const changes: MailboxStateChange[] = [];
   const unsubscribe = service.onStateChange((c) => {
     changes.push(c);
