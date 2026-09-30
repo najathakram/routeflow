@@ -147,6 +147,45 @@ describe("CreditNoteReissueService (#2648)", () => {
       expect(creditNotes.voidWithReversalInTx).toHaveBeenCalledTimes(3);
     });
 
+    it("a P2002 on some OTHER unique constraint is rethrown untouched, not dressed up as a number conflict", async () => {
+      const other = Object.assign(new Error("unique"), {
+        code: "P2002",
+        meta: { target: ["creditNoteId", "invoiceItemId"] },
+      });
+      creditNotes.insertCreditNoteInTx.mockRejectedValue(other);
+      await expect(service.reissue("cn-old", { amount: 20 }, "key-1", "u")).rejects.toBe(other);
+    });
+
+    it("a line amount/qty over the line with NO prior credits is a 400 (plain validation)", async () => {
+      for (const msg of [
+        "Credit line amount (90) exceeds invoice line subtotal (50)",
+        "Credit line qty (9) exceeds invoice line qty (5)",
+      ]) {
+        creditNotes.validateAndBuildCnItems.mockRejectedValueOnce(new BadRequestException(msg));
+        const err = await service
+          .reissue("cn-old", { amount: 20, items: [{ invoiceItemId: "li", amount: 20 }] }, "k", "u")
+          .catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect(err).not.toBeInstanceOf(ConflictException);
+      }
+    });
+
+    it("...but WITH prior credits it is the state conflict (409)", async () => {
+      creditNotes.validateAndBuildCnItems.mockRejectedValueOnce(
+        new BadRequestException(
+          "Credit line amount (20) plus prior credits (40) would exceed invoice line subtotal (50)",
+        ),
+      );
+      await expect(
+        service.reissue(
+          "cn-old",
+          { amount: 20, items: [{ invoiceItemId: "li", amount: 20 }] },
+          "k",
+          "u",
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
     it("a counter collision on the number (P2002) is a 409", async () => {
       creditNotes.insertCreditNoteInTx.mockRejectedValue(
         Object.assign(new Error("unique"), { code: "P2002" }),
