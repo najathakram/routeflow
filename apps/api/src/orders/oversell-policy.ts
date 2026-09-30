@@ -3,7 +3,9 @@ import { linePieceQty } from "./line-piece-qty";
 
 /**
  * WS9 backorder policy: pure, injected-reader modules. No DB, no schema.
- * The adapter onto the PolicyValue resolver (#1337) lands later.
+ * The adapter onto the PolicyValue resolver is `PolicyOversellReader` (policy-oversell-reader.ts).
+ * Call-site note: the buyer portal path must pass role CUSTOMER (never a staff role) for source "buyer",
+ * and a buyer "Reorder" must never be labelled `template_cron` (that source is true for every role).
  */
 
 export type OversellPolicy = "off" | "backorder";
