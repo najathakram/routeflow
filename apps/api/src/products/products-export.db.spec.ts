@@ -93,7 +93,13 @@ describeDb("products export.csv — real Postgres", () => {
 
   const seedProduct = (tenantId: string, name: string) =>
     prisma.product.create({
-      data: { tenantId, name, sku: `SKU-${randomUUID().slice(0, 6)}`, unit: "each", pricePerUnit: 3 },
+      data: {
+        tenantId,
+        name,
+        sku: `SKU-${randomUUID().slice(0, 6)}`,
+        unit: "each",
+        pricePerUnit: 3,
+      },
     });
 
   let invSeq = 0;
