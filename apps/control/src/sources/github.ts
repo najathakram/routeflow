@@ -60,7 +60,27 @@ export function buildListQuery(repo: RepoRef): GithubQuery {
     query: `query ($owner: String!, $name: String!) {
   ${RATE}
   repository(owner: $owner, name: $name) {
-    pullRequests(first: 40, orderBy: {field: UPDATED_AT, direction: DESC}) {
+    pullRequests(first: 100, states: [OPEN], orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes {
+        ${PR_SCALARS}
+        mergeable
+        reviewDecision
+        commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+      }
+    }
+  }
+}`,
+    variables: { owner: repo.owner, name: repo.name },
+  };
+}
+
+/** The small recent-closed query (every 4th poll): newest 20 CLOSED/MERGED PRs, no `files`. */
+export function buildClosedQuery(repo: RepoRef): GithubQuery {
+  return {
+    query: `query ($owner: String!, $name: String!) {
+  ${RATE}
+  repository(owner: $owner, name: $name) {
+    pullRequests(first: 20, states: [CLOSED, MERGED], orderBy: {field: UPDATED_AT, direction: DESC}) {
       nodes {
         ${PR_SCALARS}
         mergeable
@@ -86,6 +106,7 @@ export function buildDetailQuery(repo: RepoRef, number: number): GithubQuery {
       mergeable
       reviewDecision
       body
+      changedFiles
       labels(first: 20) { nodes { name } }
       files(first: 100) { nodes { path additions deletions } }
       commits(last: 1) { nodes { commit { committedDate message statusCheckRollup { state } } } }
@@ -125,19 +146,16 @@ class Limited extends Error {
   }
 }
 
-const signature = (n: RawPR): string =>
-  [
-    n.updatedAt,
-    n.headRefOid,
-    n.mergeable,
-    n.reviewDecision,
-    dig(n, "commits", "nodes", 0, "commit", "statusCheckRollup", "state"),
-  ].join("|");
+/** Detail calls per poll; the rest wait for the next tick (worst case stays inside the budget). */
+export const MAX_DETAILS_PER_POLL = 8;
+/** The recent-closed query runs on every Nth poll (about 2 min at a 30 s cadence). */
+export const CLOSED_EVERY_N_POLLS = 4;
+const MAX_BRANCH_PAGES = 10;
+
+const listRollup = (n: RawPR): unknown =>
+  dig(n, "commits", "nodes", 0, "commit", "statusCheckRollup", "state");
 
 const arr = (v: unknown): unknown[] => (Array.isArray(v) ? (v as unknown[]) : []);
-
-const safeMessage = (e: unknown): string =>
-  (e instanceof Error ? e.message : String(e)).slice(0, 200);
 
 export function createGithub(cfg: GithubConfig) {
   const doFetch: typeof fetch = cfg.fetch ?? globalThis.fetch;
@@ -150,10 +168,17 @@ export function createGithub(cfg: GithubConfig) {
     rateLimit: { remaining: null, resetAt: null, cost: null },
     etag: null,
   };
-  const cache = new Map<number, { sig: string; node: RawPR }>();
+  const cache = new Map<number, { sig: string; mergeable: unknown; node: RawPR }>();
+  const pageCache = new Map<string, { etag: string; list: RawBranch[]; next: string | null }>();
   let lastOrder: number[] = [];
   let lastListNodes = new Map<number, RawPR>();
   let branches: RawBranch[] = [];
+  let pollCount = 0;
+  let closedNodes: RawPR[] = [];
+
+  const redact = (m: string): string => (cfg.token ? m.split(cfg.token).join("***") : m);
+  const safeMessage = (e: unknown): string =>
+    redact(e instanceof Error ? e.message : String(e)).slice(0, 200);
 
   const baseHeaders = (): Record<string, string> => ({
     authorization: `Bearer ${cfg.token}`,
@@ -161,14 +186,31 @@ export function createGithub(cfg: GithubConfig) {
     "user-agent": "routeflow-control",
   });
 
+  /** Retry-After first, then x-ratelimit-reset. */
   const markLimited = (res: Response): void => {
     let resetAt = state.rateLimit.resetAt;
-    const reset = Number(res.headers.get("x-ratelimit-reset"));
     const retry = Number(res.headers.get("retry-after"));
-    if (Number.isFinite(reset) && reset > 0) resetAt = new Date(reset * 1000).toISOString();
-    else if (Number.isFinite(retry) && retry > 0)
+    const reset = Number(res.headers.get("x-ratelimit-reset"));
+    if (Number.isFinite(retry) && retry > 0)
       resetAt = new Date(nowMs() + retry * 1000).toISOString();
+    else if (Number.isFinite(reset) && reset > 0) resetAt = new Date(reset * 1000).toISOString();
     state.rateLimit = { remaining: 0, resetAt, cost: state.rateLimit.cost };
+  };
+
+  /**
+   * 429 is always a rate limit. 403 only when it says so (remaining 0, Retry-After, or a
+   * "secondary" rate-limit message); any other 403 is a permission problem: a warning, not a back-off.
+   */
+  const limitedBy = async (res: Response): Promise<boolean> => {
+    if (res.status === 429) return true;
+    if (res.status !== 403) return false;
+    if (res.headers.get("retry-after") !== null) return true;
+    if (res.headers.get("x-ratelimit-remaining") === "0") return true;
+    try {
+      return /secondary/i.test(await res.clone().text());
+    } catch {
+      return false;
+    }
   };
 
   const gql = async (q: GithubQuery): Promise<unknown> => {
@@ -177,7 +219,7 @@ export function createGithub(cfg: GithubConfig) {
       headers: { ...baseHeaders(), "content-type": "application/json" },
       body: JSON.stringify(q),
     });
-    if (res.status === 403 || res.status === 429) {
+    if (await limitedBy(res)) {
       markLimited(res);
       throw new Limited();
     }
@@ -203,11 +245,30 @@ export function createGithub(cfg: GithubConfig) {
     return body.data;
   };
 
+  /** The list's scalars (always fresh) over the cached detail node (files, body, message). */
+  const merged = (listNode: RawPR, cached: RawPR | undefined): RawPR => {
+    if (!cached) return listNode;
+    const { commits: listCommits, ...scalars } = listNode;
+    const out: RawPR = { ...cached, ...scalars };
+    if (scalars.mergeable === "UNKNOWN" && cached.mergeable !== undefined) {
+      out.mergeable = cached.mergeable; // a flapping UNKNOWN never replaces a known value
+    }
+    const rollup = dig(listCommits, "nodes", 0, "commit", "statusCheckRollup");
+    const cachedCommit = dig(cached, "commits", "nodes", 0, "commit");
+    if (rollup !== undefined && cachedCommit && typeof cachedCommit === "object") {
+      out.commits = {
+        nodes: [{ commit: { ...(cachedCommit as RawPR), statusCheckRollup: rollup } }],
+      };
+    }
+    return out;
+  };
+
   const snapshot = (extra: Partial<PollResult> = {}): PollResult => {
     const prs: RawPR[] = [];
     const files: Record<string, PRFile[]> = Object.create(null) as Record<string, PRFile[]>;
     for (const n of lastOrder) {
-      const node = cache.get(n)?.node ?? lastListNodes.get(n);
+      const listNode = lastListNodes.get(n);
+      const node = listNode ? merged(listNode, cache.get(n)?.node) : cache.get(n)?.node;
       if (!node) continue;
       prs.push(node);
       const f = dig(node, "files", "nodes");
@@ -216,48 +277,83 @@ export function createGithub(cfg: GithubConfig) {
     return { prs, branches, files, ...extra };
   };
 
+  /** Branches, paged through the Link header, one ETag per page; 304 pages cost nothing. */
   const pollBranches = async (warnings: string[]): Promise<void> => {
-    const headers = baseHeaders();
-    if (state.etag) headers["if-none-match"] = state.etag;
-    let res: Response;
-    try {
-      res = await doFetch(`${restBase}/branches?per_page=100`, { method: "GET", headers });
-    } catch (e) {
-      warnings.push(`branches: ${safeMessage(e)}`);
-      return;
+    const all: RawBranch[] = [];
+    let url: string | null = `${restBase}/branches?per_page=100`;
+    let first = true;
+    for (let page = 0; url && page < MAX_BRANCH_PAGES; page++) {
+      const cached = pageCache.get(url);
+      const headers = baseHeaders();
+      if (cached) headers["if-none-match"] = cached.etag;
+      let res: Response;
+      try {
+        res = await doFetch(url, { method: "GET", headers });
+      } catch (e) {
+        warnings.push(`branches: ${safeMessage(e)}`);
+        return;
+      }
+      let entry = cached;
+      if (res.status === 304 && cached) {
+        entry = cached;
+      } else if (await limitedBy(res)) {
+        markLimited(res);
+        throw new Limited();
+      } else if (!res.ok) {
+        warnings.push(`branches: HTTP ${res.status}`);
+        return;
+      } else {
+        const list = (await res.json()) as unknown;
+        if (!Array.isArray(list)) {
+          warnings.push("branches: unexpected response");
+          return;
+        }
+        const link = res.headers.get("link") ?? "";
+        const m = /<([^>]+)>\s*;\s*rel="next"/.exec(link);
+        // never follow a next link off the repo's own branches endpoint (token stays on GitHub)
+        const next = m && m[1].startsWith(`${restBase}/branches`) ? m[1] : null;
+        entry = { etag: res.headers.get("etag") ?? "", list: list as RawBranch[], next };
+        if (entry.etag) pageCache.set(url, entry);
+        else pageCache.delete(url);
+      }
+      if (first) state.etag = entry.etag || null;
+      first = false;
+      all.push(...entry.list);
+      url = entry.next;
     }
-    if (res.status === 304) return;
-    if (res.status === 403 || res.status === 429) {
-      markLimited(res);
-      throw new Limited();
-    }
-    if (!res.ok) {
-      warnings.push(`branches: HTTP ${res.status}`);
-      return;
-    }
-    const list = (await res.json()) as unknown;
-    if (Array.isArray(list)) {
-      branches = list as RawBranch[];
-      state.etag = res.headers.get("etag") ?? null;
-    }
+    branches = all;
   };
 
-  /** One poll: list, then detail for each changed PR, then branches. Never throws on a rate limit. */
+  /** One poll: list, then detail for each changed PR (capped), then branches. Never throws. */
   async function poll(): Promise<PollResult> {
     const warnings: string[] = [];
     try {
       const data = await gql(buildListQuery(repo));
-      const nodes = arr(dig(data, "repository", "pullRequests", "nodes")) as RawPR[];
+      const open = arr(dig(data, "repository", "pullRequests", "nodes")) as RawPR[];
+      pollCount++;
+      if (pollCount % CLOSED_EVERY_N_POLLS === 0) {
+        const c = await gql(buildClosedQuery(repo));
+        closedNodes = arr(dig(c, "repository", "pullRequests", "nodes")) as RawPR[];
+      }
+      const openNums = new Set(open.map((n) => Number(n.number)));
+      const nodes = [...open, ...closedNodes.filter((n) => !openNums.has(Number(n.number)))];
       lastOrder = nodes.map((n) => Number(n.number));
       lastListNodes = new Map(nodes.map((n) => [Number(n.number), n]));
+      let details = 0;
       for (const n of nodes) {
         const num = Number(n.number);
-        const sig = signature(n);
-        if (cache.get(num)?.sig === sig) continue;
+        const prev = cache.get(num);
+        const mergeable = n.mergeable === "UNKNOWN" && prev ? prev.mergeable : n.mergeable;
+        const sig = [n.updatedAt, n.headRefOid, mergeable, n.reviewDecision, listRollup(n)].join(
+          "|",
+        );
+        if (prev?.sig === sig) continue;
+        if (details >= MAX_DETAILS_PER_POLL) continue; // deferred to the next poll, not dropped
+        details++;
         try {
           const d = await gql(buildDetailQuery(repo, num));
           const node = dig(d, "repository", "pullRequest") as RawPR | null | undefined;
-          if (node) cache.set(num, { sig, node });
+          if (node) cache.set(num, { sig, mergeable, node });
         } catch (e) {
           if (e instanceof Limited) throw e;
           warnings.push(`detail #${num}: ${safeMessage(e)}`); // retried next poll (not cached)
@@ -266,7 +362,7 @@ export function createGithub(cfg: GithubConfig) {
       await pollBranches(warnings);
     } catch (e) {
       if (e instanceof Limited) return snapshot({ rateLimited: true, warnings });
-      throw e;
+      warnings.push(`github: ${safeMessage(e)}`);
     }
     return snapshot(warnings.length ? { warnings } : {});
   }

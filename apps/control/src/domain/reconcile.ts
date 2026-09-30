@@ -5,6 +5,7 @@
  */
 import { gitTry } from "../sources/git";
 import type { Deploy, Deploys } from "../sources/railway";
+import { globToRegex } from "./glob";
 import type { PR } from "./prs";
 import type { ControlState, Derived, LaneState, Status, TaskState, TimelineEntry } from "./types";
 
@@ -38,6 +39,10 @@ export interface InferredInput {
   deploys: Deploys | null;
   /** Clone used for `git merge-base --is-ancestor`; absent -> every deploy reads `unknown`. */
   repoDir?: string;
+  /** Newest agent-reported status-event ts per task (`reportedStatusAt` in fold.ts). */
+  reportedAt?: Record<string, string>;
+  /** Railway `watchPatterns` per service (from apps/<svc>/railway.toml, injected by the caller). */
+  watchPatterns?: { api?: string[]; web?: string[] };
 }
 
 export type ReconciledState = Omit<ControlState, "tasks" | "prs"> & {
@@ -76,7 +81,7 @@ const onService = (
 ): ServiceDeployed => {
   if (d === null) return "unknown";
   const live: Deploy | null = d[svc];
-  if (live === null) return false; // no successful deploy on this service
+  if (live === null) return "unknown"; // no successful deploy seen: not provably absent
   return isAncestor(repoDir, sha, live.sha);
 };
 
@@ -92,6 +97,23 @@ const derived = <T>(value: T, ref: string | null): Derived<T> => ({
   ref,
 });
 
+/** Which services a PR's files touch; unknown patterns or a truncated file list touch everything. */
+function touchesOf(p: PR, wp: InferredInput["watchPatterns"]): { api: boolean; web: boolean } {
+  if (!wp || p.filesTruncated) return { api: true, web: true };
+  const one = (globs: string[] | undefined): boolean => {
+    if (!globs) return true;
+    try {
+      const res = globs.map((g) => globToRegex(g));
+      return (p.filePaths ?? []).some((f) => res.some((r) => r.test(f)));
+    } catch {
+      return true;
+    }
+  };
+  return { api: one(wp.api), web: one(wp.web) };
+}
+
+// TODO(follow-up): revert detection. A merged PR later reverted on master still reads
+// code-complete/released here; detect `Revert "..."` commits (or patch-id inverses) and demote.
 export function reconcile(
   state: ControlState,
   inferred: InferredInput,
@@ -109,7 +131,12 @@ export function reconcile(
       const web = onService(inferred.deploys, "web", p.mergeSha, inferred.repoDir);
       perPrServices.set(p.pr, { api, web });
       const deployed = combine([api, web]);
-      const next: PR = { ...p, deployed };
+      const next: PR = {
+        ...p,
+        deployed,
+        touches: touchesOf(p, inferred.watchPatterns),
+        serviceDeployed: { api, web },
+      };
       delete next.deployedAt;
       if (deployed === true) {
         const at = Math.max(
@@ -157,7 +184,12 @@ export function reconcile(
     const everywhere = latest !== null && deployed?.api === true && deployed.web === true;
     const registerBug = isBug(t) && t.status.source === "register";
 
-    if (latest && !DECISION.has(cur) && cur !== "released") {
+    // F1: a status the agent reported AFTER the merge (e.g. task.reopened) is a newer decision
+    const reported =
+      inferred.reportedAt && has(inferred.reportedAt, id) ? inferred.reportedAt[id] : null;
+    const overruled =
+      latest !== null && reported !== null && toMs(reported) > toMs(latest.mergedAt);
+    if (latest && !overruled && !DECISION.has(cur) && cur !== "released") {
       if (registerBug && !(cur === "code-complete")) {
         // the register says open: inference never writes it; only a badge (row 6)
         if (linked.some((p) => p.links.bug === id || p.pr === own))
@@ -191,7 +223,13 @@ export function reconcile(
       if (latest !== null) out.verified = true;
     }
     tasks[id] = out;
-    if (latest && !DECISION.has(cur) && cur !== "code-complete" && cur !== "released") {
+    if (
+      latest &&
+      !overruled &&
+      !DECISION.has(cur) &&
+      cur !== "code-complete" &&
+      cur !== "released"
+    ) {
       nudgeTask.set(id, { pr: latest });
     }
   }

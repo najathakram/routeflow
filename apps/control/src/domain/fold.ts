@@ -835,3 +835,27 @@ export function fold(
 ): ControlState {
   return project(foldEvents(null, base, eventsByLane), base, github, railway, now);
 }
+
+const INFERRED_EMITTERS = new Set(["infer", "sync", "server"]);
+
+/**
+ * Newest agent-reported status-event `ts` per task (status events and `bug.fixed`). Reconciliation
+ * uses it so a decision reported AFTER a PR merged (e.g. `task.reopened`) is never overridden by
+ * inference. Additive: it does not touch the fold output.
+ */
+export function reportedStatusAt(
+  eventsByLane: Record<string, ControlEvent[]>,
+): Record<string, string> {
+  const out = Object.create(null) as Record<string, string>;
+  for (const evs of Object.values(eventsByLane)) {
+    for (const e of evs) {
+      if (INFERRED_EMITTERS.has(e.by)) continue;
+      const key = e.type === "bug.fixed" ? "bug" : e.type in EVENT_OF ? "task" : null;
+      const id = key === null ? null : str(e, key);
+      if (id !== null && typeof e.ts === "string" && (out[id] === undefined || e.ts > out[id])) {
+        out[id] = e.ts;
+      }
+    }
+  }
+  return out;
+}

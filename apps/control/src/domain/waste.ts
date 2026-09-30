@@ -34,6 +34,8 @@ export interface WasteInput {
   tasks: WasteTask[];
   acks: Record<string, WasteAck>;
   superseded: Record<string, unknown>;
+  /** PR ledger rows (all PRs ever seen); their head refs cover branches for W6. */
+  ledger?: Array<{ pr: number; state: string; headRef?: string | null }>;
   /** W5 predicate: did this closed PR's work reach master? Absent -> W5 is not evaluated. */
   relanded?: (pr: WastePR) => boolean;
 }
@@ -61,6 +63,7 @@ export const THRESHOLDS = {
   W8: 24 * H,
 } as const;
 
+const SERVICES = ["api", "web"] as const;
 const TIER: Record<string, number> = {
   W4: 0,
   W3: 0,
@@ -128,15 +131,21 @@ export function repoGit(dir: string): Git & { mergeBase(a: string, b: string): s
     },
     patchIdOfDiff: (base, head) => patchIdOf(git(dir, ["diff", "--end-of-options", base, head])),
     masterPatchIds: (master, limit) => {
-      const k = `${master}\0${limit}`;
+      // keyed on master's CURRENT tip, so a fetch that advances master can never reuse stale ids
+      const tip = git(dir, [
+        "rev-parse",
+        "--verify",
+        "--end-of-options",
+        `${master}^{commit}`,
+      ]).trim();
+      const k = `${tip}\0${limit}`;
       let s = masterCache.get(k);
       if (!s) {
+        masterCache.clear();
         const out = git(
           dir,
-          ["log", "-p", "--format=%H", "-n", String(limit), "--end-of-options", master],
-          {
-            timeoutMs: 120_000,
-          },
+          ["log", "-p", "--format=%H", "-n", String(limit), "--end-of-options", tip],
+          { timeoutMs: 120_000 },
         );
         const ids = git(dir, ["patch-id", "--stable"], { input: out, timeoutMs: 120_000 });
         s = new Set(
@@ -293,8 +302,18 @@ export function wasteItems(input: WasteInput, now: string): WasteItem[] {
     }
     if (p.state === "merged") {
       const mergeSha = p.mergeSha ?? p.headSha;
-      // W7 merged, not deployed
-      const notDeployed = p.deployed === false || (p.deployFailed === true && p.deployed !== true);
+      // W7 merged, not deployed: only the services the PR's files touch count (F2)
+      const svcs = p.touches && p.serviceDeployed ? SERVICES.filter((x) => p.touches?.[x]) : null;
+      let notDeployed: boolean;
+      if (svcs && p.serviceDeployed) {
+        const st = svcs.map((x) => p.serviceDeployed?.[x]);
+        notDeployed =
+          svcs.length > 0 &&
+          (st.some((x) => x === false) ||
+            (p.deployFailed === true && !st.every((x) => x === true)));
+      } else {
+        notDeployed = p.deployed === false || (p.deployFailed === true && p.deployed !== true);
+      }
       if (notDeployed && older(p.mergedAt, THRESHOLDS.W7)) {
         add(
           "W7",
@@ -348,6 +367,16 @@ export function wasteItems(input: WasteInput, now: string): WasteItem[] {
   // W6 orphan branch
   const covered = new Set<string>();
   for (const p of prs) if (isOpen(p) || p.state === "merged") covered.add(p.headRef);
+  const lastRow = new Map<number, { state: string; headRef?: string | null }>();
+  for (const r of input.ledger ?? []) lastRow.set(r.pr, r);
+  for (const r of lastRow.values()) {
+    if (
+      r.headRef &&
+      (r.state === "open" || r.state === "ready" || r.state === "draft" || r.state === "merged")
+    ) {
+      covered.add(r.headRef);
+    }
+  }
   for (const b of [...input.branches].sort((x, y) => cmp(x.name, y.name))) {
     if (b.name.startsWith("ctl/") || b.name === "master" || b.name === "main") continue;
     if (b.ahead >= 1 && !covered.has(b.name) && older(b.committedDate, THRESHOLDS.W6)) {
@@ -437,4 +466,12 @@ export function wasteItems(input: WasteInput, now: string): WasteItem[] {
     (x, y) =>
       TIER[x.rule] - TIER[y.rule] || age(y) - age(x) || cmp(x.rule, y.rule) || cmp(x.key, y.key),
   );
+}
+
+/** Source warnings for rules that could not be evaluated (W5 needs the `relanded` predicate). */
+export function wasteWarnings(input: WasteInput): string[] {
+  const closed = input.prs.some((p) => p.state === "closed" && !p.mergedAt);
+  return closed && !input.relanded
+    ? ["W5 skipped: no relanded predicate (is the clone missing or master unfetched?)"]
+    : [];
 }

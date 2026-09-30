@@ -11,12 +11,15 @@ export const BACKOFF_TABLE: ReadonlyArray<readonly [number, number]> = [
   [500, 300_000],
   [1500, 60_000],
 ];
+export const MAX_RESET_WAIT_MS = 3_600_000;
 export const WEBHOOK_FRESH_MS = 10 * 60_000;
 export const WEBHOOK_INTERVAL_MS = 300_000;
 
 export interface PollBudget {
   remaining: number | null;
   lastWebhookAt: string | null;
+  /** When the rate limit resets; honoured while the budget is exhausted (remaining 0). */
+  resetAt?: string | null;
 }
 
 /** Interval until the next tick: the slower of the rate-limit back-off and the webhook relax. */
@@ -30,6 +33,11 @@ export function nextIntervalMs(budget: PollBudget, now: string): number {
         break;
       }
     }
+  }
+  const reset = budget.resetAt ? Date.parse(budget.resetAt) : NaN;
+  const nowMs = Date.parse(now);
+  if (r === 0 && Number.isFinite(reset) && Number.isFinite(nowMs) && reset > nowMs) {
+    ms = Math.max(ms, Math.min(reset - nowMs, MAX_RESET_WAIT_MS));
   }
   const last = budget.lastWebhookAt ? Date.parse(budget.lastWebhookAt) : NaN;
   const t = Date.parse(now);
@@ -100,7 +108,7 @@ export interface TickDeps {
       rateLimited?: boolean;
       warnings?: string[];
     }>;
-    state: { rateLimit: { remaining: number | null } };
+    state: { rateLimit: { remaining: number | null; resetAt?: string | null } };
   };
   fetchMaster?(): void | Promise<void>;
   fetchState?(): void | Promise<void>;

@@ -32,9 +32,15 @@ export interface PR {
   review: Review;
   mergeable: Mergeable;
   files: number;
+  /** True when GitHub reports more changed files than the 100 the detail query returns. */
+  filesTruncated?: boolean;
   areas: string[];
   deployed: Deployed;
   deployedAt?: string;
+  /** Which Railway services this PR's files touch (set by reconcile from injected watchPatterns). */
+  touches?: { api: boolean; web: boolean };
+  /** Per-service deploy state of the merge sha (set by reconcile). */
+  serviceDeployed?: { api: Deployed; web: Deployed };
   deployFailed?: boolean;
   title: string;
   headRef: string;
@@ -78,6 +84,7 @@ export type LedgerRow = Pick<
   PR,
   | "pr"
   | "at"
+  | "headRef"
   | "state"
   | "headSha"
   | "mergeSha"
@@ -135,6 +142,10 @@ const areaOf = (p: string): string => {
   return i > 0 ? p.slice(0, i) : i === 0 ? "." : ".";
 };
 
+/** Only register-shaped ids may reach a caller-supplied lookup (`constructor` must not). */
+const TASK_ID = /^(?:RF-\d+|B\d{1,4}|F-\d+|D-\d+)$/;
+const safeId = (id: string | null): string | null => (id !== null && TASK_ID.test(id) ? id : null);
+
 function normalizeOne(n: Raw, ctx: NormalizeCtx): PR {
   const number = Number(n.number);
   const commit = (dig(n, "commits", "nodes", 0, "commit") ?? {}) as Raw;
@@ -166,8 +177,8 @@ function normalizeOne(n: Raw, ctx: NormalizeCtx): PR {
   let lane: string | null = l.lane;
   if (!lane) {
     for (const id of [links.task, links.bug, links.feature]) {
-      if (id) {
-        lane = ctx.taskLane(id);
+      if (safeId(id)) {
+        lane = ctx.taskLane(id as string);
         if (lane) break;
       }
     }
@@ -179,6 +190,8 @@ function normalizeOne(n: Raw, ctx: NormalizeCtx): PR {
       : [];
   const filePaths = [...new Set(files.map((f) => str(f.path)).filter((p) => p !== ""))].sort(cmp);
   const areas = [...new Set(filePaths.map(areaOf))].sort(cmp);
+  const changed = typeof n.changedFiles === "number" ? n.changedFiles : null;
+  const filesTruncated = changed !== null && changed > files.length;
 
   let deployed: Deployed = false;
   let deployedAt: string | undefined;
@@ -201,7 +214,8 @@ function normalizeOne(n: Raw, ctx: NormalizeCtx): PR {
     ci,
     review,
     mergeable,
-    files: filePaths.length,
+    files: changed !== null ? Math.max(changed, filePaths.length) : filePaths.length,
+    filesTruncated,
     areas,
     deployed,
     title: str(n.title),
@@ -255,6 +269,7 @@ const toRow = (p: PR, at: string): LedgerRow => {
   const row: LedgerRow = {
     pr: p.pr,
     at,
+    headRef: p.headRef,
     state: p.state,
     headSha: p.headSha,
     mergeSha: p.mergeSha ?? null,
@@ -282,6 +297,14 @@ export function ledgerRows(prev: LedgerRow[], prs: PR[], at: string): LedgerRow[
   for (const p of [...prs].sort((a, b) => a.pr - b.pr)) {
     const row = toRow(p, at);
     const before = last.get(p.pr);
+    // an "unknown" reading is a failed probe, not a fact: carry the last known value
+    if (before) {
+      if (row.mergeable === "unknown") row.mergeable = before.mergeable;
+      if (row.deployed === "unknown") {
+        row.deployed = before.deployed;
+        if (before.deployedAt) row.deployedAt = before.deployedAt;
+      }
+    }
     const changed =
       !before ||
       LEDGER_FIELDS.some(
@@ -294,6 +317,18 @@ export function ledgerRows(prev: LedgerRow[], prs: PR[], at: string): LedgerRow[
     if (changed) out.push(row);
   }
   return out;
+}
+
+/** One pass: PR number -> `at` of the first row of its trailing run with the current ci. */
+export function ciSinceAll(
+  rows: Array<{ pr: number; at: string; ci: string }>,
+): Map<number, string> {
+  const run = new Map<number, { ci: string; since: string }>();
+  for (const r of rows) {
+    const cur = run.get(r.pr);
+    if (!cur || cur.ci !== r.ci) run.set(r.pr, { ci: r.ci, since: r.at });
+  }
+  return new Map([...run].map(([k, v]) => [k, v.since]));
 }
 
 /** `at` of the first row of the trailing run of rows (of this PR) with the PR's current ci. */
@@ -369,7 +404,7 @@ export function prMetrics(
   for (const p of prs) {
     let rel: string | null = null;
     for (const id of [p.links.task, p.links.bug, p.links.feature]) {
-      const r = id ? taskRelease(id) : null;
+      const r = safeId(id) ? taskRelease(id as string) : null;
       if (r && buckets.has(r)) {
         rel = r;
         break;
