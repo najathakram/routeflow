@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import {
+  STOCK_FILTER_CHIPS,
   ProductStatusBadge,
   getProductStatus,
   stockFilterParams,
@@ -22,10 +23,25 @@ describe("stockFilterParams — the Inactive chip asks the server for isActive=f
   it("INACTIVE -> { isActive: false } with no stockStatus (the server's stock filters force active)", () => {
     expect(stockFilterParams("INACTIVE")).toEqual({ isActive: false });
   });
+  it("Out of Stock also pins isActive=true: the server's filter is isActive=false OR stock<=0, so without it inactive products leak in under the Inactive badge", () => {
+    expect(stockFilterParams("OUT_OF_STOCK").isActive).toBe(true);
+  });
   it("a stock chip -> { stockStatus }, and All -> {}", () => {
     expect(stockFilterParams("LOW")).toEqual({ stockStatus: "LOW" });
-    expect(stockFilterParams("OUT_OF_STOCK")).toEqual({ stockStatus: "OUT_OF_STOCK" });
+    expect(stockFilterParams("OUT_OF_STOCK")).toEqual({
+      stockStatus: "OUT_OF_STOCK",
+      isActive: true,
+    });
     expect(stockFilterParams("")).toEqual({});
+  });
+  it("every chip has a distinct value and All is first", () => {
+    expect(STOCK_FILTER_CHIPS.map((c) => c.value)).toEqual([
+      "",
+      "IN_STOCK",
+      "LOW",
+      "OUT_OF_STOCK",
+      "INACTIVE",
+    ]);
   });
 });
 

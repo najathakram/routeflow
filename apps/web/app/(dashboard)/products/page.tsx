@@ -44,6 +44,7 @@ import { QuickEditCell, type EditRecord } from "./_components/QuickEditCell";
 import { SectionEditCell } from "./_components/SectionEditCell";
 import { ProductsExportButton } from "./_components/ProductsExportButton";
 import {
+  STOCK_FILTER_CHIPS,
   ProductStatusBadge,
   getProductStatus,
   stockFilterParams,
@@ -51,7 +52,6 @@ import {
 } from "./_components/product-status";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-
 
 interface ApiProduct {
   id: string;
@@ -1274,15 +1274,11 @@ export default function ProductsPage() {
         )}
 
         {/* Stock status filter chips */}
-        {([
-          { value: "", label: "All" },
-          { value: "IN_STOCK", label: "In Stock" },
-          { value: "LOW", label: "Low Stock" },
-          { value: "OUT_OF_STOCK", label: "Out of Stock" },
-          { value: "INACTIVE", label: "Inactive" },
-        ] as Array<{ value: ProductStockFilter; label: string }>).map((o) => (
+        {STOCK_FILTER_CHIPS.map((o) => (
           <button
             key={o.value || "all"}
+            type="button"
+            aria-pressed={stockFilter === o.value}
             onClick={() => setStockFilter(o.value)}
             className={cn(
               "inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap transition-colors",

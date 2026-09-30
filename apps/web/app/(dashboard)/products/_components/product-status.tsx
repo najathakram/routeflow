@@ -11,15 +11,26 @@ export function getProductStatus(p: { isActive: boolean; currentStock: number })
   return "IN_STOCK";
 }
 
+export const STOCK_FILTER_CHIPS: ReadonlyArray<{ value: ProductStockFilter; label: string }> = [
+  { value: "", label: "All" },
+  { value: "IN_STOCK", label: "In Stock" },
+  { value: "LOW", label: "Low Stock" },
+  { value: "OUT_OF_STOCK", label: "Out of Stock" },
+  { value: "INACTIVE", label: "Inactive" },
+];
+
 /**
- * The list/export query params for a filter chip. "Inactive" is `isActive=false` and sends no
- * stockStatus: the server's stock filters force isActive=true, so combining them would return nothing.
+ * The list/export query params for a filter chip. "Inactive" is `isActive=false` with no stockStatus
+ * (the server's IN_STOCK/LOW filters force isActive=true, so combining would return nothing). The
+ * server's OUT_OF_STOCK filter is `isActive=false OR currentStock<=0`, so that chip pins
+ * `isActive=true` or inactive products would leak in and wear the Inactive badge.
  */
 export function stockFilterParams(filter: ProductStockFilter): {
   stockStatus?: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
-  isActive?: false;
+  isActive?: boolean;
 } {
   if (filter === "INACTIVE") return { isActive: false };
+  if (filter === "OUT_OF_STOCK") return { stockStatus: "OUT_OF_STOCK", isActive: true };
   if (filter) return { stockStatus: filter };
   return {};
 }
