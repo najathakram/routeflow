@@ -6,6 +6,7 @@ import { join } from "path";
  * Final DDL (SA-603a): `Product.portalVisible` + retired* columns, `ProductBarcode.code` DROP NOT NULL
  * + `retiredCode`, the two active-only Product NAME partial uniques (SA-603b, gated), and the `EmailDelivery` table (+ its 6-value enum).
  * SA-603c: `EmailDelivery.contentFingerprint` (nullable hash, never content) and the folded-in #1337 `PolicyValue` table (+ `PolicyScopeType` enum), no partial index on it. Metadata-only.
+ * SA-603c also appends exactly three `NotificationEvent` values (STAFF_NEW_ORDER, BUYER_ORDER_EDITED, BUYER_ORDER_CANCELLED) via ADD VALUE inside the one wrap, never used in the same transaction.
  */
 const FOLDER = "20260929220000_sitting_b_bundle";
 const MIGRATIONS_DIR = join(__dirname, "..", "..", "prisma", "migrations");
@@ -186,5 +187,22 @@ describe("sitting-B bundle migration shape (SA-603)", () => {
     expect(iAdd).toBeGreaterThan(-1);
     expect(iDrop).toBeGreaterThan(iAdd);
     expect(stmts.indexOf(root!)).toBeGreaterThan(iDrop);
+  });
+
+  it("NotificationEvent: exactly three ADD VALUEs, each name only in its own line, inside the wrap (SA-603c)", () => {
+    const adds = stmts.filter((x) => /^ALTER TYPE "NotificationEvent" ADD VALUE/.test(x));
+    expect(adds).toHaveLength(3);
+    const names = ["STAFF_NEW_ORDER", "BUYER_ORDER_EDITED", "BUYER_ORDER_CANCELLED"];
+    names.forEach((name, i) => {
+      expect(adds[i]).toMatch(
+        new RegExp(`^ALTER TYPE "NotificationEvent" ADD VALUE (IF NOT EXISTS )?'${name}'$`),
+      );
+      // never used elsewhere in the executable SQL
+      expect((sql.match(new RegExp(name, "g")) ?? []).length).toBe(1);
+      const idx = stmts.indexOf(adds[i]);
+      expect(idx).toBeGreaterThan(stmts.indexOf("BEGIN"));
+      expect(idx).toBeLessThan(stmts.indexOf("COMMIT"));
+    });
+    expect(sql).not.toMatch(/STAFF_ORDER_STATUS_CHANGED/);
   });
 });

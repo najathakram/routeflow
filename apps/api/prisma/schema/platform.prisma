@@ -504,6 +504,14 @@ enum NotificationEvent {
   // requires one), and it is NOT added to DEFAULT_ON (default-on-is-wired.spec.ts
   // would fail otherwise).
   CHECK_RETURNED // internal alert
+  // SA-603c (additive-only, appended at the END): salvage's staff/buyer order emails.
+  // The schema bundle never USES these values; only app code after the commit does
+  // (ADD VALUE cannot be used in its own transaction). Urgent orders will REUSE
+  // STAFF_NEW_ORDER with a subject prefix; URGENT_ORDER_PLACED stays untouched.
+  // messaging-config.service.ts gains exhaustiveness-only entries; NOT in DEFAULT_ON.
+  STAFF_NEW_ORDER // internal alert
+  BUYER_ORDER_EDITED // internal alert
+  BUYER_ORDER_CANCELLED // internal alert
 }
 
 // One conversation with a customer across all channels (the inbox row).

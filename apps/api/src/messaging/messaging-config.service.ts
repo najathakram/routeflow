@@ -41,6 +41,10 @@ export const EVENT_CHANNELS: Record<NotificationEvent, MessageChannel[]> = {
   // below) — entry exists only so this Record stays exhaustive over
   // NotificationEvent.
   [NotificationEvent.CHECK_RETURNED]: [INTERNAL],
+  // SA-603c: no firing site yet — exhaustiveness only (see NO_TRIGGER_EVENTS).
+  [NotificationEvent.STAFF_NEW_ORDER]: [INTERNAL],
+  [NotificationEvent.BUYER_ORDER_EDITED]: [INTERNAL],
+  [NotificationEvent.BUYER_ORDER_CANCELLED]: [INTERNAL],
 };
 
 /** Friendly label + starter body per event; `variables` derived from the body
@@ -105,6 +109,19 @@ export const DEFAULT_TEMPLATES: Record<NotificationEvent, { label: string; body:
     label: "Check returned",
     body: "A check payment from {{customerName}} for {{amount}} was returned ({{reason}}) on invoice {{invoiceNumber}}.",
   },
+  // SA-603c: exhaustiveness-only templates; no firing site yet.
+  [NotificationEvent.STAFF_NEW_ORDER]: {
+    label: "New order (staff)",
+    body: "New order {{orderNumber}} from {{customerName}}.",
+  },
+  [NotificationEvent.BUYER_ORDER_EDITED]: {
+    label: "Order edited (buyer)",
+    body: "Order {{orderNumber}} from {{customerName}} was edited.",
+  },
+  [NotificationEvent.BUYER_ORDER_CANCELLED]: {
+    label: "Order cancelled (buyer)",
+    body: "Order {{orderNumber}} from {{customerName}} was cancelled.",
+  },
 };
 
 /** Cells seeded enabled=true — PORTAL/EMAIL (free, un-metered, consent-less).
@@ -142,6 +159,10 @@ const NO_TRIGGER_EVENTS = new Set<NotificationEvent>([
   // PR adds the firing site (check-lifecycle transition to BOUNCED) and moves
   // this to DEFAULT_ON in the same PR, per this set's own header comment.
   NotificationEvent.CHECK_RETURNED,
+  // SA-603c: added with the enum values; the firing PR moves them out of this set.
+  NotificationEvent.STAFF_NEW_ORDER,
+  NotificationEvent.BUYER_ORDER_EDITED,
+  NotificationEvent.BUYER_ORDER_CANCELLED,
 ]);
 
 export interface TemplateView {
