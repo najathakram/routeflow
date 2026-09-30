@@ -23,6 +23,7 @@ import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import { buildPlanGateBody } from "../billing/plan-gate";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { CreateProductDto } from "./dto/create-product.dto";
 import {
   assertImageKeysReorder,
@@ -736,7 +737,13 @@ export class ProductsService {
       const clash = await db.findFirst({
         where: { OR: [{ sku: p.sku }, { unitSku: p.sku }], isActive: true, ...notSelf },
       });
-      if (clash) throw new BadRequestException("SKU already exists");
+      if (clash) {
+        throw new BadRequestException({
+          code: API_ERROR_CODES.CODE_TAKEN,
+          field: "sku",
+          message: "SKU already exists",
+        });
+      }
     }
     if (p.barcode) {
       const clash = await db.findFirst({
@@ -746,7 +753,13 @@ export class ProductsService {
           ...notSelf,
         },
       });
-      if (clash) throw new BadRequestException("Barcode already exists");
+      if (clash) {
+        throw new BadRequestException({
+          code: API_ERROR_CODES.BARCODE_TAKEN,
+          barcode: p.barcode,
+          message: "Barcode already exists",
+        });
+      }
     }
     if (p.unitSku) {
       const clash = await db.findFirst({
@@ -758,9 +771,11 @@ export class ProductsService {
         select: { id: true },
       });
       if (clash) {
-        throw new BadRequestException(
-          "Unit code already used by another product's SKU, barcode, or unit code",
-        );
+        throw new BadRequestException({
+          code: API_ERROR_CODES.CODE_TAKEN,
+          field: "unitSku",
+          message: "Unit code already used by another product's SKU, barcode, or unit code",
+        });
       }
     }
   }

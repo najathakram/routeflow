@@ -22,8 +22,6 @@ export function importReasonForError(e: unknown): string {
   const code = body.code;
   const field = body.field;
   if (code === API_ERROR_CODES.BARCODE_TAKEN) return IMPORT_CODE_TAKEN_REASON.barcode;
-  if (code === "SKU_TAKEN") return IMPORT_CODE_TAKEN_REASON.sku;
-  if (code === "UNIT_SKU_TAKEN") return IMPORT_CODE_TAKEN_REASON.unitSku;
   if (code === API_ERROR_CODES.CODE_TAKEN) {
     if (field === "sku") return IMPORT_CODE_TAKEN_REASON.sku;
     if (field === "unitSku") return IMPORT_CODE_TAKEN_REASON.unitSku;

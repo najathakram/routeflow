@@ -4,9 +4,8 @@
  * an import report). RED until `./import-reasons` exists.
  *
  * Real throw shapes (product-code-release.ts `taken()` / product-catalog-sync.ts): a barcode
- * collision is `BARCODE_TAKEN`; sku / unitSku collisions are `CODE_TAKEN` carrying `field`. The
- * literal `SKU_TAKEN` / `UNIT_SKU_TAKEN` codes are accepted too, so a later split of CODE_TAKEN
- * needs no importer change.
+ * collision is `BARCODE_TAKEN`; sku / unitSku collisions are `CODE_TAKEN` carrying `field`.
+ * ProductsService.assertIdentityAvailable throws the same codes inside a BadRequestException (400).
  */
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
@@ -33,8 +32,33 @@ describe("WS7 import-reasons: closed code -> sentence map", () => {
     ["CODE_TAKEN / unitSku", conflict(API_ERROR_CODES.CODE_TAKEN, "unitSku"), UNIT_REASON],
     ["BARCODE_TAKEN", conflict(API_ERROR_CODES.BARCODE_TAKEN, "barcode"), BARCODE_REASON],
     ["BARCODE_TAKEN without field", conflict(API_ERROR_CODES.BARCODE_TAKEN), BARCODE_REASON],
-    ["literal SKU_TAKEN", conflict("SKU_TAKEN"), SKU_REASON],
-    ["literal UNIT_SKU_TAKEN", conflict("UNIT_SKU_TAKEN"), UNIT_REASON],
+    [
+      "assertIdentityAvailable sku (400)",
+      new BadRequestException({
+        code: API_ERROR_CODES.CODE_TAKEN,
+        field: "sku",
+        message: "SKU already exists",
+      }),
+      SKU_REASON,
+    ],
+    [
+      "assertIdentityAvailable unitSku (400)",
+      new BadRequestException({
+        code: API_ERROR_CODES.CODE_TAKEN,
+        field: "unitSku",
+        message: "Unit code already used by another product's SKU, barcode, or unit code",
+      }),
+      UNIT_REASON,
+    ],
+    [
+      "assertIdentityAvailable barcode (400)",
+      new BadRequestException({
+        code: API_ERROR_CODES.BARCODE_TAKEN,
+        barcode: "BC-1",
+        message: "Barcode already exists",
+      }),
+      BARCODE_REASON,
+    ],
   ])("%s -> its mapped sentence", (_label, e, expected) => {
     expect(importReasonForError(e)).toBe(expected);
   });
