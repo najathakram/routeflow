@@ -178,6 +178,21 @@ describe("OrdersService.create — sell by a unit (units_v1, 4b-2b)", () => {
     expect(prisma.order.create).not.toHaveBeenCalled();
   });
 
+  it("#2784 / SA-601 interim: a BUYER's plain qty stays a PACK line even when a level is flagged isDefaultSelling, and no ladder is read for a buyer", async () => {
+    scopedUnits.findMany.mockResolvedValue(
+      ladder.map((u) => (u.label === "Case" ? { ...u, isDefaultSelling: true } : u)),
+    );
+    await create([{ productId: "prod-1", qty: 2 }], {
+      ...customerPayload,
+      tenantId: "t-1",
+    } as never);
+    const line = orderData().lineItems.create[0];
+    expect("unitLabel" in line).toBe(false);
+    expect(line).toMatchObject({ productId: "prod-1", unitsPerBox: 24 });
+    expect(scopedUnits.findMany).not.toHaveBeenCalled();
+    // The goal (owner #2780: a buyer's plain qty = the default selling unit) needs the SA's buyer unit-line design first.
+  });
+
   it("an unknown unit, boxes beside a unit, and a unit on a custom line are 400s that write nothing", async () => {
     for (const items of [
       [{ productId: "prod-1", qty: 1, unitLabel: "Bogus" }],
