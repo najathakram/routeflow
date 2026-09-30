@@ -1640,11 +1640,17 @@ export function ScanInvoiceModal({
     (inv) => inv.createMode === "expense" || inv.createMode === "both",
   ).length;
   const batchTotal = roundMoney(creatable.reduce((s, inv) => s + invoiceTotalOf(inv), 0));
+  // Only invoices that will actually raise a PO (raise on, nothing blocking it) count in PO intent.
+  const creatablePos = creatable.filter(
+    (inv) => inv.raisePo && !raisePoBlocker(inv.supplierId, buildBillItems(inv)),
+  ).length;
   const createLabel =
     intent === "purchase-order"
       ? invoices.length <= 1
         ? "Create purchase order"
-        : `Create ${creatableBills} purchase order${creatableBills === 1 ? "" : "s"}`
+        : creatablePos > 0
+          ? `Create ${creatablePos} purchase order${creatablePos === 1 ? "" : "s"}`
+          : "Create purchase orders"
       : invoices.length <= 1
         ? createMode === "bill"
           ? "Create Vendor Bill"

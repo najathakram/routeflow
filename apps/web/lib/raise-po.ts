@@ -30,7 +30,7 @@ export function poIntentRefusal(
 ): string | null {
   if (intent !== "purchase-order") return null;
   if (createMode !== "bill") {
-    return "A purchase-order scan records a bill and its PO — an expense-only record has no PO.";
+    return "A purchase-order scan records only a bill and its PO.";
   }
   if (!raisePo)
     return "Turn on “Raise a purchase order” — this scan creates a PO, not just a bill.";
