@@ -161,6 +161,7 @@ export * from "./api/restrictions";
 export * from "./api/restrictions-settings";
 export * from "./api/product-labels";
 export * from "./api/restrictions-admin";
+export * from "./api/messaging-matrix";
 export * from "./api/us-states";
 export * from "./api/config-snapshots";
 export * from "./api/import";
@@ -169,6 +170,7 @@ export * from "./api/order-tracking";
 export * from "./api/onboarding";
 export * from "./api/order-tracking-view";
 export * from "./api/error-codes";
+export * from "./api/preferences";
 
 // ─── Developer mode (hidden dispatch/driver/route addon) ──────────────────────
 
