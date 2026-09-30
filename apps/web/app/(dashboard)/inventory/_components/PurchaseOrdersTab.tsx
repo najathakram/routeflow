@@ -205,23 +205,31 @@ export function PurchaseOrdersTab({
     isLoading,
     isError,
     refetch,
-  } = usePurchaseOrders({
-    status: statusFilter || undefined,
-    supplierId: supplierFilter || undefined,
-    from: dateFrom || undefined,
-    to: dateTo || undefined,
-    page,
-    limit: PAGE_SIZE,
-  });
+  } = usePurchaseOrders(
+    {
+      status: statusFilter || undefined,
+      supplierId: supplierFilter || undefined,
+      from: dateFrom || undefined,
+      to: dateTo || undefined,
+      page,
+      limit: PAGE_SIZE,
+    },
+    { keepPrevious: true },
+  );
 
-  // A new filter starts from page 1, otherwise a narrow filter can land on an empty later page.
-  React.useEffect(() => {
+  // A new filter starts from page 1 in the same event, so no fetch runs on a stale page.
+  const onFilter = (set: (v: string) => void, value: string) => {
+    set(value);
     setPage(1);
-  }, [statusFilter, supplierFilter, dateFrom, dateTo]);
+  };
 
   const orders: PurchaseOrder[] = poData?.data ?? poData ?? [];
   const total: number = poData?.meta?.total ?? orders.length;
   const totalPages: number = poData?.meta?.totalPages ?? 1;
+  // Rows can disappear under us (a PO removed elsewhere): never stay stranded past the last page.
+  React.useEffect(() => {
+    if (totalPages > 0 && page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
 
   const toggleExpand = (id: string) => setExpandedId((prev) => (prev === id ? null : id));
 
@@ -242,7 +250,7 @@ export function PurchaseOrdersTab({
       <div className="mb-4 flex flex-wrap gap-3">
         <select
           value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
+          onChange={(e) => onFilter(setStatusFilter, e.target.value)}
           className="rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
         >
           <option value="">All Statuses</option>
@@ -255,7 +263,7 @@ export function PurchaseOrdersTab({
 
         <select
           value={supplierFilter}
-          onChange={(e) => setSupplierFilter(e.target.value)}
+          onChange={(e) => onFilter(setSupplierFilter, e.target.value)}
           className="rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
         >
           <option value="">All Suppliers</option>
@@ -269,14 +277,14 @@ export function PurchaseOrdersTab({
         <input
           type="date"
           value={dateFrom}
-          onChange={(e) => setDateFrom(e.target.value)}
+          onChange={(e) => onFilter(setDateFrom, e.target.value)}
           placeholder="From"
           className="w-36 rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
         <input
           type="date"
           value={dateTo}
-          onChange={(e) => setDateTo(e.target.value)}
+          onChange={(e) => onFilter(setDateTo, e.target.value)}
           placeholder="To"
           className="w-36 rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
@@ -287,6 +295,7 @@ export function PurchaseOrdersTab({
               setSupplierFilter("");
               setDateFrom("");
               setDateTo("");
+              setPage(1);
             }}
             className="rounded px-2 py-1.5 text-xs text-navy/70 hover:text-navy hover:bg-surface-raised"
           >
@@ -408,7 +417,7 @@ export function PurchaseOrdersTab({
           </table>
         </div>
       )}
-      {totalPages > 1 && (
+      {(totalPages > 1 || page > 1) && (
         <div className="mt-3 flex items-center justify-between text-sm text-navy/70">
           <span>
             Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of {total}

@@ -12,14 +12,18 @@ jest.mock("@routeflow/ui/web", () => {
 
 const refetch = jest.fn();
 let lastPoParams: unknown;
+let lastPoOpts: unknown;
+let paramsSeen: Array<Record<string, unknown>> = [];
 let poState: { data?: unknown; isLoading: boolean; isError: boolean } = {
   data: { data: [] },
   isLoading: false,
   isError: false,
 };
 jest.mock("@/lib/api/inventory", () => ({
-  usePurchaseOrders: (params: unknown) => {
+  usePurchaseOrders: (params: Record<string, unknown>, opts: unknown) => {
     lastPoParams = params;
+    lastPoOpts = opts;
+    paramsSeen.push(params);
     return { ...poState, refetch };
   },
   usePurchaseOrder: () => ({ data: undefined, isLoading: false }),
@@ -37,6 +41,7 @@ jest.mock("@/lib/api/products", () => ({
 beforeEach(() => {
   jest.clearAllMocks();
   poState = { data: { data: [] }, isLoading: false, isError: false };
+  paramsSeen = [];
 });
 
 describe("/purchase-orders page", () => {
@@ -77,6 +82,47 @@ describe("/purchase-orders page", () => {
     expect(screen.getByRole("button", { name: "Previous page" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Next page" }));
     expect(lastPoParams).toMatchObject({ page: 2, limit: 20 });
+  });
+
+  const pagedState = (totalPages: number, total: number) => ({
+    data: {
+      data: Array.from({ length: 20 }, (_, i) => ({
+        id: `po${i}`,
+        poNumber: `PO-${i}`,
+        status: "DRAFT",
+        supplier: { name: "Acme Supply" },
+        lines: [],
+        total: 0,
+      })),
+      meta: { total, page: 1, limit: 20, totalPages },
+    },
+    isLoading: false,
+    isError: false,
+  });
+
+  it("changing a filter goes to page 1 in the same event: no fetch on a stale page", () => {
+    poState = pagedState(3, 45);
+    render(<PurchaseOrdersPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    paramsSeen = [];
+    fireEvent.change(screen.getAllByRole("combobox")[0], { target: { value: "DRAFT" } });
+    expect(paramsSeen.length).toBeGreaterThan(0);
+    expect(paramsSeen.every((p) => p.page === 1)).toBe(true);
+  });
+
+  it("steps back to the last page when the list shrinks under it", () => {
+    poState = pagedState(3, 45);
+    const { rerender } = render(<PurchaseOrdersPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect((lastPoParams as { page: number }).page).toBe(2);
+    poState = pagedState(1, 12);
+    rerender(<PurchaseOrdersPage />);
+    expect((lastPoParams as { page: number }).page).toBe(1);
+  });
+
+  it("keeps the previous page on screen while the next loads", () => {
+    render(<PurchaseOrdersPage />);
+    expect(lastPoOpts).toMatchObject({ keepPrevious: true });
   });
 
   it("hides the pager when everything fits on one page", () => {
