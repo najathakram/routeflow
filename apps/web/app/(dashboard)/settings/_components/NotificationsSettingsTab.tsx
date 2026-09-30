@@ -266,7 +266,7 @@ export function NotificationsSettingsTab() {
 
       <QuietHoursCard settings={data.settings} isAdmin={isAdmin} />
 
-      <LowStockDigestToggle />
+      {isAdmin && <LowStockDigestToggle />}
 
       <PushStatusCard />
 

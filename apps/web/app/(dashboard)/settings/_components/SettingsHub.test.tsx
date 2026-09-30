@@ -25,9 +25,13 @@ beforeEach(() => {
   restrictions.mockReturnValue({ data: { enabled: true }, isLoading: false, isError: false });
 });
 
+const SECTION_IDS: Record<string, string> = {
+  "Selling & catalog": "selling",
+  Compliance: "compliance",
+};
+
 function section(title: string) {
-  const h = screen.getAllByText(title).find((el) => el.className.includes("font-semibold"));
-  return h!.closest("div.break-inside-avoid") as HTMLElement;
+  return screen.getByTestId(`settings-group-${SECTION_IDS[title]}`);
 }
 
 describe("SettingsHub regroup", () => {
@@ -93,6 +97,20 @@ describe("SettingsHub regroup", () => {
     renderWithProviders(<SettingsHub isAdmin />);
     expect(screen.getByText("route-defaults-card")).toBeInTheDocument();
   });
+
+  it("search 'depot' -> click the result -> the route defaults card is still rendered", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    fireEvent.change(screen.getByLabelText("Search settings"), { target: { value: "depot" } });
+    const link = screen
+      .getAllByRole("link")
+      .find((l) => l.getAttribute("href") === "#route-defaults");
+    expect(link).toBeTruthy();
+    fireEvent.click(link!);
+    expect(screen.getByText("route-defaults-card")).toBeInTheDocument();
+    expect(document.getElementById("route-defaults")).toContainElement(
+      screen.getByText("route-defaults-card"),
+    );
+  });
 });
 
 describe("SettingsHub readiness banner", () => {
@@ -112,6 +130,13 @@ describe("SettingsHub readiness banner", () => {
     const banner = screen.getByRole("status");
     expect(banner).toHaveTextContent(/selling restrictions are off/i);
     expect(within(banner).queryByRole("link")).not.toBeInTheDocument();
+  });
+
+  it("can be dismissed", () => {
+    restrictions.mockReturnValue({ data: { enabled: false }, isLoading: false, isError: false });
+    renderWithProviders(<SettingsHub isAdmin />);
+    fireEvent.click(screen.getByRole("button", { name: /dismiss/i }));
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
   it("no banner when enabled, loading, or errored", () => {

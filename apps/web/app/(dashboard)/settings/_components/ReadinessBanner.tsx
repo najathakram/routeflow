@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { ShieldAlert } from "lucide-react";
+import { ShieldAlert, X } from "lucide-react";
 import { useRestrictionsSettings } from "@/lib/api/restrictions-settings";
 
 /**
@@ -12,7 +12,8 @@ import { useRestrictionsSettings } from "@/lib/api/restrictions-settings";
  */
 export function ReadinessBanner({ isAdmin }: { isAdmin: boolean }) {
   const { data, isLoading, isError } = useRestrictionsSettings();
-  if (isLoading || isError || !data || data.enabled !== false) return null;
+  const [dismissed, setDismissed] = React.useState(false);
+  if (dismissed || isLoading || isError || !data || data.enabled !== false) return null;
   return (
     <div
       role="status"
@@ -30,6 +31,14 @@ export function ReadinessBanner({ isAdmin }: { isAdmin: boolean }) {
           Review restrictions
         </Link>
       )}
+      <button
+        type="button"
+        aria-label="Dismiss"
+        onClick={() => setDismissed(true)}
+        className="rounded p-1 text-navy/50 hover:text-navy"
+      >
+        <X className="h-4 w-4" />
+      </button>
     </div>
   );
 }

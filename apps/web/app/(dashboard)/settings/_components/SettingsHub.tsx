@@ -246,7 +246,7 @@ export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
       {/* Header + search */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-navy/60">
-          Manage your workspace, team, finances, data and integrations.
+          Manage your business, selling rules, orders, notifications and integrations.
         </p>
         <div className="relative w-full sm:w-72">
           <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-navy/40" />
@@ -323,7 +323,11 @@ export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
                 </div>
               );
             return (
-              <div key={g.key} className="mb-4 break-inside-avoid">
+              <div
+                key={g.key}
+                data-testid={`settings-group-${g.key}`}
+                className="mb-4 break-inside-avoid"
+              >
                 {content}
               </div>
             );
@@ -331,11 +335,9 @@ export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
         </div>
       )}
 
-      {!q && (
-        <div id="route-defaults" className="max-w-3xl">
-          <RouteDefaultsCard />
-        </div>
-      )}
+      <div id="route-defaults" className="max-w-3xl">
+        <RouteDefaultsCard />
+      </div>
 
       {/* My account footer */}
       {(!q || "my account password sessions sign-in".includes(q)) && (
