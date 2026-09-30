@@ -44,7 +44,13 @@ describe("ComponentSubLines", () => {
         unitBarcode: "036000291452",
         displayUnitPrice4: 0.625,
       }),
-      componentSubLineText({ name: "Oat", qty: 24, unitSku: null, unitBarcode: null, displayUnitPrice4: null }),
+      componentSubLineText({
+        name: "Oat",
+        qty: 24,
+        unitSku: null,
+        unitBarcode: null,
+        displayUnitPrice4: null,
+      }),
     ]);
     expect(rows[0].textContent).toContain("$0.63 (included)");
   });

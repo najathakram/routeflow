@@ -53,7 +53,13 @@ describe("LineItemRowReadOnly sub-lines", () => {
   });
 
   it("lineRowProps passes an order line's components through, and null for a plain line", () => {
-    const withC = { id: "l1", productId: "p", status: "PENDING", ...base, components: [comp("a", "Almond", 0)] };
+    const withC = {
+      id: "l1",
+      productId: "p",
+      status: "PENDING",
+      ...base,
+      components: [comp("a", "Almond", 0)],
+    };
     expect(lineRowProps(withC as unknown as OrderItem, "PENDING").components).toHaveLength(1);
     const plain = { id: "l2", productId: "p", status: "PENDING", ...base };
     expect(lineRowProps(plain as unknown as OrderItem, "PENDING").components).toBeNull();

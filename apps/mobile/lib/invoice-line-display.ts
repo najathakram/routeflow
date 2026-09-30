@@ -31,7 +31,9 @@ export function invoiceLineUnitNoun(item: { unitLabel?: string | null }): string
 }
 
 /** #2717 M3: the sub-line texts under a composed (mixed-pack) invoice line; none for a legacy line. */
-export function invoiceLineSubLines(item: { components?: ReadonlyArray<LineComponentView> | null }): string[] {
+export function invoiceLineSubLines(item: {
+  components?: ReadonlyArray<LineComponentView> | null;
+}): string[] {
   return componentSubLineTexts(item.components);
 }
 

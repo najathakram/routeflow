@@ -1,8 +1,5 @@
 import type { Prisma } from "@prisma/client";
-import type {
-  ComponentProductFacts,
-  RecipeSnapshotPort,
-} from "./line-composition";
+import type { ComponentProductFacts, RecipeSnapshotPort } from "./line-composition";
 
 /**
  * #2717 M3 (I11): the ONE file where a document write reads Recipe / RecipeComponent rows. The
