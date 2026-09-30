@@ -39,6 +39,9 @@ describe("CreateOrderModal default selling unit wiring (#2784)", () => {
       ["const setBoxes", "const setPieces"],
       ["const setPieces", "const setUnitQty"],
       ["const setUnitQty", "const setSellBy"],
+      ["const setSellBy", "/** The effective price tier"],
+      ["const stepLineUnit", "const addLineItem"],
+      ["const merge = (li: LineItem)", "// Built once, outside the updater"],
       ["const setDiscountedPrice", "const setOverrideReason"],
     ] as const) {
       expect({ name, consumed: /startOnDefaultUnit: false/.test(slice(name, next)) }).toEqual({

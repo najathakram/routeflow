@@ -557,9 +557,9 @@ export function CreateOrderModal({
       const pieces = li.pieces ?? 0;
       // Never step a case-packed line below one case (or its loose pieces) — undo must not zero it.
       const boxes = Math.max(pieces > 0 ? 0 : 1, (li.boxes ?? 0) + dir);
-      return { ...li, boxes, qty: boxes * li.unitsPerBox + pieces };
+      return { ...li, boxes, qty: boxes * li.unitsPerBox + pieces, startOnDefaultUnit: false };
     }
-    return { ...li, qty: Math.max(1, li.qty + dir) };
+    return { ...li, qty: Math.max(1, li.qty + dir), startOnDefaultUnit: false };
   };
 
   const addLineItem = (
@@ -577,14 +577,18 @@ export function CreateOrderModal({
     //    gains N cases and its qty is re-derived from boxes/pieces (pricing reads the split).
     //  - scan_v2 alone: one whole case for a case-packed line (a new line starts as one case).
     //  - neither: the classic picker keeps its historical +1 qty so nothing changes with the gates off.
-    const merge = (li: LineItem): LineItem =>
-      unitScan
+    // A merge is a qty edit: it CONSUMES startOnDefaultUnit (a second scan before the ladder loads must not let the
+    // picker re-apply the default over a line that already grew).
+    const merge = (li: LineItem): LineItem => ({
+      ...(unitScan
         ? mergePieceIntoLine(li, n)
         : orderUiV2
           ? mergeQtyIntoLine(li, n)
           : scanV2
             ? stepLineUnit(li, 1)
-            : { ...li, qty: li.qty + 1 };
+            : { ...li, qty: li.qty + 1 }),
+      startOnDefaultUnit: false,
+    });
     // Built once, outside the updater — none of it depends on `prev`, only on `product`/the
     // customer/pricing context, so there is nothing here a race could make stale.
     const newTempId = product.id + "-" + Date.now();
@@ -855,7 +859,9 @@ export function CreateOrderModal({
   };
 
   const setSellBy = (tempId: string, sellBy: "case" | "unit") =>
-    setLineItems((prev) => prev.map((li) => (li.tempId === tempId ? { ...li, sellBy } : li)));
+    setLineItems((prev) =>
+      prev.map((li) => (li.tempId === tempId ? { ...li, sellBy, startOnDefaultUnit: false } : li)),
+    );
 
   /** The effective price tier for a product on this order (per-product override, else the customer's). */
   const tierForProduct = (productId: string) =>
