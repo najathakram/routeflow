@@ -165,6 +165,63 @@ describeDb(
       expect(Number(aAfter2?.pricePerUnit)).toBe(3);
     });
 
+    // I12d. LEGACY UNRELEASED inactive holder: a product deactivated BEFORE the release design still
+    // holds its live code (retired* null). The import lookups are ACTIVE-ONLY, so such a holder is no
+    // match: the row creates a NEW product and claimCodes releases A's live code lazily. Dropping the
+    // `isActive: true` filter in importProducts' sku / barcode lookup would UPDATE A instead.
+    const legacyInactive = async (field: "sku" | "barcode", code: string, name: string) => {
+      const a = await inTenant(() =>
+        productsService.create({
+          name,
+          [field]: code,
+          pricePerUnit: 3,
+          unit: "unit",
+        } as any),
+      );
+      createdProductIds.push(a.id);
+      // Raw write, bypassing remove(): A is inactive but was never released (live code kept).
+      await prisma.product.update({
+        where: { id: a.id },
+        data: { isActive: false, currentStock: 9 },
+      });
+      const before = await prisma.product.findUnique({ where: { id: a.id } });
+      expect(before).toMatchObject({ isActive: false, [field]: code });
+      return a;
+    };
+
+    it.each([
+      ["sku", "SKU", `${RUN}-LEG-SKU`],
+      ["barcode", "Barcode", `${RUN}-LEG-BC`],
+    ] as const)(
+      "I12d(%s): a legacy unreleased INACTIVE holder is no match -> new product B, A's live code released lazily, A otherwise untouched",
+      async (field, header, code) => {
+        const a = await legacyInactive(field, code, `${RUN} Legacy ${field}`);
+
+        const run = await importCsv(`Item Name,${header},Rate
+${RUN} Fresh ${field},${code},5
+`);
+        expect(run.created).toBe(1);
+        expect(run.updated).toBe(0);
+        expect(run.skippedRows).toEqual([]);
+        const b = await byName(`${RUN} Fresh ${field}`);
+        expect(b).not.toBeNull();
+        if (b) createdProductIds.push(b.id);
+        expect(b?.[field]).toBe(code);
+        expect(b?.isActive).toBe(true);
+
+        const retired = field === "sku" ? "retiredSku" : "retiredBarcode";
+        const aAfter = await prisma.product.findUnique({ where: { id: a.id } });
+        expect(aAfter).toMatchObject({
+          isActive: false,
+          [field]: null,
+          [retired]: code,
+          name: `${RUN} Legacy ${field}`,
+        });
+        expect(Number(aAfter?.pricePerUnit)).toBe(3);
+        expect(Number(aAfter?.currentStock)).toBe(9);
+      },
+    );
+
     // I12c. A reactivation of A(X) and an import row for X can interleave only two legitimate ways,
     // and each is asserted STRICTLY SEQUENTIALLY here (no Promise.all, so nothing is racy):
     //   (i)  reactivate first -> A holds X again -> the import row UPDATES A (never a second holder);
