@@ -49,6 +49,11 @@ export type EventType =
   | "waste.ack"
   | "lane.note";
 
+/**
+ * Provenance rule: every value an event can change is a `Derived` ({value, source, ref}).
+ * Static registration metadata (lane name/machine/kind/active, release name/goal) is EXEMPT:
+ * it is set once by `lane.registered` / `release.created` and carries no provenance.
+ */
 export type Source = "register" | "reported" | "inferred";
 
 /** Every derived value carries where it came from (spec §4). */
@@ -119,13 +124,13 @@ export interface TaskState {
   phase: Derived<string | null>;
   areas: Derived<string[]>;
   dependsOn: string[];
-  related: string[];
+  related: Derived<string[]>;
   effort: string;
   importance: number;
   customerImpact: string;
   ref: Record<string, unknown> | null;
   notes: string | null;
-  pr: number | null;
+  pr: Derived<number | null>;
 }
 
 export interface Blocker {

@@ -13,7 +13,7 @@ import {
 } from "./schema";
 import { EVENT_OF, step, stepBugFixed } from "./transitions";
 import type { Track } from "./transitions";
-import type { ControlEvent, EventType, LaneKind, ValidationError } from "./types";
+import type { ControlEvent, EventType, LaneKind, Status, ValidationError } from "./types";
 import { eventOrder } from "./fold";
 
 export type { ValidationError } from "./types";
@@ -23,9 +23,20 @@ export interface EventFile {
   text: string;
 }
 
+export interface RegisterTask {
+  id: string;
+  status: Status;
+  release?: string | null;
+}
+
 export interface ValidationContext {
-  taskIds: string[];
+  /** Register tasks with their status; preferred over `taskIds`. */
+  tasks?: RegisterTask[];
+  /** Legacy: bare register ids, all treated as `planned`. */
+  taskIds?: string[];
   releaseIds: string[];
+  /** Denylist hook (WP3 wires the real one): returns the matched pattern, or null. */
+  denylistHit?: (line: string) => string | null;
 }
 
 interface Rec {
@@ -71,6 +82,11 @@ export function validateEvents(files: EventFile[], ctx: ValidationContext): Vali
       }
       if (Buffer.byteLength(raw, "utf8") > MAX_LINE_BYTES) {
         push(fileIdx, f.file, line, `line exceeds 1,024 bytes`);
+        continue;
+      }
+      const hit = ctx.denylistHit ? ctx.denylistHit(raw) : null;
+      if (hit) {
+        push(fileIdx, f.file, line, `denylist hit: ${hit}`);
         continue;
       }
       let parsed: unknown;
@@ -123,11 +139,19 @@ export function validateEvents(files: EventFile[], ctx: ValidationContext): Vali
         problems.push("ts must be a string");
         ok = false;
       }
-      if (typeof parsed.lane === "string" && parsed.lane !== fileLane) {
-        problems.push(`lane mismatch (${parsed.lane} in ${f.file})`);
+      if (typeof parsed.lane === "string") {
+        if (parsed.lane !== fileLane) problems.push(`lane mismatch (${parsed.lane} in ${f.file})`);
+      } else if (!missingEnv.includes("lane")) {
+        problems.push("lane must be a string");
+        ok = false;
       }
-      if (typeof parsed.by === "string" && !(BY_VALUES as readonly string[]).includes(parsed.by)) {
-        problems.push(`by must be one of ${BY_VALUES.join("|")}`);
+      if (typeof parsed.by === "string") {
+        if (!(BY_VALUES as readonly string[]).includes(parsed.by)) {
+          problems.push(`by must be one of ${BY_VALUES.join("|")}`);
+          ok = false;
+        }
+      } else if (!missingEnv.includes("by")) {
+        problems.push("by must be a string");
         ok = false;
       }
 
@@ -163,6 +187,9 @@ export function validateEvents(files: EventFile[], ctx: ValidationContext): Vali
         }
       } else if (missingEnv.includes("type")) {
         ok = false;
+      } else {
+        problems.push("type must be a string");
+        ok = false;
       }
       if (missingEnv.length > 0 && known === null) {
         problems.push(`missing key ${missingEnv.join(", ")}`);
@@ -184,7 +211,11 @@ export function validateEvents(files: EventFile[], ctx: ValidationContext): Vali
 
   // Global, order-independent facts.
   const lanes = new Map<string, LaneKind>();
-  const taskIds = new Set(ctx.taskIds);
+  const regTasks: RegisterTask[] = [
+    ...(ctx.taskIds ?? []).map((id): RegisterTask => ({ id, status: "planned", release: null })),
+    ...(ctx.tasks ?? []),
+  ];
+  const taskIds = new Set(regTasks.map((t) => t.id));
   const releaseIds = new Set(ctx.releaseIds);
   const minted = new Set<string>();
   const proposed = new Set<string>();
@@ -228,6 +259,11 @@ export function validateEvents(files: EventFile[], ctx: ValidationContext): Vali
 
   // Pass B: references, emitters, transitions in total order.
   const tracks = new Map<string, Track>();
+  const taskRelease = new Map<string, string | null>();
+  for (const t of regTasks) {
+    tracks.set(t.id, { status: t.status, prior: null, lane: null });
+    taskRelease.set(t.id, t.release ?? null);
+  }
   const alias = new Map<string, string>();
   const resolve = (id: string) => alias.get(id) ?? id;
   const trackOf = (id: string): Track =>
@@ -244,8 +280,8 @@ export function validateEvents(files: EventFile[], ctx: ValidationContext): Vali
     if (kind && !EMITTERS[type].includes(kind)) {
       at(`unauthorised emitter: ${type} from lane ${r.fileLane} (${kind})`);
     }
-    if (type === "task.next" && ev.targetLane !== undefined) {
-      if (kind && kind !== "owner" && kind !== "lead") at(`unauthorised emitter: targetLane`);
+    if (type === "task.next" && ev.targetLane !== undefined && kind && kind !== "owner") {
+      at(`unauthorised emitter: task.next targetLane is owner-only (${r.fileLane} is ${kind})`);
     }
     let dangling = false;
     const needTask = (id: unknown): boolean => {
@@ -286,16 +322,32 @@ export function validateEvents(files: EventFile[], ctx: ValidationContext): Vali
     if (type === "task.created") {
       const id = s(r, "id") ?? "";
       if (!tracks.has(id)) tracks.set(id, { status: "planned", prior: null, lane: null });
+      taskRelease.set(id, s(r, "release"));
     } else if (type === "task.proposed") {
       tracks.set(s(r, "tmpId") ?? "", { status: "proposed", prior: null, lane: null });
     } else if (type === "task.adopted") {
       alias.set(s(r, "tmpId") ?? "", s(r, "task") ?? "");
+    } else if (type === "task.lane") {
+      const id = resolve(s(r, "task") ?? "");
+      tracks.set(id, { ...trackOf(id), lane: s(r, "toLane") });
+    } else if (type === "task.release") {
+      taskRelease.set(resolve(s(r, "task") ?? ""), s(r, "release"));
+    } else if (type === "release.shipped") {
+      const shipped = s(r, "release");
+      for (const [tid, rel] of taskRelease) {
+        const t = trackOf(tid);
+        if (rel === shipped && t.status === "code-complete") {
+          tracks.set(tid, { ...t, status: "released" });
+        }
+      }
     } else if (type in EVENT_OF || type === "bug.fixed") {
       const id = resolve(s(r, type === "bug.fixed" ? "bug" : "task") ?? "");
       const t = trackOf(id);
       const res = type === "bug.fixed" ? stepBugFixed(t) : step(t, type, ev.by, r.fileLane);
-      if (res.ok) tracks.set(id, res.track);
-      else at(res.reason);
+      if (res.ok) {
+        tracks.set(id, res.track);
+        if (type === "task.released") taskRelease.set(id, s(r, "release"));
+      } else at(res.reason);
     }
   }
 

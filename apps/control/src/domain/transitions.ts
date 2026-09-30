@@ -50,16 +50,19 @@ export function transition(from: Status, ev: Ev, prior?: Status): Status | null 
 }
 
 /** Event type -> matrix column. */
-export const EVENT_OF: Record<string, Ev> = {
-  "task.started": "started",
-  "task.done": "done",
-  "task.released": "released",
-  "task.blocked": "blocked",
-  "task.unblocked": "unblocked",
-  "task.reconsider": "reconsider",
-  "task.reopened": "reopened",
-  "task.dropped": "dropped",
-};
+export const EVENT_OF: Record<string, Ev> = Object.assign(
+  Object.create(null) as Record<string, Ev>,
+  {
+    "task.started": "started",
+    "task.done": "done",
+    "task.released": "released",
+    "task.blocked": "blocked",
+    "task.unblocked": "unblocked",
+    "task.reconsider": "reconsider",
+    "task.reopened": "reopened",
+    "task.dropped": "dropped",
+  },
+);
 
 /** `released` via the `started`/`planned` rows is legal ONLY for these emitters (spec §2). */
 const INFERRED_BY = new Set(["infer", "sync", "server"]);

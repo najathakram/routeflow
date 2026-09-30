@@ -202,6 +202,35 @@ const refList: Check = (v) =>
   Array.isArray(v) && (v as unknown[]).every((x) => isStr(x) && TASK_ID_RE.test(x))
     ? null
     : "must be an array of task ids";
+const RESERVED = new Set([
+  "__proto__",
+  "constructor",
+  "prototype",
+  "toString",
+  "valueOf",
+  "hasOwnProperty",
+]);
+export const ACK_KEY_RE = /^[A-Za-z0-9._:#/-]{1,120}$/;
+const ackKey: Check = (v) =>
+  isStr(v) && ACK_KEY_RE.test(v) && !RESERVED.has(v)
+    ? null
+    : "must match [A-Za-z0-9._:#/-]{1,120} and not be a reserved name";
+/** `ref` is exactly {feature?, bug?, issue?, deferred?} (spec §1.2). */
+const refCheck: Check = (v) => {
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return "must be an object";
+  const o = v as Record<string, unknown>;
+  const pat: Record<string, (x: unknown) => boolean> = {
+    feature: (x) => isStr(x) && /^F-\d+$/.test(x),
+    bug: (x) => isStr(x) && BUG_ID_RE.test(x),
+    issue: (x) => isInt(x) && x > 0,
+    deferred: (x) => isStr(x) && /^D-\d+$/.test(x),
+  };
+  for (const k of Object.keys(o)) {
+    if (!Object.hasOwn(pat, k)) return `unknown key ${k} (allowed: feature|bug|issue|deferred)`;
+    if (o[k] !== null && !pat[k](o[k])) return `bad value for ${k}`;
+  }
+  return null;
+};
 const posInt: Check = (v) => (isInt(v) && v > 0 ? null : "must be a positive integer");
 
 /** Per-field value checks; `type.field` overrides the bare `field` entry. */
@@ -229,7 +258,7 @@ const FIELD: Record<string, Check> = {
   reason: str,
   why: str,
   goal: str,
-  key: (v) => (isStr(v) && v.length > 0 ? null : "must be a non-empty string"),
+  key: ackKey,
   notes: str,
   note: str,
   priority: oneOf(PRIORITIES),
@@ -246,8 +275,7 @@ const FIELD: Record<string, Check> = {
   customerImpact: oneOf(IMPACTS),
   dependsOn: refList,
   related: refList,
-  ref: (v) =>
-    v !== null && typeof v === "object" && !Array.isArray(v) ? null : "must be an object",
+  ref: refCheck,
   pr: posInt,
   sha: re(SHA_RE, "a hex sha"),
   shipDate: date,
@@ -267,6 +295,7 @@ export function checkField(
   value: unknown,
   fileLane: string,
 ): string | null {
-  const c = FIELD[`${type}.${key}`] ?? FIELD[key];
+  const o = `${type}.${key}`;
+  const c = Object.hasOwn(FIELD, o) ? FIELD[o] : Object.hasOwn(FIELD, key) ? FIELD[key] : undefined;
   return c ? c(value, fileLane) : null;
 }

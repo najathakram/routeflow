@@ -17,16 +17,16 @@ import type {
   Warning,
 } from "./types";
 
+/** Code-unit comparison: locale-independent, so order and `version` never depend on ICU. */
+export const cmpStr = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
 // total order (spec §4): ts, then sync|server|infer after the rest, then lane, then seq
 const rank = (by: string) => (by === "sync" || by === "server" || by === "infer" ? 1 : 0);
 export const eventOrder = (
   a: Pick<ControlEvent, "ts" | "by" | "lane" | "seq">,
   b: Pick<ControlEvent, "ts" | "by" | "lane" | "seq">,
 ): number =>
-  a.ts.localeCompare(b.ts) ||
-  rank(a.by) - rank(b.by) ||
-  a.lane.localeCompare(b.lane) ||
-  a.seq - b.seq;
+  cmpStr(a.ts, b.ts) || rank(a.by) - rank(b.by) || cmpStr(a.lane, b.lane) || a.seq - b.seq;
 
 const HOUR_MS = 3_600_000;
 
@@ -58,7 +58,7 @@ function canonical(v: unknown): unknown {
   if (Array.isArray(v)) return (v as unknown[]).map(canonical);
   if (v !== null && typeof v === "object") {
     const o = v as Record<string, unknown>;
-    const out: Record<string, unknown> = {};
+    const out = Object.create(null) as Record<string, unknown>;
     for (const k of Object.keys(o).sort()) {
       if (o[k] !== undefined) out[k] = canonical(o[k]);
     }
@@ -79,13 +79,13 @@ function taskFromBase(b: BaseTask): TaskState {
     phase: reg(b.phase, b.id),
     areas: reg([...b.areas], b.id),
     dependsOn: [...b.dependsOn],
-    related: [...b.related],
+    related: reg([...b.related], b.id),
     effort: b.effort ?? "M",
     importance: b.importance ?? 3,
     customerImpact: b.customerImpact ?? "none",
     ref: b.ref ?? null,
     notes: b.notes ?? null,
-    pr: b.pr ?? null,
+    pr: reg(b.pr ?? null, b.id),
   };
 }
 
@@ -102,13 +102,13 @@ export function fold(
   railway: RailwaySnapshot,
   now: string,
 ): ControlState {
-  const tasks: Record<string, TaskState> = {};
+  const tasks = Object.create(null) as Record<string, TaskState>;
   const tracks = new Map<string, Track>();
   for (const b of base.tasks) {
     tasks[b.id] = taskFromBase(b);
     tracks.set(b.id, { status: b.status, prior: null, lane: null });
   }
-  const releases: Record<string, ReleaseState> = {};
+  const releases = Object.create(null) as Record<string, ReleaseState>;
   for (const r of base.releases) {
     releases[r.id] = {
       id: r.id,
@@ -119,12 +119,12 @@ export function fold(
       history: [],
     };
   }
-  const lanes: Record<string, LaneState> = {};
+  const lanes = Object.create(null) as Record<string, LaneState>;
   const alias = new Map<string, string>();
   const warnings: Warning[] = [];
   const timeline: ControlState["timeline"] = [];
-  const acks: ControlState["acks"] = {};
-  const superseded: ControlState["superseded"] = {};
+  const acks = Object.create(null) as ControlState["acks"];
+  const superseded = Object.create(null) as ControlState["superseded"];
 
   const ensureLane = (id: string): LaneState => {
     let l = lanes[id];
@@ -135,11 +135,11 @@ export function fold(
         machine: "",
         kind: "unregistered",
         active: true,
-        current: { value: null, source: "register", ref: null },
-        next: { value: null, source: "register", ref: null },
+        current: { value: null, source: "reported", ref: null },
+        next: { value: null, source: "reported", ref: null },
         blockers: [],
-        heartbeat: { value: null, source: "register", ref: null },
-        stale: { value: "live", source: "register", ref: null },
+        heartbeat: { value: null, source: "reported", ref: null },
+        stale: { value: "live", source: "reported", ref: null },
       };
       lanes[id] = l;
     }
@@ -202,7 +202,7 @@ export function fold(
               break;
             case "task.done": {
               const pr = ev.pr;
-              if (typeof pr === "number") t.pr = pr;
+              if (typeof pr === "number") t.pr = rep<number | null>(pr, ev);
               clearCurrent(id, ev);
               break;
             }
@@ -266,7 +266,7 @@ export function fold(
               phase: rep(null, ev),
               areas: rep(strArr(ev, "areas") ?? [], ev),
               dependsOn: strArr(ev, "dependsOn") ?? [],
-              related: strArr(ev, "related") ?? [],
+              related: rep(strArr(ev, "related") ?? [], ev),
               effort: str(ev, "effort") ?? "M",
               importance: typeof ev.importance === "number" ? ev.importance : 3,
               customerImpact: str(ev, "customerImpact") ?? "none",
@@ -275,7 +275,7 @@ export function fold(
                   ? (ev.ref as Record<string, unknown>)
                   : null,
               notes: str(ev, "notes"),
-              pr: null,
+              pr: rep<number | null>(null, ev),
             };
             tracks.set(id, { status: "planned", prior: null, lane: null });
           }
@@ -302,13 +302,13 @@ export function fold(
               phase: rep(null, ev),
               areas: rep(strArr(ev, "areas") ?? [], ev),
               dependsOn: [],
-              related: [],
+              related: rep<string[]>([], ev),
               effort: "M",
               importance: 3,
               customerImpact: "none",
               ref: null,
               notes: null,
-              pr: null,
+              pr: rep<number | null>(null, ev),
             };
             tracks.set(id, { status: "proposed", prior: null, lane: null });
           }
@@ -381,7 +381,11 @@ export function fold(
           else if (!("toLane" in ev)) {
             warn("missing toLane");
             applied = false;
-          } else tasks[id].lane = rep(str(ev, "toLane"), ev);
+          } else {
+            const to = str(ev, "toLane");
+            tasks[id].lane = rep(to, ev);
+            tracks.set(id, { ...trackOf(id), lane: to });
+          }
           break;
         }
         case "task.next": {
@@ -415,7 +419,9 @@ export function fold(
             if (other === null) applied = false;
             else {
               const link = (a: string, b: string) => {
-                if (!tasks[a].related.includes(b)) tasks[a].related = [...tasks[a].related, b];
+                if (!tasks[a].related.value.includes(b)) {
+                  tasks[a].related = rep([...tasks[a].related.value, b], ev);
+                }
               };
               link(bug, other);
               link(other, bug);
@@ -438,7 +444,7 @@ export function fold(
           }
           tracks.set(bug, res.track);
           tasks[bug].status = rep<Status>("code-complete", ev);
-          if (typeof ev.pr === "number") tasks[bug].pr = ev.pr;
+          if (typeof ev.pr === "number") tasks[bug].pr = rep<number | null>(ev.pr, ev);
           dropBlockers(bug);
           clearCurrent(bug, ev);
           break;
