@@ -279,7 +279,16 @@ export interface ProductCodeTakenError extends ProductReactivationHolder {
   barcode?: string;
   holders?: ProductReactivationHolder[];
 }
-export type ProductNameTakenError = ProductCodeTakenError & { code: "NAME_TAKEN"; field: "name" };
+/**
+ * The name-taken 409. `productId` / `productName` name the holder, but the DB-unique backstop (a P2002 on an active-name
+ * index) cannot know who holds it, so on that path they are absent.
+ */
+export type ProductNameTakenError = Omit<ProductCodeTakenError, "productId" | "productName"> & {
+  code: "NAME_TAKEN";
+  field: "name";
+  productId?: string;
+  productName?: string;
+};
 
 /** 409 when `deactivateHolderIds` was sent but NOTHING blocks the reactivation any more. */
 export interface ProductHoldersChangedError {

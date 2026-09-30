@@ -88,14 +88,21 @@ function taken(field: CodeField, value: string, holder: { id: string; name: stri
 }
 
 /** Move a product's live codes into retired* and mirror them onto its level rows. Only writes what is live. */
+/** One code a release gave up: the audit and the caller name exactly what was freed. */
+export interface FreedCode {
+  field: CodeField;
+  value: string;
+}
+
 async function releaseLive(
   tx: CatalogTx,
   tenantId: string,
   p: ProductCodes,
   only?: ReadonlyArray<{ field: CodeField; value: string }>,
-): Promise<CodeField[]> {
+): Promise<{ fields: CodeField[]; freed: FreedCode[] }> {
   const data: Record<string, string | null> = {};
   const released: CodeField[] = [];
+  const freed: FreedCode[] = [];
   for (const field of FIELDS) {
     const live = p[field];
     if (live == null) continue;
@@ -103,6 +110,7 @@ async function releaseLive(
     data[RETIRED_COLUMN[field]] = live;
     data[field] = null;
     released.push(field);
+    freed.push({ field, value: live });
   }
   if (released.length > 0) await tx.product.update({ where: { id: p.id }, data });
 
@@ -118,8 +126,11 @@ async function releaseLive(
       data: { retiredCode: r.code, code: null },
     });
     if (!released.includes("barcode")) released.push("barcode");
+    if (!freed.some((f) => f.field === "barcode" && f.value === r.code)) {
+      freed.push({ field: "barcode", value: r.code as string });
+    }
   }
-  return released;
+  return { fields: released, freed };
 }
 
 /**
@@ -164,19 +175,61 @@ export async function findCodeHolders(
 }
 
 /**
+ * Every code a product holds or retired (legacy columns, level rows, both live and retired): the set a writer of that
+ * product locks, in ONE sorted `lockBarcodeCodes` call, BEFORE any row write (Opus #2860 B2, SA-572c).
+ */
+export async function peekProductCodes(
+  tx: CatalogTx,
+  tenantId: string,
+  productId: string,
+): Promise<string[]> {
+  const p: ProductCodes | null = await tx.product.findFirst({
+    where: { id: productId, tenantId },
+    select: CODE_SELECT,
+  });
+  const rows: Array<{ code: string | null; retiredCode: string | null }> =
+    await tx.productBarcode.findMany({
+      where: { tenantId, productId },
+      select: { code: true, retiredCode: true },
+    });
+  const out: string[] = [];
+  if (p) {
+    out.push(
+      ...[p.sku, p.barcode, p.unitSku, p.retiredSku, p.retiredBarcode, p.retiredUnitSku].filter(
+        (v): v is string => typeof v === "string",
+      ),
+    );
+  }
+  for (const r of rows) {
+    if (r.code) out.push(r.code);
+    if (r.retiredCode) out.push(r.retiredCode);
+  }
+  return out;
+}
+
+/**
  * Deactivate: release ALL of this product's live codes. Idempotent — with nothing live it writes nothing. Returns the
- * fields released. Call inside the same tx that flips `isActive`.
+ * fields released. Call BEFORE the `isActive` write, never after it: it takes this product's code locks FIRST and then its row
+ * lock (house order), so a row already locked by the `isActive` UPDATE would invert the order and deadlock (Opus #2860 B1).
  */
 export async function releaseProductCodes(
   tx: CatalogTx,
-  input: { tenantId: string; productId: string },
-): Promise<{ released: CodeField[] }> {
+  input: {
+    tenantId: string;
+    productId: string;
+    /**
+     * The codes the caller ALREADY locked in its ONE sorted call. After the row lock the product's live codes must be a
+     * subset of it, else 409 CODES_CHANGED (the release would free a code nobody locked: an inverted-order deadlock).
+     */
+    lockedCodes?: ReadonlySet<string>;
+  },
+): Promise<{ released: CodeField[]; freed: FreedCode[] }> {
   const { tenantId, productId } = input;
   const peek: ProductCodes | null = await tx.product.findFirst({
     where: { id: productId, tenantId },
     select: CODE_SELECT,
   });
-  if (!peek) return { released: [] };
+  if (!peek) return { released: [], freed: [] };
   const rowCodes: Array<{ code: string | null }> = await tx.productBarcode.findMany({
     where: { tenantId, productId, code: { not: null } },
     select: { code: true },
@@ -192,8 +245,18 @@ export async function releaseProductCodes(
     where: { id: productId, tenantId },
     select: CODE_SELECT,
   });
-  if (!p) return { released: [] };
-  return { released: await releaseLive(tx, tenantId, p) };
+  if (!p) return { released: [], freed: [] };
+  if (input.lockedCodes) {
+    const live = await peekProductCodes(tx, tenantId, productId);
+    if (live.some((c) => !input.lockedCodes!.has(c))) {
+      throw new ConflictException({
+        code: API_ERROR_CODES.CODES_CHANGED,
+        message: "This product's codes changed while it was being saved. Try again.",
+      });
+    }
+  }
+  const done = await releaseLive(tx, tenantId, p);
+  return { released: done.fields, freed: done.freed };
 }
 
 /**
@@ -246,7 +309,7 @@ export async function claimCodes(
     // Re-checked under the row lock: a holder reactivated in the meantime is now ACTIVE -> 409.
     if (fresh?.isActive) taken(held[0].field, held[0].value, fresh);
     // eslint-disable-next-line no-await-in-loop
-    const released = await releaseLive(tx, tenantId, fresh ?? holder, held);
+    const released = (await releaseLive(tx, tenantId, fresh ?? holder, held)).fields;
     // eslint-disable-next-line no-await-in-loop
     await tx.auditLog.create({
       data: {

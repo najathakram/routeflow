@@ -50,7 +50,11 @@ describe("resolveReactivationConflicts", () => {
       entityId: "h1",
       meta: {
         reactivatedProductId: "me",
-        freed: [{ field: "sku", value: "S1" }],
+        // audit == effect (Opus #2860 N1): everything the deactivation released, not only the colliding sku
+        freed: expect.arrayContaining([
+          { field: "sku", value: "S1" },
+          { field: "barcode", value: "B9" },
+        ]),
         reason: "deactivated to reactivate me",
       },
     });
@@ -189,5 +193,45 @@ describe("resolveReactivationConflicts", () => {
     expect(i("lock:row:h1")).toBeLessThan(i("lock:row:me"));
     expect(i("lock:row:me")).toBeLessThan(i("product.update:h1"));
     expect(i("product.update:h1")).toBeLessThan(i("auditLog.create"));
+  });
+
+  it("returns the ids it deactivated (the caller emits one product-changed event for them, N4)", async () => {
+    const tx = makeTx({
+      products: [reactivating(), product({ id: "h1", name: "Holder", sku: "S1" })],
+    });
+    await expect(resolveReactivationConflicts(tx, input(["h1"]))).resolves.toEqual({
+      deactivatedIds: ["h1"],
+    });
+    const none = makeTx({ products: [reactivating()] });
+    await expect(resolveReactivationConflicts(none, input(undefined))).resolves.toEqual({
+      deactivatedIds: [],
+    });
+  });
+
+  it("B2: every code the holder's release will free must already be in the caller's ONE locked set, else 409 and nothing written", async () => {
+    const mk = () =>
+      makeTx({
+        products: [reactivating(), product({ id: "h1", name: "Holder", sku: "S1", barcode: "B9" })],
+      });
+    const short = mk();
+    const body = await bodyOf(
+      resolveReactivationConflicts(short, input(["h1"], { lockedCodes: new Set(["S1"]) })),
+    );
+    expect(body).toMatchObject({ code: "CODE_TAKEN", productId: "h1" });
+    expect(short.products[1].isActive).toBe(true);
+    expect(short.audits).toHaveLength(0);
+    const full = mk();
+    await resolveReactivationConflicts(full, input(["h1"], { lockedCodes: new Set(["S1", "B9"]) }));
+    expect(full.products[1].isActive).toBe(false);
+  });
+
+  it("B1: the holder's codes are released BEFORE its isActive write (two writes, release first)", async () => {
+    const tx = makeTx({
+      products: [reactivating(), product({ id: "h1", name: "Holder", sku: "S1" })],
+    });
+    await resolveReactivationConflicts(tx, input(["h1"]));
+    expect(tx.calls.filter((c) => c === "product.update:h1")).toHaveLength(2);
+    expect(tx.calls.indexOf("lock:row:h1")).toBeLessThan(tx.calls.indexOf("product.update:h1"));
+    expect(tx.products[1]).toMatchObject({ isActive: false, sku: null, retiredSku: "S1" });
   });
 });

@@ -1,7 +1,7 @@
 /**
  * SA-603 / SA-603a DB-lane proof for code release and reuse (real Postgres, throwaway `qa-*` tenants).
  *
- * WRITTEN, NOT RUN by its author: the DB lane is F2's (`npm run local:test:db`). Collected only by
+ * Run by F2's DB lane (`npm run local:test:db`; `npm run local:test:db` builds its own fresh database). Collected only by
  * `jest.db.config.js` (`.db.spec.ts$`). Needs the Sitting-B bundle migration applied (retired* columns,
  * nullable ProductBarcode.code, the two active-name partial uniques). `requireLocalDatabaseUrl()` refuses any
  * non-local host; every tenant is a `qa-*` slug approved by `assertTestTenant`.
@@ -15,6 +15,7 @@ import { StorageService } from "../storage/storage.service";
 import { AddonService } from "../billing/addon.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { FeatureOverrideService } from "../billing/feature-override.service";
 import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
@@ -63,6 +64,7 @@ describeDb("SA-603a code release, lazy reuse, restore and name rule — real Pos
         { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(false) } },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
+        { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         entitlementAuthorityFromEntitlements,
         {
           provide: PlanCatalogService,
@@ -351,5 +353,125 @@ describeDb("SA-603a code release, lazy reuse, restore and name rule — real Pos
     // The loser keeps its retired value (no orphan).
     const loser = all.find((p) => p.sku == null && p.id !== c.id)!;
     expect(loser.retiredSku === "DRR-1" || loser.isActive === false).toBe(true);
+  });
+
+  // ── Opus #2860 B1/B2/B3: lock-order pins. A deadlock (40P01) surfaces as a raw 500; each race below must end with
+  // ONLY 2xx / 4xx outcomes. What each scenario PINS (F2's revert probe, removing the single sorted lock set in
+  // `update()`): scenario C goes red deterministically; A, B and D are best-effort SMOKE pins (the interleavings are
+  // timing-dependent, so they may stay green on a revert): they guard against regressions but are not the proof of the
+  // lock. The deterministic proof of the lock SET is the unit probe in products.code-release-wiring.spec.ts.
+  const barrier = async <T>(...fns: Array<() => Promise<T>>) => {
+    let open!: () => void;
+    const gate = new Promise<void>((r) => {
+      open = r;
+    });
+    const started = fns.map((fn) => gate.then(fn)); // all start in the SAME tick once released
+    open();
+    return Promise.allSettled(started);
+  };
+  const noServerErrors = (results: PromiseSettledResult<unknown>[]) => {
+    for (const r of results) {
+      if (r.status === "rejected") {
+        const status = typeof r.reason?.getStatus === "function" ? r.reason.getStatus() : 500;
+        expect({ status, message: String(r.reason?.message) }).toEqual(
+          expect.objectContaining({ status: expect.any(Number) }),
+        );
+        expect(status).toBeLessThan(500);
+      }
+    }
+  };
+  const ROUNDS = 6;
+
+  it("LOCK ORDER A: a door (P2 is the holder) vs an ordinary PATCH of P2 never deadlocks (no 500)", async () => {
+    const tenantId = await seedTenant("lo-a");
+    for (let i = 0; i < ROUNDS; i += 1) {
+      const x = `LA-X-${i}-${randomUUID().slice(0, 4)}`;
+      const y = `LA-Y-${i}-${randomUUID().slice(0, 4)}`;
+      // eslint-disable-next-line no-await-in-loop
+      const p1 = await mk(tenantId, `LA P1 ${i}`, { sku: x });
+      // eslint-disable-next-line no-await-in-loop
+      await inTenant(tenantId, () => service.update(p1.id, { isActive: false } as any));
+      // eslint-disable-next-line no-await-in-loop
+      const p2 = await mk(tenantId, `LA P2 ${i}`, { sku: x, barcode: y });
+      // eslint-disable-next-line no-await-in-loop
+      const results = await barrier(
+        () =>
+          inTenant(tenantId, () =>
+            service.update(p1.id, { isActive: true, deactivateHolderIds: [p2.id] } as any),
+          ),
+        () => inTenant(tenantId, () => service.update(p2.id, { pricePerUnit: "2.00" } as any)),
+      );
+      noServerErrors(results);
+    }
+  });
+
+  it("LOCK ORDER B: a door vs DELETE of the holder never deadlocks (no 500)", async () => {
+    const tenantId = await seedTenant("lo-b");
+    for (let i = 0; i < ROUNDS; i += 1) {
+      const x = `LB-X-${i}-${randomUUID().slice(0, 4)}`;
+      const y = `LB-Y-${i}-${randomUUID().slice(0, 4)}`;
+      // eslint-disable-next-line no-await-in-loop
+      const p1 = await mk(tenantId, `LB P1 ${i}`, { sku: x });
+      // eslint-disable-next-line no-await-in-loop
+      await inTenant(tenantId, () => service.update(p1.id, { isActive: false } as any));
+      // eslint-disable-next-line no-await-in-loop
+      const p2 = await mk(tenantId, `LB P2 ${i}`, { sku: x, barcode: y });
+      // eslint-disable-next-line no-await-in-loop
+      const results = await barrier(
+        () =>
+          inTenant(tenantId, () =>
+            service.update(p1.id, { isActive: true, deactivateHolderIds: [p2.id] } as any),
+          ),
+        () => inTenant(tenantId, () => service.remove(p2.id)),
+      );
+      noServerErrors(results);
+    }
+  });
+
+  it("LOCK ORDER C: two doors naming the SAME holder for different retired codes never deadlock; at least one wins", async () => {
+    const tenantId = await seedTenant("lo-c");
+    for (let i = 0; i < ROUNDS; i += 1) {
+      const x = `LC-X-${i}-${randomUUID().slice(0, 4)}`;
+      const y = `LC-Y-${i}-${randomUUID().slice(0, 4)}`;
+      // eslint-disable-next-line no-await-in-loop
+      const p1 = await mk(tenantId, `LC P1 ${i}`, { sku: x });
+      // eslint-disable-next-line no-await-in-loop
+      await inTenant(tenantId, () => service.update(p1.id, { isActive: false } as any));
+      // eslint-disable-next-line no-await-in-loop
+      const p4 = await mk(tenantId, `LC P4 ${i}`, { barcode: y });
+      // eslint-disable-next-line no-await-in-loop
+      await inTenant(tenantId, () => service.update(p4.id, { isActive: false } as any));
+      // eslint-disable-next-line no-await-in-loop
+      const p2 = await mk(tenantId, `LC P2 ${i}`, { sku: x, barcode: y });
+      // eslint-disable-next-line no-await-in-loop
+      const results = await barrier(
+        () =>
+          inTenant(tenantId, () =>
+            service.update(p1.id, { isActive: true, deactivateHolderIds: [p2.id] } as any),
+          ),
+        () =>
+          inTenant(tenantId, () =>
+            service.update(p4.id, { isActive: true, deactivateHolderIds: [p2.id] } as any),
+          ),
+      );
+      noServerErrors(results);
+      expect(results.filter((r) => r.status === "fulfilled").length).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it("LOCK ORDER D (B2): PATCH {sku} on a product that holds a barcode vs a create claiming that sku AND barcode never deadlocks", async () => {
+    const tenantId = await seedTenant("lo-d");
+    for (let i = 0; i < ROUNDS; i += 1) {
+      const z = `LD-Z-${i}-${randomUUID().slice(0, 4)}`;
+      const a = `LD-A-${i}-${randomUUID().slice(0, 4)}`;
+      // eslint-disable-next-line no-await-in-loop
+      const p3 = await mk(tenantId, `LD P3 ${i}`, { barcode: z });
+      // eslint-disable-next-line no-await-in-loop
+      const results = await barrier(
+        () => inTenant(tenantId, () => service.update(p3.id, { sku: a } as any)),
+        () => mk(tenantId, `LD New ${i}`, { sku: a, barcode: z }),
+      );
+      noServerErrors(results);
+    }
   });
 });

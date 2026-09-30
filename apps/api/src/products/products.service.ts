@@ -51,11 +51,15 @@ import {
 import {
   claimCodes,
   codeClaims,
+  peekProductCodes,
   releaseProductCodes,
   restoreProductCodes,
 } from "./product-code-release";
 import { assertNameFree, mapNameUniqueViolation } from "./product-name-rules";
-import { resolveReactivationConflicts } from "./product-reactivation-holders";
+import {
+  reactivationLockCodes,
+  resolveReactivationConflicts,
+} from "./product-reactivation-holders";
 import { recipeReferenceGroupers } from "./recipe-references";
 import { lockAndAssertRecipeGuards } from "./recipe-update-guard";
 import {
@@ -1239,27 +1243,50 @@ export class ProductsService {
         ? await readFamilyPriceMode(this.featureConfig, tenantId)
         : "off";
     let propagatedRows = 0;
+    let doorDeactivated: string[] = [];
     const updated = await this.prisma.tenantTransaction(async (tx: any) => {
-      // Source-order pin: lock [new, old] before the update's own product.findFirst-style reads.
-      await lockBarcodeCodes(tx, tenantId, [effectiveBarcode, existing.barcode]);
       // SA-603a: reactivate restores the retired codes still free; a code this PATCH sets is claimed (an inactive
-      // holder is released + audited, an active one is a 409). Deactivate releases after the write, below.
+      // holder is released + audited, an active one is a 409); deactivate releases BEFORE the isActive write.
       const claims = codeClaims(dto, existing);
       const reactivating = existing.isActive === false && data.isActive === true;
       const deactivating = existing.isActive !== false && data.isActive === false;
+      const effectiveParent =
+        dto.parentProductId !== undefined ? dto.parentProductId : existing.parentProductId;
+      // ONE sorted lockBarcodeCodes call for EVERY code this write can touch, taken before the first write or row lock
+      // (SA-572c / Opus #2860 B2): the new and old barcode, this product's own live and retired codes (level rows
+      // too), the claims and, for the one-tx door, the blocking holders' live codes (their codes are released below).
+      // Every later lock in this tx is a subset of it, so it acquires nothing new and cannot invert the order.
+      const lockList = [
+        effectiveBarcode,
+        existing.barcode,
+        ...claims.map((c) => c.value),
+        ...(await peekProductCodes(tx, tenantId, id)),
+        ...(reactivating
+          ? await reactivationLockCodes(tx, {
+              tenantId,
+              productId: id,
+              name: dto.name ?? existing.name,
+              parentProductId: effectiveParent,
+              skip: claims.map((c) => c.field),
+              withHolders: !!dto.deactivateHolderIds?.length,
+            })
+          : []),
+      ].filter((c): c is string => typeof c === "string" && c.trim().length > 0);
+      await lockBarcodeCodes(tx, tenantId, lockList);
       if (reactivating) {
         // SA-603i: any ACTIVE holder of a retired code / the name is a 409 listing ALL of them; with
-        // `deactivateHolderIds` exactly that set is deactivated in this tx (lock order codes -> name -> rows).
-        await resolveReactivationConflicts(tx, {
+        // `deactivateHolderIds` exactly that set is deactivated in this tx (codes -> name -> rows sorted).
+        const res = await resolveReactivationConflicts(tx, {
           tenantId,
           productId: id,
           name: dto.name ?? existing.name,
-          parentProductId:
-            dto.parentProductId !== undefined ? dto.parentProductId : existing.parentProductId,
+          parentProductId: effectiveParent,
           skip: claims.map((c) => c.field),
           holderIds: dto.deactivateHolderIds,
           actorId: options?.actorId ?? null,
+          lockedCodes: new Set(lockList),
         });
+        doorDeactivated = res.deactivatedIds;
       }
       if (reactivating) {
         await restoreProductCodes(tx, {
@@ -1307,6 +1334,11 @@ export class ProductsService {
         familyMode === "on"
           ? await applyFamilyPriceBeforeUpdate(tx, { tenantId, id, existing, dto, data })
           : { propagate: false };
+      // Codes + row lock BEFORE the isActive write (Opus #2860 B1): the release takes this product's code locks, then
+      // its row lock; the UPDATE below must never be the first thing to lock the row.
+      if (deactivating) {
+        await releaseProductCodes(tx, { tenantId, productId: id, lockedCodes: new Set(lockList) });
+      }
       let row;
       try {
         row = await tx.product.update({ where: { id }, data });
@@ -1316,10 +1348,6 @@ export class ProductsService {
         } catch (mapped) {
           mapNameUniqueViolation(mapped, dto.name ?? existing.name, !!existing.parentProductId);
         }
-      }
-      if (deactivating) {
-        await releaseProductCodes(tx, { tenantId, productId: id });
-        row = await tx.product.findFirst({ where: { id, tenantId } });
       }
       // Sync from the row the UPDATE returned (the post-write values, under its row lock), not from
       // `existing`: a concurrent image upload between the read and this write would otherwise be
@@ -1345,6 +1373,8 @@ export class ProductsService {
     // suppressEmit lets a caller that loops this method (bulkAssignParent) emit
     // ONE coalesced event after the loop instead of one per row.
     if (!options?.suppressEmit) this.emitProductChanged(id, "updated");
+    // The one-tx door deactivated blocking products too: buyer/driver caches must not keep them visible (SA-603j LOW, N4).
+    if (doorDeactivated.length > 0) this.emitProductChanged(null, "bulk");
     // The family edit moved its children's prices: ONE coalesced event, after the commit (L-237).
     if (propagatedRows > 0) this.emitProductChanged(null, "bulk");
     return updated;
@@ -1544,10 +1574,13 @@ export class ProductsService {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) throw new BadRequestException("No tenant context");
     const archived = await this.prisma.tenantTransaction(async (tx: any) => {
-      const row = await tx.product.update({ where: { id }, data: { isActive: false } });
-      // SA-603a: archiving releases the codes, so a new product can reuse them.
-      await releaseProductCodes(tx, { tenantId, productId: id });
-      return row;
+      // SA-603a: archiving releases the codes, so a new product can reuse them. Codes + row lock FIRST, the isActive
+      // write after (house order, Opus #2860 B1).
+      // ONE sorted lock call for every code of the product (Opus #2860 R1), then the release, then the write.
+      const codes = (await peekProductCodes(tx, tenantId, id)).filter((c) => c.trim().length > 0);
+      await lockBarcodeCodes(tx, tenantId, codes);
+      await releaseProductCodes(tx, { tenantId, productId: id, lockedCodes: new Set(codes) });
+      return tx.product.update({ where: { id }, data: { isActive: false } });
     });
     this.emitProductChanged(id, "archived");
     return archived;
@@ -1676,15 +1709,25 @@ export class ProductsService {
       const clearTenantId = this.prisma.getTenantId();
       if (!clearTenantId) throw new BadRequestException("No tenant context");
       await this.prisma.tenantTransaction(async (tx: any) => {
+        // SA-603a: an archived product releases its codes (same rule as remove()), codes + row lock FIRST in sorted id
+        // order, THEN the isActive write (Opus #2860 B1).
+        // ONE sorted lock call over EVERY soft-deleted product's codes BEFORE the loop (Opus #2860 r2): per-product
+        // lock-then-row would deadlock against a concurrent PATCH B {sku: <A's code>} (codes A -> row A -> codes B).
+        const all: string[] = [];
+        for (const productId of softDeleteIds) {
+          // eslint-disable-next-line no-await-in-loop -- pre-lock peek, a bounded set
+          all.push(...(await peekProductCodes(tx, clearTenantId, productId)));
+        }
+        const lockedCodes = new Set(all.filter((c) => c.trim().length > 0));
+        await lockBarcodeCodes(tx, clearTenantId, [...lockedCodes]);
+        for (const productId of [...softDeleteIds].sort()) {
+          // eslint-disable-next-line no-await-in-loop
+          await releaseProductCodes(tx, { tenantId: clearTenantId, productId, lockedCodes });
+        }
         await tx.product.updateMany({
           where: { id: { in: softDeleteIds } },
           data: { isActive: false },
         });
-        // SA-603a: an archived product releases its codes (same rule as remove()).
-        for (const productId of softDeleteIds) {
-          // eslint-disable-next-line no-await-in-loop
-          await releaseProductCodes(tx, { tenantId: clearTenantId, productId });
-        }
       });
     }
 

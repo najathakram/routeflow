@@ -85,13 +85,18 @@ describe("ProductsService — code release wiring (SA-603a)", () => {
       ([a]: any) => a.data.retiredSku === "S1",
     );
     expect(flipped).toBeDefined();
+    // Opus #2860 B1: the release (code locks, then the row lock) comes BEFORE the isActive write.
+    const order = prisma.product.update.mock.calls.map(([a]: any) =>
+      a.data.isActive === false ? "flip" : a.data.retiredSku ? "release" : "other",
+    );
+    expect(order.indexOf("release")).toBeLessThan(order.indexOf("flip"));
     expect(released?.[0]).toMatchObject({
       where: { id: "prod-1" },
       data: { retiredSku: "S1", sku: null, retiredBarcode: "B1", barcode: null },
     });
   });
 
-  it("update({isActive:false}) on an active product releases its codes after the write", async () => {
+  it("update({isActive:false}) on an active product releases its codes BEFORE the isActive write (Opus #2860 B1)", async () => {
     const self = { ...BASE, sku: "S1" };
     prisma.product.findUnique.mockResolvedValue(self as any);
     prisma.product.update.mockResolvedValue({ ...self, isActive: false } as any);
@@ -99,9 +104,39 @@ describe("ProductsService — code release wiring (SA-603a)", () => {
 
     await service.update("prod-1", { isActive: false } as any);
 
-    expect(prisma.product.update.mock.calls.some(([a]: any) => a.data.retiredSku === "S1")).toBe(
-      true,
+    const order = prisma.product.update.mock.calls.map(([a]: any) =>
+      a.data.retiredSku === "S1" ? "release" : a.data.isActive === false ? "flip" : "other",
     );
+    expect(order).toContain("release");
+    expect(order.indexOf("release")).toBeLessThan(order.indexOf("flip"));
+  });
+
+  it("B2 probe: update() takes its code locks as ONE sorted set up front; every later lock is a subset (no inverted order)", async () => {
+    const self = { ...BASE, sku: "OLD1", barcode: "Z9" };
+    prisma.product.findUnique.mockResolvedValue(self as any);
+    prisma.product.update.mockResolvedValue({ ...self, sku: "A1" } as any);
+    holderLookup(self);
+    prisma.product.findMany.mockResolvedValue([]);
+    prisma.productBarcode.findMany.mockResolvedValue([]);
+    const events: string[] = [];
+    const lockSpy = jest.fn((strings: TemplateStringsArray, ...v: unknown[]) => {
+      if (v[0] === "product-barcode") events.push(`lock:${String(v[1]).split(":")[1]}`);
+      return Promise.resolve(0);
+    });
+    prisma.tenantTransaction.mockImplementation((fn: any) =>
+      fn({ ...prisma, $executeRaw: lockSpy, $queryRaw: jest.fn().mockResolvedValue([]) }),
+    );
+
+    await service.update("prod-1", { sku: "A1" } as any);
+
+    const keys = events.map((e) => e.slice("lock:".length));
+    // The first batch is the maximal ascending prefix (one sorted lockBarcodeCodes call)...
+    let n = 1;
+    while (n < keys.length && keys[n] > keys[n - 1]) n += 1;
+    const first = keys.slice(0, n);
+    expect(first).toEqual(expect.arrayContaining(["A1", "Z9"]));
+    // ...and nothing locked afterwards is new: the old 3-call order (Z9, then A1) fails this.
+    for (const k of keys.slice(n)) expect(first).toContain(k);
   });
 
   it("update({isActive:true}) on an inactive product restores its retired codes before the write", async () => {

@@ -36,7 +36,7 @@ export class UpdateProductDto {
   /**
    * Reuse API (one-tx reactivation): with `isActive: true`, the ids of the ACTIVE products blocking the reactivation
    * (a retired code's holder, the same-name product). The server re-derives that set under its locks and refuses unless
-   * these are EXACTLY it (409 HOLDERS_CHANGED); it then deactivates each in the same transaction.
+   * these are EXACTLY it (else a 409 with the current `holders[]`; HOLDERS_CHANGED only when nothing blocks any more); it then deactivates each in the same transaction.
    */
   @IsOptional()
   @IsArray()
