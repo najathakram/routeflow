@@ -1,5 +1,4 @@
-import { ConflictException } from "@nestjs/common";
-import type { BuyerBlockedLine, BuyerSellingRestrictedError } from "@routeflow/types";
+import { hiddenFromPortalRestriction } from "../selling-restrictions/selling-restrictions.service";
 import type { Prisma } from "@prisma/client";
 import { isSellableProduct, sellableProductWhere } from "../products/sellable-product-where";
 
@@ -112,20 +111,11 @@ export function assertBuyerMayOrder(
     (p) => p.isActive && !heldProductIds.has(p.id) && !isBuyerVisibleBase(p),
   );
   if (hidden.length === 0) return;
-  const blockedLines: BuyerBlockedLine[] = hidden.map((p) => ({
-    productId: p.id,
-    productName: p.name,
-    reason: "HIDDEN_FROM_PORTAL",
-  }));
-  throw new ConflictException({
-    code: "SELLING_RESTRICTED",
-    message:
-      blockedLines.length === 1
-        ? `"${blockedLines[0].productName}" isn't available for online ordering.`
-        : `${blockedLines.length} items on this order aren't available for online ordering: ${blockedLines
-            .slice(0, 3)
-            .map((l) => `"${l.productName}"`)
-            .join(", ")}${blockedLines.length > 3 ? ` and ${blockedLines.length - 3} more` : ""}.`,
-    blockedLines,
-  } satisfies BuyerSellingRestrictedError);
+  throw hiddenFromPortalRestriction(
+    hidden.map((p) => ({
+      productId: p.id,
+      productName: p.name,
+      reason: "HIDDEN_FROM_PORTAL" as const,
+    })),
+  );
 }

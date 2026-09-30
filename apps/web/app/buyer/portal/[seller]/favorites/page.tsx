@@ -199,6 +199,7 @@ export default function BuyerFavoritesPage() {
               item={item}
               cartQty={cart.getItemQty(item.productId)}
               onAdd={() =>
+                !item.unavailable &&
                 cart.addItem({
                   productId: item.productId,
                   qty: 1,
