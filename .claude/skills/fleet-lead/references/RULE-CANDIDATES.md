@@ -287,3 +287,24 @@ A candidate becomes a SKILL.md rule after it appears in 3 log entries. `promoted
   key: tier 1 money reviews run the module s full db lane not just the pr s spec
   first: 2026-09-28
   promoted: never brief from an issue title or a pr title (2026-09-28, 5x)
+- candidate: Probe reachability from the consuming machine before any cross-machine stack is built
+  key: probe reachability from the consuming machine before any cross machine stack is built
+  first: 2026-09-28
+- candidate: Assign by title AND verified machine/state from ListAgents, never by title alone
+  key: assign by title and verified machine state from listagents never by title alone
+  first: 2026-09-28
+- candidate: A scoped verify always includes the repo's cross-workspace guard specs
+  key: a scoped verify always includes the repo s cross workspace guard specs
+  first: 2026-09-28
+- candidate: Only the owner lifts an owner-ordered pause, in words, quoted in the resume
+  key: only the owner lifts an owner ordered pause in words quoted in the resume
+  first: 2026-09-29
+- candidate: A rotation card is read by path from where the next session's hook looks; write it there, not only on a branch
+  key: a rotation card is read by path from where the next session s hook looks write it there not only on a branch
+  first: 2026-09-29
+- candidate: schema-freeze commit 1 gets a real-PG replay before the build continues
+  key: schema freeze commit 1 gets a real pg replay before the build continues
+  first: 2026-09-29
+- candidate: Type-ownership rulings cite the spec path:line that defines the shape
+  key: type ownership rulings cite the spec path line that defines the shape
+  first: 2026-09-30
