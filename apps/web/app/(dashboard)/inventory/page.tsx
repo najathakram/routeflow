@@ -5,7 +5,7 @@ import * as Tabs from "@radix-ui/react-tabs";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Plus, X, Info, Sparkles, Search, SlidersHorizontal, DollarSign } from "lucide-react";
-import { Badge, Button, Modal, PageHeader, cn, useToast } from "@routeflow/ui/web";
+import { Badge, Button, Modal, PageHeader, ScrollShadow, cn, useToast } from "@routeflow/ui/web";
 import { SearchableProductPicker } from "@/components/SearchableProductPicker";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { archivedMessage, resolveProductByCode } from "@/lib/barcode-resolve";
@@ -2164,7 +2164,7 @@ export default function InventoryPage() {
             </div>
           </div>
 
-          <div className="overflow-x-auto rounded-b-lg border border-t-0 border-surface-border bg-white shadow-card">
+          <ScrollShadow className="rounded-b-lg border border-t-0 border-surface-border bg-white shadow-card">
             {stockLoading ? (
               <div className="space-y-2 p-4">
                 {[...Array(5)].map((_, i) => (
@@ -2187,7 +2187,7 @@ export default function InventoryPage() {
                 onScrolled={clearScrollTarget}
               />
             )}
-          </div>
+          </ScrollShadow>
         </Tabs.Content>
 
         {/* ── Stock Count tab ── */}

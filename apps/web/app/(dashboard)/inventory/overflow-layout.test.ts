@@ -24,10 +24,11 @@ describe("/inventory overflow (B919)", () => {
     expect(src).toMatch(/<div className="flex flex-wrap gap-2">[\s\S]{0,2500}?Adjust Stock/);
   });
 
-  it("the stock table shell scrolls horizontally instead of clipping (no overflow-hidden)", () => {
+  it("the stock table shell is a ScrollShadow (scrolls + edge fade), never overflow-hidden", () => {
     expect(src).toMatch(
-      /<div className="overflow-x-auto rounded-b-lg border border-t-0 border-surface-border bg-white shadow-card">/,
+      /<ScrollShadow className="rounded-b-lg border border-t-0 border-surface-border bg-white shadow-card">/,
     );
+    expect(src).toMatch(/<\/ScrollShadow>/);
     expect(src).not.toMatch(/<div className="overflow-hidden rounded-b-lg border border-t-0/);
   });
 });
@@ -37,6 +38,6 @@ describe("/dashboard overflow (B919)", () => {
 
   it("the Recent Orders header wraps and its table shell scrolls", () => {
     expect(src).toMatch(/<div className="mb-4 flex flex-wrap items-center justify-between gap-2">/);
-    expect(src).toMatch(/<div className="-mx-6 -mb-6 overflow-x-auto">/);
+    expect(src).toMatch(/<ScrollShadow className="-mx-6 -mb-6">/);
   });
 });

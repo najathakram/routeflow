@@ -1,5 +1,6 @@
 "use client";
 
+import { CUSTOMER_NOT_LINKED_COPY, isCustomerNotLinked } from "@/lib/customer-not-linked";
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -20,7 +21,16 @@ import {
   Briefcase,
   type LucideIcon,
 } from "lucide-react";
-import { StatCard, Badge, Table, Button, Card, cn, EmptyState } from "@routeflow/ui/web";
+import {
+  StatCard,
+  Badge,
+  Table,
+  Button,
+  Card,
+  cn,
+  EmptyState,
+  ScrollShadow,
+} from "@routeflow/ui/web";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
 import { fmtCalendarDate } from "@/lib/formatting";
@@ -588,6 +598,7 @@ export default function DashboardPage() {
     data: recentOrdersData,
     isLoading: recentLoading,
     isError: recentError,
+    error: recentErrorObj,
   } = useOrders({ page: 1, limit: 5 }, { ...POLL, enabled: readsBusinessData });
   // `/route-runs` and `/drivers` are addon-gated server-side (403 without a
   // dispatch addon), so the 30s polls must be skipped for tenants that can't see
@@ -1085,9 +1096,15 @@ export default function DashboardPage() {
               ))}
             </div>
           ) : recentError ? (
-            <ErrorBanner message="Could not load recent orders." />
+            <ErrorBanner
+              message={
+                isCustomerNotLinked(recentErrorObj)
+                  ? CUSTOMER_NOT_LINKED_COPY
+                  : "Could not load recent orders."
+              }
+            />
           ) : (
-            <div className="-mx-6 -mb-6 overflow-x-auto">
+            <ScrollShadow className="-mx-6 -mb-6">
               <Table
                 data={recentOrders}
                 columns={orderColumns}
@@ -1100,7 +1117,7 @@ export default function DashboardPage() {
                   />
                 }
               />
-            </div>
+            </ScrollShadow>
           )}
         </Card>
       )}
