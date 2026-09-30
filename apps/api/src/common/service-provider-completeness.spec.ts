@@ -289,6 +289,25 @@ describe("negative controls: the analysis fails a spec that leaves a dependency 
     });
   });
 
+  describe("a shared provider declared with let / var (not only const), through a relative import", () => {
+    const decl = (kw: string) =>
+      `export ${kw} entitlementAuthorityFromEntitlements = { provide: EntitlementAuthority, inject: [], useFactory: () => ({}) };`;
+    const importer = `import { entitlementAuthorityFromEntitlements } from "./testing/shared";
+      Test.createTestingModule({ providers: [ProductsService, { provide: PrismaService, useValue: {} }, entitlementAuthorityFromEntitlements] });`;
+    it.each(["const", "let", "var"])("`export %s` resolves and provides the token", (kw) => {
+      const rf: ReadFile = (p) => (p === "/x/testing/shared.ts" ? decl(kw) : null);
+      expect(run(importer, rf)).toEqual([]);
+    });
+
+    it("an imported name with no declaration of any kind is still a class (so the token stays missing)", () => {
+      const rf: ReadFile = (p) =>
+        p === "/x/testing/shared.ts"
+          ? "export class entitlementAuthorityFromEntitlements {}"
+          : null;
+      expect(run(importer, rf)).toHaveLength(1);
+    });
+  });
+
   it("candidateSpecs keeps only the files that mention a guarded service AND a `providers` list (the rest are never parsed)", () => {
     const files: Record<string, string> = {
       "/a/x.spec.ts": "Test.createTestingModule({ providers: [ProductsService] })",
@@ -404,14 +423,31 @@ describe("negative controls: the analysis fails a spec that leaves a dependency 
       ["a push of an unresolvable spread", "providers.push(...someHelper());"],
       ["concat assigned back", "providers = providers.concat(more);"],
     ])("FAILS LOUDLY when the array is mutated another way: %s", (_label, extra) => {
-      const found = run(
-        withPush(base.replace("EntitlementAuthority", "EntitlementAuthority"), extra).replace(
-          "const providers",
-          "let providers",
-        ),
-      );
+      const found = run(withPush(base, extra).replace("const providers", "let providers"));
       expect(found).toHaveLength(1);
       expect(found[0].service).toMatch(/unresolvable providers/);
+    });
+
+    it.each([
+      ["a `length = 0` write (it truncates the array)", "providers.length = 0;"],
+      ["a `length` compound write", "providers.length -= 1;"],
+      ["a `length++`", "providers.length++;"],
+    ])("FAILS LOUDLY on %s, though `.length` reads are fine", (_label, extra) => {
+      const found = run(withPush(base, extra).replace("const providers", "let providers"));
+      expect(found).toHaveLength(1);
+      expect(found[0].service).toMatch(/unresolvable providers/);
+      expect(found[0].missing[0]).toMatch(/cannot verify/);
+    });
+
+    it("`.length` READS stay fine (comparison, ternary, arithmetic)", () => {
+      expect(
+        run(
+          withPush(
+            base,
+            "const a = providers.length > 2; const b = providers.length ? 1 : 0; const c = providers.length + 1;",
+          ),
+        ),
+      ).toEqual([]);
     });
 
     it("an initializer that is not an array literal fails loudly (never skipped)", () => {

@@ -197,9 +197,9 @@ function resolveConst(
   for (const candidate of [`${base}.ts`, `${base}/index.ts`]) {
     const text = readOnce(readFile, candidate);
     if (text == null) continue;
-    // Cheap text test first: a class import (nearly every provider) has no `const NAME` in its file,
+    // Cheap text test first: a class import (nearly every provider) has no `const|let|var NAME` in its file,
     // so its production source is never parsed just to find that out.
-    if (!new RegExp(`\\bconst\\s+${escapeRe(name)}\\b`).test(text)) continue;
+    if (!new RegExp(`\\b(?:const|let|var)\\s+${escapeRe(name)}\\b`).test(text)) continue;
     const other = parse(candidate, text);
     const found = topLevelConst(other, name);
     if (found) return { node: found, sourceFile: other, fileName: candidate };
@@ -339,6 +339,23 @@ const READ_ONLY_ARRAY_MEMBERS = new Set([
   "join",
 ]);
 
+/** True when `node` is being assigned to, incremented / decremented, or deleted. */
+function isWriteTarget(node: ts.Node): boolean {
+  const par = node.parent;
+  if (ts.isBinaryExpression(par) && par.left === node) {
+    return (
+      par.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      par.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+    );
+  }
+  if (ts.isPrefixUnaryExpression(par) || ts.isPostfixUnaryExpression(par)) {
+    return (
+      par.operator === ts.SyntaxKind.PlusPlusToken || par.operator === ts.SyntaxKind.MinusMinusToken
+    );
+  }
+  return ts.isDeleteExpression(par);
+}
+
 type LocalArray = { elements: ts.Expression[] } | { unresolvable: string };
 
 /**
@@ -401,6 +418,12 @@ function resolveLocalArray(id: ts.Identifier, from: ts.Node): LocalArray | null 
         const call = par.parent;
         if (member === "push" && ts.isCallExpression(call) && call.expression === par) {
           elements.push(...call.arguments);
+          return;
+        }
+        // `.length` is a read-only member EXCEPT as a write target: `providers.length = 0` truncates
+        // the array, `length -= 1` / `length++` / `delete` shrink or change it.
+        if (member === "length" && isWriteTarget(par)) {
+          unsafe.push(`${name}.length write`);
           return;
         }
         if (READ_ONLY_ARRAY_MEMBERS.has(member)) return;
