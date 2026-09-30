@@ -134,6 +134,8 @@ export class PlatformGoogleAuthController {
         "tenant_suspended",
         "google_already_linked",
         "google_id_taken",
+        // #2495: an email match already bound to a DIFFERENT Google sub.
+        "google_account_mismatch",
       ]);
       if (errCode === "google_token_invalid")
         return res.redirect(`${base}/auth/callback?error=state_invalid`);

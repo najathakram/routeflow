@@ -21,6 +21,8 @@ const ERROR_MESSAGES: Record<string, string> = {
     "Your account already has a Google account connected. Remove the existing connection first.",
   google_id_taken:
     "This Google account is already linked to a different user. Sign in with that account or use a different Google account.",
+  google_account_mismatch:
+    "This Google account doesn't match the one already linked to this email. Sign in with your linked Google account or your password.",
   oauth_cancelled: "Sign-in was cancelled. Please try again.",
   unknown_error: "An unexpected error occurred. Please try again.",
 };
@@ -249,7 +251,9 @@ function GoogleCallbackInner() {
           >
             Go to staff login
           </a>
-        ) : errorCode === "unauthorized" || errorCode === "tenant_suspended" ? (
+        ) : errorCode === "unauthorized" ||
+          errorCode === "tenant_suspended" ||
+          errorCode === "google_account_mismatch" ? (
           <a
             href="/login"
             className="inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors hover:brightness-110"
