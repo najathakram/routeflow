@@ -65,7 +65,7 @@ const packLine = (product: LineUnitsProduct): ResolvedLineUnits => ({
 export function resolveLineUnits(
   product: LineUnitsProduct,
   units: readonly LadderUnit[],
-  requested?: { unitLabel?: string | null } | null,
+  requested?: { unitLabel?: string | null; boxes?: number | null; pieces?: number | null } | null,
   existing?: LineUnitsExisting | null,
   /**
    * #2784 / SA-601: a BUYER's plain qty on a NEW line (no unit requested, no existing line) resolves to the level flagged
@@ -76,7 +76,9 @@ export function resolveLineUnits(
 ): ResolvedLineUnits {
   let explicit = requested?.unitLabel; // undefined = unchanged
   // SA-610: only a NEW line (no `existing`) takes the default — a held pack line (existing, unitLabel null) stays a pack.
-  if (opts?.honourDefaultSelling && explicit === undefined && existing == null) {
+  // SA-610 B2 / SA-601(2): an explicit boxes/pieces split always wins — only a QTY-ONLY line takes the default.
+  const qtyOnly = requested?.boxes == null && requested?.pieces == null;
+  if (opts?.honourDefaultSelling && explicit === undefined && existing == null && qtyOnly) {
     const dflt = defaultSellingLabel({ pricePerUnit: 0, ...product }, units);
     if (dflt) explicit = dflt;
   }

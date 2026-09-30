@@ -189,7 +189,9 @@ export function defaultSellingLabel(
   for (const row of validRows(units)) {
     if (!row.isDefaultSelling) continue;
     // resolveLadderLevel applies the shadowing rules (the pack wins its own label; "Piece" is factor 1).
-    if (resolveLadderLevel(product, units, row.label).kind !== "pack") return row.label;
+    const level = resolveLadderLevel(product, units, row.label);
+    // A row the ladder does not actually sell at its own factor (a "Piece" row whose factor is not 1) is not the default.
+    if (level.kind !== "pack" && level.factorToBase === row.factorToBase) return row.label;
   }
   return null;
 }
