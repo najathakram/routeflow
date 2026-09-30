@@ -24,6 +24,8 @@ export interface LoadOpts {
   /** Master clone to read from with `git show`; needs a full 40-hex `sha`. */
   repoDir?: string;
   sha?: string;
+  /** Injectable git runner (tests count spawns); defaults to execFileSync. */
+  run?: (repoDir: string, args: string[]) => string;
 }
 
 /** Parse JSONL; malformed lines are skipped with a `label:line` warning. */
@@ -81,7 +83,7 @@ function build(
 }
 
 const SHA = /^[0-9a-f]{40}$/;
-const gitOut = (repoDir: string, args: string[]): string =>
+const defaultRun = (repoDir: string, args: string[]): string =>
   execFileSync("git", ["-C", repoDir, ...args], {
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
@@ -118,11 +120,14 @@ export function loadRegisters(opts: LoadOpts = {}): Registers {
     if (!SHA.test(sha)) throw new Error("loadRegisters: sha must be a full 40-hex commit id");
     const key = `${repoDir}\0${sha}`;
     if (cache?.key === key) return cache.value;
+    const gitOut = opts.run ?? defaultRun;
+    let gitFailed = false;
     const show = (p: string): Row[] => {
       try {
         const text = gitOut(repoDir, ["show", "--end-of-options", `${sha}:${p}`]);
         return parseJsonl(text, p, warnings);
       } catch (e) {
+        gitFailed = true;
         warnings.push(`git show ${p}: ${String(e).split("\n")[0]}`);
         return [];
       }
@@ -141,6 +146,7 @@ export function loadRegisters(opts: LoadOpts = {}): Registers {
         .filter((n) => n.endsWith(".jsonl"))
         .sort();
     } catch (e) {
+      gitFailed = true;
       warnings.push(`git ls-tree status: ${String(e).split("\n")[0]}`);
     }
     const res = build(
@@ -151,7 +157,7 @@ export function loadRegisters(opts: LoadOpts = {}): Registers {
       shardFiles.flatMap(show),
       warnings,
     );
-    if (warnings.length === 0) cache = { key, value: res };
+    if (!gitFailed) cache = { key, value: res };
     return res;
   }
   return { tasks: [], releases: [], registerTasks: [], warnings: ["no register source"] };

@@ -137,3 +137,35 @@ describe("7. git path + cache", () => {
     expect(loadRegisters({ repoDir: a.d, sha: a.sha })).not.toBe(r1);
   });
 });
+
+describe("follow-ups", () => {
+  it("extensionless known files stay bare paths", () => {
+    expect(locationAreas("apps/api/Dockerfile")).toEqual(["apps/api/Dockerfile"]);
+    expect(locationAreas("apps/api/src")).toEqual(["apps/api/src/**"]);
+  });
+  it("parse-warning-only load is cached; git spawns counted", () => {
+    const d = tmp();
+    dirs.push(d);
+    git(d, ["init", "-q"]);
+    fs.mkdirSync(path.join(d, ".claude/campaign"), { recursive: true });
+    fs.writeFileSync(path.join(d, ".claude/campaign/bugs.jsonl"), jl(bug("B01")) + "{bad\n");
+    for (const f of ["features", "deferred", "releases"]) {
+      fs.mkdirSync(path.join(d, ".claude/roadmap"), { recursive: true });
+      fs.writeFileSync(path.join(d, `.claude/roadmap/${f}.jsonl`), "");
+    }
+    git(d, ["add", "."]);
+    git(d, ["commit", "-q", "-m", "x"]);
+    const sha = git(d, ["rev-parse", "HEAD"]).trim();
+    let n = 0;
+    const run = (repo: string, args: string[]) => {
+      n++;
+      return git(repo, args);
+    };
+    const r1 = loadRegisters({ repoDir: d, sha, run });
+    expect(r1.warnings.length).toBe(1);
+    const before = n;
+    expect(before).toBeGreaterThan(0);
+    expect(loadRegisters({ repoDir: d, sha, run })).toBe(r1);
+    expect(n).toBe(before);
+  });
+});

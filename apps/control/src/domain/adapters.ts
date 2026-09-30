@@ -40,6 +40,15 @@ const SEVERITY = nullMap<string>({
   low: "P3",
 });
 
+const EXTENSIONLESS_FILES = new Set([
+  "Dockerfile",
+  "Makefile",
+  "Procfile",
+  "LICENSE",
+  "CODEOWNERS",
+  "Caddyfile",
+]);
+
 /** Spec §3 regex, verbatim. */
 // eslint-disable-next-line no-useless-escape
 const PATH_TOKEN = /(apps|packages|scripts)\/[A-Za-z0-9_.\/()\[\]-]+/g;
@@ -56,7 +65,10 @@ export function locationAreas(location: string): string[] {
       p = p.slice(0, -1);
     }
     if (p.endsWith("/")) p += "**";
-    else if (!p.slice(p.lastIndexOf("/") + 1).includes(".")) p += "/**";
+    else {
+      const last = p.slice(p.lastIndexOf("/") + 1);
+      if (!last.includes(".") && !EXTENSIONLESS_FILES.has(last)) p += "/**";
+    }
     if (!seen.has(p)) {
       seen.add(p);
       out.push(p);
