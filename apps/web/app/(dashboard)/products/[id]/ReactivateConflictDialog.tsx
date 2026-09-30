@@ -58,7 +58,7 @@ export function ReactivateConflictDialog({
   }
 
   const unique = refusal.holders.filter(
-    (h, i) => refusal.holders.findIndex((x) => x.productId === h.productId) === i,
+    (h, i) => h.productId && refusal.holders.findIndex((x) => x.productId === h.productId) === i,
   );
   return (
     <Modal

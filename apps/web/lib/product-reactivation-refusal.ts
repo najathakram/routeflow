@@ -71,7 +71,24 @@ export function getReactivationRefusal(err: unknown): ReactivationRefusal | null
     : isHolder(data)
       ? [data as ProductReactivationHolder]
       : [];
-  if (source.length === 0) return null;
+  if (source.length === 0) {
+    // A name clash with no holder to name still gets its sentence (the value), but nothing to link or
+    // resolve. Any other clash without a holder has nothing to say: the caller toasts generically.
+    if (data.code !== API_ERROR_CODES.NAME_TAKEN || typeof data.value !== "string") return null;
+    return {
+      kind: "HOLDERS",
+      holders: [
+        {
+          productId: "",
+          productName: "",
+          line: holderLine({ ...(data as ProductReactivationHolder), field: "name" }),
+          blocked: false,
+        },
+      ],
+      holderIds: [],
+      canResolve: false,
+    };
+  }
   const holders = source.map((h) => ({
     productId: h.productId,
     productName: h.productName,
@@ -82,7 +99,7 @@ export function getReactivationRefusal(err: unknown): ReactivationRefusal | null
     kind: "HOLDERS",
     holders,
     holderIds: [...new Set(holders.map((h) => h.productId))],
-    canResolve: holders.every((h) => !h.blocked),
+    canResolve: holders.every((h) => !h.blocked) && holders.length > 0,
   };
 }
 
@@ -100,12 +117,6 @@ const DEACTIVATE_CONFLICT_LINES: Record<string, string> = {
     "Too many products to remove at once. Select fewer and try again.",
 };
 
-/**
- * The toast for a failed deactivate / archive / delete. `CODES_CHANGED` (a live code the writer had
- * not locked up front) and `CATALOG_TOO_LARGE_FOR_CLEAR_ALL` (clear-all / bulk delete above the lock
- * cap) each get one fixed sentence; anything else is the bare `title` — the server message is never
- * shown.
- */
 /** READ_ONLY's 403 already gets the global "workspace is read-only" toast: a caller must not add a second. */
 export function isReadOnlyRefusal(err: unknown): boolean {
   return (
@@ -114,6 +125,12 @@ export function isReadOnlyRefusal(err: unknown): boolean {
   );
 }
 
+/**
+ * The toast for a failed deactivate / archive / delete. `CODES_CHANGED` (a live code the writer had
+ * not locked up front) and `CATALOG_TOO_LARGE_FOR_CLEAR_ALL` (clear-all / bulk delete above the lock
+ * cap) each get one fixed sentence; anything else is the bare `title` — the server message is never
+ * shown.
+ */
 export function deactivateFailureToast(
   err: unknown,
   title: string,

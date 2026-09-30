@@ -52,6 +52,31 @@ describe("getReactivationRefusal — maps the 409 by code+field, never by the se
     );
   });
 
+  it("NAME_TAKEN without productId: a line naming the value, no holder to link, no one-call resolve", () => {
+    const r = getReactivationRefusal(
+      err({ code: "NAME_TAKEN", field: "name", value: "Cola 6pk", message: "RAW" }),
+    );
+    expect(r).toEqual({
+      kind: "HOLDERS",
+      holders: [
+        {
+          productId: "",
+          productName: "",
+          line: `Can't reactivate: an active product is already named "Cola 6pk". Rename one of them first.`,
+          blocked: false,
+        },
+      ],
+      holderIds: [],
+      canResolve: false,
+    });
+  });
+
+  it("a code clash with no productId stays null (nothing to name, generic toast)", () => {
+    expect(
+      getReactivationRefusal(err({ code: "CODE_TAKEN", field: "sku", value: "x" })),
+    ).toBeNull();
+  });
+
   it("holders[] is the full set: every holder gets a line, holderIds is exactly their ids (deduped)", () => {
     const r = getReactivationRefusal(
       err({
@@ -95,7 +120,6 @@ describe("getReactivationRefusal — maps the 409 by code+field, never by the se
     ["a 500", { response: { status: 500, data: { message: "boom" } } }],
     ["a network error", new Error("Network Error")],
     ["null", null],
-    ["a body with no productId", err({ code: "CODE_TAKEN", field: "sku", value: "x" })],
   ])("%s -> null (caller shows a generic toast)", (_n, e) => {
     expect(getReactivationRefusal(e)).toBeNull();
   });

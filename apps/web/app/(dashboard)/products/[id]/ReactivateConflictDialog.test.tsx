@@ -99,4 +99,16 @@ describe("ReactivateConflictDialog", () => {
     expect(onRetry).toHaveBeenCalled();
     expect(screen.queryByTestId("reactivate-resolve")).toBeNull();
   });
+
+  it("a holder with no productId: its line shows, but no link and no one-call button", () => {
+    setup({
+      kind: "HOLDERS",
+      holders: [{ productId: "", productName: "", line: "name line", blocked: false }],
+      holderIds: [],
+      canResolve: false,
+    });
+    expect(screen.getByText("name line")).toBeInTheDocument();
+    expect(screen.queryByRole("link")).toBeNull();
+    expect(screen.queryByTestId("reactivate-resolve")).toBeNull();
+  });
 });
