@@ -98,11 +98,16 @@ function pieceUnitLabel(p: { unit?: string | null; unitsPerBox?: unknown }): str
   return p.unit ?? undefined;
 }
 
+/**
+ * `allowOversell` is the ONE resolved boolean (staff role, or the buyer-oversell policy already
+ * read by the caller) � this locked section never reads a policy itself (SA-606c: the policy is
+ * resolved BEFORE any FOR UPDATE; order-stock-no-policy-read.spec.ts pins it).
+ */
 export async function decrementStockForSale(
   deps: OrderStockDeps,
   tx: any,
   stockLines: StockLine[],
-  isStaffRole: boolean,
+  allowOversell: boolean,
   event: OrderStockEvent,
 ): Promise<void> {
   if (stockLines.length === 0) return;
@@ -156,7 +161,7 @@ export async function decrementStockForSale(
     }
   }
   if (oosItems.length > 0) {
-    if (isStaffRole) {
+    if (allowOversell) {
       deps.logger.warn(`Operator-initiated order will go below stock: ${oosItems.join("; ")}`);
     } else {
       throw new ConflictException({
@@ -240,7 +245,8 @@ export async function decrementStockForSale(
  * at all — no lock, no read, no write for it (see the DELTA_MAP short
  * circuit below), which is also why a same-qty edit never re-queries stock.
  *
- * Role semantics mirror create(): CUSTOMER/DRIVER hard-block (409
+ * Role semantics mirror create() unless `opts.allowOversell` is passed (it replaces the role
+ * test; WS9 buyer-oversell policy): CUSTOMER/DRIVER hard-block (409
  * INSUFFICIENT_STOCK) with NO write on a violation; everyone else
  * (operator/admin/undefined = internal caller) may knowingly oversell —
  * warn-only log, and then (unlike the old validate-only guard) the write
@@ -291,6 +297,11 @@ export async function settleStockForEdit(
   user?: JwtPayload,
   /** B562 PR-2: the event the SALE rows record (default EDIT); the acting user wins over `performedById`. */
   event: { notes: string; performedById?: string | null } = { notes: "EDIT" },
+  /**
+   * WS9: when provided, `allowOversell` REPLACES the role test below (the caller resolved it
+   * before any lock); absent = the role test, byte-identical to before.
+   */
+  opts?: { allowOversell?: boolean },
 ): Promise<void> {
   if (order.status === "DRAFT") return;
 
@@ -411,7 +422,11 @@ export async function settleStockForEdit(
       }
     }
     if (violations.length > 0) {
-      if (user?.role !== UserRole.CUSTOMER && user?.role !== UserRole.DRIVER) {
+      const mayOversell =
+        opts?.allowOversell !== undefined
+          ? opts.allowOversell
+          : user?.role !== UserRole.CUSTOMER && user?.role !== UserRole.DRIVER;
+      if (mayOversell) {
         // Operators/admins may oversell — matches create()'s warn-only path.
         // Unlike the old validate-only guard, this does NOT return: the
         // write below still applies so the oversell lands in currentStock,
