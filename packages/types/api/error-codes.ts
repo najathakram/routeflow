@@ -24,6 +24,8 @@
 //   CODE_TAKEN     — `body.code` of the 409 when a product sku / unit code (a barcode answers
 //                    BARCODE_TAKEN) is held by another ACTIVE product of the tenant (SA-603a); body
 //                    carries `field` (sku | unitSku), `value`, the holder's `productId` and `productName`.
+//   CATALOG_TOO_LARGE_FOR_CLEAR_ALL — `body.code` of the 409 from DELETE /products/clear-all when its soft-delete set holds more
+//                    than 1,000 distinct codes (one advisory lock per code is held to COMMIT; Opus/SA #2860). Delete in smaller batches.
 //   CODES_CHANGED — `body.code` of the 409 when a deactivation finds a live code of the product that was NOT in the
 //                    code-lock set the writer took up front (the codes changed under it): retry (Opus #2860 R1).
 //   HOLDERS_CHANGED — `body.code` of the 409 when `deactivateHolderIds` was sent on a reactivation but NOTHING blocks it any
@@ -76,6 +78,7 @@ export const API_ERROR_CODES = {
   FAMILY_NOT_SELLABLE: "FAMILY_NOT_SELLABLE",
   FAMILY_ROWS_CONFLICT: "FAMILY_ROWS_CONFLICT",
   CODES_CHANGED: "CODES_CHANGED",
+  CATALOG_TOO_LARGE_FOR_CLEAR_ALL: "CATALOG_TOO_LARGE_FOR_CLEAR_ALL",
   RECIPE_IMMUTABLE: "RECIPE_IMMUTABLE",
   RECIPE_CATEGORY_LOCKED: "RECIPE_CATEGORY_LOCKED",
   RECIPE_FAMILY_LOCKED: "RECIPE_FAMILY_LOCKED",

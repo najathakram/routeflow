@@ -207,11 +207,49 @@ export async function peekProductCodes(
   return out;
 }
 
+/** One advisory lock per code is held to COMMIT, so a whole-catalog lock set can exhaust Postgres' instance-wide lock table. */
+export const CLEAR_ALL_MAX_LOCKED_CODES = 1000;
+
+/**
+ * Peek EVERY code of `productIds` and lock them in ONE sorted `lockBarcodeCodes` call (Opus #2860 r2), refusing a set larger
+ * than `max` with a readable 409 (clearAll is not chunked yet; a chunked version is a follow-up). Returns the locked set,
+ * which the caller hands to each `releaseProductCodes(..., { lockedCodes })`.
+ */
+export async function lockCodesOfProducts(
+  tx: CatalogTx,
+  tenantId: string,
+  productIds: readonly string[],
+  max = CLEAR_ALL_MAX_LOCKED_CODES,
+): Promise<Set<string>> {
+  const all: string[] = [];
+  for (const productId of productIds) {
+    // eslint-disable-next-line no-await-in-loop -- pre-lock peek over a bounded set
+    all.push(...(await peekProductCodes(tx, tenantId, productId)));
+  }
+  const codes = new Set(all.filter((c) => c.trim().length > 0));
+  if (codes.size > max) {
+    throw new ConflictException({
+      code: API_ERROR_CODES.CATALOG_TOO_LARGE_FOR_CLEAR_ALL,
+      message: `This catalog has too many product codes to clear in one go (${codes.size}, the limit is ${max}). Delete products in smaller batches.`,
+      codeCount: codes.size,
+      max,
+    });
+  }
+  await lockBarcodeCodes(tx, tenantId, [...codes]);
+  return codes;
+}
+
 /**
  * Deactivate: release ALL of this product's live codes. Idempotent — with nothing live it writes nothing. Returns the
  * fields released. Call BEFORE the `isActive` write, never after it: it takes this product's code locks FIRST and then its row
  * lock (house order), so a row already locked by the `isActive` UPDATE would invert the order and deadlock (Opus #2860 B1).
  */
+const codesChanged = () =>
+  new ConflictException({
+    code: API_ERROR_CODES.CODES_CHANGED,
+    message: "This product's codes changed while it was being saved. Try again.",
+  });
+
 export async function releaseProductCodes(
   tx: CatalogTx,
   input: {
@@ -234,12 +272,16 @@ export async function releaseProductCodes(
     where: { tenantId, productId, code: { not: null } },
     select: { code: true },
   });
-  await lockBarcodeCodes(tx, tenantId, [
-    peek.sku,
-    peek.barcode,
-    peek.unitSku,
-    ...rowCodes.map((r) => r.code),
-  ]);
+  const preLock = [peek.sku, peek.barcode, peek.unitSku, ...rowCodes.map((r) => r.code)];
+  if (input.lockedCodes) {
+    // Opus #2860 r3 B1: check the PRE-LOCK peek against the caller's set BEFORE taking any lock. A stale set that then
+    // locked the new code here (after the caller's row locks) would be a late, inverted-order acquisition: a deadlock
+    // that CODES_CHANGED after the fact cannot prevent.
+    if (preLock.some((c) => typeof c === "string" && c.trim() && !input.lockedCodes!.has(c))) {
+      throw codesChanged();
+    }
+  }
+  await lockBarcodeCodes(tx, tenantId, preLock);
   await lockProductRow(tx, tenantId, productId);
   const p: ProductCodes | null = await tx.product.findFirst({
     where: { id: productId, tenantId },
@@ -248,12 +290,7 @@ export async function releaseProductCodes(
   if (!p) return { released: [], freed: [] };
   if (input.lockedCodes) {
     const live = await peekProductCodes(tx, tenantId, productId);
-    if (live.some((c) => !input.lockedCodes!.has(c))) {
-      throw new ConflictException({
-        code: API_ERROR_CODES.CODES_CHANGED,
-        message: "This product's codes changed while it was being saved. Try again.",
-      });
-    }
+    if (live.some((c) => !input.lockedCodes!.has(c))) throw codesChanged();
   }
   const done = await releaseLive(tx, tenantId, p);
   return { released: done.fields, freed: done.freed };

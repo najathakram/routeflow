@@ -172,13 +172,15 @@ describe("resolveReactivationConflicts", () => {
     const tx = makeTx({
       products: [reactivating(), product({ id: "old", name: "Old", isActive: false, sku: "S1" })],
     });
-    await expect(resolveReactivationConflicts(tx, input(undefined))).resolves.toBeUndefined();
+    await expect(resolveReactivationConflicts(tx, input(undefined))).resolves.toEqual({
+      deactivatedIds: [],
+    });
     const tx2 = makeTx({
       products: [reactivating(), product({ id: "h1", name: "Holder", sku: "S1" })],
     });
     await expect(
       resolveReactivationConflicts(tx2, input(undefined, { skip: ["sku"] })),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ deactivatedIds: [] });
   });
 
   it("lock order: the code locks, then the name lock, BEFORE any holder read; then rows in sorted id order; then the writes", async () => {

@@ -51,6 +51,7 @@ import {
 import {
   claimCodes,
   codeClaims,
+  lockCodesOfProducts,
   peekProductCodes,
   releaseProductCodes,
   restoreProductCodes,
@@ -1713,13 +1714,7 @@ export class ProductsService {
         // order, THEN the isActive write (Opus #2860 B1).
         // ONE sorted lock call over EVERY soft-deleted product's codes BEFORE the loop (Opus #2860 r2): per-product
         // lock-then-row would deadlock against a concurrent PATCH B {sku: <A's code>} (codes A -> row A -> codes B).
-        const all: string[] = [];
-        for (const productId of softDeleteIds) {
-          // eslint-disable-next-line no-await-in-loop -- pre-lock peek, a bounded set
-          all.push(...(await peekProductCodes(tx, clearTenantId, productId)));
-        }
-        const lockedCodes = new Set(all.filter((c) => c.trim().length > 0));
-        await lockBarcodeCodes(tx, clearTenantId, [...lockedCodes]);
+        const lockedCodes = await lockCodesOfProducts(tx, clearTenantId, softDeleteIds);
         for (const productId of [...softDeleteIds].sort()) {
           // eslint-disable-next-line no-await-in-loop
           await releaseProductCodes(tx, { tenantId: clearTenantId, productId, lockedCodes });
