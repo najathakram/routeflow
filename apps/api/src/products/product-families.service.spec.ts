@@ -286,6 +286,43 @@ describe("PATCH /products/:id/variants (updateVariants)", () => {
     expect(k1Updates).toHaveLength(2); // the release write, then the isActive write
   });
 
+  it("Opus #2881 notes: out-of-range money is a 400 (incl. the ROUNDING overflow) and codes are stored trimmed", async () => {
+    const a = build();
+    await expect(
+      a.service.createFamily(dto([variant("A", { pricePerUnit: "99999999.999" })]), ACTOR),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      a.service.createFamily(dto([variant("A", { standardCost: "999999.99999" })]), ACTOR),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    const b = build();
+    await b.service.createFamily(dto([variant("A", { sku: "  S-1  ", barcode: " 123 " })]), ACTOR);
+    const kid = b.tx.products.find(
+      (p) => (p as Record<string, unknown>).kind === "VARIANT",
+    ) as Record<string, unknown>;
+    expect(kid).toMatchObject({ sku: "S-1", barcode: "123" });
+  });
+
+  it("Opus #2881 B5 (authority off): a price edit moves only the tiers that EQUALLED the old price", async () => {
+    const famRow = fam();
+    const k1 = {
+      ...kid("k1"),
+      pricePerUnit: "5.00",
+      priceTier2: "5.00",
+      priceTier3: "4.00", // deliberately different
+      priceTier4: "5.00",
+      priceTier5: "5.00",
+    };
+    const off = build({ products: [famRow, k1] }, "off");
+    await off.service.updateVariants("fam", { update: [{ id: "k1", pricePerUnit: "6" }] }, ACTOR);
+    expect(off.tx.products.find((p) => p.id === "k1")).toMatchObject({
+      pricePerUnit: "6.00",
+      priceTier2: "6.00",
+      priceTier3: "4.00",
+      priceTier4: "6.00",
+      priceTier5: "6.00",
+    });
+  });
+
   it("SA-606a: family standardCost is inherited by a variant that omits its own; an own cost wins; never averageCost", async () => {
     const a = build();
     await a.service.createFamily(

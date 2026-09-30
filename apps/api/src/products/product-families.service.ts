@@ -60,10 +60,25 @@ const MAX_ROWS = 200;
 export const FAMILY_CREATED_ACTION = "product.family_created";
 export const FAMILY_VARIANTS_UPDATED_ACTION = "product.family_variants_updated";
 
+/** A code / text value, trimmed (" A1" and "A1" are one code); blank -> null. */
 const blank = (v: string | undefined | null): string | null =>
-  typeof v === "string" && v.trim().length > 0 ? v : null;
-const money = (v: string | undefined | null, fallback = 0): string =>
-  roundMoney(v != null && v !== "" ? Number(v) : fallback).toFixed(2);
+  typeof v === "string" && v.trim().length > 0 ? v.trim() : null;
+const sameMoney = (a: Prisma.Decimal | null, b: Prisma.Decimal | null): boolean =>
+  a != null && b != null && roundMoney(Number(a)) === roundMoney(Number(b));
+const outOfRange = (what: string) =>
+  new BadRequestException(`${what} is out of range for a stored amount.`);
+/** Decimal(10,2): the DTO bounds the integer part, this catches a ROUNDING overflow (99999999.999 -> 100000000.00). */
+const money = (v: string | undefined | null, fallback = 0): string => {
+  const r = roundMoney(v != null && v !== "" ? Number(v) : fallback);
+  if (!(r >= 0 && r < 1e8)) throw outOfRange("A price");
+  return r.toFixed(2);
+};
+/** Decimal(10,4) cost, the same rounding-overflow guard (999999.99999 -> 1000000.0000). */
+const cost4 = (v: string | number): string => {
+  const r = roundUnitCost(Number(v));
+  if (!(r >= 0 && r < 1e6)) throw outOfRange("A cost");
+  return r.toFixed(4);
+};
 
 @Injectable()
 export class ProductFamiliesService {
@@ -166,7 +181,7 @@ export class ProductFamiliesService {
             unit: "each",
             pricePerUnit: familyPrice,
             ...(dto.family.standardCost != null && dto.family.standardCost !== ""
-              ? { standardCost: roundUnitCost(Number(dto.family.standardCost)).toFixed(4) }
+              ? { standardCost: cost4(dto.family.standardCost) }
               : {}),
             category: dto.family.category ?? null,
             description: dto.family.description ?? null,
@@ -237,9 +252,7 @@ export class ProductFamiliesService {
       priceTier3: col("priceTier3"),
       priceTier4: col("priceTier4"),
       priceTier5: col("priceTier5"),
-      ...(cost != null && cost !== ""
-        ? { standardCost: roundUnitCost(Number(cost)).toFixed(4) }
-        : {}),
+      ...(cost != null && cost !== "" ? { standardCost: cost4(cost) } : {}),
       isActive: true,
     };
   }
@@ -409,9 +422,33 @@ export class ProductFamiliesService {
             codes: claimed,
           });
         }
+        const priceEdits = update.filter((u) => u.pricePerUnit !== undefined).map((u) => u.id);
+        const oldPrices = new Map<string, Record<FamilyPriceColumn, Prisma.Decimal | null>>(
+          priceEdits.length > 0
+            ? (
+                await tx.product.findMany({
+                  where: { tenantId, id: { in: priceEdits } },
+                  select: {
+                    id: true,
+                    pricePerUnit: true,
+                    priceTier2: true,
+                    priceTier3: true,
+                    priceTier4: true,
+                    priceTier5: true,
+                  },
+                })
+              ).map((p: { id: string } & Record<FamilyPriceColumn, Prisma.Decimal | null>) => [
+                p.id,
+                p,
+              ])
+            : [],
+        );
         for (const u of update) {
           // eslint-disable-next-line no-await-in-loop
-          await tx.product.update({ where: { id: u.id }, data: this.variantPatch(u) });
+          await tx.product.update({
+            where: { id: u.id },
+            data: this.variantPatch(u, oldPrices.get(u.id)),
+          });
           if (u.barcode !== undefined || u.unitsPerBox !== undefined) {
             // eslint-disable-next-line no-await-in-loop
             const row: { barcode: string | null; unitsPerBox: number | null } =
@@ -471,7 +508,10 @@ export class ProductFamiliesService {
     return result;
   }
 
-  private variantPatch(u: FamilyVariantUpdateDto): Prisma.ProductUncheckedUpdateInput {
+  private variantPatch(
+    u: FamilyVariantUpdateDto,
+    old?: Record<FamilyPriceColumn, Prisma.Decimal | null>,
+  ): Prisma.ProductUncheckedUpdateInput {
     const data: Prisma.ProductUncheckedUpdateInput = {};
     if (u.name !== undefined) {
       data.name = u.name.trim();
@@ -482,13 +522,16 @@ export class ProductFamiliesService {
     if (u.unitSku !== undefined) data.unitSku = blank(u.unitSku);
     if (u.unitsPerBox !== undefined) data.unitsPerBox = u.unitsPerBox;
     if (u.pricePerUnit !== undefined) {
-      // Authority off: create sets all five columns to the price, so an edit moves all five (Opus #2881 B5) — a
-      // tier-2..5 customer must not keep being billed the old price.
+      // Authority off: create sets all five columns to the price, so an edit moves every tier that still EQUALS the old
+      // price (Opus #2881 B5) — a tier-2..5 customer must not keep being billed the old price, and a deliberately
+      // different tier stays as the operator set it.
       const price = money(u.pricePerUnit);
-      for (const c of FAMILY_PRICE_COLUMNS) data[c] = price;
+      for (const c of FAMILY_PRICE_COLUMNS) {
+        const following = c === "pricePerUnit" || !old || sameMoney(old[c], old.pricePerUnit);
+        if (following) data[c] = price;
+      }
     }
-    if (u.standardCost !== undefined)
-      data.standardCost = roundUnitCost(Number(u.standardCost)).toFixed(4);
+    if (u.standardCost !== undefined) data.standardCost = cost4(u.standardCost);
     return data;
   }
 

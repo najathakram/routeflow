@@ -1,3 +1,5 @@
+import { readFileSync } from "fs";
+import { join } from "path";
 import { BadRequestException } from "@nestjs/common";
 import { ChangeRequestType, UserRole } from "@prisma/client";
 import { ChangeRequestsService } from "../orders/change-requests.service";
@@ -87,5 +89,47 @@ describe("the skipped line / stock writers now refuse a FAMILY (400 FAMILY_NOT_S
     );
     await refused(svc.recordAdjustment({ productId: FAMILY.id, quantity: 1 } as never, "u1"));
     expect(tenantTransaction).not.toHaveBeenCalled();
+  });
+
+  it("Opus #2881 B1': stock count (legacy + session + line scan) and cost-basis writes refuse a FAMILY", async () => {
+    const tenantTransaction = jest.fn();
+    const session = { id: "s1", status: "OPEN", lines: [{ productId: FAMILY.id }] };
+    const svc = build(
+      InventoryService,
+      {
+        ...prismaWith({
+          product: {
+            findMany: jest.fn().mockResolvedValue([FAMILY]),
+            findFirst: jest.fn().mockResolvedValue(FAMILY),
+            findUnique: jest.fn().mockResolvedValue(FAMILY),
+          },
+          stockCountSession: { findUnique: jest.fn().mockResolvedValue(session) },
+        }),
+        tenantTransaction,
+      },
+      { loadEditableSession: jest.fn().mockResolvedValue(session) },
+    );
+    const items = [{ productId: FAMILY.id, countedQty: 5, unitCost: 1 }];
+    await refused(svc.commitStockCount({ sessionId: "x", items } as never, "u1"));
+    await refused(svc.commitStockCountSession("s1", {} as never, { sub: "u1" }));
+    await refused(
+      svc.upsertStockCountLine("s1", { productId: FAMILY.id, countedQty: 5 } as never, {
+        sub: "u1",
+      }),
+    );
+    await refused(svc.setCostBasis(FAMILY.id, { unitCost: 1 } as never, "u1"));
+    await refused(svc.bulkSetCostBasis({ items } as never, "u1"));
+    expect(tenantTransaction).not.toHaveBeenCalled();
+  });
+
+  it("the recurring template create AND update both call the shared guard helper (pinned: 2 call sites)", () => {
+    const src = readFileSync(
+      join(__dirname, "../recurring-invoices/recurring-invoices.service.ts"),
+      "utf8",
+    );
+    expect((src.match(/this\.assertNoFamilyLines\(/g) ?? []).length).toBe(2);
+    expect(src.indexOf("this.assertNoFamilyLines(")).toBeLessThan(
+      src.indexOf("recurringInvoice.create("),
+    );
   });
 });

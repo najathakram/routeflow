@@ -861,6 +861,7 @@ export class InventoryService {
         missingProductIds,
       });
     }
+    assertSellableLines(products); // WS8: a counted FAMILY would drain phantom stock into its variants
 
     const effectiveDate = dto.effectiveDate ? new Date(dto.effectiveDate) : new Date();
     const reference = `STOCK_COUNT-${dto.sessionId}`;
@@ -2089,6 +2090,7 @@ export class InventoryService {
   async setCostBasis(productId: string, dto: SetCostBasisDto, performedById: string) {
     const product = await this.prisma.forTenant().product.findUnique({ where: { id: productId } });
     if (!product) throw new NotFoundException("Product not found");
+    assertSellableLines([product]); // WS8: a FAMILY has no cost basis (no stock)
 
     return this.prisma.tenantTransaction((tx) =>
       this.setCostBasisInTx(tx, product, dto, performedById),
@@ -2108,6 +2110,7 @@ export class InventoryService {
         missingProductIds: missing,
       });
     }
+    assertSellableLines(products); // WS8
 
     return this.prisma.tenantTransaction(async (tx) => {
       const movementIds: string[] = [];
@@ -2376,9 +2379,10 @@ export class InventoryService {
 
     const product = await this.prisma.forTenant().product.findFirst({
       where: { id: dto.productId },
-      select: { id: true, currentStock: true, unitsPerBox: true },
+      select: { id: true, name: true, kind: true, currentStock: true, unitsPerBox: true },
     });
     if (!product) throw new NotFoundException("Product not found");
+    assertSellableLines([product]); // WS8: a counted FAMILY must not reach assignToVariants
 
     // Boxes/pieces win when present — the server recomputes qty from the split
     // exactly like the order builders, so a boxed product is never miscounted
@@ -2498,6 +2502,7 @@ export class InventoryService {
         missingProductIds,
       });
     }
+    assertSellableLines(products); // WS8
 
     const effectiveDate = dto.effectiveDate ? new Date(dto.effectiveDate) : new Date();
     const reference = `STOCK_COUNT-${id}`;
