@@ -21,12 +21,18 @@ import { useCreateDraft, useUpdateDraft, useDeleteDraft, useDraft } from "@/lib/
 import { draftDeviceLabel, type OrderDraftPayload } from "@/lib/drafts";
 import { apiClient } from "@/lib/api-client";
 import { orderCreatedToast } from "./order-created-toast";
-import { mergeQtyIntoLine, mergedLineMessage, newLineQty } from "./add-line-merge";
+import {
+  mergePieceIntoLine,
+  mergeQtyIntoLine,
+  mergedLineMessage,
+  newLineQtyForLevel,
+} from "./add-line-merge";
 import {
   isSpecialTier,
   getTierPrice,
   computeLineSubtotal,
   normalizeBoxesPieces,
+  type SellLevel,
 } from "@routeflow/pricing";
 import {
   applyTypedPrice,
@@ -365,12 +371,12 @@ export function CreateOrderModal({
   // ./scan/useScanCodeHandler so the redesigned scan screen can reuse it.
   const barcodeScanHandlerRef = useScanCodeHandler({
     // A thunk: addLineItem is declared further down and is read only when a code is scanned.
-    addLineItem: (product) => {
+    addLineItem: (product, level) => {
       // SA-090/Opus item 1: `created` comes from addLineItem's OWN return value now — it is
       // decided inside the setLineItems updater, against the true latest state, never from a
       // closure-captured `lineItems` read here beforehand (which a same-tick retry-plus-live-scan
       // race of the same product could make stale — see addLineItem's own comment).
-      const { created } = addLineItem(product);
+      const { created } = addLineItem(product, level);
       return { created };
     },
     onUnknownCode: (code) => {
@@ -554,15 +560,21 @@ export function CreateOrderModal({
     return { ...li, qty: Math.max(1, li.qty + dir) };
   };
 
-  const addLineItem = (product: any): { created: boolean } => {
+  const addLineItem = (product: any, level: SellLevel = "BOX"): { created: boolean } => {
     const n = 1; // #2696: every pick / scan adds one (the quick-add Qty field is gone)
+    // #2717 M4a-1 (SA-580 R1/R4): a UNIT scan on a boxed product adds one loose PIECE, never a
+    // case; a picker click (no level) and every BOX/shared scan keep today's whole-case add. For
+    // upb <= 1 there is no box/unit distinction, so the line shape is unchanged either way.
+    const unitScan = level === "UNIT" && Number(product.unitsPerBox ?? 0) > 1;
     // Already in the list: MERGE (sum) into that line instead of adding a duplicate.
     //  - order_ui_v2: +1 for a scan / plain pick, +N for a typed qty. Box-aware: a case-packed line
     //    gains N cases and its qty is re-derived from boxes/pieces (pricing reads the split).
     //  - scan_v2 alone: one whole case for a case-packed line (a new line starts as one case).
     //  - neither: the classic picker keeps its historical +1 qty so nothing changes with the gates off.
     const merge = (li: LineItem): LineItem =>
-      orderUiV2
+      unitScan
+        ? mergePieceIntoLine(li, n)
+        : orderUiV2
         ? mergeQtyIntoLine(li, n)
         : scanV2
           ? stepLineUnit(li, 1)
@@ -605,7 +617,7 @@ export function CreateOrderModal({
         : hasHistDiscount
           ? ("DISCOUNTED" as const)
           : priceType,
-      ...newLineQty(upb, n),
+      ...newLineQtyForLevel(upb, level, n),
       unitsPerBox: upb,
       unitCost: product.averageCost != null ? Number(product.averageCost) : undefined,
       category: product.category ?? undefined,

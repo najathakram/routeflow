@@ -17,6 +17,8 @@ import { InvoiceStatus, PaymentMethod } from "@prisma/client";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { NumberingService } from "../import/numbering.service";
 import { retryOnTxConflict, txConflictState } from "../common/tx-retry";
+import { asReadableConflict, cnBad, cnConflict, type CreditNoteCode } from "./credit-note-errors";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { blockedPairs, clearApplyBlocks, pairKey, writeApplyBlocks } from "./apply-block";
 import { SOURCE_DELETED_MESSAGE, hasSourceDeletedMarker } from "./sourced-credit-guard";
 import {
@@ -107,13 +109,14 @@ export class CreditNotesService {
         },
       },
     });
-    if (!invoice) throw new BadRequestException("Invoice not found");
+    if (!invoice) throw cnBad(API_ERROR_CODES.CREDIT_NOTE_SOURCE_GONE, "Invoice not found");
     if (invoice.customerId !== dto.customerId)
       throw new BadRequestException("Invoice does not belong to this customer");
     // F09/B66: a dead or forgiven invoice justifies no new credit. DRAFT is
     // allowed on purpose (returns.processRefund and the UI picker rely on it).
     if (CREDIT_SOURCE_EXCLUDED.includes(invoice.status)) {
-      throw new BadRequestException(
+      throw cnBad(
+        API_ERROR_CODES.CREDIT_NOTE_SOURCE_GONE,
         `Cannot issue a credit note against a ${invoice.status} invoice.`,
       );
     }
@@ -129,7 +132,8 @@ export class CreditNotesService {
     const totalExisting = Number(existingCredits._sum.amount ?? 0);
     const invoiceTotal = Number(invoice.total);
     if (totalExisting + dto.amount > invoiceTotal + 0.001) {
-      throw new BadRequestException(
+      throw cnBad(
+        API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM,
         `Credit note amount (${dto.amount}) would exceed invoice total (${invoiceTotal}). Already credited: ${totalExisting}.`,
       );
     }
@@ -197,15 +201,23 @@ export class CreditNotesService {
     const cnItemsData = [...mergedByLine.values()].map((li) => {
       const line: any = lineById.get(li.invoiceItemId);
       if (!line)
-        throw new BadRequestException(
+        throw cnBad(
+          API_ERROR_CODES.CREDIT_NOTE_LINE_INVALID,
           `Credit line ${li.invoiceItemId} is not on invoice ${dto.invoiceId}`,
         );
       const amt = li.amount;
-      if (!(amt > 0)) throw new BadRequestException("Credit line amount must be greater than 0");
+      if (!(amt > 0))
+        throw cnBad(
+          API_ERROR_CODES.CREDIT_NOTE_LINE_INVALID,
+          "Credit line amount must be greater than 0",
+        );
       const lineSubtotal = Number(line.subtotal);
       const priorForLine = creditedByLine.get(li.invoiceItemId) ?? 0;
       if (priorForLine + amt > lineSubtotal + 0.001)
-        throw new BadRequestException(
+        throw cnBad(
+          priorForLine > 0
+            ? API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM
+            : API_ERROR_CODES.CREDIT_NOTE_LINE_INVALID,
           priorForLine > 0
             ? `Credit line amount (${amt}) plus prior credits (${roundMoney(priorForLine)}) would exceed invoice line subtotal (${lineSubtotal})`
             : `Credit line amount (${amt}) exceeds invoice line subtotal (${lineSubtotal})`,
@@ -227,7 +239,10 @@ export class CreditNotesService {
             ? qtyLeft
             : Math.min(this.round3(lineQty * frac), qtyLeft);
       if (priorQtyForLine + qty > lineQty + 0.001)
-        throw new BadRequestException(
+        throw cnBad(
+          priorQtyForLine > 0
+            ? API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM
+            : API_ERROR_CODES.CREDIT_NOTE_LINE_INVALID,
           priorQtyForLine > 0
             ? `Credit line qty (${qty}) plus prior credited qty (${this.round3(priorQtyForLine)}) would exceed invoice line qty (${lineQty})`
             : `Credit line qty (${qty}) exceeds invoice line qty (${lineQty})`,
@@ -244,7 +259,8 @@ export class CreditNotesService {
       };
     });
     if (Math.abs(sum - dto.amount) > 0.01)
-      throw new BadRequestException(
+      throw cnBad(
+        API_ERROR_CODES.CREDIT_NOTE_LINE_INVALID,
         `Credit line amounts (${roundMoney(sum)}) must sum to the credit note amount (${dto.amount})`,
       );
     return cnItemsData;
@@ -1044,20 +1060,41 @@ export class CreditNotesService {
     db: any,
     cn: { id: string; status: string; amountUsed: unknown },
     payments: Array<{ amount: unknown }>,
-  ): Promise<string | null> {
-    if (cn.status === "VOID") return "This credit note is already void.";
+  ): Promise<{ code: CreditNoteCode; message: string } | null> {
+    if (cn.status === "VOID")
+      return {
+        code: API_ERROR_CODES.CREDIT_NOTE_VOID_NOT_EDITABLE,
+        message: "This credit note is already void.",
+      };
     const ret = await db.return.findFirst({
       where: { creditNoteId: cn.id, status: { notIn: ["CANCELLED", "REJECTED"] } },
       select: { returnNumber: true },
     });
     if (ret) {
-      return `This credit note backs a return${ret.returnNumber ? ` (${ret.returnNumber})` : ""}. Cancel the return instead of voiding its credit.`;
+      return {
+        code: API_ERROR_CODES.CREDIT_NOTE_RETURN_BACKED,
+        message: `This credit note backs a return${ret.returnNumber ? ` (${ret.returnNumber})` : ""}. Cancel the return instead of voiding its credit.`,
+      };
     }
     const onInvoices = roundMoney(payments.reduce((s, p) => s + Number(p.amount), 0));
     if (roundMoney(Number(cn.amountUsed) - onInvoices) > 0.001) {
-      return "Part of this credit was used somewhere it cannot be reversed from here (RETURN_CREDIT_CONSUMED). Nothing was changed.";
+      return {
+        code: API_ERROR_CODES.CREDIT_NOTE_CREDIT_CONSUMED,
+        message:
+          "Part of this credit was used somewhere it cannot be reversed from here (RETURN_CREDIT_CONSUMED). Nothing was changed.",
+      };
     }
     return null;
+  }
+
+  /** The preview's refusal as `{ refusal, refusalCode }`: the text is for logs, the code for the UI. */
+  private async previewRefusal(
+    db: any,
+    cn: { id: string; status: string; amountUsed: unknown },
+    payments: Array<{ amount: unknown }>,
+  ) {
+    const r = await this.voidWithReversalRefusal(db, cn, payments);
+    return { refusal: r?.message ?? null, refusalCode: r?.code ?? null };
   }
 
   /** The note's live CREDIT_NOTE applications (the rows a reversal restores), with their invoice. */
@@ -1126,7 +1163,7 @@ export class CreditNotesService {
       creditNoteNumber: cn.creditNoteNumber,
       restoresTotal: roundMoney(invoices.reduce((s, i) => s + i.amount, 0)),
       invoices,
-      refusal: await this.voidWithReversalRefusal(db, cn, payments),
+      ...(await this.previewRefusal(db, cn, payments)),
     };
   }
 
@@ -1173,7 +1210,7 @@ export class CreditNotesService {
     // Re-read under the locks: the rows the reversal restores are exactly these.
     const payments: any[] = await this.liveCreditPayments(tx, id);
     const refusal = await this.voidWithReversalRefusal(tx, cn, payments);
-    if (refusal) throw new BadRequestException(refusal);
+    if (refusal) throw cnBad(refusal.code, refusal.message);
 
     const reopened: Array<{ invoiceId: string; invoiceNumber: string; amount: number }> = [];
     for (const p of payments) {
@@ -1202,7 +1239,8 @@ export class CreditNotesService {
       data: { status: "VOID" },
     });
     if (flipped.count === 0) {
-      throw new BadRequestException(
+      throw cnBad(
+        API_ERROR_CODES.CREDIT_NOTE_CHANGED_CONCURRENTLY,
         "This credit note changed while it was being voided. Nothing was changed; try again.",
       );
     }
@@ -1233,11 +1271,16 @@ export class CreditNotesService {
    */
   async voidWithReversal(id: string, actorId: string | null) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: once per call, before any loop
-    const result = await retryOnTxConflict(`credit void-with-reversal cn=${id}`, () =>
-      this.prisma.tenantTransaction((tx: any) => this.voidWithReversalInTx(tx, id, actorId, tz), {
-        isolationLevel: "Serializable",
-      }),
-    );
+    let result: Awaited<ReturnType<CreditNotesService["voidWithReversalInTx"]>>;
+    try {
+      result = await retryOnTxConflict(`credit void-with-reversal cn=${id}`, () =>
+        this.prisma.tenantTransaction((tx: any) => this.voidWithReversalInTx(tx, id, actorId, tz), {
+          isolationLevel: "Serializable",
+        }),
+      );
+    } catch (err) {
+      throw asReadableConflict(err, this.logger); // SA-608h: exhausted retries are a 409, not a 500
+    }
 
     this.gateway.emitCreditNoteVoided(this.prisma.getTenantId(), {
       creditNoteId: result.creditNote.id,
@@ -1927,7 +1970,11 @@ export class CreditNotesService {
         select: { id: true, status: true, reason: true, expiresAt: true },
       });
       if (!cn) throw new NotFoundException("Credit note not found");
-      if (cn.status === "VOID") throw new ConflictException("A void credit note can't be edited.");
+      if (cn.status === "VOID")
+        throw cnConflict(
+          API_ERROR_CODES.CREDIT_NOTE_VOID_NOT_EDITABLE,
+          "A void credit note can't be edited.",
+        );
 
       // SA-535b: the no-op filter runs FIRST, so a field that does not change is never validated
       // (re-saving an unchanged expiry on an applied or expired note is a quiet no-op, not a 400).
@@ -1946,13 +1993,14 @@ export class CreditNotesService {
         if (!sameDate(cn.expiresAt ?? null, next)) {
           // #2848: an expiry change could revive an orphan's value; refused once its source is gone.
           if (await hasSourceDeletedMarker(tx, id))
-            throw new ConflictException(SOURCE_DELETED_MESSAGE);
+            throw cnConflict(API_ERROR_CODES.CREDIT_NOTE_SOURCE_GONE, SOURCE_DELETED_MESSAGE);
           if (cn.status !== "ISSUED")
-            throw new BadRequestException(
+            throw cnBad(
+              API_ERROR_CODES.CREDIT_NOTE_EXPIRY_NOT_EDITABLE,
               "expiresAt can only be changed while the credit note is ISSUED",
             );
           if (next && next.getTime() <= Date.now())
-            throw new BadRequestException("expiresAt must be in the future");
+            throw cnBad(API_ERROR_CODES.CREDIT_NOTE_EXPIRY_PAST, "expiresAt must be in the future");
           data.expiresAt = next;
         }
       }

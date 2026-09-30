@@ -49,7 +49,8 @@ import { ListOrdersDto } from "../orders/dto/list-orders.dto";
 import { ListInvoicesDto } from "../invoices/dto/list-invoices.dto";
 import { UpdateOrderItemsDto } from "../orders/dto/update-order-items.dto";
 import { SubmitAuthorizationDto } from "../authorizations/dto/submit-authorization.dto";
-import { normalizeScanCode, pickBestScanMatch } from "../common/barcode-normalize";
+import { normalizeScanCode } from "@routeflow/scanning";
+import { findScanMatches } from "../products/scan-match";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import {
   foldMergeItems,
@@ -463,32 +464,11 @@ export class BuyerController {
     const candidates = normalizeScanCode(code);
     if (candidates.length === 0) throw new NotFoundException("Product not found");
 
-    const db = this.prisma.forTenant();
-    // Tier 1 — exact (mirrors ProductsService.findByBarcode).
-    let matches = await db.product.findMany({
-      where: {
-        OR: [
-          { barcode: { in: candidates } },
-          { sku: { in: candidates } },
-          { unitSku: { in: candidates } },
-        ],
-      },
-    });
-    // Tier 2 — case-insensitive, MISS ONLY (typed/lowercased alpha SKUs).
-    if (matches.length === 0) {
-      matches = await db.product.findMany({
-        where: {
-          OR: candidates.flatMap((c) => [
-            { barcode: { equals: c, mode: "insensitive" as const } },
-            { sku: { equals: c, mode: "insensitive" as const } },
-            { unitSku: { equals: c, mode: "insensitive" as const } },
-          ]),
-        },
-        take: 25,
-      });
-    }
-    if (matches.length === 0) throw new NotFoundException("Product not found");
-    const match = pickBestScanMatch(matches, candidates);
+    // One shared lookup (L-167). Buyer scope: active products only; getProductDetail below still
+    // applies the regulated-category gate, so a row code on a hidden product 404s here too.
+    const hit = await findScanMatches(this.prisma.forTenant(), candidates, { isActive: true });
+    if (!hit) throw new NotFoundException("Product not found");
+    const match = hit.product;
 
     const detail = await this.catalogService.getProductDetail(match.id, ctx.customerId);
     const alertSubscribed = await this.stockAlertService.isSubscribed(ctx.customerId, match.id);

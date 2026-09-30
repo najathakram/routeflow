@@ -28,10 +28,12 @@ import {
   Megaphone,
   Route as RouteIcon,
   type LucideIcon,
+  PackageCheck,
 } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
 import { apiClient } from "@/lib/api-client";
+import { displayEmail } from "@/lib/formatting";
 import { useI18n } from "@/lib/i18n";
 import { useRoutesAccess, useDeliveryAccess } from "@/lib/api/addons";
 
@@ -153,6 +155,13 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
           action: () => router.push("/inventory"),
         },
         {
+          id: "nav-purchase-orders",
+          group: "Navigate",
+          label: "Purchase Orders",
+          icon: PackageCheck,
+          action: () => router.push("/purchase-orders"),
+        },
+        {
           id: "nav-suppliers",
           group: "Navigate",
           label: "Suppliers",
@@ -190,7 +199,7 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
         {
           id: "nav-expenses",
           group: "Navigate",
-          label: "Bills & Purchasing",
+          label: "Supplier Bills",
           icon: ShoppingBag,
           action: () => router.push("/vendor-bills"),
         },
@@ -338,7 +347,7 @@ function useSearchResults(
             items.push({
               id: `customer-${c.id}`,
               label: c.businessName ?? c.contactName ?? "Unknown",
-              sublabel: c.email ?? c.phone ?? "",
+              sublabel: displayEmail(c.email) ?? c.phone ?? "",
               href: `/customers/${c.id}`,
               icon: Users,
               group: "results",

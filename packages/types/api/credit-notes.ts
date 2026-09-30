@@ -1,3 +1,5 @@
+import type { CreditNoteErrorCode } from "./error-codes";
+
 /**
  * Credit-note request/response shapes shared by web and mobile (#2648). The server is
  * apps/api/src/credit-notes (credit-notes.controller.ts, credit-note-reissue.service.ts).
@@ -5,7 +7,9 @@
 
 /** GET /credit-notes/:id/void-preview: what a void-with-reversal would un-apply, and any refusal. */
 export interface CreditNoteVoidPreview {
+  /** Server text for logs only: the UI never renders it (#2418); it maps `refusalCode` to fixed copy. */
   refusal: string | null;
+  refusalCode: CreditNoteErrorCode | null;
   restoresTotal: number;
   invoices: Array<{
     invoiceId: string;
