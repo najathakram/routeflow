@@ -29,6 +29,7 @@ import { StorageService } from "../storage/storage.service";
 import { AddonService } from "../billing/addon.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { FeatureOverrideService } from "../billing/feature-override.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -259,6 +260,7 @@ describe("ProductsService.findByBarcode via findScanMatches (#2717 M4a-1)", () =
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
         entitlementAuthorityFromEntitlements,
         { provide: PlanCatalogService, useValue: { upgradeTargetForFlag: jest.fn().mockResolvedValue(null) } },
+        { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: RouteFlowGateway, useValue: { emitProductUpdated: jest.fn() } },
       ],
     }).compile();
