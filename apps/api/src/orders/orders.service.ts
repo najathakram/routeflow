@@ -10,6 +10,7 @@ import {
   Optional,
   ServiceUnavailableException,
 } from "@nestjs/common";
+import { assertSellableLines } from "../products/sellable-lines";
 import { randomUUID } from "crypto";
 import { LeaderCron } from "../common/cron-lock";
 import { withAfterCommit } from "../common/after-commit";
@@ -1595,6 +1596,7 @@ export class OrdersService implements OnApplicationBootstrap {
         : [];
 
     const productMap = new Map(products.map((p) => [p.id, p]));
+    assertSellableLines(products); // WS8: a FAMILY is never a line
 
     // units_v1 (4b-2b): the gate (staff, flag.units_v1) + the server ladder of the named units.
     const unitsByProduct = await unitLines.prepareUnitLadders(items, {
@@ -3167,6 +3169,7 @@ export class OrdersService implements OnApplicationBootstrap {
           const productIds = dto.items.map((i) => i.productId).filter(Boolean) as string[];
           const products = await tx.product.findMany({ where: { id: { in: productIds } } });
           const productMap = new Map<string, any>(products.map((p: any) => [p.id, p]));
+          assertSellableLines(products); // WS8
           // B297 (SA-098a): this pack-line create() is disconnected from `uctx.categoryMap`
           // (which only covers unit-aware `unitCtx.products`) — its own scoped load.
           const buyerCategoryMap = await loadCategoryMapForProducts(tx, productMap);
@@ -3448,6 +3451,7 @@ export class OrdersService implements OnApplicationBootstrap {
             const productIds = dto.items.map((i) => i.productId).filter(Boolean) as string[];
             const products = await tx.product.findMany({ where: { id: { in: productIds } } });
             const productMap = new Map<string, any>(products.map((p: any) => [p.id, p]));
+            assertSellableLines(products); // WS8
             // B297 (SA-098a): a superset of `uctx.categoryMap` (unit-aware products only) —
             // this pack-line create() below needs every product this replaceAll touches.
             const operatorReplaceCategoryMap = await loadCategoryMapForProducts(tx, productMap);
@@ -3576,6 +3580,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 ? await tx.product.findMany({ where: { id: { in: addProductIds } } })
                 : [];
             const addProductMap = new Map<string, any>(addProducts.map((p: any) => [p.id, p]));
+            assertSellableLines(addProducts); // WS8
             // B297 (SA-098a): `uctx.categoryMap` only covers unit-aware `unitCtx.products` —
             // a diff-add's own pack-line create() below needs its own scoped load.
             const addCategoryMap = await loadCategoryMapForProducts(tx, addProductMap);
