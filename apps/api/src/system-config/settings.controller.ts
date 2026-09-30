@@ -488,6 +488,9 @@ export class SettingsController {
   @Patch("route")
   @UsePipes(new ValidationPipe({ whitelist: true }))
   async updateRouteSettings(@Body() dto: UpdateRouteSettingsDto) {
+    if ((dto.depotLat === undefined) !== (dto.depotLng === undefined)) {
+      throw new BadRequestException("depotLat and depotLng must be provided together");
+    }
     if (dto.averageSpeedKmh !== undefined) {
       await this.svc.set("route.averageSpeedKmh", String(dto.averageSpeedKmh));
     }
@@ -496,6 +499,10 @@ export class SettingsController {
     }
     if (dto.defaultStartTime !== undefined) {
       await this.svc.set("route.defaultStartTime", dto.defaultStartTime);
+    }
+    if (dto.depotLat !== undefined && dto.depotLng !== undefined) {
+      await this.svc.set("route.defaultDepotLat", String(dto.depotLat));
+      await this.svc.set("route.defaultDepotLng", String(dto.depotLng));
     }
     return this.getRouteSettings();
   }
