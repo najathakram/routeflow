@@ -90,21 +90,15 @@ describe("isBuyerVisibleProduct (in-memory twin)", () => {
   it("every field is REQUIRED: a partial select is a compile error, not a silently visible product", () => {
     // Compile-time pin only: the calls live in a function that is never invoked.
     const compileOnly = () => {
-      const noFlag = { id: "p", name: "n", isActive: true, kind: "STANDARD", parent: null };
-      const noKind = { id: "p", name: "n", isActive: true, portalVisible: true, parent: null };
-      const noParent = {
-        id: "p",
-        name: "n",
-        isActive: true,
-        kind: "STANDARD",
-        portalVisible: true,
-      };
-      // @ts-expect-error portalVisible missing
-      assertBuyerMayOrder([noFlag], new Set());
+      const noFlag = { id: "p", isActive: true, kind: "STANDARD", parent: null };
+      const noKind = { id: "p", isActive: true, portalVisible: true, parent: null };
+      const noParent = { id: "p", isActive: true, kind: "STANDARD", portalVisible: true };
+      // @ts-expect-error portalVisible missing: used to count as visible (fail-open)
+      isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, noFlag);
       // @ts-expect-error kind missing
-      assertBuyerMayOrder([noKind], new Set());
+      isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, noKind);
       // @ts-expect-error parent missing (null = standalone must be explicit)
-      assertBuyerMayOrder([noParent], new Set());
+      isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, noParent);
     };
     expect(typeof compileOnly).toBe("function");
   });
@@ -134,21 +128,21 @@ describe("assertBuyerMayOrder (WS6 refusal: 409 SELLING_RESTRICTED, reason HIDDE
   it("every field is REQUIRED: a partial select is a compile error, not a silently orderable product (SA-612)", () => {
     // Compile-time pin only: the calls live in a function that is never invoked.
     const compileOnly = () => {
+      const noFlag = { id: "p", name: "n", isActive: true, kind: "STANDARD", parent: null };
+      const noKind = { id: "p", name: "n", isActive: true, portalVisible: true, parent: null };
+      const noParent = {
+        id: "p",
+        name: "n",
+        isActive: true,
+        kind: "STANDARD",
+        portalVisible: true,
+      };
       // @ts-expect-error portalVisible missing
-      assertBuyerMayOrder(
-        [{ id: "p", name: "n", isActive: true, kind: "STANDARD", parent: null }],
-        new Set(),
-      );
+      assertBuyerMayOrder([noFlag], new Set());
       // @ts-expect-error kind missing
-      assertBuyerMayOrder(
-        [{ id: "p", name: "n", isActive: true, portalVisible: true, parent: null }],
-        new Set(),
-      );
+      assertBuyerMayOrder([noKind], new Set());
       // @ts-expect-error parent missing (null = standalone must be explicit)
-      assertBuyerMayOrder(
-        [{ id: "p", name: "n", isActive: true, kind: "STANDARD", portalVisible: true }],
-        new Set(),
-      );
+      assertBuyerMayOrder([noParent], new Set());
     };
     expect(typeof compileOnly).toBe("function");
   });
