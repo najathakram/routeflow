@@ -6,6 +6,7 @@ import {
   NotFoundException,
   Optional,
 } from "@nestjs/common";
+import type { PurchaseOrderReceipt } from "@routeflow/types";
 import * as crypto from "crypto";
 import { CostingMethod, MovementType, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
@@ -1250,10 +1251,53 @@ export class InventoryService {
         items: {
           include: { product: { select: { id: true, name: true, unit: true, unitsPerBox: true } } },
         },
+        vendorBill: { select: { id: true, billNumber: true, status: true } },
       },
     });
     if (!po) throw new NotFoundException("Purchase order not found");
-    return po;
+
+    // The PO's receipts history. There is no movement -> PO foreign key, only `reference = poNumber`
+    // (operator-editable on manual purchases), so the join is narrowed to what can only be this PO's:
+    // tenant-scoped (forTenant), the PO's own products, nothing written before the PO existed, and
+    // for receipts the PO's own supplier. A reversal is a re-apply's compensating ADJUSTMENT
+    // ("PO edit reversal — reverses <movementId>"), flagged and pointed at the receipt it undoes.
+    const prefix = InventoryService.PO_REVERSAL_NOTE;
+    const names = new Map(po.items.map((i) => [i.productId, i.product?.name ?? null]));
+    const movements = await this.prisma.forTenant().stockMovement.findMany({
+      where: {
+        reference: po.poNumber,
+        type: { in: [MovementType.PURCHASE, MovementType.ADJUSTMENT] },
+        productId: { in: [...names.keys()] },
+        createdAt: { gte: po.createdAt },
+      },
+      orderBy: [{ effectiveAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
+    });
+    const receipts: PurchaseOrderReceipt[] = [];
+    for (const m of movements) {
+      if (m.type === MovementType.PURCHASE && m.supplierId === po.supplierId) {
+        receipts.push({
+          id: m.id,
+          kind: "RECEIPT",
+          productId: m.productId,
+          productName: names.get(m.productId) ?? null,
+          quantity: Number(m.quantity),
+          unitCost: m.unitCost == null ? null : Number(m.unitCost),
+          at: m.createdAt.toISOString(),
+        });
+      } else if (m.type === MovementType.ADJUSTMENT && m.notes?.startsWith(prefix)) {
+        receipts.push({
+          id: m.id,
+          kind: "REVERSAL",
+          productId: m.productId,
+          productName: names.get(m.productId) ?? null,
+          quantity: Number(m.quantity),
+          unitCost: m.unitCost == null ? null : Number(m.unitCost),
+          at: m.createdAt.toISOString(),
+          reversesId: m.notes.slice(prefix.length).trim(),
+        });
+      }
+    }
+    return { ...po, receipts };
   }
 
   async sendPurchaseOrder(id: string) {

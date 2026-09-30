@@ -142,6 +142,7 @@ export * from "./order-applied-credits";
 export * from "./api/enums";
 export * from "./api/billing";
 export * from "./api/orders";
+export * from "./api/purchase-orders";
 export * from "./api/customers";
 export * from "./api/products";
 export * from "./api/finance";
