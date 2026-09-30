@@ -310,6 +310,49 @@ describe("WS7 importers: active-only lookups, retired codes, reasons on every sk
     expect(messages.join(" | ")).not.toContain("matches only an inactive item");
   });
 
+  // The buffered inactive-SKU warnings are flushed only after a CREATE. The two branches below do
+  // NOT create a new invoice (they sync/skip an existing one), so they DROP the warnings by design.
+  it("W-drop(a): an invoice whose NUMBER already exists is synced, not created -> no inactive-SKU warning", async () => {
+    store.push(row({ id: "A", name: "Old", sku: "X-1", isActive: false }));
+    prisma.invoice.findFirst.mockResolvedValue({
+      id: "inv-existing",
+      invoiceNumber: "INV-7001",
+      status: "DRAFT",
+      dueDate: null,
+      paidAt: null,
+    });
+    const { r, messages } = await runInvoice({ SKU: "X-1" });
+    expect(invoicesCreated).toHaveLength(0);
+    expect(r.imported).toBe(0);
+    expect(r.updated).toBe(1);
+    expect((r as any).warnings).toBeUndefined();
+    expect(messages.join(" | ")).not.toContain("matches only an inactive item");
+  });
+
+  it("W-drop(b): a numberless row whose importRef was already imported is skipped WITH a reason and no inactive-SKU warning", async () => {
+    store.push(row({ id: "A", name: "Old", sku: "X-1", isActive: false }));
+    (service as any).externalRefs.findLocalId.mockResolvedValue("inv-prior");
+    prisma.invoice.findFirst.mockResolvedValue({
+      id: "inv-prior",
+      invoiceNumber: "INV-2026-0042",
+      customerId: "cust-1",
+      total: 10,
+      status: "VOID", // a voided prior is refused by the sync rule -> a recorded reason
+      dueDate: null,
+      paidAt: null,
+    });
+    const csv = invoiceCsv({ "Invoice Number": "", SKU: "X-1" })
+      .replace("Invoice Number,", "Invoice ID,Invoice Number,")
+      .replace("\n", '\n"REF-1",');
+    const r = await service.importInvoices(Buffer.from(csv), "user-1");
+    expect(invoicesCreated).toHaveLength(0);
+    expect(r.imported).toBe(0);
+    expect(r.skipped).toBe(1);
+    expect(r.errors).toHaveLength(1);
+    expect(r.errors[0]).toContain("re-import skipped");
+    expect((r as any).warnings).toBeUndefined();
+  });
+
   it("N4: a group with no customer name is skipped WITH a reason in errors", async () => {
     const { r } = await runInvoice({ "Customer Name": "", "Invoice Number": "INV-7002" });
     expect(r.skipped).toBe(1);
