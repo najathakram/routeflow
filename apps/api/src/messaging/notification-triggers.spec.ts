@@ -7,7 +7,8 @@
  */
 import * as fs from "fs";
 import * as path from "path";
-import { NotificationEvent } from "@prisma/client";
+import { MessageChannel, NotificationEvent } from "@prisma/client";
+import { CHANNEL_STATUS_CHANNEL_VALUES } from "@routeflow/types";
 import {
   NOTIFICATION_AUDIENCE,
   NOTIFICATION_TRIGGERS,
@@ -31,9 +32,69 @@ const FILES = collect(SRC_ROOT);
 const SOURCES = FILES.map((f) => fs.readFileSync(f, "utf8"));
 const ALL_EVENTS = Object.values(NotificationEvent) as NotificationEvent[];
 
-function firedOutsideMessaging(ev: string): boolean {
-  return SOURCES.some((t) => t.includes(`NotificationEvent.${ev}`));
+/**
+ * The events a source text passes to `notifyEvent(` — the actual firing sites, not any mention of
+ * `NotificationEvent.X`. The first argument may be `NotificationEvent.X`, a string literal
+ * (`"X"`/`'X'`/`` `X` ``), or an identifier (a variable/map lookup); an identifier cannot be
+ * resolved statically, so it falls back to the `NotificationEvent.X` references in the same file
+ * (documented limitation: `orders.service.ts` routes its status→event map through one variable).
+ */
+function eventsFiredIn(text: string): Set<NotificationEvent> {
+  const fired = new Set<NotificationEvent>();
+  const known = new Set<string>(ALL_EVENTS);
+  const refs = [...text.matchAll(/NotificationEvent\.([A-Z_]+)/g)].map((m) => m[1]);
+  for (const m of text.matchAll(/notifyEvent\(\s*([^,)]+)/g)) {
+    const arg = m[1].trim();
+    const direct = arg.match(/^NotificationEvent\.([A-Z_]+)$/)?.[1];
+    const literal = arg.match(/^["'`]([A-Z_]+)["'`]$/)?.[1];
+    if (direct && known.has(direct)) fired.add(direct as NotificationEvent);
+    else if (literal && known.has(literal)) fired.add(literal as NotificationEvent);
+    else if (!direct && !literal) {
+      for (const r of refs) if (known.has(r)) fired.add(r as NotificationEvent);
+    }
+  }
+  return fired;
 }
+
+const WIRED = new Set<NotificationEvent>(SOURCES.flatMap((t) => [...eventsFiredIn(t)]));
+function firedOutsideMessaging(ev: string): boolean {
+  return WIRED.has(ev as NotificationEvent);
+}
+
+describe("eventsFiredIn — mutant pins (#1965)", () => {
+  it("reads a NotificationEvent.X first argument, across lines and method chains", () => {
+    expect([
+      ...eventsFiredIn("this.messaging\n  .notifyEvent(\n    NotificationEvent.DELIVERED, {})"),
+    ]).toEqual(["DELIVERED"]);
+  });
+
+  it("reads a string-literal first argument (a mutant that only matched NotificationEvent.X would miss it)", () => {
+    expect([...eventsFiredIn('await svc.notifyEvent("LOW_STOCK", { productName })')]).toEqual([
+      "LOW_STOCK",
+    ]);
+    expect([...eventsFiredIn("svc.notifyEvent('FAILED_DELIVERY', {})")]).toEqual([
+      "FAILED_DELIVERY",
+    ]);
+  });
+
+  it("ignores a mention that is not a notifyEvent( call site", () => {
+    expect(
+      eventsFiredIn("const label = NotificationEvent.LOW_STOCK; log(NotificationEvent.DELIVERED)")
+        .size,
+    ).toBe(0);
+  });
+
+  it("falls back to the file's own NotificationEvent.X references for an identifier argument", () => {
+    const src =
+      "const map = { a: NotificationEvent.OUT_FOR_DELIVERY, b: NotificationEvent.CANCELLED };\n" +
+      "svc.notifyEvent(messagingEvent, {})";
+    expect([...eventsFiredIn(src)].sort()).toEqual(["CANCELLED", "OUT_FOR_DELIVERY"]);
+  });
+
+  it("does not count an unknown literal", () => {
+    expect(eventsFiredIn('svc.notifyEvent("NOT_AN_EVENT", {})').size).toBe(0);
+  });
+});
 
 describe("scanner harness integrity (pin)", () => {
   it("walks a non-trivial tree and sees a known wired event and a known unwired one", () => {
@@ -66,5 +127,14 @@ describe("NOTIFICATION_TRIGGERS (#1965)", () => {
       ].sort(),
     );
     expect(Object.keys(NOTIFICATION_AUDIENCE).sort()).toEqual([...ALL_EVENTS].sort());
+  });
+});
+
+describe("channelStatus channel list (#1965)", () => {
+  it("CHANNEL_STATUS_CHANNEL_VALUES is exactly MessageChannel minus INTERNAL (L-072 pin)", () => {
+    const expected = (Object.values(MessageChannel) as string[])
+      .filter((c) => c !== MessageChannel.INTERNAL)
+      .sort();
+    expect([...CHANNEL_STATUS_CHANNEL_VALUES].sort()).toEqual(expected);
   });
 });

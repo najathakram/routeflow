@@ -39,8 +39,8 @@ export const EVENT_CHANNELS: Record<NotificationEvent, MessageChannel[]> = {
   [NotificationEvent.LOW_STOCK]: [INTERNAL],
   [NotificationEvent.FAILED_DELIVERY]: [INTERNAL],
   [NotificationEvent.PAYMENT_FAILED_NSF]: [INTERNAL],
-  // Post-dated check payments PR-1: no firing site yet (see NOTIFICATION_TRIGGERS (absent)
-  // below) — entry exists only so this Record stays exhaustive over
+  // Post-dated check payments PR-1: no firing site yet (absent from
+  // NOTIFICATION_TRIGGERS) — entry exists only so this Record stays exhaustive over
   // NotificationEvent.
   [NotificationEvent.CHECK_RETURNED]: [INTERNAL],
 };
@@ -111,7 +111,7 @@ export const DEFAULT_TEMPLATES: Record<NotificationEvent, { label: string; body:
 
 /** Cells seeded enabled=true — PORTAL/EMAIL (free, un-metered, consent-less).
  *  Every metered/consented channel (WA/SMS) seeds OFF, and so does every
- *  INTERNAL ops alert below (NOTIFICATION_TRIGGERS (absent)) — seeding a key ON that can
+ *  INTERNAL ops alert below (none is in NOTIFICATION_TRIGGERS) — seeding a key ON that can
  *  never fire is B180 (cause-ruling.md §2/Check).
  *
  *  N1 (2026-09-16): the four order-status events default their EMAIL cell ON
@@ -327,11 +327,6 @@ export class MessagingConfigService {
     return this.getSettings();
   }
 
-  /** F23/B180+B182+B183a (cause-ruling.md §2): the ONE capability seam consulted by both
-   *  getMatrix()/setRuleEnabled() here and sendMessage() in messaging.service.ts. NO_TRIGGER
-   *  takes priority (an INTERNAL-only ops alert with no firing site — its channel is always
-   *  "transported" since INTERNAL is exempt below), then NO_TRANSPORT (the bound provider
-   *  doesn't declare this channel), then NO_CONSENT_WRITER (WA/SMS with no consent writer yet). */
   /** NOT_CONFIGURED is reserved for a channel that has a transport but no tenant setup; no such
    *  channel exists yet, so today every channel is LIVE (transport bound) or NOT_BUILT. */
   private channelStatus(): ChannelStatusMap {
@@ -339,13 +334,18 @@ export class MessagingConfigService {
     return { EMAIL: st(EMAIL), WHATSAPP: st(WHATSAPP), SMS: st(SMS), PORTAL: st(PORTAL) };
   }
 
+  /** F23/B180+B182+B183a (cause-ruling.md §2): the ONE capability seam consulted by both
+   *  getMatrix()/setRuleEnabled() here and sendMessage() in messaging.service.ts. NO_TRIGGER
+   *  takes priority (an INTERNAL-only ops alert with no firing site — its channel is always
+   *  "transported" since INTERNAL is exempt below), then NO_TRANSPORT (the bound provider
+   *  doesn't declare this channel), then NO_CONSENT_WRITER (WA/SMS with no consent writer yet). */
   private unavailabilityReason(
     eventKey: NotificationEvent,
     channel: MessageChannel,
   ): MatrixCell["unavailable"] {
     if (hasNoTrigger(eventKey)) return "NO_TRIGGER";
     // The `channel !== INTERNAL` exemption is currently unreachable: every INTERNAL event is
-    // in NOTIFICATION_TRIGGERS (absent) above, so this line never sees channel === INTERNAL today. Kept for
+    // absent from NOTIFICATION_TRIGGERS (so `hasNoTrigger` returns above), so this line never sees channel === INTERNAL today. Kept for
     // the first wired INTERNAL event; pinned by the NO_TRANSPORT spec in
     // messaging-config.service.spec.ts.
     if (channel !== INTERNAL && !this.provider.transports(channel)) return "NO_TRANSPORT";
