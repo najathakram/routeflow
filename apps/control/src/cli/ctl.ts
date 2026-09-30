@@ -21,6 +21,7 @@ import { CtlError, assertLaneName, gitTry } from "../sources/git";
 import type { Env } from "../sources/git";
 import { COMMANDS, LANELESS } from "./commands";
 import type { Args, Ctx } from "./commands";
+import { controlFailure, oneLine } from "./format";
 
 const VALUE_FLAGS = new Set([
   "lane",
@@ -72,7 +73,9 @@ export function parseArgs(argv: string[]): Args {
     if (BOOL_FLAGS.has(name)) flags[name] = true;
     else if (VALUE_FLAGS.has(name)) {
       const v = m[2] ?? argv[++i];
-      if (v === undefined) throw new CtlError(2, `--${name} needs a value`);
+      if (v === undefined || (m[2] === undefined && v.startsWith("--"))) {
+        throw new CtlError(2, `--${name} needs a value`);
+      }
       flags[name] = v;
     } else throw new CtlError(2, `unknown flag --${name}`);
   }
@@ -87,7 +90,10 @@ function repoRoot(cwd: string): string {
 /** --lane > CTL_LANE > .claude/control/.lane; null when none is configured. */
 export function resolveLane(args: Args, cwd: string): string | null {
   const f = args.flags.lane;
-  if (typeof f === "string" && f !== "") return assertLaneName(f);
+  if (typeof f === "string") {
+    if (f.trim() === "") throw new CtlError(2, "--lane must not be empty");
+    return assertLaneName(f);
+  }
   const e = process.env.CTL_LANE;
   if (e !== undefined && e.trim() !== "") return assertLaneName(e.trim());
   try {
@@ -149,12 +155,12 @@ function buildEnv(cwd: string, registers: Registers): Env {
 }
 
 export async function main(argv: string[]): Promise<void> {
-  const quietNext = argv[0] === "next" && argv.includes("--quiet");
   try {
     const args = parseArgs(argv);
     if (args.verb === "" || args.verb === "help" || !Object.hasOwn(COMMANDS, args.verb)) {
       if (args.verb !== "" && args.verb !== "help") {
-        throw new CtlError(2, `unknown verb ${args.verb}\n${USAGE}`);
+        process.stderr.write(USAGE + "\n");
+        throw new CtlError(2, `unknown verb ${args.verb}`);
       }
       process.stdout.write(USAGE + "\n");
       process.exitCode = args.verb === "" ? 2 : 0;
@@ -165,7 +171,7 @@ export async function main(argv: string[]): Promise<void> {
     if (lane === null && !LANELESS.has(args.verb)) {
       throw new CtlError(2, "no lane: pass --lane, set CTL_LANE, or run `ctl lane use <lane>`");
     }
-    if (args.verb === "lane" || args.verb === "serve") {
+    if (args.verb === "serve" || (args.verb === "lane" && args.pos[0] !== "use")) {
       const ctx = { cwd, lane, args, out: (t: string) => void process.stdout.write(t) } as Ctx;
       await COMMANDS[args.verb](ctx);
       return;
@@ -181,20 +187,15 @@ export async function main(argv: string[]): Promise<void> {
     };
     await COMMANDS[args.verb](ctx);
   } catch (e) {
+    const code = e instanceof CtlError ? e.code : 5;
+    const msg = e instanceof Error ? e.message : String(e);
     if (argv[0] === "next") {
-      // `next` always exits 0 and prints at most one line (quiet: nothing)
-      if (!quietNext) {
-        const msg = e instanceof Error ? e.message : String(e);
-        process.stdout.write(`control: unavailable ${msg.replace(/\s+/g, " ").slice(0, 120)}\n`);
-      }
+      // `next` always exits 0 and prints exactly one line, even with --quiet
+      process.stdout.write(controlFailure(code === 3 ? 3 : 5, msg));
       return;
     }
-    if (e instanceof CtlError) {
-      process.stderr.write(`ctl: ${e.message}\n`);
-      process.exitCode = e.code;
-    } else {
-      process.stderr.write(`ctl: ${e instanceof Error ? e.message : String(e)}\n`);
-      process.exitCode = 1;
-    }
+    // validate lists its errors (exit 3); everything else is one line
+    process.stderr.write(`ctl: ${code === 3 ? msg : oneLine(msg)}\n`);
+    process.exitCode = code;
   }
 }

@@ -141,3 +141,20 @@ export function formatWaste(rows: unknown[]): string {
   const lines = rows.map((r) => trunc(typeof r === "string" ? r : JSON.stringify(r), 140));
   return capOutput([`waste: ${rows.length}`, ...lines], PANEL_MAX_LINES, 8192);
 }
+
+/** First non-empty line, whitespace collapsed, cut to `n` characters. */
+export function oneLine(s: string, n = 200): string {
+  const first = s.split("\n").find((l) => l.trim() !== "") ?? "";
+  return trunc(first, n);
+}
+
+/** The single line `next` prints for a corrupt (INVALID, exit 3) or unreachable (UNAVAILABLE) state. */
+export function controlFailure(code: number | undefined, message: string): string {
+  const kind = code === 3 ? "INVALID" : "UNAVAILABLE";
+  const body = oneLine(message, 400)
+    .replace(/\S*[\\/]\S*/g, "<path>")
+    .replace(/^(INVALID|UNAVAILABLE)\s*/i, "");
+  let line = `control: ${kind} ${body}`.trimEnd();
+  while (bytesOf(line) > 120 && line.length > 1) line = line.slice(0, -1);
+  return line + "\n";
+}
