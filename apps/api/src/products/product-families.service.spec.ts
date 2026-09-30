@@ -173,6 +173,10 @@ describe("POST /products/families (createFamily)", () => {
       n += 1;
       if (n === 2) {
         // a concurrent writer committed S-RACE between our check and our insert
+        tx.products.splice(
+          tx.products.findIndex((p) => p.id === "c1"),
+          1,
+        ); // the failed tx rolled the family back
         tx.products.push(product({ id: "racer", name: "Racer", sku: "S-RACE" }));
         throw new Prisma.PrismaClientKnownRequestError("unique", {
           code: "P2002",
