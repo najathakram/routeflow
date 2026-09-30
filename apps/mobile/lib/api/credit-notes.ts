@@ -214,7 +214,10 @@ export function useVoidWithReversal() {
   >({
     mutationFn: ({ id, reason }) =>
       apiClient
-        .post(`/credit-notes/${id}/void-with-reversal`, reason ? { reason } : {})
+        // Online-only: it needs a fresh void-preview, and a silent offline replay would void later.
+        .post(`/credit-notes/${id}/void-with-reversal`, reason ? { reason } : {}, {
+          _skipOfflineQueue: true,
+        } as object)
         .then((r) => r.data),
     onSuccess: (_, { id }) => {
       invalidateCreditNote(qc, id);
@@ -235,9 +238,11 @@ export function useReissueCreditNote() {
   >({
     mutationFn: ({ id, idempotencyKey, ...dto }) =>
       apiClient
+        // Online-only (see useVoidWithReversal): "Nothing was changed" on a network drop must be true.
         .post(`/credit-notes/${id}/reissue`, dto, {
           headers: { "Idempotency-Key": idempotencyKey },
-        })
+          _skipOfflineQueue: true,
+        } as object)
         .then((r) => r.data),
     onSuccess: (_, { id }) => {
       invalidateCreditNote(qc, id);

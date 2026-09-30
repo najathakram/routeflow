@@ -12,6 +12,7 @@ import {
 } from "../../../../lib/api/credit-notes";
 import { useAdminInvoice } from "../../../../lib/api/admin";
 import {
+  CREDIT_NOTE_REASON_MAX,
   type CreditNoteEditDraft,
   creditNoteDraftAmount,
   creditNoteLines,
@@ -115,6 +116,8 @@ export default function EditCreditNoteScreen() {
   };
 
   const busy = update.isPending || reissue.isPending;
+  // Mirrors web: only an ISSUED note's expiry is editable in place (a money change reissues instead).
+  const expiryEditable = cn.status === "ISSUED" || plan.kind === "reissue";
   const set = (patch: Partial<CreditNoteEditDraft>) =>
     setDraft((d) => (d ? { ...d, ...patch } : d));
 
@@ -164,13 +167,18 @@ export default function EditCreditNoteScreen() {
             Changing the amount voids {cn.creditNoteNumber} and issues a new credit note.
           </Text>
         ) : null}
-        {plan.kind === "reissue" && preview.data?.refusal ? (
-          <Text style={styles.error}>{preview.data.refusal}</Text>
+        {plan.kind === "reissue" && (preview.data?.refusalCode || preview.data?.refusal) ? (
+          <Text style={styles.error}>{refusalCopy(preview.data?.refusalCode)}</Text>
         ) : null}
       </FormSection>
       <FormSection title="Details">
         <FormField label="Reason">
-          <FormTextInput value={draft.reason} onChangeText={(t) => set({ reason: t })} multiline />
+          <FormTextInput
+            value={draft.reason}
+            onChangeText={(t) => set({ reason: t })}
+            maxLength={CREDIT_NOTE_REASON_MAX}
+            multiline
+          />
         </FormField>
         <FormField
           label="Expires"
@@ -182,6 +190,7 @@ export default function EditCreditNoteScreen() {
             onChangeText={(t) => set({ expiry: t.trim() })}
             placeholder="YYYY-MM-DD"
             keyboardType="numbers-and-punctuation"
+            editable={expiryEditable}
           />
         </FormField>
       </FormSection>

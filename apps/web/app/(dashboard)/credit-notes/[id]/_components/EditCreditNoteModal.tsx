@@ -89,6 +89,8 @@ export function EditCreditNoteModal({
     : newAmount !== roundMoney(Number(note.amount));
   const reasonChanged = reason.trim() !== (note.reason ?? "").trim();
   const expiryChanged = expiry !== toDateInput(note.expiresAt);
+  // A reason that was set can be changed but not blanked (the pre-edit UI always required one).
+  const reasonBlanked = reasonChanged && reason.trim() === "" && (note.reason ?? "").trim() !== "";
   // Same convention as the create form (credit-notes/page.tsx): the picked calendar date, as ISO.
   const expiryIso = expiry ? new Date(expiry).toISOString() : null;
   const invalidAmount =
@@ -230,7 +232,11 @@ export function EditCreditNoteModal({
           <Button variant="secondary" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
-          <Button onClick={onSave} loading={update.isPending} disabled={invalidAmount || busy}>
+          <Button
+            onClick={onSave}
+            loading={update.isPending}
+            disabled={invalidAmount || reasonBlanked || busy}
+          >
             {moneyChanged ? "Continue" : "Save"}
           </Button>
         </>
@@ -282,9 +288,15 @@ export function EditCreditNoteModal({
             id="cn-edit-reason"
             rows={2}
             value={reason}
+            maxLength={450}
             onChange={(e) => setReason(e.target.value)}
             className="w-full resize-none rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
+          {reasonBlanked && (
+            <p className="text-xs text-danger" data-testid="cn-edit-reason-required">
+              A reason is required.
+            </p>
+          )}
         </div>
         <div className="flex flex-col gap-1">
           <label htmlFor="cn-edit-expiry" className="text-sm font-medium text-navy">

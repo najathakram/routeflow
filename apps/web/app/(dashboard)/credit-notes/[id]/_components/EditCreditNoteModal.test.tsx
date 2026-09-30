@@ -122,6 +122,31 @@ describe("EditCreditNoteModal (#2648 / SA-535(c))", () => {
   const SECRET = "RAW SERVER TEXT cn=CN-2026-0042 cust=Acme Mart";
   const apiError = (code?: string) => ({ response: { data: { code, message: SECRET } } });
 
+  it("a reason can be changed but not blanked: Save is disabled with a 'required' hint; the box is bounded to 450", async () => {
+    const user = userEvent.setup();
+    open(note());
+    const dialog = within(await screen.findByRole("dialog"));
+    const box = dialog.getByLabelText("Reason");
+    expect(box).toHaveAttribute("maxlength", "450");
+
+    await user.clear(box);
+    expect(dialog.getByTestId("cn-edit-reason-required")).toBeInTheDocument();
+    expect(dialog.getByRole("button", { name: "Save" })).toBeDisabled();
+
+    await user.type(box, "Wrong item");
+    expect(dialog.queryByTestId("cn-edit-reason-required")).not.toBeInTheDocument();
+    expect(dialog.getByRole("button", { name: "Save" })).toBeEnabled();
+  });
+
+  it("a note that never had a reason can still be saved (only blanking a set reason is blocked)", async () => {
+    const user = userEvent.setup();
+    open(note({ reason: null as unknown as string, status: "ISSUED" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.type(dialog.getByLabelText(/Expires/), "2999-01-01");
+    expect(dialog.queryByTestId("cn-edit-reason-required")).not.toBeInTheDocument();
+    expect(dialog.getByRole("button", { name: "Save" })).toBeEnabled();
+  });
+
   it("a void-preview refusal shows FIXED copy for its code (never the server text) and blocks the reissue", async () => {
     previewData = {
       refusal: SECRET,

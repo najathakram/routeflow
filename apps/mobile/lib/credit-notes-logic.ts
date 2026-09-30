@@ -98,6 +98,8 @@ export interface CreditNoteEditDraft {
 }
 
 export interface CreditNoteEditSource {
+  /** ISSUED is the only status whose expiry can change in place (the server says 400 otherwise). */
+  status?: string;
   amount: number | string;
   reason?: string | null;
   expiresAt?: string | null;
@@ -117,6 +119,9 @@ export type CreditNoteEditPlan =
         expiresAt?: string | null;
       };
     };
+
+/** The server bound on a credit note reason (PATCH and reissue DTOs). */
+export const CREDIT_NOTE_REASON_MAX = 450;
 
 const cents = (n: number | string | null | undefined) => roundMoney(Number(n ?? 0));
 
@@ -152,6 +157,21 @@ export function planCreditNoteEdit(
   const reasonChanged = reason !== (note.reason ?? "").trim();
   const oldExpiry = note.expiresAt ? note.expiresAt.slice(0, 10) : "";
   const expiryChanged = draft.expiry !== oldExpiry;
+
+  // Mirrors web: a reason that was set can be changed but not blanked, and is bounded (server max 450).
+  if (reasonChanged && reason === "" && (note.reason ?? "").trim() !== "")
+    return { kind: "invalid", message: "A reason is required." };
+  if (reason.length > CREDIT_NOTE_REASON_MAX)
+    return {
+      kind: "invalid",
+      message: `The reason can be at most ${CREDIT_NOTE_REASON_MAX} characters.`,
+    };
+  // Mirrors web: the expiry field is locked on a non-ISSUED note unless the amount is being changed.
+  if (expiryChanged && !moneyChanged && note.status && note.status !== "ISSUED")
+    return {
+      kind: "invalid",
+      message: "The expiry can only be changed while the credit note is unused.",
+    };
 
   if (draft.expiry && !/^\d{4}-\d{2}-\d{2}$/.test(draft.expiry))
     return { kind: "invalid", message: "Enter the expiry as YYYY-MM-DD, or leave it empty." };

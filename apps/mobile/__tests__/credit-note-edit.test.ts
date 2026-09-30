@@ -8,6 +8,7 @@ import { join } from "path";
 import {
   type CreditNoteEditDraft,
   creditNoteDraftAmount,
+  CREDIT_NOTE_REASON_MAX,
   planCreditNoteEdit,
   reissueConfirmMessage,
 } from "../lib/credit-notes-logic";
@@ -109,6 +110,47 @@ describe("reissueConfirmMessage", () => {
   });
 });
 
+describe("planCreditNoteEdit guards mirror web (#2418 U1)", () => {
+  it("a set reason can be changed but not blanked; a never-set reason is fine", () => {
+    expect(planCreditNoteEdit(note, draft({ reason: "   " }))).toEqual({
+      kind: "invalid",
+      message: "A reason is required.",
+    });
+    const noReason = { ...note, reason: null as string | null };
+    expect(planCreditNoteEdit(noReason, draft({ reason: "", expiry: FUTURE }))).toMatchObject({
+      kind: "patch",
+    });
+  });
+
+  it("the reason is bounded to the server's 450", () => {
+    expect(
+      planCreditNoteEdit(note, draft({ reason: "x".repeat(CREDIT_NOTE_REASON_MAX) })),
+    ).toMatchObject({
+      kind: "patch",
+    });
+    expect(
+      planCreditNoteEdit(note, draft({ reason: "x".repeat(CREDIT_NOTE_REASON_MAX + 1) })),
+    ).toMatchObject({
+      kind: "invalid",
+    });
+  });
+
+  it("the expiry is locked on a non-ISSUED note unless the amount is being changed", () => {
+    const applied = { ...note, status: "APPLIED" };
+    expect(planCreditNoteEdit(applied, draft({ expiry: FUTURE }))).toMatchObject({
+      kind: "invalid",
+    });
+    expect(planCreditNoteEdit(applied, draft({ expiry: FUTURE, amount: 20 }))).toMatchObject({
+      kind: "reissue",
+    });
+    expect(
+      planCreditNoteEdit({ ...note, status: "ISSUED" }, draft({ expiry: FUTURE })),
+    ).toMatchObject({
+      kind: "patch",
+    });
+  });
+});
+
 describe("Edit credit note wiring (#2648)", () => {
   const read = (p: string) => readFileSync(join(__dirname, "..", p), "utf8");
   const detail = read("app/(operator)/credit-notes/[id].tsx");
@@ -136,5 +178,24 @@ describe("Edit credit note wiring (#2648)", () => {
     expect(api).toMatch(
       /\.post\(`\/credit-notes\/\$\{id\}\/reissue`, dto, \{\s*headers: \{ "Idempotency-Key": idempotencyKey \}/,
     );
+  });
+  it("the reissue and the void-with-reversal are online-only: never offline-queued (#2418 U1)", () => {
+    expect(api).toMatch(
+      /\.post\(`\/credit-notes\/\$\{id\}\/reissue`, dto, \{\s*headers: \{[^}]*\},\s*_skipOfflineQueue: true,?\s*\}/,
+    );
+    expect(api).toMatch(
+      /\.post\(`\/credit-notes\/\$\{id\}\/void-with-reversal`, [^)]*\{\s*_skipOfflineQueue: true,?\s*\}/,
+    );
+  });
+
+  it("no screen renders the server's refusal text: only refusalCode via fixed copy", () => {
+    for (const src of [edit, detail]) {
+      // `.refusal` may be tested for truthiness but never rendered or toasted (`.refusalCode` is fine).
+      expect(src).not.toMatch(/\{\s*[\w.?]*\.refusal\s*\}/);
+      expect(src).not.toMatch(/showToast\(\s*[\w.?]*\.refusal\b(?!Code)/);
+      expect(src).not.toMatch(/data\??\.message/);
+    }
+    expect(edit).toContain("refusalCopy(preview.data?.refusalCode)");
+    expect(detail).toContain("refusalCopy(voidPreview.data.refusalCode)");
   });
 });
