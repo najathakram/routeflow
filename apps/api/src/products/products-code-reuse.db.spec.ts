@@ -302,8 +302,9 @@ describeDb("SA-603a code release, lazy reuse, restore and name rule — real Pos
       service.update(a.id, { isActive: true, deactivateHolderIds: [bystander.id] } as any),
     ).catch((e) => e);
     expect(bad.getResponse()).toMatchObject({
-      code: "HOLDERS_CHANGED",
-      holders: [{ productId: holder.id }],
+      code: "CODE_TAKEN",
+      productId: holder.id,
+      holders: [{ productId: holder.id, field: "sku", value: "DR-1" }],
     });
     expect(await fresh(holder.id)).toMatchObject({ isActive: true, sku: "DR-1" });
     expect(await fresh(a.id)).toMatchObject({ isActive: false, retiredSku: "DR-1" });
