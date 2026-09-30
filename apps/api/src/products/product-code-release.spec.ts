@@ -68,7 +68,8 @@ function makeTx(seed: { products: ProductRow[]; barcodes?: BarcodeRow[] }) {
   const audits: Array<{ data: Record<string, unknown> }> = [];
   const matchesWhere = (row: Record<string, unknown>, where: Record<string, unknown>): boolean =>
     Object.entries(where).every(([k, v]) => {
-      if (k === "OR") return (v as Array<Record<string, unknown>>).some((w) => matchesWhere(row, w));
+      if (k === "OR")
+        return (v as Array<Record<string, unknown>>).some((w) => matchesWhere(row, w));
       return matchesValue(row[k], v);
     });
   const tx = {
@@ -107,7 +108,10 @@ function makeTx(seed: { products: ProductRow[]; barcodes?: BarcodeRow[] }) {
       }),
       update: jest.fn(({ where, data }: { where: { id: string }; data: Partial<BarcodeRow> }) => {
         calls.push(`productBarcode.update:${where.id}`);
-        Object.assign(barcodes.find((b) => b.id === where.id)!, data);
+        Object.assign(
+          barcodes.find((b) => b.id === where.id)!,
+          data,
+        );
         return Promise.resolve({});
       }),
     },
@@ -302,7 +306,9 @@ describe("claimCodes (create / update / reactivate collide with a holder)", () =
         actorId: ACTOR,
         codes: [{ field: "unitSku", value: "U7" }],
       }),
-    ).rejects.toMatchObject({ response: { code: "CODE_TAKEN", field: "unitSku", productId: "h1" } });
+    ).rejects.toMatchObject({
+      response: { code: "CODE_TAKEN", field: "unitSku", productId: "h1" },
+    });
   });
 });
 
@@ -342,7 +348,13 @@ describe("restoreProductCodes (reactivate)", () => {
     await expect(
       restoreProductCodes(tx, { tenantId: T, productId: "p1", actorId: ACTOR }),
     ).rejects.toMatchObject({
-      response: { code: "CODE_TAKEN", field: "sku", value: "S1", productId: "h1", productName: "New Holder" },
+      response: {
+        code: "CODE_TAKEN",
+        field: "sku",
+        value: "S1",
+        productId: "h1",
+        productName: "New Holder",
+      },
     });
     expect(tx.products[0]).toMatchObject({ sku: null, retiredSku: "S1" });
   });
