@@ -201,7 +201,13 @@ describe("OrdersService.findOne — credit payments carry their credit note (#24
     await service.findOne("ord-1", operatorPayload);
     const include = prisma.order.findUnique.mock.calls[0][0].include;
     expect(include.invoices.select.payments.select).toEqual(
-      expect.objectContaining({ id: true, amount: true, creditNoteId: true, autoApplied: true }),
+      expect.objectContaining({
+        id: true,
+        amount: true,
+        creditNoteId: true,
+        autoApplied: true,
+        createdAt: true,
+      }),
     );
   });
 });
