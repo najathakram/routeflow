@@ -112,7 +112,10 @@ import {
 import { assertNsfLinesUntaxed } from "./nsf-line-tax-guard";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
-import { assertNoUnspentSourcedCredits } from "../credit-notes/sourced-credit-guard";
+import {
+  assertNoUnspentSourcedCredits,
+  unlinkSourcedCredits,
+} from "../credit-notes/sourced-credit-guard";
 import { MessagingService } from "../messaging/messaging.service";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
@@ -5227,12 +5230,12 @@ export class InvoicesService {
       // items are deleted (the ledger keeps its own snapshot; append-only, no FK).
       await this.ledger.reverseInvoiceEntries({ invoiceId: id, db: tx });
 
-      // Unlink the remaining (closed: spent, VOID or expired) credit notes this invoice sourced;
-      // open ones were refused above.
-      await tx.creditNote.updateMany({
-        where: { invoiceId: id },
-        data: { invoiceId: null },
-      });
+      // Unlink the remaining (closed) credit notes this invoice sourced, marking each (#2848).
+      await unlinkSourcedCredits(
+        tx,
+        [{ id, invoiceNumber: inv.invoiceNumber }],
+        this.prisma.getTenantId(),
+      );
 
       // Delete line items
       await tx.invoiceItem.deleteMany({ where: { invoiceId: id } });

@@ -14,6 +14,7 @@ import { IdempotencyService } from "../common/idempotency.service";
 import { tenantTimeZone } from "../common/tenant-time-zone";
 import { retryOnTxConflict, txConflictState } from "../common/tx-retry";
 import { CreditNotesService } from "./credit-notes.service";
+import { SOURCE_DELETED_MESSAGE, hasSourceDeletedMarker } from "./sourced-credit-guard";
 
 export interface ReissueInput {
   amount: number;
@@ -45,7 +46,6 @@ const STATE_REFUSAL =
 /** SA-608c: a note with no source invoice (born standalone, or orphaned by deleteInvoice). */
 const NO_SOURCE_CAP =
   "A credit note without a source invoice can't be increased; issue a separate credit.";
-const SOURCE_DELETED = "This credit's source invoice was deleted; it can't be edited.";
 
 /** A carried reason from an earlier reissue loses its own "Replaces …" prefix (no chains). */
 const REPLACES_PREFIX = /^Replaces CN-\S+(?: — )?/;
@@ -139,12 +139,15 @@ export class CreditNoteReissueService {
     );
     if (consumed) throw new ConflictException(consumed);
 
+    // #2848: a durable SOURCE_DELETED marker (written by every invoice-destroying door) refuses the
+    // note entirely: no reissue, at any amount.
+    if (await hasSourceDeletedMarker(db, id)) throw new ConflictException(SOURCE_DELETED_MESSAGE);
     // SA-608c (b): no invoice but line rows = its source was deleted (the rows survive); a reissue
     // would silently drop the split, so it is refused. (a): every no-invoice note is capped at its
     // own amount, so an edit can never create value the note did not already hold.
     if (!old.invoiceId) {
       const lineRows = await db.creditNoteItem.count({ where: { creditNoteId: id } });
-      if (lineRows > 0) throw new ConflictException(SOURCE_DELETED);
+      if (lineRows > 0) throw new ConflictException(SOURCE_DELETED_MESSAGE);
       if (roundMoney(Number(dto.amount)) > roundMoney(Number(old.amount)) + 0.001)
         throw new ConflictException(NO_SOURCE_CAP);
     }

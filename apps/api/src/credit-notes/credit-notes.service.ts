@@ -18,6 +18,7 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { NumberingService } from "../import/numbering.service";
 import { retryOnTxConflict, txConflictState } from "../common/tx-retry";
 import { blockedPairs, clearApplyBlocks, pairKey, writeApplyBlocks } from "./apply-block";
+import { SOURCE_DELETED_MESSAGE, hasSourceDeletedMarker } from "./sourced-credit-guard";
 import {
   CREDIT_NOT_APPLICABLE,
   CREDIT_SETTLE_EXCLUDED,
@@ -1946,6 +1947,9 @@ export class CreditNotesService {
             throw new BadRequestException("expiresAt must be a valid ISO date");
         }
         if (!sameDate(cn.expiresAt ?? null, next)) {
+          // #2848: an expiry change could revive an orphan's value; refused once its source is gone.
+          if (await hasSourceDeletedMarker(tx, id))
+            throw new ConflictException(SOURCE_DELETED_MESSAGE);
           if (cn.status !== "ISSUED")
             throw new BadRequestException(
               "expiresAt can only be changed while the credit note is ISSUED",
