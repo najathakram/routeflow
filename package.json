@@ -69,7 +69,9 @@
     "plane:apply": "node scripts/campaign/plane-apply.mjs",
     "plane:doctor": "node scripts/campaign/plane-doctor.mjs",
     "plane:retro": "node scripts/campaign/plane-retro.mjs",
-    "work:plane-release": "node scripts/work/plane-release-sync.mjs"
+    "work:plane-release": "node scripts/work/plane-release-sync.mjs",
+    "control": "node apps/control/bin/ctl.mjs serve",
+    "ctl": "node apps/control/bin/ctl.mjs"
   },
   "devDependencies": {
     "@bcoe/v8-coverage": "^0.2.3",
