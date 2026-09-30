@@ -87,6 +87,8 @@ interface Fx {
   P: any;
   V1: any;
   V2: any;
+  /** a sellable variant that is NOT on the past order: the positive control for the suggested rail */
+  V3: any;
   /** standalone */
   S: any;
   orderId: string;
@@ -336,6 +338,15 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
       variantName: "Lime",
       category: "Acme Family",
     });
+    // Positive control (Opus #2856 r2): sellable, in a rail-eligible category, NOT on the past order, so it is the one
+    // product the "suggested" rail can show (P, the FAMILY container, never can).
+    const V3 = await mkProduct(`Acme Soda Mango ${run}`, {
+      skuTag: "V3",
+      kind: "VARIANT",
+      parentProductId: P.id,
+      variantName: "Mango",
+      category: "Acme Family",
+    });
     const S = await mkProduct(`Acme Crackers ${run}`, {
       skuTag: "S",
       category: "Acme Solo",
@@ -399,6 +410,7 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
       P,
       V1,
       V2,
+      V3,
       S,
       orderId: order.id,
       invoiceId: invoice.id,
@@ -527,8 +539,10 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
         expect(stub).not.toHaveProperty("buyerPrice");
       }
     }
-    // P is the only product in a rail-eligible category that is not on the order.
-    if (id === f.P.id) expect(v.suggested.has(id)).toBe(visible);
+    // V3 is the ONLY sellable product in a rail-eligible category that is not on the order: suggested when visible, absent
+    // when it or its parent is hidden. P (the FAMILY container) never appears there.
+    if (id === f.V3.id) expect(v.suggested.has(id)).toBe(visible);
+    if (id === f.P.id) expect(v.suggested.has(id)).toBe(false);
   }
 
   async function expectProbe(f: Fx, p: any, visibleIn: boolean, write = false) {
@@ -553,10 +567,10 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
   it("(a) all visible: every buyer read includes the variants and the standalone product (P, the FAMILY container, never)", async () => {
     const f = await seedTenant("a-all");
     const v = await buyerView(f);
-    for (const p of [f.P, f.V1, f.V2, f.S]) expectSurfaces(f, v, p, true);
-    expect(v.counts.total).toBe(3); // V1, V2, S (the FAMILY parent P is not sellable)
+    for (const p of [f.P, f.V1, f.V2, f.V3, f.S]) expectSurfaces(f, v, p, true);
+    expect(v.counts.total).toBe(4); // V1, V2, V3, S (the FAMILY parent P is not sellable)
     expect(v.countCategoryNames.sort()).toEqual(["Acme Family", "Acme Solo"]);
-    expect(v.counts.categories.find((c: any) => c.name === "Acme Family")?.count).toBe(2);
+    expect(v.counts.categories.find((c: any) => c.name === "Acme Family")?.count).toBe(3);
     expect([...v.categories].sort()).toEqual(["Acme Family", "Acme Solo"]);
     // Point reads + the two writes (positive control that the harness can subscribe / favourite).
     await expectProbe(f, f.S, true, true);
@@ -572,8 +586,8 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
 
     const v = await buyerView(f);
     expectSurfaces(f, v, f.S, false);
-    for (const p of [f.P, f.V1, f.V2]) expectSurfaces(f, v, p, true);
-    expect(v.counts.total).toBe(2);
+    for (const p of [f.P, f.V1, f.V2, f.V3]) expectSurfaces(f, v, p, true);
+    expect(v.counts.total).toBe(3);
     expect(v.countCategoryNames).toEqual(["Acme Family"]); // S was the only "Acme Solo" product
     expect(v.categories).toEqual(["Acme Family"]);
 
@@ -596,12 +610,12 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
     expect(variantFlags.map((r) => r.portalVisible)).toEqual([true, true]); // no cascade write
 
     const hidden = await buyerView(f);
-    for (const p of [f.P, f.V1, f.V2]) expectSurfaces(f, hidden, p, false);
+    for (const p of [f.P, f.V1, f.V2, f.V3]) expectSurfaces(f, hidden, p, false);
     expectSurfaces(f, hidden, f.S, true);
     expect(hidden.counts.total).toBe(1);
     expect(hidden.categories).toEqual(["Acme Solo"]);
     expect(hidden.countCategoryNames).toEqual(["Acme Solo"]);
-    for (const p of [f.P, f.V1, f.V2]) {
+    for (const p of [f.P, f.V1, f.V2, f.V3]) {
       // eslint-disable-next-line no-await-in-loop
       await expectProbe(f, p, false, true);
       // eslint-disable-next-line no-await-in-loop
@@ -611,8 +625,8 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
 
     await setOne(f, f.P.id, true);
     const back = await buyerView(f);
-    for (const p of [f.P, f.V1, f.V2, f.S]) expectSurfaces(f, back, p, true);
-    expect(back.counts.total).toBe(3);
+    for (const p of [f.P, f.V1, f.V2, f.V3, f.S]) expectSurfaces(f, back, p, true);
+    expect(back.counts.total).toBe(4);
     await expectProbe(f, f.V1, true);
     await expectProbe(f, f.V2, true);
   });
@@ -624,8 +638,8 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
     await setOne(f, f.V1.id, false);
     const v = await buyerView(f);
     expectSurfaces(f, v, f.V1, false);
-    for (const p of [f.P, f.V2, f.S]) expectSurfaces(f, v, p, true);
-    expect(v.counts.total).toBe(2);
+    for (const p of [f.P, f.V2, f.V3, f.S]) expectSurfaces(f, v, p, true);
+    expect(v.counts.total).toBe(3);
     await expectProbe(f, f.V1, false, true);
     await expectProbe(f, f.V2, true);
     await expectProbe(f, f.P, true);
@@ -799,7 +813,7 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
     const aView = await buyerView(a);
     expect(aView.counts.total).toBe(0);
     const bAfter = await buyerView(b);
-    expect(bAfter.counts.total).toBe(3);
+    expect(bAfter.counts.total).toBe(4);
     expect(bAfter.list).toEqual(bBefore.list);
     expect(bAfter.categories).toEqual(bBefore.categories);
     for (const p of [b.P, b.V1, b.V2, b.S]) expectSurfaces(b, bAfter, p, true);
