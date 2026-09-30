@@ -1,5 +1,7 @@
 import { Module } from "@nestjs/common";
 import { ProductsController } from "./products.controller";
+import { ProductPortalVisibilityController } from "./product-portal-visibility.controller";
+import { ProductPortalVisibilityService } from "./product-portal-visibility.service";
 import { ProductsService } from "./products.service";
 import { ProductUnitsController } from "./product-units.controller";
 import { ProductUnitsService } from "./product-units.service";
@@ -13,8 +15,13 @@ import { GatewaysModule } from "../gateways/gateways.module";
 
 @Module({
   imports: [AuthModule, StorageModule, BillingModule, SystemConfigModule, GatewaysModule],
-  controllers: [ProductsController, ProductUnitsController, RecipesController],
-  providers: [ProductsService, ProductUnitsService, RecipesService],
+  controllers: [
+    ProductPortalVisibilityController,
+    ProductsController,
+    ProductUnitsController,
+    RecipesController,
+  ],
+  providers: [ProductsService, ProductPortalVisibilityService, ProductUnitsService, RecipesService],
   exports: [ProductsService],
 })
 export class ProductsModule {}

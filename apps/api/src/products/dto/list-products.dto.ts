@@ -34,6 +34,17 @@ export class ListProductsDto {
   // @Min(1)@Max(200) rejected all of those with 400, leaving pickers empty.
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(10000) limit?: number;
   @IsOptional() @Transform(({ value }) => value === "true") @IsBoolean() includeVariants?: boolean;
+  /** Staff "Hidden from portal" filter: false = hidden only, true = visible only, absent = all. */
+  @IsOptional()
+  @Transform(({ value }) =>
+    value === "true" || value === true
+      ? true
+      : value === "false" || value === false
+        ? false
+        : value,
+  )
+  @IsBoolean()
+  portalVisible?: boolean;
 
   /** Regulated-section filter: "any" (any regulated), "none" (non-regulated), or a section id. */
   @IsOptional()

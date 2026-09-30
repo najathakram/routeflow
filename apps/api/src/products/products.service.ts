@@ -334,6 +334,7 @@ export class ProductsService {
     if (query.category) where.category = query.category;
     if (query.isActive !== undefined) where.isActive = query.isActive;
     if (query.isTobacco !== undefined) where.isTobacco = query.isTobacco;
+    if (query.portalVisible !== undefined) where.portalVisible = query.portalVisible;
     // W7 buyer gate: exclude regulated categories the buyer isn't licensed for (set
     // internally by BuyerCatalogService — never from buyer input). In the query so
     // pagination counts stay correct.
@@ -404,7 +405,7 @@ export class ProductsService {
     // relations) so this is cheap. variants{} is still gated behind
     // includeVariants since it materially expands the payload.
     const includeRelations = {
-      parent: { select: { id: true, name: true } },
+      parent: { select: { id: true, name: true, portalVisible: true } },
       // #2717 M1 (SA-572b Q5): additive barcodes[] on the list too (rows, else synthesized below).
       barcodes: { orderBy: { level: "asc" as const } },
       ...(query.includeVariants
