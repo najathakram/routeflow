@@ -2655,7 +2655,8 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       // that money back before its payment rows are destroyed with the bill.
       await this.refundDrawnSupplierCredits(tx, id);
       await tx.billPayment.deleteMany({ where: { vendorBillId: id } });
-      // Parent-scoped, like update(): legacy lines carry a NULL tenantId a child-scoped delete can't see.
+      // Parent-scoped like update() (consistency, and defensive: the FK already cascades, but a
+      // child-scoped delete would miss NULL-tenant legacy lines).
       await tx.vendorBill.update({ where: { id }, data: { items: { deleteMany: {} } } });
       await tx.vendorBill.delete({ where: { id } });
     });
