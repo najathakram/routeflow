@@ -45,9 +45,10 @@ export function findRawStringSites(text: string): RawHit[] {
   const aliases = new Set<string>();
   for (const m of text.matchAll(/\b(?:const|let|var)\s+(\w+)\s*(?::[^=;]+)?=([^;]*);/g)) {
     const expr = m[2].replace(/\s+/g, "");
-    // A function-valued const, or a value derived through match/replace/test/includes/startsWith,
-    // is a computation, not the raw text itself.
-    if (/=>|function|\.(match|replace|test|includes|startsWith|slice)\(/.test(expr)) continue;
+    // A function-valued const, or a value reduced to a boolean/extracted group through
+    // match/test/includes/startsWith, is a computation, not the raw text itself. slice/replace
+    // still yield raw text, so they are NOT excluded.
+    if (/=>|function|\.(match|test|includes|startsWith)\(/.test(expr)) continue;
     if (
       /response\??\.data\??\.(message|error)/.test(expr) ||
       /(^|[.?])lastError\b/.test(expr) ||
@@ -116,6 +117,19 @@ describe("findRawStringSites — planted-fixture pins (#1965)", () => {
     expect(
       findRawStringSites("const m = err.message;\nreturn <p>{m}</p>;").map((h) => h.chain),
     ).toEqual(["m"]);
+  });
+
+  it("flags an alias derived through slice/replace (truncating or rewriting raw text is still raw text)", () => {
+    expect(
+      findRawStringSites("const m = err.message.slice(0, 200);\nreturn <p>{m}</p>;").map(
+        (h) => h.chain,
+      ),
+    ).toEqual(["m"]);
+    expect(
+      findRawStringSites("const t = err.message.replace(/x/g, '');\nreturn <p>{t}</p>;").map(
+        (h) => h.chain,
+      ),
+    ).toEqual(["t"]);
   });
 
   it("does not flag an alias that is only tested or logged, never interpolated", () => {

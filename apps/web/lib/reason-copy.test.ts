@@ -72,6 +72,13 @@ describe("reason-copy: run failures, return reasons, save errors (#1965)", () =>
     expect(r.text).not.toMatch(/is not billed/); // our own fixed wording, not the server's
   });
 
+  it("describeRunFailure: a restricted product name containing parentheses is kept whole", () => {
+    const r = describeRunFailure(
+      "Suspended: a line is under a selling restriction (Acme Soda (12 oz), Acme Gadget). Fix the template and reactivate it; the skipped cycle is not billed.",
+    );
+    expect(r.text).toContain("(Acme Soda (12 oz), Acme Gadget)");
+  });
+
   it("describeRunFailure keys off the shared RUN_UNFINALIZED_PREFIX constant (REG-B106, no copied string)", () => {
     expect(describeRunFailure(`${RUN_UNFINALIZED_PREFIX} (invoice 1): x`).retryable).toBe(false);
   });

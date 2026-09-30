@@ -1,3 +1,5 @@
+import { RUN_UNFINALIZED_PREFIX } from "./api/invoices";
+
 /**
  * PLACEHOLDER closed sets for the email-delivery health strip. The authoritative `EmailReasonCode`
  * Prisma enum (+ its `X_VALUES` mirror in `packages/types/api/enums.ts`, L-072) ships with the
@@ -80,8 +82,6 @@ export function deliveryFixTarget(link: string): { label: string; href: string }
 
 // ─── Recurring invoice run failures ──────────────────────────────────────────
 
-import { RUN_UNFINALIZED_PREFIX } from "./api/invoices";
-
 const RUN_SUSPENDED = "Suspended:";
 
 /**
@@ -98,7 +98,8 @@ export function describeRunFailure(lastError: string): { text: string; retryable
   }
   if (lastError.startsWith(RUN_SUSPENDED)) {
     // The restricted product lines are tenant data (not provider text): keep naming them.
-    const names = lastError.match(/selling restriction \(([^)]*)\)/)?.[1];
+    // Names may themselves contain parentheses ("Soda (12 oz)"), so stop at the ")." that ends the list.
+    const names = lastError.match(/selling restriction \((.*?)\)\. /)?.[1];
     return {
       text: `Paused because a line is under a selling restriction${names ? ` (${names})` : ""}. Fix the template and reactivate it; the skipped cycle isn't billed.`,
       retryable: true,
