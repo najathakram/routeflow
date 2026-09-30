@@ -228,3 +228,78 @@ describe("settleStockForEdit — same code, lines[] added, legacy top-level fiel
     expect((err.getResponse() as any).code).toBe("INSUFFICIENT_STOCK");
   });
 });
+
+// B920 — the buyer oversell check is per PRODUCT, not per LINE: two lines of one product that
+// each fit in stock but together exceed it must 409 once, with ONE lines[] entry for the product.
+describe("B920 — lines of the same product are summed before the oversell check", () => {
+  const line = (qty: number, productId = "mango") => ({ productId, qty });
+
+  it("two lines of 3 against 5 on hand: a customer gets the coded 409, one lines[] entry {5, 6}, nothing written", async () => {
+    const tx = fakeTx([mango()]);
+    const err = await caught(() =>
+      decrementStockForSale(deps, tx, [line(3), line(3)], false, event),
+    );
+    const body = err.getResponse() as any;
+    expect(body.code).toBe("INSUFFICIENT_STOCK");
+    expect(body.lines).toEqual([
+      { productId: "mango", name: "Mango 5ct", available: 5, requested: 6 },
+    ]);
+    expect(body.message).toMatch(/Mango 5ct \(available: 5, requested: 6\)/);
+    expect(tx.$queryRaw).not.toHaveBeenCalled();
+    expect(tx.stockMovement.create).not.toHaveBeenCalled();
+  });
+
+  it("reports one entry per SHORT product, in first-seen order, when lines repeat", async () => {
+    const err = await caught(() =>
+      decrementStockForSale(
+        deps,
+        fakeTx([mango(), lime()]),
+        [line(3), line(1, "lime"), line(3)],
+        false,
+        event,
+      ),
+    );
+    const { lines } = err.getResponse() as any;
+    expect(lines.map((l: any) => [l.productId, l.available, l.requested])).toEqual([
+      ["mango", 5, 6],
+      ["lime", 0, 1],
+    ]);
+  });
+
+  it("lines that together fit exactly (2 + 3 of 5) are accepted and stock hits 0", async () => {
+    const products = [mango()];
+    await expect(
+      decrementStockForSale(deps, fakeTx(products), [line(2), line(3)], false, event),
+    ).resolves.toBeUndefined();
+    expect(products[0].currentStock).toBe(0);
+  });
+
+  it("staff behaviour is unchanged: two lines of 3 against 5 oversell with ONE warning naming the product total", async () => {
+    const products = [mango()];
+    await expect(
+      decrementStockForSale(deps, fakeTx(products), [line(3), line(3)], true, event),
+    ).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toMatch(/Mango 5ct \(available: 5, requested: 6\)/);
+    expect(products[0].currentStock).toBe(-1);
+  });
+
+  it("the edit path already sums per product: an edit adding two lines of 3 against 5 gives one entry {5, 6}", async () => {
+    const order = { id: "o-1", status: "PENDING" };
+    const l = (qty: number) => ({
+      productId: "mango",
+      qty,
+      boxes: null,
+      pieces: null,
+      unitsPerBox: null,
+    });
+    const err = await caught(() =>
+      settleStockForEdit(deps, fakeTx([mango()]), order, [], [l(3), l(3)], {
+        role: UserRole.CUSTOMER,
+      } as any),
+    );
+    expect((err.getResponse() as any).lines).toEqual([
+      { productId: "mango", name: "Mango 5ct", available: 5, requested: 6 },
+    ]);
+  });
+});
