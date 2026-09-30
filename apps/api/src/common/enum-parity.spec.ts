@@ -238,7 +238,7 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // packages/types/api/onboarding.ts + their `ENUM_TABLE` rows above (102 → 104).
 // Triage for HandoffRealm (#2653, 2026-09-28): one brand-new Prisma enum (migration
 // 20260929190000_2653_auth_handoff_code), mirrored immediately as HANDOFF_REALM_VALUES in
-// packages/types/api/enums.ts + its `ENUM_TABLE` row above (109 → 110, after M1's four and M2's RecipeStatus).
+// packages/types/api/enums.ts + its `ENUM_TABLE` row above (110 → 111, after M1's four, M2's RecipeStatus and M3's CompositionMode).
 
 // Triage for ProductKind + PackagingLevel + BarcodeSymbology + BarcodeOrigin (#2717 M1, SA-572a,
 // #2728 P1, 2026-09-28): four brand-new Prisma enums (migration
@@ -248,7 +248,7 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // Triage for RecipeStatus (#2717 M2, SA-574, 2026-09-29): one brand-new Prisma enum (migration
 // 20260929120000_2717_m2_recipes) — mirrored immediately as `RECIPE_STATUS_VALUES` in
 // packages/types/api/enums.ts + its `ENUM_TABLE` row above (108 → 109).
-const PINNED_PRISMA_ENUM_COUNT = 110;
+const PINNED_PRISMA_ENUM_COUNT = 111;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {
