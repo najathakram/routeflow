@@ -15,7 +15,7 @@ export function portalBadge(row: PortalVisibilityRow): PortalBadge {
 }
 
 export const PORTAL_BADGE_LABEL: Record<Exclude<PortalBadge, null>, string> = {
-  hidden: "Hidden",
+  hidden: "Hidden from portal",
   "hidden-by-parent": "Hidden by parent",
 };
 
@@ -28,6 +28,10 @@ export function portalVisibleFilterParam(hiddenOnly: boolean): { portalVisible?:
 export function canBulkSetPortalVisibility(role: string | undefined, selectedCount: number) {
   return role === "TENANT_ADMIN" && selectedCount > 0;
 }
+
+/** The server caps one bulk call at 200 ids; past that the UI says so instead of surfacing a raw 400. */
+export const BULK_PORTAL_MAX = 200;
+export const bulkPortalTooMany = (selectedCount: number) => selectedCount > BULK_PORTAL_MAX;
 
 export function bulkPortalPayload(selected: Iterable<string>, portalVisible: boolean) {
   return { ids: Array.from(selected), portalVisible };

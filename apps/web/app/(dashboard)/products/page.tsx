@@ -1026,6 +1026,7 @@ export default function ProductsPage() {
     stockFilter,
     sectionFilter,
     pageSize,
+    hiddenOnly,
   ]);
 
   // REG-B154: the selection Set used to accumulate across page/search/category/
@@ -1488,6 +1489,7 @@ export default function ProductsPage() {
                     setSearch("");
                     setCategoryFilter("");
                     setStockFilter("");
+                    setHiddenOnly(false);
                     setUrlFilter("section", "");
                   }}
                 >

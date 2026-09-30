@@ -6,7 +6,9 @@ import { Badge, Button, useToast } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
 import { useBulkSetPortalVisibility } from "@/lib/api/product-portal-visibility";
 import {
+  BULK_PORTAL_MAX,
   bulkPortalPayload,
+  bulkPortalTooMany,
   canBulkSetPortalVisibility,
   portalBadge,
   PORTAL_BADGE_LABEL,
@@ -57,6 +59,7 @@ export function PortalBulkButtons({
   const { toast } = useToast();
   const bulk = useBulkSetPortalVisibility();
   if (!canBulkSetPortalVisibility(role, selected.size)) return null;
+  const tooMany = bulkPortalTooMany(selected.size);
   const run = (portalVisible: boolean) =>
     bulk.mutate(bulkPortalPayload(selected, portalVisible), {
       onSuccess: (res) => {
@@ -69,9 +72,15 @@ export function PortalBulkButtons({
     });
   return (
     <>
+      {tooMany && (
+        <span className="text-xs text-amber-700" data-testid="portal-bulk-limit">
+          Select up to {BULK_PORTAL_MAX} products to hide or show ({selected.size} selected).
+        </span>
+      )}
       <Button
         variant="secondary"
         leftIcon={<EyeOff className="h-4 w-4" />}
+        disabled={tooMany}
         loading={bulk.isPending}
         data-testid="portal-bulk-hide"
         onClick={() => run(false)}
@@ -81,6 +90,7 @@ export function PortalBulkButtons({
       <Button
         variant="secondary"
         leftIcon={<Eye className="h-4 w-4" />}
+        disabled={tooMany}
         loading={bulk.isPending}
         data-testid="portal-bulk-show"
         onClick={() => run(true)}

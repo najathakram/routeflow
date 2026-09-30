@@ -11,6 +11,8 @@ jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
   useAuth: () => ({ user: { role } }),
 }));
+let flag = { enabled: true, resolved: true, failed: false };
+jest.mock("@/lib/api/plan-flags", () => ({ usePlanFlag: () => flag }));
 jest.mock("@/lib/api/product-portal-visibility", () => ({
   useSetProductPortalVisibility: (id: string) => hookFactory(id),
   useBulkSetPortalVisibility: () => ({ mutate: jest.fn(), isPending: false }),
@@ -26,6 +28,7 @@ const render = (props: Record<string, unknown> = {}) =>
 beforeEach(() => {
   jest.clearAllMocks();
   role = "TENANT_ADMIN";
+  flag = { enabled: true, resolved: true, failed: false };
 });
 
 describe("ProductPortalVisibilityCard", () => {
@@ -52,5 +55,28 @@ describe("ProductPortalVisibilityCard", () => {
     expect(screen.getByText("Hidden by parent")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("switch"));
     expect(mutate).toHaveBeenCalledWith({ portalVisible: false });
+  });
+
+  it("off state shows the owner's caption: staff can still add it to orders", () => {
+    render({ portalVisible: false });
+    expect(screen.getByTestId("portal-visibility-caption")).toHaveTextContent(
+      "Hidden from your online shop. Your team can still add it to orders.",
+    );
+  });
+
+  it("an operator's view of a variant under a hidden parent says 'Hidden by parent', never 'Visible'", () => {
+    role = "OPERATOR";
+    render({ parent: { portalVisible: false } });
+    expect(screen.getByTestId("portal-visibility-status")).toHaveTextContent("Hidden by parent");
+    expect(screen.queryByText(/visible in buyer portal/i)).not.toBeInTheDocument();
+  });
+
+  it("renders nothing for a tenant without the buyer-portal add-on; fails open while the flag is unknown", () => {
+    flag = { enabled: false, resolved: true, failed: false };
+    const { container } = render();
+    expect(container).toBeEmptyDOMElement();
+    flag = { enabled: true, resolved: false, failed: false };
+    render();
+    expect(screen.getByTestId("portal-visibility-card")).toBeInTheDocument();
   });
 });

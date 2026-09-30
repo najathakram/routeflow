@@ -32,13 +32,23 @@ describe("PortalVisibilityControls", () => {
     const { rerender } = renderWithProviders(
       <PortalHiddenBadge product={{ portalVisible: false }} />,
     );
-    expect(screen.getByText("Hidden")).toBeInTheDocument();
+    expect(screen.getByText("Hidden from portal")).toBeInTheDocument();
     rerender(
       <PortalHiddenBadge product={{ portalVisible: true, parent: { portalVisible: false } }} />,
     );
     expect(screen.getByText("Hidden by parent")).toBeInTheDocument();
     rerender(<PortalHiddenBadge product={{ portalVisible: true, parent: null }} />);
     expect(screen.queryByTestId("portal-hidden-badge")).not.toBeInTheDocument();
+  });
+
+  it("bulk over the server cap of 200: buttons disabled with a plain message, never a raw 400", () => {
+    const many = new Set(Array.from({ length: 201 }, (_, i) => `id${i}`));
+    renderWithProviders(<PortalBulkButtons selected={many} onDone={jest.fn()} />);
+    expect(screen.getByTestId("portal-bulk-limit")).toHaveTextContent(/up to 200/i);
+    expect(screen.getByTestId("portal-bulk-hide")).toBeDisabled();
+    expect(screen.getByTestId("portal-bulk-show")).toBeDisabled();
+    fireEvent.click(screen.getByTestId("portal-bulk-hide"));
+    expect(mutate).not.toHaveBeenCalled();
   });
 
   it("filter reports its checked state", () => {
