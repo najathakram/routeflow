@@ -33,6 +33,11 @@ describe("poIntentRefusal", () => {
       "Can't draft the purchase order yet: Select a supplier first.",
     );
   });
+  it("refuses an expense-only or both mode in PO intent (no PO would exist)", () => {
+    expect(poIntentRefusal("purchase-order", true, null, "expense")).toMatch(/expense-only/);
+    expect(poIntentRefusal("purchase-order", true, null, "both")).toMatch(/expense-only/);
+    expect(poIntentRefusal("bill", false, null, "expense")).toBeNull();
+  });
   it("lets a raisable PO scan through", () => {
     expect(poIntentRefusal("purchase-order", true, null)).toBeNull();
   });

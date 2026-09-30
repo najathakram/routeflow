@@ -725,6 +725,8 @@ export function ScanInvoiceModal({
       const msg: string = err?.response?.data?.message ?? "";
       const code: string | undefined = err?.response?.data?.code;
       const isApiKeyError = code === "AI_KEY_INVALID" || /api key|anthropic/i.test(msg);
+      // PO intent shows fixed copy only, never the server's own words.
+      const shownMsg = intent === "purchase-order" ? "" : msg;
       // A plan gate that closed after the page loaded answers 403: show the friendly lock copy,
       // never the server's raw message.
       const planLocked = intent === "purchase-order" && isScanPlanLock(err);
@@ -739,7 +741,7 @@ export function ScanInvoiceModal({
             ? SCAN_LOCK_BODY
             : isApiKeyError
               ? "Go to Settings → AI & Integrations to add your Claude API key."
-              : msg || "Please check the file and try again.",
+              : shownMsg || "Please check the file and try again.",
           variant: "error",
         });
         setStep("upload");
@@ -750,7 +752,7 @@ export function ScanInvoiceModal({
             ? SCAN_LOCK_BODY
             : isApiKeyError
               ? "Anthropic API key not configured — see Settings → AI & Integrations."
-              : msg || "Scan failed. Retry, or check the file.",
+              : shownMsg || "Scan failed. Retry, or check the file.",
         });
       }
     } finally {
@@ -1335,7 +1337,7 @@ export function ScanInvoiceModal({
         // Blocked (not just "off") gets its own note below — the switch was ON but couldn't fire.
         const poBlockReason = inv.raisePo ? raisePoBlocker(inv.supplierId, billItems) : null;
         const raisesPo = inv.raisePo && !poBlockReason;
-        const refusal = poIntentRefusal(intent, inv.raisePo, poBlockReason);
+        const refusal = poIntentRefusal(intent, inv.raisePo, poBlockReason, inv.createMode);
         if (refusal) {
           // Nothing is posted: the scan was asked for a PO, and a bare received bill is not that.
           patchInvoiceById(invoiceId, { error: refusal });
@@ -1389,8 +1391,10 @@ export function ScanInvoiceModal({
             } else {
               // Bill was created but receive failed — surface the issue but don't lose the bill
               const rmsg =
-                (receiveErr as { response?: { data?: { message?: string } } })?.response?.data
-                  ?.message ??
+                (intent === "purchase-order"
+                  ? undefined
+                  : (receiveErr as { response?: { data?: { message?: string } } })?.response?.data
+                      ?.message) ??
                 "created in Draft (could not auto-receive — open the bill and click Receive to update stock)";
               notes.push(`Supplier bill ${rmsg}`);
             }
@@ -1437,9 +1441,11 @@ export function ScanInvoiceModal({
       const planLocked = intent === "purchase-order" && isScanPlanLock(err);
       const msg = planLocked
         ? SCAN_LOCK_BODY
-        : err?.response?.data?.message ||
-          err?.message ||
-          "Failed to create records. Please try again.";
+        : intent === "purchase-order"
+          ? "We couldn't create the purchase order. Check the details and try again."
+          : err?.response?.data?.message ||
+            err?.message ||
+            "Failed to create records. Please try again.";
       // Keep status "scanned" so the invoice stays editable + creatable.
       patchInvoiceById(invoiceId, { error: msg });
       return { ok: false, duplicate: false, notes };
@@ -1635,21 +1641,25 @@ export function ScanInvoiceModal({
   ).length;
   const batchTotal = roundMoney(creatable.reduce((s, inv) => s + invoiceTotalOf(inv), 0));
   const createLabel =
-    invoices.length <= 1
-      ? createMode === "bill"
-        ? "Create Vendor Bill"
-        : createMode === "expense"
-          ? "Record Expense"
-          : "Create Bill & Expense"
-      : "Create " +
-        ([
-          creatableBills > 0 ? `${creatableBills} bill${creatableBills === 1 ? "" : "s"}` : "",
-          creatableExpenses > 0
-            ? `${creatableExpenses} expense${creatableExpenses === 1 ? "" : "s"}`
-            : "",
-        ]
-          .filter(Boolean)
-          .join(" + ") || "bills");
+    intent === "purchase-order"
+      ? invoices.length <= 1
+        ? "Create purchase order"
+        : `Create ${creatableBills} purchase order${creatableBills === 1 ? "" : "s"}`
+      : invoices.length <= 1
+        ? createMode === "bill"
+          ? "Create Vendor Bill"
+          : createMode === "expense"
+            ? "Record Expense"
+            : "Create Bill & Expense"
+        : "Create " +
+          ([
+            creatableBills > 0 ? `${creatableBills} bill${creatableBills === 1 ? "" : "s"}` : "",
+            creatableExpenses > 0
+              ? `${creatableExpenses} expense${creatableExpenses === 1 ? "" : "s"}`
+              : "",
+          ]
+            .filter(Boolean)
+            .join(" + ") || "bills");
 
   const handleScanAgain = () => {
     const hasWork = invoices.some((inv) => inv.status === "scanned" || inv.status === "created");
@@ -1964,53 +1974,55 @@ export function ScanInvoiceModal({
                         </div>
                       )}
 
-                      {/* Create mode selector */}
-                      <div>
-                        <p className="mb-2 text-sm font-semibold text-navy">
-                          What would you like to create?
-                        </p>
-                        <div className="grid grid-cols-3 gap-3">
-                          {(
-                            [
-                              {
-                                value: "bill",
-                                label: "Vendor Bill",
-                                sub: "Adds to inventory and updates costs",
-                                icon: ShoppingCart,
-                              },
-                              {
-                                value: "expense",
-                                label: "Expense",
-                                sub: "Bookkeeping only — no stock change",
-                                icon: Receipt,
-                              },
-                              {
-                                value: "both",
-                                label: "Both",
-                                sub: "Inventory + bookkeeping in one go",
-                                icon: Sparkles,
-                              },
-                            ] as const
-                          ).map(({ value, label, sub, icon: Icon }) => (
-                            <button
-                              key={value}
-                              onClick={() => setCreateMode(value)}
-                              className={cn(
-                                "flex flex-col items-start gap-1.5 rounded-xl border-2 px-4 py-3 text-left transition-all",
-                                createMode === value
-                                  ? "border-brand-500 bg-brand-50 text-brand-700 shadow-sm"
-                                  : "border-surface-border bg-white text-navy hover:border-brand-200 hover:bg-brand-50/30",
-                              )}
-                            >
-                              <div className="flex items-center gap-2">
-                                <Icon className="h-4 w-4" />
-                                <span className="text-sm font-semibold">{label}</span>
-                              </div>
-                              <span className="text-xs leading-snug text-current/70">{sub}</span>
-                            </button>
-                          ))}
+                      {/* Create mode selector: a PO scan always records a bill + its PO */}
+                      {intent !== "purchase-order" && (
+                        <div>
+                          <p className="mb-2 text-sm font-semibold text-navy">
+                            What would you like to create?
+                          </p>
+                          <div className="grid grid-cols-3 gap-3">
+                            {(
+                              [
+                                {
+                                  value: "bill",
+                                  label: "Vendor Bill",
+                                  sub: "Adds to inventory and updates costs",
+                                  icon: ShoppingCart,
+                                },
+                                {
+                                  value: "expense",
+                                  label: "Expense",
+                                  sub: "Bookkeeping only — no stock change",
+                                  icon: Receipt,
+                                },
+                                {
+                                  value: "both",
+                                  label: "Both",
+                                  sub: "Inventory + bookkeeping in one go",
+                                  icon: Sparkles,
+                                },
+                              ] as const
+                            ).map(({ value, label, sub, icon: Icon }) => (
+                              <button
+                                key={value}
+                                onClick={() => setCreateMode(value)}
+                                className={cn(
+                                  "flex flex-col items-start gap-1.5 rounded-xl border-2 px-4 py-3 text-left transition-all",
+                                  createMode === value
+                                    ? "border-brand-500 bg-brand-50 text-brand-700 shadow-sm"
+                                    : "border-surface-border bg-white text-navy hover:border-brand-200 hover:bg-brand-50/30",
+                                )}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <Icon className="h-4 w-4" />
+                                  <span className="text-sm font-semibold">{label}</span>
+                                </div>
+                                <span className="text-xs leading-snug text-current/70">{sub}</span>
+                              </button>
+                            ))}
+                          </div>
                         </div>
-                      </div>
+                      )}
 
                       {/* Shared header: supplier + dates */}
                       <div className="grid grid-cols-2 gap-4 rounded-xl border border-surface-border bg-surface-raised p-4">
