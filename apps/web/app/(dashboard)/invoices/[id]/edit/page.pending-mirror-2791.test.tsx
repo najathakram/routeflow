@@ -10,9 +10,14 @@ import EditInvoicePage from "./page";
  */
 
 const replace = jest.fn();
+const toastMock = jest.fn();
 const updateMutate = jest.fn();
 let mockInvoice: Record<string, unknown> | undefined;
 
+jest.mock("@routeflow/ui/web", () => ({
+  ...jest.requireActual("@routeflow/ui/web"),
+  useToast: () => ({ toast: toastMock }),
+}));
 jest.mock("next/navigation", () => ({
   useParams: () => ({ id: "inv-1" }),
   useRouter: () => ({ push: jest.fn(), replace, back: jest.fn() }),
@@ -68,12 +73,18 @@ describe("invoice edit page — pending-mirror draft (#2791)", () => {
     mockInvoice = base;
     renderWithProviders(<EditInvoicePage />);
 
-    expect(replace).toHaveBeenCalledWith("/orders/ord-9/edit");
+    expect(replace).toHaveBeenCalledWith("/orders/ord-9");
     expect(screen.getByText(/mirrors order #1042/i)).toBeInTheDocument();
     expect(screen.getByText(/edit the order instead/i)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /edit order #1042/i })).toHaveAttribute(
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "This invoice mirrors order #1042" }),
+    );
+    expect(replace.mock.invocationCallOrder[0]).toBeGreaterThan(
+      toastMock.mock.invocationCallOrder[0],
+    );
+    expect(screen.getByRole("link", { name: /open order #1042/i })).toHaveAttribute(
       "href",
-      "/orders/ord-9/edit",
+      "/orders/ord-9",
     );
     expect(screen.queryByRole("button", { name: /save changes/i })).toBeNull();
     expect(updateMutate).not.toHaveBeenCalled();
@@ -89,9 +100,18 @@ describe("invoice edit page — pending-mirror draft (#2791)", () => {
     },
   );
 
-  it("does NOT redirect a batch-linked or order-less draft", () => {
+  it("does NOT redirect a batch-linked draft", () => {
     mockInvoice = { ...base, deliveryBatchId: "b1" };
     renderWithProviders(<EditInvoicePage />);
     expect(replace).not.toHaveBeenCalled();
+    expect(toastMock).not.toHaveBeenCalled();
+  });
+
+  it("does NOT redirect a manual (orderId null) draft", () => {
+    mockInvoice = { ...base, orderId: null, order: undefined };
+    renderWithProviders(<EditInvoicePage />);
+    expect(replace).not.toHaveBeenCalled();
+    expect(toastMock).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /save changes/i })).toBeInTheDocument();
   });
 });

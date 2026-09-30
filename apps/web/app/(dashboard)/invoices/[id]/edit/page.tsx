@@ -373,9 +373,18 @@ export default function EditInvoicePage() {
   // source of truth until delivery). Send the user to the order instead of showing a form that can only fail.
   const pendingMirrorOrderId =
     invoice && isPendingMirrorInvoice(invoice) ? (invoice.orderId ?? null) : null;
+  const pendingMirrorOrderNo = invoice?.order?.orderNumber ?? "";
   React.useEffect(() => {
-    if (pendingMirrorOrderId) router.replace(`/orders/${pendingMirrorOrderId}/edit`);
-  }, [pendingMirrorOrderId, router]);
+    if (!pendingMirrorOrderId) return;
+    // The toast provider lives in the dashboard layout, so it survives the navigation and the order
+    // page shows the reason. Fixed copy only — nothing from the URL is ever echoed.
+    toast({
+      title: `This invoice mirrors order #${pendingMirrorOrderNo}`,
+      description: "It can't be edited until the order is delivered — edit the order instead.",
+    });
+    router.replace(`/orders/${pendingMirrorOrderId}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- toast identity is unstable; fire once per mirror
+  }, [pendingMirrorOrderId, pendingMirrorOrderNo, router]);
 
   // Customer tier pricing (mirrors invoices/new): every product-selection path
   // below should price at this customer's tier, not the raw catalog price.
@@ -645,14 +654,14 @@ export default function EditInvoicePage() {
   }
 
   if (pendingMirrorOrderId) {
-    const orderNo = invoice.order?.orderNumber ?? "";
+    const orderNo = pendingMirrorOrderNo;
     return (
       <div className="mx-auto flex max-w-xl flex-col items-center gap-4 p-12 text-center">
         <p className="text-base font-medium text-navy">
           This invoice mirrors order #{orderNo} until it&apos;s delivered — edit the order instead.
         </p>
-        <Button variant="secondary" href={`/orders/${pendingMirrorOrderId}/edit`}>
-          Edit order #{orderNo}
+        <Button variant="secondary" href={`/orders/${pendingMirrorOrderId}`}>
+          Open order #{orderNo}
         </Button>
       </div>
     );
