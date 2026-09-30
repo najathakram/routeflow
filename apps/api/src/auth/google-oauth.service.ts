@@ -20,6 +20,7 @@ import type { BuyerJwtPayload } from "../buyer/interfaces/buyer-jwt-payload.inte
 import { EntitlementsService } from "../billing/entitlements.service";
 import type { DeviceInfo } from "./auth.service";
 import { escapeHtml } from "../common/html-escape";
+import { casLinkProviderId, resolveBySubThenEmail } from "./oauth-account-link";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -325,6 +326,8 @@ export class GoogleOAuthService {
   async linkGoogleAccount(profile: GoogleProfile): Promise<void> {
     const { linkUserId, googleId, email } = profile;
     if (!linkUserId) throw new BadRequestException("linkUserId required");
+    // SA-598 P1: a falsy sub/email refuses before ANY query (an undefined filter would widen).
+    if (!googleId || !email) throw new ForbiddenException("unauthorized");
 
     const user = await this.prisma.user.findUnique({ where: { id: linkUserId } });
     if (!user || user.deletedAt) throw new ForbiddenException("unauthorized");
@@ -336,12 +339,20 @@ export class GoogleOAuthService {
     if (existingByGoogleId) throw new ForbiddenException("google_id_taken");
     if (user.googleId) throw new ForbiddenException("google_already_linked");
 
-    await this.prisma.user.update({
-      where: { id: linkUserId },
-      data: { googleId, forcePasswordChange: false },
+    // SA-598 P1: CAS link (id + tenantId + googleId:null); a lost race to a different sub is a
+    // 409 and only the request that actually wrote sends the notice (B906: ids only in logs).
+    const cas = await casLinkProviderId({
+      updateMany: (args) => this.prisma.user.updateMany(args as any),
+      findUnique: (id) => this.prisma.user.findUnique({ where: { id } }),
+      row: user,
+      column: "googleId",
+      sub: googleId,
+      data: { forcePasswordChange: false },
+      extraWhere: { tenantId: user.tenantId },
     });
+    if (!cas.linked) return;
 
-    this.logger.log(`Google account linked for user ${linkUserId} (${email})`);
+    this.logger.log(`Google account linked for user ${linkUserId}`);
 
     // Fire-and-forget security notification
     if (user.email) {
@@ -518,13 +529,12 @@ export class GoogleOAuthService {
     profile: GoogleProfile,
     deviceInfo?: DeviceInfo,
   ): Promise<GoogleAuthResult> {
-    const user = await this.prisma.user.findFirst({
-      where: {
-        tenantId: null,
-        role: "SUPER_ADMIN",
-        deletedAt: null,
-        OR: [{ googleId: profile.googleId }, { email: profile.email }],
-      },
+    let user = await resolveBySubThenEmail({
+      findFirst: (args) => this.prisma.user.findFirst(args as any),
+      baseWhere: { tenantId: null, role: "SUPER_ADMIN", deletedAt: null },
+      column: "googleId",
+      sub: profile.googleId,
+      email: profile.email,
     });
 
     if (!user || user.status !== "ACTIVE") {
@@ -535,10 +545,15 @@ export class GoogleOAuthService {
     // Also clear forcePasswordChange — Google-authenticated users cannot set a
     // password via the change-password form, so the flag must not block them.
     if (!user.googleId) {
-      await this.prisma.user.update({
-        where: { id: user.id },
-        data: { googleId: profile.googleId, forcePasswordChange: false },
+      const linked = await casLinkProviderId({
+        updateMany: (args) => this.prisma.user.updateMany(args as any),
+        findUnique: (id) => this.prisma.user.findUnique({ where: { id } }),
+        row: user,
+        column: "googleId",
+        sub: profile.googleId,
+        data: { forcePasswordChange: false },
       });
+      user = linked.row;
     }
 
     const tokens = await this.issueUserTokenPair(user, null, deviceInfo);
@@ -568,6 +583,8 @@ export class GoogleOAuthService {
     }
 
     if (!profile.tenantSlug) throw new BadRequestException("tenantSlug required");
+    // SA-598 P1: a falsy sub/email refuses before ANY query (an undefined filter would widen).
+    if (!profile.googleId || !profile.email) throw new ForbiddenException("unauthorized");
 
     const tenant = await this.prisma.tenant.findFirst({ where: { slug: profile.tenantSlug } });
     if (!tenant) throw new ForbiddenException("tenant_suspended");
@@ -575,14 +592,17 @@ export class GoogleOAuthService {
       throw new ForbiddenException("tenant_suspended");
     }
 
-    // Check for a matching staff user in this tenant first
-    let staffUser = await this.prisma.user.findFirst({
-      where: {
+    // Check for a matching staff user in this tenant first (sub first, then the ordered email).
+    let staffUser = await resolveBySubThenEmail({
+      findFirst: (args) => this.prisma.user.findFirst(args as any),
+      baseWhere: {
         tenantId: tenant.id,
         deletedAt: null,
         role: { in: ["OPERATOR", "DRIVER", "TENANT_ADMIN"] },
-        OR: [{ googleId: profile.googleId }, { email: profile.email }],
       },
+      column: "googleId",
+      sub: profile.googleId,
+      email: profile.email,
     });
 
     if (staffUser) {
@@ -592,12 +612,18 @@ export class GoogleOAuthService {
       if (profile.context === "portal") throw new ForbiddenException("google_email_is_staff");
 
       if (!staffUser.googleId) {
-        staffUser = await this.prisma.user.update({
-          where: { id: staffUser.id },
+        const linked = await casLinkProviderId({
+          updateMany: (args) => this.prisma.user.updateMany(args as any),
+          findUnique: (id) => this.prisma.user.findUnique({ where: { id } }),
+          row: staffUser,
+          column: "googleId",
+          sub: profile.googleId,
           // Clear forcePasswordChange — Google users cannot use the password
           // change form, so the flag must not redirect them to /change-password.
-          data: { googleId: profile.googleId, forcePasswordChange: false },
+          data: { forcePasswordChange: false },
+          extraWhere: { tenantId: tenant.id },
         });
+        staffUser = linked.row;
       }
       const tokens = await this.issueUserTokenPair(staffUser, tenant.slug, deviceInfo);
       return {
@@ -618,11 +644,15 @@ export class GoogleOAuthService {
   }
 
   private async handleBuyerPortalAuth(profile: GoogleProfile): Promise<GoogleAuthResult> {
-    let buyer = await this.prisma.buyerAccount.findFirst({
-      where: {
-        deletedAt: null,
-        OR: [{ googleId: profile.googleId }, { email: profile.email }],
-      },
+    // SA-598 P1: a falsy sub/email refuses before ANY query.
+    if (!profile.googleId || !profile.email) throw new ForbiddenException("unauthorized");
+
+    let buyer = await resolveBySubThenEmail({
+      findFirst: (args) => this.prisma.buyerAccount.findFirst(args as any),
+      baseWhere: { deletedAt: null },
+      column: "googleId",
+      sub: profile.googleId,
+      email: profile.email,
     });
 
     if (buyer) {
@@ -646,42 +676,43 @@ export class GoogleOAuthService {
       const squattedPassword = googleAttestsMailbox && buyer.passwordSet && !buyer.emailVerified;
 
       if (!buyer.googleId) {
-        if (squattedPassword) {
-          const placeholderHash = await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 10);
-          buyer = await this.prisma.buyerAccount.update({
-            where: { id: buyer.id },
-            data: {
-              googleId: profile.googleId,
-              emailVerified: true,
-              passwordHash: placeholderHash,
-              passwordSet: false,
-            },
-          });
-          await this.prisma.buyerRefreshToken.deleteMany({
-            where: { buyerAccountId: buyer.id },
-          });
-          this.logger.warn(
-            `Buyer ${buyer.id} had an unverified password neutralized on first Google link ` +
-              `(mailbox now attested by Google; prior sessions revoked)`,
-          );
-        } else {
-          buyer = await this.prisma.buyerAccount.update({
-            where: { id: buyer.id },
-            data: {
-              googleId: profile.googleId,
-              ...(googleAttestsMailbox ? { emailVerified: true } : {}),
-            },
-          });
+        const placeholderHash = squattedPassword
+          ? await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 10)
+          : null;
+        // SA-598 P1: CAS link. Revocation and the email happen ONLY when THIS request wrote.
+        const cas = await casLinkProviderId({
+          updateMany: (args) => this.prisma.buyerAccount.updateMany(args as any),
+          findUnique: (id) => this.prisma.buyerAccount.findUnique({ where: { id } }),
+          row: buyer,
+          column: "googleId",
+          sub: profile.googleId,
+          data: placeholderHash
+            ? { emailVerified: true, passwordHash: placeholderHash, passwordSet: false }
+            : googleAttestsMailbox
+              ? { emailVerified: true }
+              : {},
+        });
+        buyer = cas.row;
+        if (cas.linked) {
+          if (placeholderHash) {
+            await this.prisma.buyerRefreshToken.deleteMany({
+              where: { buyerAccountId: buyer.id },
+            });
+            this.logger.warn(
+              `Buyer ${buyer.id} had an unverified password neutralized on first Google link ` +
+                `(mailbox now attested by Google; prior sessions revoked)`,
+            );
+          }
+          void this.emailService
+            .send({
+              to: buyer.email,
+              subject: "Google Sign-In linked to your RouteFlow account",
+              html: `<p>Your Google account (<strong>${escapeHtml(profile.email)}</strong>) has been linked to your RouteFlow portal account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
+              // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
+              senderClass: "platform",
+            })
+            .catch((e: Error) => this.logger.warn(`Google link notification failed: ${e.message}`));
         }
-        void this.emailService
-          .send({
-            to: buyer.email,
-            subject: "Google Sign-In linked to your RouteFlow account",
-            html: `<p>Your Google account (<strong>${escapeHtml(profile.email)}</strong>) has been linked to your RouteFlow portal account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
-            // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
-            senderClass: "platform",
-          })
-          .catch((e: Error) => this.logger.warn(`Google link notification failed: ${e.message}`));
       } else if (googleAttestsMailbox && !buyer.emailVerified) {
         // Already-linked account whose mailbox was never verified (e.g. password
         // registration followed by Google linking before this gate existed). Same
@@ -727,7 +758,7 @@ export class GoogleOAuthService {
           emailVerified: true,
         },
       });
-      this.logger.log(`BuyerAccount created via Google: ${profile.email}`);
+      this.logger.log(`BuyerAccount created via Google: ${buyer.id}`);
     }
 
     // Process an invite token embedded in the OAuth state

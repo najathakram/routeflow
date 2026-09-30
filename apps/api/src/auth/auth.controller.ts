@@ -697,6 +697,7 @@ export class AuthController {
       "google_email_is_staff",
       "google_already_linked",
       "google_id_taken",
+      "google_account_mismatch",
     ]);
     return allowed.has(raw) ? raw : "unknown_error";
   }

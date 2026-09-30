@@ -125,15 +125,13 @@ describe("GoogleOAuthService.handleTenantAuth — INACTIVE staff is rejected, ne
       tenantId: TENANT.id,
     };
     prisma.user.findFirst.mockResolvedValue(activeUser as any);
-    prisma.user.update.mockImplementation(({ data }: any) =>
-      Promise.resolve({ ...activeUser, ...data }),
-    );
+    prisma.user.updateMany.mockResolvedValue({ count: 1 } as any);
 
     const service = buildService(prisma);
     const result: any = await service.findOrCreateUser(baseProfile as any);
 
-    expect(prisma.user.update).toHaveBeenCalledWith({
-      where: { id: "user-active" },
+    expect(prisma.user.updateMany).toHaveBeenCalledWith({
+      where: { id: "user-active", tenantId: TENANT.id, googleId: null },
       data: { googleId: "google-real-id", forcePasswordChange: false },
     });
     expect(result.kind).toBe("staff");
