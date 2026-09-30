@@ -68,18 +68,15 @@ export function resolveLineUnits(
   requested?: { unitLabel?: string | null } | null,
   existing?: LineUnitsExisting | null,
   /**
-   * #2784 / SA-601: a BUYER's plain qty (no unit requested, none held) resolves to the level flagged
+   * #2784 / SA-601: a BUYER's plain qty on a NEW line (no unit requested, no existing line) resolves to the level flagged
    * `isDefaultSelling`, else the pack. Off by default — the staff and driver arms stay exactly as SA-593g pinned.
    * An explicit unit (incl. an explicit null/"" = the pack) always wins.
    */
   opts?: { honourDefaultSelling?: boolean },
 ): ResolvedLineUnits {
   let explicit = requested?.unitLabel; // undefined = unchanged
-  if (
-    opts?.honourDefaultSelling &&
-    explicit === undefined &&
-    !(existing?.unitLabel ?? "").trim()
-  ) {
+  // SA-610: only a NEW line (no `existing`) takes the default — a held pack line (existing, unitLabel null) stays a pack.
+  if (opts?.honourDefaultSelling && explicit === undefined && existing == null) {
     const dflt = defaultSellingLabel({ pricePerUnit: 0, ...product }, units);
     if (dflt) explicit = dflt;
   }
