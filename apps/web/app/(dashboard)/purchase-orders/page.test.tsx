@@ -14,7 +14,13 @@ const refetch = jest.fn();
 let lastPoParams: unknown;
 let lastPoOpts: unknown;
 let paramsSeen: Array<Record<string, unknown>> = [];
-let poState: { data?: unknown; isLoading: boolean; isError: boolean } = {
+let poState: {
+  data?: unknown;
+  isLoading: boolean;
+  isError: boolean;
+  isFetching?: boolean;
+  isPlaceholderData?: boolean;
+} = {
   data: { data: [] },
   isLoading: false,
   isError: false,
@@ -123,6 +129,40 @@ describe("/purchase-orders page", () => {
   it("keeps the previous page on screen while the next loads", () => {
     render(<PurchaseOrdersPage />);
     expect(lastPoOpts).toMatchObject({ keepPrevious: true });
+  });
+
+  it("dims the table, marks it busy and disables the pager while showing placeholder rows", () => {
+    poState = { ...pagedState(3, 45), isFetching: true, isPlaceholderData: true };
+    const { container } = render(<PurchaseOrdersPage />);
+    expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Previous page" })).toBeDisabled();
+    expect(screen.getByText("Updating…")).toBeInTheDocument();
+  });
+
+  it("does not step back while a fetch is in flight (a failed page-2 fetch is not hidden)", () => {
+    poState = pagedState(3, 45);
+    const { rerender } = render(<PurchaseOrdersPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    poState = { ...pagedState(1, 12), isFetching: true };
+    rerender(<PurchaseOrdersPage />);
+    expect((lastPoParams as { page: number }).page).toBe(2);
+  });
+
+  it("Clear filters returns to page 1 with no filters", () => {
+    poState = pagedState(3, 45);
+    render(<PurchaseOrdersPage />);
+    fireEvent.change(screen.getAllByRole("combobox")[0], { target: { value: "DRAFT" } });
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(lastPoParams).toMatchObject({ page: 1, status: undefined });
+  });
+
+  it("never renders a 'Showing 21–0 of 0' range", () => {
+    poState = pagedState(0, 0);
+    render(<PurchaseOrdersPage />);
+    fireEvent.click(screen.queryByRole("button", { name: "Next page" }) ?? document.body);
+    expect(screen.queryByText(/Showing 21/)).not.toBeInTheDocument();
   });
 
   it("hides the pager when everything fits on one page", () => {

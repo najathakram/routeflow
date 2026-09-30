@@ -204,6 +204,8 @@ export function PurchaseOrdersTab({
     data: poData,
     isLoading,
     isError,
+    isFetching,
+    isPlaceholderData,
     refetch,
   } = usePurchaseOrders(
     {
@@ -228,8 +230,9 @@ export function PurchaseOrdersTab({
   const totalPages: number = poData?.meta?.totalPages ?? 1;
   // Rows can disappear under us (a PO removed elsewhere): never stay stranded past the last page.
   React.useEffect(() => {
-    if (totalPages > 0 && page > totalPages) setPage(totalPages);
-  }, [page, totalPages]);
+    // only trust a settled response: a failed or in-flight page-2 fetch must not be 'fixed' away
+    if (poData?.meta && !isFetching && totalPages > 0 && page > totalPages) setPage(totalPages);
+  }, [page, totalPages, poData, isFetching]);
 
   const toggleExpand = (id: string) => setExpandedId((prev) => (prev === id ? null : id));
 
@@ -322,7 +325,12 @@ export function PurchaseOrdersTab({
       ) : orders.length === 0 && !(statusFilter || supplierFilter || dateFrom || dateTo) ? (
         <EmptyState title="No purchase orders yet. Create one by hand when you place an order with a supplier." />
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-surface-border">
+        <div
+          aria-busy={isPlaceholderData || undefined}
+          className={`overflow-x-auto rounded-xl border border-surface-border transition-opacity ${
+            isPlaceholderData ? "opacity-50" : ""
+          }`}
+        >
           <table className="w-full text-sm">
             <thead className="border-b border-surface-border bg-surface-raised text-xs text-navy/70">
               <tr>
@@ -419,14 +427,18 @@ export function PurchaseOrdersTab({
       )}
       {(totalPages > 1 || page > 1) && (
         <div className="mt-3 flex items-center justify-between text-sm text-navy/70">
-          <span>
-            Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of {total}
+          <span role="status">
+            {isPlaceholderData
+              ? "Updating…"
+              : total > 0
+                ? `Showing ${(page - 1) * PAGE_SIZE + 1}–${Math.min(page * PAGE_SIZE, total)} of ${total}`
+                : ""}
           </span>
           <div className="flex gap-2">
             <Button
               size="sm"
               variant="secondary"
-              disabled={page <= 1}
+              disabled={page <= 1 || isPlaceholderData}
               onClick={() => setPage((p) => p - 1)}
               aria-label="Previous page"
             >
@@ -435,7 +447,7 @@ export function PurchaseOrdersTab({
             <Button
               size="sm"
               variant="secondary"
-              disabled={page >= totalPages}
+              disabled={page >= totalPages || isPlaceholderData}
               onClick={() => setPage((p) => p + 1)}
               aria-label="Next page"
             >
