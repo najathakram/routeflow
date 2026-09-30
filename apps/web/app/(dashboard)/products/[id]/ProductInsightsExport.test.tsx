@@ -135,7 +135,10 @@ describe("ProductInsightsExport", () => {
   it("surfaces the server message from a Blob error body", async () => {
     get.mockRejectedValueOnce({
       message: "Request failed with status code 403",
-      response: { status: 403, data: new Blob([JSON.stringify({ message: "Plan does not include analytics" })]) },
+      response: {
+        status: 403,
+        data: new Blob([JSON.stringify({ message: "Plan does not include analytics" })]),
+      },
     });
     render(<ProductInsightsExport productId="p1" sku="SKU-1" />);
     click();

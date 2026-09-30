@@ -6,7 +6,7 @@ import { Button, useToast } from "@routeflow/ui/web";
 import { apiClient } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
 import { csvFilename, downloadCsvBlob } from "@/lib/export";
-import { exportErrorMessage, isoDay } from "@/lib/csv-export-request";
+import { exportErrorMessage, exportTailWarning, isoDay } from "@/lib/csv-export-request";
 
 export interface ProductsExportFilters {
   search?: string;
@@ -16,6 +16,8 @@ export interface ProductsExportFilters {
 }
 
 const PRESETS = [7, 30, 90] as const;
+/** A preset of N days is N calendar days inclusive of today: from = today − (N − 1). */
+const presetFrom = (days: number) => isoDay(days - 1);
 
 /**
  * "Export CSV (N products)" — the whole filtered catalog (not just the loaded page) as a
@@ -24,15 +26,18 @@ const PRESETS = [7, 30, 90] as const;
  */
 export function ProductsExportButton({
   total,
+  loading = false,
   filters,
 }: {
   total: number;
+  /** The list query has not answered yet, so `total` is not a real count. */
+  loading?: boolean;
   filters: ProductsExportFilters;
 }) {
   const { user } = useAuth();
   const { toast } = useToast();
   const [open, setOpen] = React.useState(false);
-  const [from, setFrom] = React.useState(() => isoDay(30));
+  const [from, setFrom] = React.useState(() => presetFrom(30));
   const [to, setTo] = React.useState(() => isoDay(0));
   const [busy, setBusy] = React.useState(false);
 
@@ -63,8 +68,19 @@ export function ProductsExportButton({
       });
       downloadCsvBlob(csvFilename("products", from, to), res.data);
       setOpen(false);
+      if (await exportTailWarning(res.data)) {
+        toast({
+          title: "Export may be incomplete",
+          description: "The file ends early. Check it before relying on it, or narrow the filters.",
+          variant: "warning",
+        });
+      }
     } catch (err) {
-      toast({ title: "Export failed", description: exportErrorMessage(err), variant: "error" });
+      toast({
+        title: "Export failed",
+        description: await exportErrorMessage(err),
+        variant: "error",
+      });
     } finally {
       setBusy(false);
     }
@@ -75,7 +91,7 @@ export function ProductsExportButton({
       <Button
         variant="secondary"
         leftIcon={<Download className="h-4 w-4" />}
-        disabled={busy}
+        disabled={busy || loading}
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         data-testid="products-export-button"
@@ -99,7 +115,7 @@ export function ProductsExportButton({
                 type="button"
                 className="rounded border border-slate-200 px-2 py-1 text-xs hover:bg-slate-50"
                 onClick={() => {
-                  setFrom(isoDay(d));
+                  setFrom(presetFrom(d));
                   setTo(isoDay(0));
                 }}
               >

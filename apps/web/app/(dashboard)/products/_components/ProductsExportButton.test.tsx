@@ -181,22 +181,22 @@ describe("ProductsExportButton", () => {
     expect(screen.getByTestId("products-export-button")).toBeDisabled();
   });
 
-  it.each([
-    ["# export failed: the file is incomplete\r\n"],
-    ["# truncated at 50000 rows\r\n"],
-  ])("still downloads but warns when the file ends with %j", async (tail) => {
-    const blob = new Blob(["Name\r\nA\r\n" + tail]);
-    get.mockResolvedValue({ data: blob });
-    renderBtn();
-    open();
-    fireEvent.click(screen.getByTestId("products-export-download"));
-    await waitFor(() =>
-      expect(toast).toHaveBeenCalledWith(
-        expect.objectContaining({ title: "Export may be incomplete", variant: "warning" }),
-      ),
-    );
-    expect(downloadCsvBlob).toHaveBeenCalledTimes(1);
-  });
+  it.each([["# export failed: the file is incomplete\r\n"], ["# truncated at 50000 rows\r\n"]])(
+    "still downloads but warns when the file ends with %j",
+    async (tail) => {
+      const blob = new Blob(["Name\r\nA\r\n" + tail]);
+      get.mockResolvedValue({ data: blob });
+      renderBtn();
+      open();
+      fireEvent.click(screen.getByTestId("products-export-download"));
+      await waitFor(() =>
+        expect(toast).toHaveBeenCalledWith(
+          expect.objectContaining({ title: "Export may be incomplete", variant: "warning" }),
+        ),
+      );
+      expect(downloadCsvBlob).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("does not warn on a complete file", async () => {
     get.mockResolvedValue({ data: new Blob(["Name\r\nA\r\n"]) });

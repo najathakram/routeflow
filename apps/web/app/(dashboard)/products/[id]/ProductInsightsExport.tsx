@@ -8,7 +8,11 @@ import { useAuth } from "@/lib/auth-context";
 import { usePlanFlag } from "@/lib/api/plan-flags";
 import { planFlagVisible } from "@/lib/plan-gated-nav";
 import { csvFilename, downloadCsvBlob } from "@/lib/export";
-import { exportErrorMessage, filenameFromDisposition } from "@/lib/csv-export-request";
+import {
+  exportErrorMessage,
+  exportTailWarning,
+  filenameFromDisposition,
+} from "@/lib/csv-export-request";
 
 /**
  * "Download product sales CSV" — GET /analytics/products/:id/insights.csv (the sales lines
@@ -38,8 +42,19 @@ export function ProductInsightsExport({ productId, sku }: { productId: string; s
         filenameFromDisposition(res.headers?.["content-disposition"]) ??
         csvFilename(`product-sales-${sku}`, from || null, to || null);
       downloadCsvBlob(name, res.data);
+      if (await exportTailWarning(res.data)) {
+        toast({
+          title: "Export may be incomplete",
+          description: "The file ends early. Check it before relying on it, or narrow the dates.",
+          variant: "warning",
+        });
+      }
     } catch (err) {
-      toast({ title: "Export failed", description: exportErrorMessage(err), variant: "error" });
+      toast({
+        title: "Export failed",
+        description: await exportErrorMessage(err),
+        variant: "error",
+      });
     } finally {
       setBusy(false);
     }

@@ -1201,6 +1201,7 @@ export default function ProductsPage() {
             </Button>
             <ProductsExportButton
               total={totalItems}
+              loading={isLoading}
               filters={{
                 search: debouncedSearch,
                 category: categoryFilter,

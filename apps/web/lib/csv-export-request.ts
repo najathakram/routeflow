@@ -5,14 +5,46 @@ export function isoDay(daysAgo = 0): string {
   return new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 }
 
+/** Text of a Blob (jsdom and old browsers lack `Blob.text`). */
+function blobText(b: Blob): Promise<string> {
+  if (typeof b.text === "function") return b.text();
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result ?? ""));
+    r.onerror = () => reject(r.error);
+    r.readAsText(b);
+  });
+}
+
 /** Toast description for a failed export: a friendly line for the throttle, else the server's
- *  message, else the client error's own. */
-export function exportErrorMessage(err: unknown): string {
+ *  message, else the client error's own. With `responseType: "blob"` an error body arrives as a
+ *  Blob, so it is parsed as JSON first (a non-JSON body falls through to the client message). */
+export async function exportErrorMessage(err: unknown): Promise<string> {
   const e = err as { message?: string; response?: { status?: number; data?: unknown } };
   if (e?.response?.status === 429) return "Too many exports — try again in a minute.";
-  const data = e?.response?.data as { message?: unknown } | undefined;
-  if (typeof data?.message === "string") return data.message;
+  let data = e?.response?.data as { message?: unknown } | Blob | undefined;
+  if (typeof Blob !== "undefined" && data instanceof Blob) {
+    try {
+      data = JSON.parse(await blobText(data)) as { message?: unknown };
+    } catch {
+      data = undefined;
+    }
+  }
+  const msg = (data as { message?: unknown } | undefined)?.message;
+  if (typeof msg === "string") return msg;
+  if (Array.isArray(msg) && msg.every((m) => typeof m === "string")) return msg.join(", ");
   return e?.message || "Something went wrong. Please try again.";
+}
+
+/** True when the downloaded stream ends with the server's `# export failed` or `# truncated`
+ *  line — the file is usable but not complete. Reads only the tail. */
+export async function exportTailWarning(blob: Blob): Promise<boolean> {
+  try {
+    const tail = await blobText(blob.slice(Math.max(0, blob.size - 400)));
+    return /(^|\n)# (export failed|truncated)[^\n]*\s*$/.test(tail);
+  } catch {
+    return false;
+  }
 }
 
 /** `filename` from a Content-Disposition header value, when present. */
