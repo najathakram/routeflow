@@ -4,7 +4,7 @@ import { join } from "path";
 /**
  * SA-603 Sitting-B schema bundle: the migration file is READ at test time and pinned by shape.
  * Final DDL (SA-603a): `Product.portalVisible` + retired* columns, `ProductBarcode.code` DROP NOT NULL
- * + `retiredCode`, and the `EmailDelivery` table (+ its 6-value enum). Metadata-only.
+ * + `retiredCode`, the two active-only Product NAME partial uniques (SA-603b, gated), and the `EmailDelivery` table (+ its 6-value enum). Metadata-only.
  */
 const FOLDER = "20260929220000_sitting_b_bundle";
 const MIGRATIONS_DIR = join(__dirname, "..", "..", "prisma", "migrations");
@@ -30,7 +30,7 @@ describe("sitting-B bundle migration shape (SA-603)", () => {
   const sql = executableSql();
   const stmts = sql
     .split(";")
-    .map((s) => s.trim())
+    .map((s) => s.replace(/\s+/g, " ").trim())
     .filter(Boolean);
 
   it("is one transaction with a bounded lock_timeout right after BEGIN", () => {
@@ -73,7 +73,9 @@ describe("sitting-B bundle migration shape (SA-603)", () => {
 
   it("has exactly one DROP NOT NULL overall, preceded by a -- reason: line", () => {
     const raw = readFileSync(MIGRATION, "utf8").split("\n");
-    const idx = raw.map((l, n) => (/DROP NOT NULL/i.test(l) ? n : -1)).filter((n) => n >= 0);
+    const idx = raw
+      .map((l, n) => (!l.trim().startsWith("--") && /DROP NOT NULL/i.test(l) ? n : -1))
+      .filter((n) => n >= 0);
     expect(idx.length).toBe(1);
     expect(raw.slice(0, idx[0]).some((l) => /^--\s*reason:/i.test(l.trim()))).toBe(true);
     expect((sql.match(/DROP NOT NULL/gi) ?? []).length).toBe(1);
@@ -94,11 +96,42 @@ describe("sitting-B bundle migration shape (SA-603)", () => {
   });
 
   it("is otherwise additive only", () => {
-    expect(sql.replace(/DROP NOT NULL/g, "")).not.toMatch(/\bDROP\b/i);
-    expect(sql).not.toMatch(/\bUPDATE\b/i);
-    expect(sql).not.toMatch(/\bDELETE\b/i);
+    // the only DROPs: the one DROP NOT NULL and the two prod-only index drops (IF EXISTS, SA-603b)
+    expect(
+      sql.replace(/DROP NOT NULL/g, "").replace(/DROP INDEX IF EXISTS "[A-Za-z_]+"/g, ""),
+    ).not.toMatch(/\bDROP\b/i);
+    expect(sql.replace(/ON UPDATE CASCADE/g, "")).not.toMatch(/\bUPDATE\b/i);
+    expect(sql.replace(/ON DELETE CASCADE/g, "")).not.toMatch(/\bDELETE\b/i);
     expect((sql.match(/ALTER COLUMN/gi) ?? []).length).toBe(1);
     expect(sql).not.toMatch(/SET NOT NULL/i);
-    expect(sql).not.toMatch(/CREATE (UNIQUE )?INDEX[^;]*\bWHERE\b/i);
+    // partial indexes: exactly the two active-only name uniques (SA-603b), nothing else
+    const partial = stmts.filter((x) => /^CREATE (UNIQUE )?INDEX/.test(x) && /\bWHERE\b/i.test(x));
+    expect(partial).toHaveLength(2);
+  });
+
+  it("Product NAME uniqueness (SA-603b): drops the prod-only indexes IF EXISTS, then two active-only partial uniques", () => {
+    const drops = stmts.filter((x) => x.startsWith("DROP INDEX"));
+    expect(drops).toEqual([
+      'DROP INDEX IF EXISTS "Product_tenantId_name_root_key"',
+      'DROP INDEX IF EXISTS "Product_tenantId_parent_name_key"',
+    ]);
+    const root = stmts.find((x) =>
+      x.startsWith('CREATE UNIQUE INDEX "Product_tenant_root_name_active_key"'),
+    );
+    const kid = stmts.find((x) =>
+      x.startsWith('CREATE UNIQUE INDEX "Product_tenant_parent_name_active_key"'),
+    );
+    expect(root).toBe(
+      'CREATE UNIQUE INDEX "Product_tenant_root_name_active_key" ON "Product"("tenantId", "name") WHERE "parentProductId" IS NULL AND "isActive"',
+    );
+    expect(kid).toBe(
+      'CREATE UNIQUE INDEX "Product_tenant_parent_name_active_key" ON "Product"("tenantId", "parentProductId", "name") WHERE "parentProductId" IS NOT NULL AND "isActive"',
+    );
+    // drops and creates sit inside the one wrap, after the Product ADD COLUMNs
+    const iDrop = stmts.indexOf(drops[0]);
+    const iAdd = stmts.findIndex((x) => /^ALTER TABLE "Product" ADD COLUMN/.test(x));
+    expect(iAdd).toBeGreaterThan(-1);
+    expect(iDrop).toBeGreaterThan(iAdd);
+    expect(stmts.indexOf(root!)).toBeGreaterThan(iDrop);
   });
 });
