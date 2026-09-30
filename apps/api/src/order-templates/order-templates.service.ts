@@ -1,4 +1,5 @@
 import {
+  Optional,
   BadRequestException,
   ForbiddenException,
   Injectable,
@@ -11,6 +12,8 @@ import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { OrdersService } from "../orders/orders.service";
+import { syncOrderLineCompositions } from "../orders/order-composition";
+import { FeatureConfigService } from "../billing/feature-config.service";
 import { isMergeContention } from "../orders/merge-contention";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { NotificationsService } from "../notifications/notifications.service";
@@ -62,6 +65,8 @@ export class OrderTemplatesService {
     private readonly notifications: NotificationsService,
     private readonly systemConfig: SystemConfigService,
     private readonly sellingRestrictions: SellingRestrictionsService,
+    // #2717 M3: the `mixed_packs` mode read; absent = off (no composition work).
+    @Optional() private readonly featureConfig?: FeatureConfigService,
   ) {}
 
   // ─── CRUD ────────────────────────────────────────────────────────────────────
@@ -781,6 +786,7 @@ export class OrderTemplatesService {
           customer: { select: { id: true, businessName: true } },
         },
       });
+      await syncOrderLineCompositions(tx, order.id, this.prisma.getTenantId(), this.featureConfig);
       const stockLines = lineItemsData.map((li) => ({ productId: li.productId, qty: li.qty }));
       // #1208 review LOW-MED: the cron run and an operator's "Generate now" keep the
       // warn-and-oversell posture (isStaffRole=true, unconditionally, above); a buyer's
