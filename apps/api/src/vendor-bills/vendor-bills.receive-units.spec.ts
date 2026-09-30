@@ -105,7 +105,11 @@ async function makeService(): Promise<{
       { provide: StorageService, useValue: { upload: jest.fn(), presignedUrl: jest.fn() } },
       {
         provide: InventoryService,
-        useValue: { recomputeProductInTx: jest.fn(), fireStockAlerts: jest.fn() },
+        useValue: {
+          recomputeProductInTx: jest.fn(),
+          lockProducts: jest.fn(),
+          fireStockAlerts: jest.fn(),
+        },
       },
       // receive/revertToDraft/voidBill never touch alias resolution — a bare
       // stub is enough to satisfy the constructor (added by WP2).

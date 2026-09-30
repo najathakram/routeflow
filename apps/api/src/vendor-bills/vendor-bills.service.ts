@@ -1129,6 +1129,14 @@ export class VendorBillsService {
       // its per-PIECE contract (margins previously inflated by unitsPerBox²).
       const effectiveDate = bill.billDate ?? new Date();
       const restockedIds: string[] = [];
+      // B285: row-lock the products BEFORE the per-line read below. currentStock is written as
+      // an increment, but averageCost and the movement's stockAfter are derived from that read,
+      // so without the lock a concurrent PO receive (which takes the same locks, sorted) is a
+      // lost update on the average. Sorted ids inside lockProducts keep two writers deadlock-free.
+      await this.inventory.lockProducts(
+        tx,
+        plan.flatMap((p) => (p.item.productId ? [p.item.productId] : [])),
+      );
       // B562 follow-up: a bill is received in ONE transaction across every
       // line. If one product's ledger has a gap (see recomputeProductInTx),
       // that must not abort lines that are perfectly fine — receiving stock

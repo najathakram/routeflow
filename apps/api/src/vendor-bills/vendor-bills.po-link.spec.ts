@@ -87,6 +87,7 @@ describe("VendorBillsService — PO-linked bills (units/PO step 7)", () => {
   let prisma: ReturnType<typeof createMockPrisma>;
   let inventory: {
     recomputeProductInTx: jest.Mock;
+    lockProducts: jest.Mock;
     fireStockAlerts: jest.Mock;
     createDraftPurchaseOrderInTx: jest.Mock;
   };
@@ -95,6 +96,7 @@ describe("VendorBillsService — PO-linked bills (units/PO step 7)", () => {
     prisma = createMockPrisma();
     inventory = {
       recomputeProductInTx: jest.fn(),
+      lockProducts: jest.fn(),
       fireStockAlerts: jest.fn(),
       createDraftPurchaseOrderInTx: jest
         .fn()

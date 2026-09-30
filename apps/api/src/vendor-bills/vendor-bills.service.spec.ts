@@ -84,6 +84,7 @@ const storage = {
 
 const inventory = {
   recomputeProductInTx: jest.fn(),
+  lockProducts: jest.fn(),
   fireStockAlerts: jest.fn(),
   createDraftPurchaseOrderInTx: jest.fn(),
 };
