@@ -14,6 +14,13 @@ jest.mock("@/lib/auth-context", () => ({
   useAuth: () => ({ user: { role: mockRole } }),
 }));
 
+const senderState: { sender: { kind: string; label: string } | null } = {
+  sender: { kind: "default", label: "RouteFlow's address" },
+};
+jest.mock("./_components/useEmailSender", () => ({
+  useEmailSender: () => ({ sender: senderState.sender }),
+}));
+
 jest.mock("@/lib/api/notifications", () => ({
   useNotificationsStatus: () => ({ data: { configured: false, deviceCount: 0 } }),
   useSendTestNotification: () => ({ mutate: jest.fn(), isPending: false }),
@@ -129,6 +136,7 @@ jest.mock("@/lib/api/messaging", () => ({
 }));
 
 beforeEach(() => {
+  senderState.sender = { kind: "default", label: "RouteFlow's address" };
   mockRole = "TENANT_ADMIN";
   state.config = makeConfig();
   state.isError = false;
@@ -140,13 +148,15 @@ beforeEach(() => {
 });
 
 describe("Notifications page — grouped list (#1965)", () => {
-  it("T5 renders no 'Not available' text, no WhatsApp/SMS/Portal column, and ONE coming-soon line", () => {
+  it("T5 renders no 'Not available' text, no WhatsApp/SMS/Portal column, and coming-soon channels in ONE place (the disclosure)", () => {
     renderWithProviders(<NotificationsSettingsTab />);
     expect(screen.queryByText(/not available/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("columnheader", { name: /whatsapp|sms|portal/i })).toBeNull();
+    const soon = screen.getByText(/^coming soon$/i).closest("details") as HTMLElement;
     expect(
-      screen.getAllByText(/whatsapp, sms and customer portal messages: coming soon/i),
-    ).toHaveLength(1);
+      within(soon).getByText(/whatsapp, sms and customer portal messages/i),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText(/whatsapp, sms and customer portal messages/i)).toHaveLength(1);
   });
 
   it("T6 every live row shows a recipient chip; order rows say 'Your customer'", () => {
@@ -213,6 +223,8 @@ describe("Notifications page — grouped list (#1965)", () => {
     for (const sw of screen.getAllByRole("switch", { name: /order confirmed|delivered/i })) {
       expect(sw).toBeDisabled();
     }
+    // nothing editable for a read-only user
+    expect(screen.queryByRole("button", { name: /edit .* email text/i })).toBeNull();
   });
 
   it("T12 a load error shows a sentence and a working Retry", () => {
@@ -253,7 +265,7 @@ describe("Notifications page — grouped list (#1965)", () => {
 
   it("T3 (review F3) the template editor shows only live channels and opens on Email", () => {
     renderWithProviders(<NotificationsSettingsTab />);
-    fireEvent.click(screen.getByRole("button", { name: /edit order confirmed template/i }));
+    fireEvent.click(screen.getByRole("button", { name: /edit order confirmed email text/i }));
     expect(screen.getByRole("button", { name: "Email" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /whatsapp|sms|portal/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/meta template name/i)).not.toBeInTheDocument();
@@ -290,13 +302,40 @@ describe("Notifications page — grouped list (#1965)", () => {
     expect(info).toHaveAttribute("tabindex", "0");
   });
 
-  it("T16 (review) setup hint links to email setup and says team emails are not live yet", () => {
+  it("T16 the sender row says which sender is in use and links to mailbox setup (admin)", () => {
     renderWithProviders(<NotificationsSettingsTab />);
-    expect(screen.getByRole("link", { name: /set up email/i })).toHaveAttribute(
+    const row = document.querySelector("[data-sender-row]") as HTMLElement;
+    expect(row).toHaveTextContent("Sending from: RouteFlow's address");
+    expect(within(row).getByRole("link", { name: /use your own mailbox/i })).toHaveAttribute(
       "href",
       "/settings?tab=email",
     );
-    expect(screen.getByText(/your team isn't emailed about orders yet/i)).toBeInTheDocument();
+  });
+
+  it("T16b a connected sender is named; an unknown sender hides the row; a non-admin gets no setup link", () => {
+    senderState.sender = { kind: "mailbox", label: "your connected mailbox (ops@acme.test)" };
+    const first = renderWithProviders(<NotificationsSettingsTab />);
+    expect(document.querySelector("[data-sender-row]")).toHaveTextContent(
+      "Sending from: your connected mailbox (ops@acme.test)",
+    );
+    first.unmount();
+    senderState.sender = null;
+    const second = renderWithProviders(<NotificationsSettingsTab />);
+    expect(document.querySelector("[data-sender-row]")).toBeNull();
+    second.unmount();
+    senderState.sender = { kind: "default", label: "RouteFlow's address" };
+    mockRole = "OPERATOR";
+    renderWithProviders(<NotificationsSettingsTab />);
+    expect(screen.queryByRole("link", { name: /set up email|use your own mailbox/i })).toBeNull();
+    expect(screen.getByText(/sending from: routeflow's address/i)).toBeInTheDocument();
+  });
+
+  it("T22 the team group says plainly that nothing is emailed to the team yet", () => {
+    renderWithProviders(<NotificationsSettingsTab />);
+    const team = screen
+      .getByRole("heading", { name: "Emails to your team" })
+      .closest("section") as HTMLElement;
+    expect(within(team).getByText(/your team isn't emailed about orders yet/i)).toBeInTheDocument();
   });
 
   it("T17 the loading state is an accessible status region", () => {
@@ -307,11 +346,11 @@ describe("Notifications page — grouped list (#1965)", () => {
     ).toBeInTheDocument();
   });
 
-  it("T18 (a11y) hint text carrying the setup link is >= 4.5:1 (text-navy/70 = 6.4:1; /50 was 3.3:1)", () => {
+  it("T18 (a11y) the sender row and footnote are >= 4.5:1 (text-navy/70 = 6.4:1; /50 was 3.3:1)", () => {
     renderWithProviders(<NotificationsSettingsTab />);
-    const link = screen.getByRole("link", { name: /set up email/i });
-    const hint = link.closest("p") as HTMLElement;
-    const foot = hint.parentElement as HTMLElement;
+    const row = document.querySelector("[data-sender-row]") as HTMLElement;
+    expect(row.className).toMatch(/text-navy\/70/);
+    const foot = screen.getByText(/invoices are emailed when you press send/i);
     expect(foot.className).toMatch(/text-navy\/70/);
     expect(foot.className).not.toMatch(/text-navy\/(?:[0-5]\d)/);
   });
@@ -333,7 +372,7 @@ describe("Notifications page — grouped list (#1965)", () => {
     }
   });
 
-  it("T13 the health strip maps a reason code to a sentence + fix link and never prints the raw code", () => {
+  it("T13 the health strip maps a reason code to a count sentence + fix link, warns on failures, and never prints the raw code", () => {
     state.health = {
       windowDays: 7,
       sent: 40,
@@ -342,9 +381,15 @@ describe("Notifications page — grouped list (#1965)", () => {
       byReason: [{ reasonCode: "NO_FROM_ADDRESS", count: 2, fixLink: "SETTINGS_EMAIL" }],
     };
     renderWithProviders(<NotificationsSettingsTab />);
-    expect(screen.getByText(/40 sent/i)).toBeInTheDocument();
-    expect(screen.getByText(/no sending email address is set up/i)).toBeInTheDocument();
     const strip = screen.getByRole("region", { name: /email delivery, last 7 days/i });
+    expect(strip).toHaveTextContent("40 sent");
+    expect(strip).toHaveTextContent("2 failed");
+    expect(strip).toHaveTextContent("1 skipped");
+    expect(
+      within(strip).getByText("2 emails weren't sent: no sending email address is set up."),
+    ).toBeInTheDocument();
+    expect(strip.textContent).not.toMatch(/\(2\)/);
+    expect(within(strip).getByText("2 failed").className).toMatch(/text-danger|text-red/);
     expect(within(strip).getByRole("link", { name: /set up email/i })).toHaveAttribute(
       "href",
       expect.stringContaining("tab=email"),
@@ -360,7 +405,44 @@ describe("Notifications page — grouped list (#1965)", () => {
     unmount();
     state.health = { windowDays: 30, sent: 1, failed: 0, skipped: 0, byReason: [] };
     renderWithProviders(<NotificationsSettingsTab />);
-    expect(screen.getByText(/last 30 days: 1 sent/i)).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: /last 30 days/i })).toHaveTextContent("1 sent");
+  });
+
+  it("T20 (mobile) each row stacks: one labelled switch per channel beside its name", () => {
+    renderWithProviders(<NotificationsSettingsTab />);
+    const row = screen.getByText("Order confirmed").closest("[data-event-row]") as HTMLElement;
+    const sw = within(row).getByRole("switch", { name: /order confirmed via email/i });
+    expect(within(row).getByText("Email")).toBeInTheDocument();
+    expect(sw).toBeInTheDocument();
+    expect(row.tagName).toBe("LI");
+  });
+
+  it("T21 every live event carries a one-line description (who gets it, and when)", () => {
+    renderWithProviders(<NotificationsSettingsTab />);
+    expect(screen.getByText("Sent when an order is confirmed for delivery.")).toBeInTheDocument();
+  });
+
+  it("T23 a not-set-up channel is stated ONCE, above the list, not as a column", () => {
+    state.config = makeConfig({
+      channelStatus: {
+        EMAIL: "LIVE",
+        WHATSAPP: "NOT_CONFIGURED",
+        SMS: "NOT_BUILT",
+        PORTAL: "NOT_BUILT",
+      },
+    });
+    renderWithProviders(<NotificationsSettingsTab />);
+    const note = screen.getByText(/^whatsapp · not set up$/i);
+    const firstRow = document.querySelector("[data-event-row]") as HTMLElement;
+    expect(note.compareDocumentPosition(firstRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole("columnheader")).toBeNull();
+  });
+
+  it("T24 (error) Retry is a 44px tap target and the push card still renders", () => {
+    state.isError = true;
+    renderWithProviders(<NotificationsSettingsTab />);
+    expect(screen.getByRole("button", { name: /retry/i }).className).toMatch(/min-h-11/);
+    expect(screen.getByText("Push notifications")).toBeInTheDocument();
   });
 
   it("T13b the health strip renders nothing when the endpoint has no data", () => {
