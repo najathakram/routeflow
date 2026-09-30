@@ -6,6 +6,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../common/encryption.service";
 import { MailboxSendService } from "./mailbox/mailbox-send.service";
 import { mailboxRevokedCopy } from "./mailbox/mailbox-alert.copy";
+import { isInternalEmail } from "../common/internal-email";
 import { escapeHtml, safeLinkHref } from "../common/html-escape";
 // F03/R9: ONE original-price display decision shared with the PDF, so the two
 // customer-facing documents of the same send can never disagree (a pure helper —
@@ -1089,6 +1090,30 @@ export class EmailService {
   // ─── Internal send ─────────────────────────────────────────────────────────
 
   /**
+   * #2854 Opus B4+r2: ONE refusal shared by BOTH public send paths — `send()` and
+   * `sendPlatform()` (which is called directly by set-password / tenant-welcome /
+   * email-change / role-change, billing-notification and onboarding, so a guard in
+   * `send()` alone left an admin resetPassword mailing an @imported.local user).
+   * Import sentinels (@imported.local / @placeholder.local) are non-routable;
+   * refusing is treated exactly like "no email on file". Honest result (R5).
+   * The warn log carries the sentinel DOMAIN only, never the full address.
+   */
+  private refuseSentinel(
+    to: string,
+  ): { delivered: false; transport: "none"; error: string } | null {
+    if (!isInternalEmail(to)) return null;
+    const domain = to.slice(to.lastIndexOf("@"));
+    this.logger.warn(
+      `send refused: recipient is at the internal sentinel domain ${domain} (no real email on file)`,
+    );
+    return {
+      delivered: false,
+      transport: "none",
+      error: "Recipient is an internal placeholder address (no real email on file).",
+    };
+  }
+
+  /**
    * Send an email and return an HONEST result. NEVER throws for a delivery/config
    * problem — it returns `{delivered:false, …}` instead — so fire-and-forget callers
    * (auth password-reset, account-merge) are never turned into a 500 by an
@@ -1147,6 +1172,11 @@ export class EmailService {
      */
     fromAddress?: string;
   }> {
+    // Sentinel guard (#2854 Opus B4 + r2): shared with sendPlatform() below —
+    // BOTH public send paths refuse before any transport or delegation.
+    const refusedTo = this.refuseSentinel(params.to);
+    if (refusedTo) return refusedTo;
+
     // Security review Phase 2: a platform-class send is a full DELEGATION to `sendPlatform()`
     // — not a set of skipped branches inside this method. `sendPlatform` never resolves
     // tenant SMTP, a tenant's own Reply-To, or a tenant's connected mailbox; it always uses
@@ -1393,6 +1423,12 @@ export class EmailService {
     id?: string;
     error?: string;
   }> {
+    // Sentinel guard (#2854 Opus r2): sendPlatform is PUBLIC and called directly
+    // (set-password / welcome / email-change / role-change, billing-notification,
+    // onboarding) — it needs its own refusal, not just send()'s.
+    const refusedTo = this.refuseSentinel(params.to);
+    if (refusedTo) return refusedTo;
+
     // 1. Platform SMTP (Google Workspace mailbox) — same transport as send()'s own
     // platform-SMTP step, but the From identity is always the bare platform address.
     if (this.platformSmtp) {
