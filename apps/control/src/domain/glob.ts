@@ -16,6 +16,7 @@ export function globToRegex(glob: string): RegExp {
   const runs = g.match(/[*?]+/g) ?? [];
   if (
     runs.length > MAX_WILDCARD_RUNS ||
+    (g.match(/\*\*/g) ?? []).length > 2 ||
     g.split("/").some((s) => (s.match(/\*/g) ?? []).length > MAX_STARS_PER_SEGMENT)
   ) {
     throw new Error(`unsafe glob: ${glob.slice(0, 64)}`);
@@ -29,7 +30,7 @@ export function globToRegex(glob: string): RegExp {
       if (segStart && g[i + 1] === "/") {
         re += "(?:[^/]*/)*";
         i++;
-      } else re += ".*";
+      } else re += segStart && i + 1 === g.length ? ".*" : "[^/]*";
     } else if (c === "*") re += "[^/]*";
     else if (c === "?") re += "[^/]";
     else re += c.replace(/[.+^${}()|[\]\\]/g, "\\$&");

@@ -27,6 +27,31 @@ describe("glob ReDoS guards", () => {
   });
 });
 
+describe("glob round 2", () => {
+  const path = "a/".repeat(512);
+  const fast = (glob: string) => {
+    const t = performance.now();
+    try {
+      G.globToRegex(glob).test(path);
+    } catch (e) {
+      expect(String(e)).toMatch(/unsafe glob/);
+    }
+    expect(performance.now() - t).toBeLessThan(50);
+  };
+  it("stacked ** globs throw or finish < 50 ms", () => {
+    fast("**a/**a/**a/**b");
+    fast("**/a/**/a/**/a/**/b");
+  });
+  it("a non-whole-segment ** does not cross /", () => {
+    expect(G.globToRegex("apps/**x.ts").test("apps/a/bx.ts")).toBe(false);
+    expect(G.globToRegex("apps/**x.ts").test("apps/bx.ts")).toBe(true);
+  });
+  it("a*a*a*b still throws; > 2 ** runs throw", () => {
+    expect(() => G.globToRegex("a*a*a*b")).toThrow(/unsafe glob/);
+    expect(() => G.globToRegex("**/a/**/b/**/c")).toThrow(/unsafe glob/);
+  });
+});
+
 describe("glob ** semantics", () => {
   it("apps/**/x.ts is segment-aware", () => {
     const re = G.globToRegex("apps/**/x.ts");
