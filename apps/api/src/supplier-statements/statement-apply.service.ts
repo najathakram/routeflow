@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { lockBillRows } from "../vendor-bills/bill-locks";
 import { randomUUID } from "crypto";
 import { PaymentMethod } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
@@ -192,6 +193,12 @@ export class StatementApplyService {
         return this.alreadyAppliedResult(fresh.appliedPaymentGroupId);
       }
 
+      // B285: lock every bill this apply will pay (confirmed + implied), sorted, BEFORE reading
+      // their payments — same lock the other bill writers take.
+      await lockBillRows(tx, this.prisma.getTenantId(), [
+        ...confirmed.map((c) => c.billId),
+        ...impliedPaidIds,
+      ]);
       const payments: AppliedStatementPayment[] = [];
       const bills: { id: string; status: string; totalPaid: number }[] = [];
 
