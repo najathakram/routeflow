@@ -7,6 +7,13 @@ import type {
 } from "@routeflow/types";
 import { apiClient } from "../api-client";
 
+/**
+ * Credit notes are money: EVERY credit-note mutation is online-only (never offline-queued). A queued
+ * apply/void/edit would replay later behind a UI that said it failed, and a retry would double it.
+ * (api-client `_skipOfflineQueue`; a wiring test pins that every call in this file passes it.)
+ */
+const ONLINE_ONLY = { _skipOfflineQueue: true } as object;
+
 // ─── Types (mirror apps/web/lib/api/credit-notes.ts) ────────────────────────────
 
 // Schema-pinned (packages/types/api/enums.ts): ISSUED | APPLIED | VOID — a
@@ -109,7 +116,7 @@ export interface CreateCreditNoteInput {
 export function useCreateCreditNote() {
   const qc = useQueryClient();
   return useMutation<CreditNote, Error, CreateCreditNoteInput>({
-    mutationFn: (dto) => apiClient.post("/credit-notes", dto).then((r) => r.data),
+    mutationFn: (dto) => apiClient.post("/credit-notes", dto, ONLINE_ONLY).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["credit-notes"] }),
   });
 }
@@ -129,7 +136,7 @@ export function useApplyCreditNote() {
   const qc = useQueryClient();
   return useMutation<{ id: string }, Error, { id: string; invoiceId: string }>({
     mutationFn: ({ id, invoiceId }) =>
-      apiClient.post(`/credit-notes/${id}/apply`, { invoiceId }).then((r) => r.data),
+      apiClient.post(`/credit-notes/${id}/apply`, { invoiceId }, ONLINE_ONLY).then((r) => r.data),
     onSuccess: (_, { id, invoiceId }) => {
       invalidateCreditNote(qc, id);
       qc.invalidateQueries({ queryKey: ["invoices"] });
@@ -153,7 +160,7 @@ export function useUnapplyCreditNote() {
   const qc = useQueryClient();
   return useMutation<CreditNote, Error, { id: string; invoiceId: string }>({
     mutationFn: ({ id, invoiceId }) =>
-      apiClient.post(`/credit-notes/${id}/unapply`, { invoiceId }).then((r) => r.data),
+      apiClient.post(`/credit-notes/${id}/unapply`, { invoiceId }, ONLINE_ONLY).then((r) => r.data),
     onSuccess: (_, { id, invoiceId }) => {
       invalidateCreditNote(qc, id);
       qc.invalidateQueries({ queryKey: ["invoices"] });
@@ -167,22 +174,13 @@ export function useUnapplyCreditNote() {
   });
 }
 
-/** Void — server rejects if APPLIED or amountUsed>0; undoes any ledger reversal. */
-export function useVoidCreditNote() {
-  const qc = useQueryClient();
-  return useMutation<CreditNote, Error, string>({
-    mutationFn: (id) => apiClient.post(`/credit-notes/${id}/void`).then((r) => r.data),
-    onSuccess: (_, id) => invalidateCreditNote(qc, id),
-  });
-}
-
 /** #2648 / SA-535(a): reason/expiry, in place (a VOID note is not editable). */
 export function useUpdateCreditNote() {
   const qc = useQueryClient();
   return useMutation<CreditNote, Error, { id: string; reason?: string; expiresAt?: string | null }>(
     {
       mutationFn: ({ id, ...dto }) =>
-        apiClient.patch(`/credit-notes/${id}`, dto).then((r) => r.data),
+        apiClient.patch(`/credit-notes/${id}`, dto, ONLINE_ONLY).then((r) => r.data),
       onSuccess: (_, { id }) => invalidateCreditNote(qc, id),
     },
   );
@@ -215,9 +213,7 @@ export function useVoidWithReversal() {
     mutationFn: ({ id, reason }) =>
       apiClient
         // Online-only: it needs a fresh void-preview, and a silent offline replay would void later.
-        .post(`/credit-notes/${id}/void-with-reversal`, reason ? { reason } : {}, {
-          _skipOfflineQueue: true,
-        } as object)
+        .post(`/credit-notes/${id}/void-with-reversal`, reason ? { reason } : {}, ONLINE_ONLY)
         .then((r) => r.data),
     onSuccess: (_, { id }) => {
       invalidateCreditNote(qc, id);
@@ -241,8 +237,8 @@ export function useReissueCreditNote() {
         // Online-only (see useVoidWithReversal): "Nothing was changed" on a network drop must be true.
         .post(`/credit-notes/${id}/reissue`, dto, {
           headers: { "Idempotency-Key": idempotencyKey },
-          _skipOfflineQueue: true,
-        } as object)
+          ...ONLINE_ONLY,
+        })
         .then((r) => r.data),
     onSuccess: (_, { id }) => {
       invalidateCreditNote(qc, id);

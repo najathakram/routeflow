@@ -181,6 +181,8 @@ model Product {
   recipesAsProduct      Recipe[]               @relation("RecipeProduct")
   recipesAsFamily       Recipe[]               @relation("RecipeFamily")
   recipeComponents      RecipeComponent[]
+  orderItemComponents   OrderItemComponent[]
+  invoiceItemComponents InvoiceItemComponent[]
 
   @@unique([tenantId, sku])
   @@unique([tenantId, barcode])

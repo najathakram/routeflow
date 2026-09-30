@@ -58,6 +58,10 @@ export default function NewStandingOrderScreen() {
         .filter((l) => l.qty > 0),
     );
 
+  // #2717 M4a-1 (SA-580): a template line carries `qty` ONLY (no boxes/pieces split, no level in
+  // the template DTO), so a scanned level cannot be represented here yet - every hit is one
+  // selling unit, as before. Flagged in the M4a-1 scan-caller table as a follow-up (needs an
+  // API/DTO field), not silently mapped.
   // Shared by the picker's onSelect and the scan FAB (B266) so a scanned
   // product adds/increments a line exactly like a tapped one.
   const addLine = (product: AdminProduct) =>

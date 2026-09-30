@@ -134,18 +134,6 @@ export function useApplyCreditNote() {
   });
 }
 
-export function useVoidCreditNote() {
-  const qc = useQueryClient();
-  return useMutation<CreditNote, Error, string>({
-    mutationFn: (id) => apiClient.post(`/credit-notes/${id}/void`).then((r) => r.data),
-    onSuccess: (data, id) => {
-      qc.invalidateQueries({ queryKey: ["credit-notes"] });
-      qc.invalidateQueries({ queryKey: ["credit-notes", id] });
-      qc.invalidateQueries({ queryKey: ["customers", data.customerId, "statement"] });
-    },
-  });
-}
-
 /**
  * Un-apply (part of) a credit note from one invoice — the inverse of
  * useApplyCreditNote. Restores the wallet balance, reverts the credit note's

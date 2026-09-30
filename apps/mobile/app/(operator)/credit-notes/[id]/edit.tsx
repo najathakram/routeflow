@@ -117,7 +117,11 @@ export default function EditCreditNoteScreen() {
 
   const busy = update.isPending || reissue.isPending;
   // Mirrors web: only an ISSUED note's expiry is editable in place (a money change reissues instead).
-  const expiryEditable = cn.status === "ISSUED" || plan.kind === "reissue";
+  // A changed expiry stays editable so it can be put back (amount -> expiry -> amount back is not a trap).
+  const expiryEditable =
+    cn.status === "ISSUED" ||
+    plan.kind === "reissue" ||
+    draft.expiry !== (cn.expiresAt ? cn.expiresAt.slice(0, 10) : "");
   const set = (patch: Partial<CreditNoteEditDraft>) =>
     setDraft((d) => (d ? { ...d, ...patch } : d));
 

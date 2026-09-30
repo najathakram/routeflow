@@ -138,6 +138,25 @@ describe("EditCreditNoteModal (#2648 / SA-535(c))", () => {
     expect(dialog.getByRole("button", { name: "Save" })).toBeEnabled();
   });
 
+  it("the expiry lock is not a trap: amount -> expiry -> amount back leaves the changed expiry editable", async () => {
+    const user = userEvent.setup();
+    open(note({ status: "APPLIED" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    const expiry = dialog.getByLabelText(/Expires/);
+    expect(expiry).toBeDisabled(); // a non-ISSUED note with no money change
+
+    await user.clear(dialog.getByLabelText("Credit amount"));
+    await user.type(dialog.getByLabelText("Credit amount"), "10");
+    expect(expiry).toBeEnabled();
+    await user.type(expiry, "2999-01-01");
+
+    await user.clear(dialog.getByLabelText("Credit amount"));
+    await user.type(dialog.getByLabelText("Credit amount"), "30"); // back to the original amount
+    expect(expiry).toBeEnabled(); // still editable, so it can be put back
+    await user.clear(expiry);
+    expect(expiry).toBeDisabled(); // restored => locked again
+  });
+
   it("a note that never had a reason can still be saved (only blanking a set reason is blocked)", async () => {
     const user = userEvent.setup();
     open(note({ reason: null as unknown as string, status: "ISSUED" }));

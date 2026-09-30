@@ -13,6 +13,9 @@ import {
 } from "@routeflow/pricing";
 import { mergeBoxedContributions } from "./buyer-merge-pricing";
 import { groupContributionsByPack, type PackCandidate } from "./merge-pack-resolve";
+import { compositionStampOf } from "./order-composition";
+
+export { compositionStampOf };
 
 export interface MergeLine extends PackCandidate {
   /** Set only on the winner's own existing OrderItem row — identity distinguishes it in a group. */
@@ -31,6 +34,10 @@ export interface MergeLine extends PackCandidate {
   categoryTaxType: CategoryTaxType | null;
   categoryTaxRate: unknown;
   categoryPriceIncludesTax: boolean | null;
+  /** #2717 M3: composition provenance; a FIXED line folds only with the same recipeVersion. */
+  compositionMode?: string | null;
+  recipeId?: string | null;
+  recipeVersion?: number | null;
 }
 
 export interface MergeLineWriteData {
@@ -54,6 +61,10 @@ export interface MergeLineWriteData {
   categoryTaxType: CategoryTaxType | null;
   categoryTaxRate: number | null;
   categoryPriceIncludesTax: boolean | null;
+  /** #2717 M3: a moved/created FIXED line keeps the recipe stamp it had; absent on plain lines. */
+  compositionMode?: string;
+  recipeId?: string | null;
+  recipeVersion?: number | null;
 }
 
 type MergeLineUpdateData = Pick<
@@ -81,6 +92,10 @@ export interface BuildMergeLineWritesOptions {
   categoryFor: (productId: string) => string | null;
   liveUnitsPerBoxFor: (productId: string) => number;
 }
+
+/** Fold key: lines of one product fold only at the same composition (FIXED version, or plain). */
+const versionKey = (li: MergeLine): string =>
+  li.compositionMode === "FIXED" ? `FIXED:${li.recipeVersion ?? ""}` : "";
 
 /** `unitsPerBox` a NON-boxed line ends up written with — matches computeLineSubtotal's own
  * "boxed only when boxes != null" contract: a group whose resolved pack is <= 1 never boxes. */
@@ -115,9 +130,26 @@ export function buildMergeLineWrites(
   const writes: MergeLineWrite[] = [];
   const warnings: MergeWarning[] = [];
 
+  // #2717 M3 (C9a/C9b): split every product's contributions by composition first, so a FIXED line
+  // never folds across a recipe version (or with a plain line). One bucket per product otherwise.
+  const buckets: Array<{ productId: string; winner: MergeLine[]; losers: MergeLine[] }> = [];
   for (const productId of productIds) {
-    const winnerLinesForProduct = winnerByProduct.get(productId) ?? [];
-    const losers = loserByProduct.get(productId) ?? [];
+    const w = winnerByProduct.get(productId) ?? [];
+    const l = loserByProduct.get(productId) ?? [];
+    const keys = new Set([...w, ...l].map(versionKey));
+    if (keys.size <= 1) buckets.push({ productId, winner: w, losers: l });
+    else {
+      for (const k of keys) {
+        buckets.push({
+          productId,
+          winner: w.filter((li) => versionKey(li) === k),
+          losers: l.filter((li) => versionKey(li) === k),
+        });
+      }
+    }
+  }
+
+  for (const { productId, winner: winnerLinesForProduct, losers } of buckets) {
     if (losers.length === 0) continue; // nothing contributed by any loser — every winner line is untouched.
 
     const liveUpb = opts.liveUnitsPerBoxFor(productId);
@@ -167,6 +199,7 @@ export function buildMergeLineWrites(
               categoryTaxRate: c.categoryTaxRate as number | string | null,
               categoryPriceIncludesTax: c.categoryPriceIncludesTax,
             }),
+            ...compositionStampOf(c),
           },
         });
         continue;
@@ -237,6 +270,7 @@ export function buildMergeLineWrites(
               categoryTaxRate: primary.categoryTaxRate as number | string | null,
               categoryPriceIncludesTax: primary.categoryPriceIncludesTax,
             }),
+            ...compositionStampOf(primary),
           },
         });
       }

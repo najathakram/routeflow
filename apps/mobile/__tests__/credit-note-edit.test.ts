@@ -179,13 +179,30 @@ describe("Edit credit note wiring (#2648)", () => {
       /\.post\(`\/credit-notes\/\$\{id\}\/reissue`, dto, \{\s*headers: \{ "Idempotency-Key": idempotencyKey \}/,
     );
   });
-  it("the reissue and the void-with-reversal are online-only: never offline-queued (#2418 U1)", () => {
-    expect(api).toMatch(
-      /\.post\(`\/credit-notes\/\$\{id\}\/reissue`, dto, \{\s*headers: \{[^}]*\},\s*_skipOfflineQueue: true,?\s*\}/,
+  it("EVERY credit-note mutation is online-only: each apiClient write in lib/api/credit-notes.ts passes ONLINE_ONLY (#2418 U1)", () => {
+    const calls = [...api.matchAll(/apiClient(?:\s|\/\/[^\n]*)*\.(post|patch|put|delete)\(/g)];
+    expect(calls.length).toBeGreaterThanOrEqual(6); // create, apply, unapply, patch, void-with-reversal, reissue
+    for (const m of calls) {
+      let depth = 0;
+      let i = m.index! + m[0].length - 1;
+      const start = i;
+      for (; i < api.length; i++) {
+        if (api[i] === "(") depth++;
+        else if (api[i] === ")" && --depth === 0) break;
+      }
+      expect(api.slice(start, i + 1)).toContain("ONLINE_ONLY");
+    }
+    expect(api).toMatch(/const ONLINE_ONLY = \{ _skipOfflineQueue: true \}/);
+  });
+
+  it("the expiry field stays editable while it differs from the note's (amount -> expiry -> amount back)", () => {
+    expect(edit).toMatch(
+      /const expiryEditable =\s*cn\.status === "ISSUED" \|\|\s*plan\.kind === "reissue" \|\|\s*draft\.expiry !== \(cn\.expiresAt \? cn\.expiresAt\.slice\(0, 10\) : ""\)/,
     );
-    expect(api).toMatch(
-      /\.post\(`\/credit-notes\/\$\{id\}\/void-with-reversal`, [^)]*\{\s*_skipOfflineQueue: true,?\s*\}/,
-    );
+  });
+
+  it("the unused plain void hook is gone (the UI voids through void-with-reversal only)", () => {
+    expect(api).not.toContain("useVoidCreditNote");
   });
 
   it("no screen renders the server's refusal text: only refusalCode via fixed copy", () => {
