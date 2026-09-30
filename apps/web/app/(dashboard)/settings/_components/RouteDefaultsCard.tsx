@@ -38,6 +38,17 @@ function validate(f: Form): Errors {
   return e;
 }
 
+function depotContext(data?: {
+  depotLat?: number | null;
+  depotLng?: number | null;
+  depotAddress?: string | null;
+}): string {
+  if (data?.depotAddress) return `Routes currently start from ${data.depotAddress}.`;
+  if (data?.depotLat != null && data?.depotLng != null)
+    return `Routes currently start from ${data.depotLat}, ${data.depotLng}.`;
+  return "No depot is set yet.";
+}
+
 export function RouteDefaultsCard() {
   const { toast } = useToast();
   const { data, isLoading, isError, refetch } = useRouteSettings();
@@ -57,8 +68,10 @@ export function RouteDefaultsCard() {
       service: String(data.serviceTimeMinutes),
       start: data.defaultStartTime,
       speed: String(data.averageSpeedKmh),
-      lat: data.depotLat == null ? "" : String(data.depotLat),
-      lng: data.depotLng == null ? "" : String(data.depotLng),
+      // The depot inputs stay blank: GET may return a cached geocode of the business
+      // address, which must not look like something the user typed.
+      lat: "",
+      lng: "",
     });
   }, [data]);
 
@@ -125,6 +138,10 @@ export function RouteDefaultsCard() {
               error={errors.speed}
             />
           </div>
+          <p className="text-xs text-navy/60">
+            {depotContext(data)} Enter both coordinates to change it; leave both blank to keep it as
+            is (it can&apos;t be cleared here yet).
+          </p>
           <div className="grid gap-4 sm:grid-cols-2">
             <Input
               label="Depot latitude"

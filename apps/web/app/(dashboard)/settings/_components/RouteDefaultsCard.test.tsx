@@ -47,15 +47,27 @@ describe("RouteDefaultsCard", () => {
     expect((await field(/service time/i)).value).toBe("10");
     expect((await field(/start time/i)).value).toBe("08:00");
     expect((await field(/average speed/i)).value).toBe("40");
-    expect((await field(/depot latitude/i)).value).toBe("33.9");
-    expect((await field(/depot longitude/i)).value).toBe("-118.2");
   });
 
-  it("renders an unset depot as empty", async () => {
-    get.mockResolvedValue({ data: { ...SETTINGS, depotLat: null, depotLng: null } });
+  it("shows the current depot as context, never prefilled as typed input", async () => {
     renderWithProviders(<RouteDefaultsCard />);
     expect((await field(/depot latitude/i)).value).toBe("");
     expect((await field(/depot longitude/i)).value).toBe("");
+    expect(screen.getByText(/currently start from 33\.9, -118\.2/i)).toBeInTheDocument();
+  });
+
+  it("prefers the business address as the depot context", async () => {
+    get.mockResolvedValue({ data: { ...SETTINGS, depotAddress: "1 Main St, Springfield" } });
+    renderWithProviders(<RouteDefaultsCard />);
+    await field(/depot latitude/i);
+    expect(screen.getByText(/currently start from 1 main st, springfield/i)).toBeInTheDocument();
+  });
+
+  it("says no depot is set when there is none", async () => {
+    get.mockResolvedValue({ data: { ...SETTINGS, depotLat: null, depotLng: null } });
+    renderWithProviders(<RouteDefaultsCard />);
+    await field(/depot latitude/i);
+    expect(screen.getByText(/no depot is set yet/i)).toBeInTheDocument();
   });
 
   it("blocks save on an out-of-range service time", async () => {
@@ -78,7 +90,7 @@ describe("RouteDefaultsCard", () => {
 
   it("blocks save when only one of lat/lng is set", async () => {
     renderWithProviders(<RouteDefaultsCard />);
-    fireEvent.change(await field(/depot longitude/i), { target: { value: "" } });
+    fireEvent.change(await field(/depot latitude/i), { target: { value: "34.05" } });
     fireEvent.click(screen.getByRole("button", { name: /save/i }));
     expect(await screen.findByText(/both latitude and longitude/i)).toBeInTheDocument();
     expect(patch).not.toHaveBeenCalled();
@@ -98,6 +110,7 @@ describe("RouteDefaultsCard", () => {
     renderWithProviders(<RouteDefaultsCard />);
     fireEvent.change(await field(/service time/i), { target: { value: "15" } });
     fireEvent.change(await field(/depot latitude/i), { target: { value: "34.05" } });
+    fireEvent.change(await field(/depot longitude/i), { target: { value: "-118.2" } });
     fireEvent.click(screen.getByRole("button", { name: /save/i }));
     await waitFor(() =>
       expect(patch).toHaveBeenCalledWith("/settings/route", {
@@ -113,8 +126,7 @@ describe("RouteDefaultsCard", () => {
     );
   });
 
-  it("omits depot fields when both are blank", async () => {
-    get.mockResolvedValue({ data: { ...SETTINGS, depotLat: null, depotLng: null } });
+  it("keeps an existing depot when both fields are left blank (no depot keys sent)", async () => {
     renderWithProviders(<RouteDefaultsCard />);
     await field(/depot latitude/i);
     fireEvent.click(screen.getByRole("button", { name: /save/i }));
