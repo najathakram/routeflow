@@ -263,6 +263,49 @@ export class VendorBillsService {
       : new Prisma.Decimal(0);
   }
 
+  /**
+   * B285: serialise every writer of ONE bill's receipt (receive, revertToDraft, voidBill). Their
+   * guards and plans are computed from a read taken OUTSIDE the transaction, so two concurrent
+   * writers both passed them and both posted (a double receive doubled the stock; a revert racing
+   * a top-up left stock counted twice). Lock the bill row, then refuse, readably, if the receipt
+   * state the caller planned from is no longer the bill's.
+   */
+  private async lockBillAndAssertReceiptState(
+    tx: Prisma.TransactionClient,
+    bill: {
+      id: string;
+      status: string;
+      receivedDate: Date | null;
+      items: { id: string; qtyReceived: Prisma.Decimal | null }[];
+    },
+  ) {
+    const tenantId = this.prisma.getTenantId();
+    await tx.$executeRaw`SELECT id FROM "VendorBill" WHERE id = ${bill.id} AND "tenantId" = ${tenantId} FOR UPDATE`;
+    const fresh = await tx.vendorBill.findUnique({
+      where: { id: bill.id },
+      select: {
+        status: true,
+        receivedDate: true,
+        items: { select: { id: true, qtyReceived: true } },
+      },
+    });
+    const state = (b: {
+      status: string;
+      receivedDate: Date | null;
+      items: { id: string; qtyReceived: Prisma.Decimal | null }[];
+    }) =>
+      JSON.stringify([
+        b.status,
+        b.receivedDate?.getTime() ?? null,
+        b.items.map((i) => [i.id, i.qtyReceived == null ? null : String(i.qtyReceived)]).sort(),
+      ]);
+    if (!fresh || state(fresh) !== state(bill)) {
+      throw new ConflictException(
+        "This bill was just changed by someone else (received, reverted or voided) — reload it and try again.",
+      );
+    }
+  }
+
   private async nextBillNumber() {
     const year = new Date().getFullYear();
     const prefix = `BILL-${year}-`;
@@ -1123,27 +1166,7 @@ export class VendorBillsService {
     });
 
     const updated = await this.prisma.tenantTransaction(async (tx) => {
-      // B285: serialise receives of ONE bill. The idempotency guard and the plan above were
-      // computed from a read taken outside this transaction, so two concurrent receives both
-      // passed it and both posted the full stock. Lock the bill row, then refuse if what we
-      // planned from is no longer the bill's receipt state.
-      const tenantId = this.prisma.getTenantId();
-      await tx.$executeRaw`SELECT id FROM "VendorBill" WHERE id = ${id} AND "tenantId" = ${tenantId} FOR UPDATE`;
-      const fresh = await tx.vendorBill.findUnique({
-        where: { id },
-        select: { receivedDate: true, items: { select: { id: true, qtyReceived: true } } },
-      });
-      const receiptState = (b: {
-        receivedDate: Date | null;
-        items: { id: string; qtyReceived: Prisma.Decimal | null }[];
-      }) =>
-        JSON.stringify([
-          b.receivedDate?.getTime() ?? null,
-          b.items.map((i) => [i.id, i.qtyReceived == null ? null : String(i.qtyReceived)]).sort(),
-        ]);
-      if (!fresh || receiptState(fresh) !== receiptState(bill)) {
-        throw new ConflictException("Bill was just received by someone else — reload it.");
-      }
+      await this.lockBillAndAssertReceiptState(tx, bill);
       // Sync inventory for each line in the plan. The whole block works in
       // INVENTORY denomination: lineInventoryDelta converts a case-priced line
       // (packSize > 1) to pieces + per-piece cost so Product.averageCost keeps
@@ -1332,6 +1355,7 @@ export class VendorBillsService {
     const movesStock = bill.purchaseOrderId == null;
 
     return this.prisma.tenantTransaction(async (tx) => {
+      await this.lockBillAndAssertReceiptState(tx, bill);
       // Reverse inventory for each product-linked item — in the SAME
       // inventory denomination receive() applied (case lines converted to
       // pieces + per-piece cost), and only the quantity ACTUALLY received
@@ -1448,6 +1472,7 @@ export class VendorBillsService {
       bill.purchaseOrderId == null;
     if (needsReversal) {
       return this.prisma.tenantTransaction(async (tx) => {
+        await this.lockBillAndAssertReceiptState(tx, bill);
         for (const item of bill.items) {
           if (!item.productId || !item.product) continue;
           // Same inventory denomination receive() applied — see

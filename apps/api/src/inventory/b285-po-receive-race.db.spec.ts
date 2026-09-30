@@ -426,4 +426,69 @@ describeDb("B285 — PO receive vs concurrent writers — real Postgres, separat
     expect(lots).toHaveLength(1);
     expect(moves).toHaveLength(1);
   });
+
+  // The loser of a bill race must get a readable refusal and stock must never stay double-counted.
+  describe.each(["revertToDraft", "voidBill"] as const)(
+    "(e) a top-up receive racing %s of the same bill",
+    (undo) => {
+      it("one wins, the other is refused readably, and stock matches what the bill says", async () => {
+        const w = await seedWorld(`e-${undo}`, 50, 2);
+        const bill: any = await inTenant(A, w, () =>
+          A.bills.create({
+            supplierId: w.supplierId,
+            billDate: "2026-09-01",
+            items: [{ productId: w.productId, description: "Widget", qty: 10, unitCost: 6 }],
+          } as never),
+        );
+        // first receipt: 4 of 10
+        await inTenant(A, w, () =>
+          A.bills.receive(
+            bill.id,
+            { items: [{ itemId: bill.items[0].id, qty: 4 }] } as never,
+            w.userId,
+          ),
+        );
+        expect(Number((await productOf(w)).currentStock)).toBe(54);
+
+        // both writers pass their pre-transaction reads before either opens its txn
+        const barrier = new Barrier(2, 1500);
+        for (const svc of [A, C]) {
+          const prismaSvc = svc.prisma as unknown as {
+            tenantTransaction: (...a: unknown[]) => Promise<unknown>;
+          };
+          const original = prismaSvc.tenantTransaction.bind(prismaSvc);
+          jest
+            .spyOn(prismaSvc, "tenantTransaction")
+            .mockImplementation(async (...args: unknown[]) => {
+              await barrier.arrive();
+              return original(...args);
+            });
+        }
+        const settled = await Promise.allSettled([
+          inTenant(A, w, () =>
+            A.bills.receive(
+              bill.id,
+              { items: [{ itemId: bill.items[0].id, qty: 6 }] } as never,
+              w.userId,
+            ),
+          ),
+          inTenant(C, w, () => (C.bills as any)[undo](bill.id, w.userId)),
+        ]);
+
+        const p = await productOf(w);
+        const fulfilled = settled.filter((r) => r.status === "fulfilled");
+        const rejected = settled.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+        console.log(
+          `B285(e/${undo}) observed: fulfilled=${fulfilled.length} stock=${p.currentStock} ` +
+            `rejected=${rejected.map((r) => r.reason?.message).join(" | ")}`,
+        );
+        expect(fulfilled).toHaveLength(1);
+        expect(rejected).toHaveLength(1);
+        expect(rejected[0].reason?.message).toMatch(/just changed by someone else|reload/i);
+        // receive won -> 50 + 10 = 60 and the undo was refused; undo won -> the 4 received were
+        // reversed (50) and the top-up refused. Anything else (54, 64) is stock counted twice.
+        expect([60, 50]).toContain(Number(p.currentStock));
+      });
+    },
+  );
 });
