@@ -8,7 +8,10 @@
  *   Q3 no ACTIVE recipe -> plain line
  *   Q4 buyer cart path (create with a CUSTOMER caller) composes the same; buyer isolation
  *   Q5 edit 2 -> 3 keeps and rescales the components
- *   Q6 buyer AUTO-MERGE new-line path: qty is PIECES (re-split), pins vs a non-recipe twin
+ *   Q6 buyer AUTO-MERGE new-line path: a PLAIN qty = PACKS (SA-601/#2780, same as create); explicit
+ *      boxes/pieces still wins (Q6c)
+ *   Q8 PARITY: the same plain buyer qty via create(forceNew) and via the auto-merge new line stores
+ *      identical columns + components for a boxed, a unit-sized and a recipe product
  *   Q7 DRIVER replace path, `pieceDenominated` arm (product already carries a box-aware line):
  *      same rule as Q6 (pieces % pack == 0 composes; else 400 FIXED_WHOLE_BOXES, nothing persisted)
  *   Q7c STAFF (OPERATOR) diff/merge branch: no split, qty = packs -> 2 packs = 48, boxes/pieces null
@@ -588,40 +591,57 @@ describeDb("#2717 M3 qty-only RECIPE line composition — real Postgres", () => 
     expect(await componentCount(w.tenantId)).toBe(2);
   });
 
-  // Q6: on the buyer AUTO-MERGE path a NEW boxed line's `qty` is PIECES: updateOrderItems re-splits
-  // it (normalizeBoxesPieces), so 72 at pack 24 = 3 boxes + 0 pieces = 3 packs. PINS: composition
-  // never reinterprets the path's meaning of qty (SA-593g); green on current code.
-  it("Q6a merge adds a NEW recipe line qty 72 (no boxes): composes 3 packs; stored columns equal the plain twin's", async () => {
+  // Q6 (SA-601 / #2780, PACK ONLY): on the buyer AUTO-MERGE path a PLAIN qty (no boxes/pieces/
+  // unitLabel) is the DEFAULT SELLING UNIT = the PACK, exactly as create() stores it: qty N = N
+  // packs, boxes/pieces null. (Was: re-split as PIECES.) An EXPLICIT boxes/pieces wins (Q6c).
+  const expectComposedPacks = (
+    w: World,
+    cat: { v1: { id: string } | null; a: { id: string }; b: { id: string } },
+    mixLine: Awaited<ReturnType<typeof linesOf>>[number],
+    twinLine: Awaited<ReturnType<typeof linesOf>>[number],
+    packs: number,
+  ) => {
+    expect(mixLine).toMatchObject({ compositionMode: "FIXED", recipeId: cat.v1?.id });
+    // recipe = 12 + 12 per 24-piece pack, so each component carries 12 x packs.
+    expect(mixLine.components.map((c) => [c.componentProductId, c.qty])).toEqual([
+      [cat.a.id, 12 * packs],
+      [cat.b.id, 12 * packs],
+    ]);
+    expect(mixLine.components.reduce((n, c) => n + c.qty, 0)).toBe(packs * 24);
+    for (const c of mixLine.components) expect(c.tenantId).toBe(w.tenantId);
+    expect(Number(mixLine.qty)).toBe(packs); // stored as selling units (packs), not pieces
+    expect(mixLine.boxes).toBeNull();
+    expect(mixLine.pieces).toBeNull();
+    expect(cols(mixLine)).toEqual(cols(twinLine));
+    expect(twinLine.components).toEqual([]);
+  };
+
+  it("Q6a merge adds a NEW recipe line plain qty 72 = 72 PACKS: components sum 72 x 24 = 1728, stored qty 72, boxes/pieces null, equal to the plain twin and to forceNew", async () => {
     const { w, cat, mixLine, twinLine } = await mergeRecipeAndTwin("q6a", { qty: 72 });
-    expectComposed72(w, cat, mixLine, twinLine);
+    expectComposedPacks(w, cat, mixLine, twinLine, 72);
+    expect(mixLine.components.reduce((n, c) => n + c.qty, 0)).toBe(1728);
+
+    // The forceNew (create) path for the same payload stores the same columns + components.
+    const w2 = await seedWorld("q6a-fn");
+    const cat2 = await seedCatalog(w2);
+    const b2 = await seedActiveBuyerOrder(w2, "q6a-fn");
+    const created = (await inTenant(w2.tenantId, () =>
+      orders.create({ items: [qtyOnly(cat2.mix.id, 72)], status: "PENDING" }, buyer(w2, b2.userId)),
+    )) as { id: string };
+    const [fn] = await linesOf(created.id);
+    expect(cols(fn)).toEqual(cols(mixLine));
+    expect(fn.components.map((c) => c.qty)).toEqual(mixLine.components.map((c) => c.qty));
   });
 
-  it("Q6b merge adds qty 3 (3 loose pieces) -> 400 FIXED_WHOLE_BOXES; the existing order is unchanged", async () => {
-    const w = await seedWorld("q6b");
-    const cat = await seedCatalog(w);
-    const b = await seedActiveBuyerOrder(w, "q6b");
-    const before = await linesOf(b.existing.id);
-    const orderBefore = await raw.order.findUniqueOrThrow({ where: { id: b.existing.id } });
-    const compsBefore = await componentCount(w.tenantId);
-
-    await expect(
-      buyerMerge(w, b.userId, b.customerId, [{ productId: cat.mix.id, qty: 3 }]),
-    ).rejects.toMatchObject({
-      status: 400,
-      response: { code: API_ERROR_CODES.FIXED_WHOLE_BOXES },
-    });
-
-    const after = await linesOf(b.existing.id);
-    expect(after).toHaveLength(before.length);
-    expect(after.map((l) => [l.id, cols(l)])).toEqual(before.map((l) => [l.id, cols(l)]));
-    const orderAfter = await raw.order.findUniqueOrThrow({ where: { id: b.existing.id } });
-    expect(Number(orderAfter.total)).toBe(Number(orderBefore.total));
-    expect(Number(orderAfter.subtotal)).toBe(Number(orderBefore.subtotal));
-    expect(await componentCount(w.tenantId)).toBe(compsBefore);
+  it("Q6b merge adds plain qty 3 = 3 PACKS: composes (components sum 3 x 24 = 72), NOT a 400", async () => {
+    const { w, cat, mixLine, twinLine } = await mergeRecipeAndTwin("q6b", { qty: 3 });
+    expectComposedPacks(w, cat, mixLine, twinLine, 3);
+    expect(mixLine.components.reduce((n, c) => n + c.qty, 0)).toBe(72);
     expect(await raw.order.count({ where: { tenantId: w.tenantId } })).toBe(1);
   });
 
-  it("Q6c merge with explicit qty 72 + boxes 3, and boxes-only (pieces 0): same composition and columns as Q6a", async () => {
+  // Q6c UNCHANGED: an EXPLICIT boxes/pieces wins (qty 72 + boxes 3 = 72 pieces = 3 packs, boxes 3 stored).
+  it("Q6c merge with explicit qty 72 + boxes 3, and with pieces 0: explicit split wins -> 3 packs, boxes 3 / pieces 0", async () => {
     for (const payload of [
       { qty: 72, boxes: 3 },
       { qty: 72, boxes: 3, pieces: 0 },
@@ -729,5 +749,62 @@ describeDb("#2717 M3 qty-only RECIPE line composition — real Postgres", () => 
     expect(mixLine!.pieces).toBeNull();
     expect(cols(mixLine!)).toEqual(cols(twinLine!));
     expect(twinLine!.components).toEqual([]);
+  });
+
+  // Q8 (SA-601 / #2780): PARITY. The same PLAIN buyer qty through create() (forceNew: a new order)
+  // and through the auto-merge NEW line stores IDENTICAL qty/boxes/pieces/unitsPerBox/unitPrice/
+  // subtotal and identical component sets, for a boxed (pack 24), a unit-sized (pack 1) and a
+  // RECIPE product. Q7 (DRIVER, pieceDenominated arm = pieces) and Q7c (STAFF merge = packs) are
+  // UNCHANGED by this ruling -- they are not buyer paths.
+  const shapeOf = async (w: World, kind: "boxed" | "unit" | "recipe") => {
+    if (kind === "recipe") return (await seedCatalog(w)).mix;
+    return product(w, kind, kind === "unit" ? { unitsPerBox: 1, unit: "Each" } : {});
+  };
+  const lineShape = (l: Awaited<ReturnType<typeof linesOf>>[number]) => ({
+    cols: cols(l),
+    // component product ids differ per world; compare the ordered quantities.
+    components: l.components.map((c) => c.qty),
+  });
+
+  it.each([
+    ["boxed upb 24 plain product", "boxed", 5],
+    ["unit-sized upb 1 product", "unit", 5],
+    ["recipe product (5 packs = 120 pieces)", "recipe", 5],
+  ] as const)(
+    "Q8 parity: plain buyer qty %s via forceNew == via auto-merge new line",
+    async (_n, kind, qty) => {
+      const wA = await seedWorld(`q8a-${kind}`);
+      const pA = await shapeOf(wA, kind);
+      const bA = await seedActiveBuyerOrder(wA, `q8a-${kind}`);
+      const created = (await inTenant(wA.tenantId, () =>
+        orders.create({ items: [qtyOnly(pA.id, qty)], status: "PENDING" }, buyer(wA, bA.userId)),
+      )) as { id: string };
+      expect(created.id).not.toBe(bA.existing.id);
+      const viaCreate = (await linesOf(created.id)).find((l) => l.productId === pA.id);
+
+      const wB = await seedWorld(`q8b-${kind}`);
+      const pB = await shapeOf(wB, kind);
+      const bB = await seedActiveBuyerOrder(wB, `q8b-${kind}`);
+      await buyerMerge(wB, bB.userId, bB.customerId, [{ productId: pB.id, qty }]);
+      const viaMerge = (await linesOf(bB.existing.id)).find((l) => l.productId === pB.id);
+
+      expect(viaCreate).toBeDefined();
+      expect(viaMerge).toBeDefined();
+      expect(Number(viaMerge!.qty)).toBe(qty); // selling units, never x pack / never re-split
+      expect(viaMerge!.boxes).toBeNull();
+      expect(viaMerge!.pieces).toBeNull();
+      expect(lineShape(viaMerge!)).toEqual(lineShape(viaCreate!));
+      if (kind === "recipe") {
+        expect(viaMerge!.components.reduce((n, c) => n + c.qty, 0)).toBe(qty * 24);
+      }
+    },
+  );
+
+  it("Q8 explicit wins: qty 72 + boxes 3 on the merge new line stays a box split (3 boxes / 0 pieces), unlike the plain qty", async () => {
+    const { mixLine, twinLine } = await mergeRecipeAndTwin("q8x", { qty: 72, boxes: 3 });
+    expect(Number(mixLine.qty)).toBe(72);
+    expect(mixLine.boxes).toBe(3);
+    expect(mixLine.pieces).toBe(0);
+    expect(cols(mixLine)).toEqual(cols(twinLine));
   });
 });
