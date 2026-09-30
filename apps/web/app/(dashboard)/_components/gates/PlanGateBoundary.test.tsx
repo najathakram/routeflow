@@ -11,10 +11,10 @@ import type { SubscriptionView } from "@/lib/api/billing";
  * any inline error) before the lock settled. `PlanGateBoundary` is the extracted, directly
  * testable decision RouteGuard now delegates to.
  *
- * Fix-round finding 2: the boundary now emits the navigation's ONE plan-gate notice itself
- * (naming this route's own gate tier) the moment it decides "locked", instead of relying on
- * whichever gated query happens to 403 first — and marks the pathname locked via
- * `setRouteLocked` so `PlanGateNotice` refuses to let a stray 403 add a second one.
+ * Fix-round finding 2: the boundary owns the navigation's ONE plan-gate notice: the lock card
+ * names this route and plan, the top-bar title is set here, and there is NO toast repeating the
+ * card. It still marks the pathname locked via `setRouteLocked` so `PlanGateNotice` refuses to let
+ * a stray 403 add a second one.
  */
 
 const mockToast = jest.fn();

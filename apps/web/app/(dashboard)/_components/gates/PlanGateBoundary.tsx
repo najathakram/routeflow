@@ -24,9 +24,10 @@ import { LockedPage } from "./PlanGates";
  * the real page.
  *
  * B449 fix-round finding 2: when this decides "locked", it is the ONLY source of the
- * navigation's plan-gate notice — it fires the toast itself, naming THIS route's own
- * gate tier, and marks the pathname locked via `setRouteLocked` so `PlanGateNotice`
- * refuses to let a stray 403 from some other widget add a second, possibly
+ * navigation's plan-gate notice. The lock card names THIS route and the plan ("Supplier Bills
+ * isn't on the Lite plan") and the top-bar title is set here too, since the gated page never
+ * mounts. No toast repeats the card; the pathname is still marked locked via `setRouteLocked`
+ * so `PlanGateNotice` refuses to let a stray 403 from some other widget add a second, possibly
  * contradictory one. The notice never comes from a 403 here.
  */
 export function PlanGateBoundary({

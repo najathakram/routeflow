@@ -660,7 +660,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
       {
         onSuccess: () => {
           savePrefs.mutate({ "bill.lastSupplierId": supplierId });
-          toast({ title: "Vendor bill created", variant: "success" });
+          toast({ title: "Supplier bill created", variant: "success" });
           onClose();
         },
         onError: (err: unknown) => {
@@ -685,7 +685,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
           // server refusal in plain language instead of its raw message.
           if (data?.code === "MONEY_INVARIANT") {
             toast({
-              title: "Failed to create vendor bill",
+              title: "Failed to create supplier bill",
               description:
                 "These lines net to a negative amount — if this is a credit memo, record it as a supplier credit.",
               variant: "error",
@@ -694,7 +694,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
           }
           const raw = data?.message;
           toast({
-            title: "Failed to create vendor bill",
+            title: "Failed to create supplier bill",
             description: (Array.isArray(raw) ? raw.join(" ") : raw) || "Please try again.",
             variant: "error",
           });
@@ -1186,7 +1186,7 @@ function InventoryPurchasesTab() {
   return (
     <div className="space-y-5">
       <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700">
-        Inventory purchases are recorded as vendor bills. When a bill is <strong>received</strong>,
+        Inventory purchases are recorded as supplier bills. When a bill is <strong>received</strong>,
         stock is updated and product average costs are recalculated automatically.
       </div>
 
@@ -2339,7 +2339,7 @@ function ExpenseDetailModal({
             href={`/finance/vendor-bills/${expense.vendorBillId}`}
             className="inline-flex items-center gap-2 text-sm text-brand-600 hover:underline"
           >
-            <ExternalLink className="h-4 w-4" /> View linked vendor bill
+            <ExternalLink className="h-4 w-4" /> View linked supplier bill
           </Link>
         )}
       </div>

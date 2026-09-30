@@ -1243,7 +1243,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
     const wantsExpense = inv.createMode === "expense" || inv.createMode === "both";
     if (wantsBill && !inv.supplierId) return "Please select a supplier before creating the bill.";
     if (wantsBill && validItemsOf(inv).length === 0)
-      return "Add at least one valid line item for the vendor bill";
+      return "Add at least one valid line item for the supplier bill";
     if (wantsExpense && !inv.expenseCategoryId) return "Select an expense category";
     return null;
   };
@@ -1334,12 +1334,12 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
             await receiveBill.mutateAsync({ id: billId, acknowledgeUnlinked: true });
             notes.push(
               raisesPo
-                ? `Vendor bill received. ${RAISED_PO_NOTE}`
+                ? `Supplier bill received. ${RAISED_PO_NOTE}`
                 : poBlockReason
-                  ? `Vendor bill received — no purchase order raised (${poBlockReason})`
+                  ? `Supplier bill received — no purchase order raised (${poBlockReason})`
                   : matchedItems > 0
-                    ? `Vendor bill received — inventory updated for ${matchedItems} item${matchedItems === 1 ? "" : "s"}`
-                    : "Vendor bill received",
+                    ? `Supplier bill received — inventory updated for ${matchedItems} item${matchedItems === 1 ? "" : "s"}`
+                    : "Supplier bill received",
             );
           } catch (receiveErr: unknown) {
             // B743: NEVER auto-acknowledge a missing case size (acknowledgeUnlinked above is a
@@ -1349,7 +1349,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
             if (packUnknown) {
               const n = packUnknown.packSizeUnknownItems.length;
               notes.push(
-                `Vendor bill created in Draft — ${n} line${n === 1 ? "" : "s"} don't state units per case. Open the bill to set case sizes (or receive them as loose pieces) before stock updates.`,
+                `Supplier bill created in Draft — ${n} line${n === 1 ? "" : "s"} don't state units per case. Open the bill to set case sizes (or receive them as loose pieces) before stock updates.`,
               );
             } else {
               // Bill was created but receive failed — surface the issue but don't lose the bill
@@ -1357,11 +1357,11 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                 (receiveErr as { response?: { data?: { message?: string } } })?.response?.data
                   ?.message ??
                 "created in Draft (could not auto-receive — open the bill and click Receive to update stock)";
-              notes.push(`Vendor bill ${rmsg}`);
+              notes.push(`Supplier bill ${rmsg}`);
             }
           }
         } else {
-          notes.push("Vendor bill created");
+          notes.push("Supplier bill created");
         }
       }
 
@@ -1654,7 +1654,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
             <div className="p-6">
               <p className="mb-4 text-sm text-navy/70">
                 Upload vendor invoices — drop several PDFs to scan <b>each as its own invoice</b>{" "}
-                (one vendor bill per PDF), or photograph the pages of one invoice as images. Claude
+                (one supplier bill per PDF), or photograph the pages of one invoice as images. Claude
                 will extract every line item and match them to your catalog.
               </p>
               <div
@@ -2840,7 +2840,7 @@ function PriorScanBanner({
           {recorded ? (
             <>
               <span className="font-semibold">
-                You already scanned this — recorded as {prior.billNumber ?? "a vendor bill"}
+                You already scanned this — recorded as {prior.billNumber ?? "a supplier bill"}
                 {when ? ` on ${when}` : ""}
                 {prior.total != null ? `, ${fmt(prior.total)}` : ""}.
               </span>{" "}
