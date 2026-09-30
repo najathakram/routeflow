@@ -465,6 +465,21 @@ describeDb("Bill-state locks — real Postgres, parked first writer", () => {
   it("(p) editing a bill's lines replaces them: one line, and receive posts only the new one", async () => {
     const w = await seedWorld("p");
     const bill = await draftBill(w); // one line, qty 10
+    // a legacy line written before lines were stamped: explicitly NULL tenantId, via the raw client
+    await A.prisma.vendorBillItem.create({
+      data: {
+        vendorBillId: bill.id,
+        description: "Legacy",
+        qty: 3,
+        unitCost: 6,
+        tenantId: null,
+      },
+    });
+    await A.prisma.vendorBillItem.updateMany({
+      where: { vendorBillId: bill.id },
+      data: { tenantId: null },
+    });
+    await A.prisma.vendorBill.update({ where: { id: bill.id }, data: { totalOwed: 78 } });
     await inTenant(A, w, () =>
       A.bills.update(bill.id, {
         items: [{ productId: w.productId, description: "Widget", qty: 4, unitCost: 6 }],
@@ -473,6 +488,8 @@ describeDb("Bill-state locks — real Postgres, parked first writer", () => {
     let items = await A.prisma.vendorBillItem.findMany({ where: { vendorBillId: bill.id } });
     console.log(`B285(p) observed after edit: lines=${items.map((i) => i.qty)}`);
     expect(items.map((i) => Number(i.qty))).toEqual([4]);
+    // the new line is stamped with the tenant
+    expect(items[0].tenantId).toBe(w.tenantId);
 
     // editing the edited bill again (its line now carries the tenant stamp or not) replaces again
     await inTenant(A, w, () =>

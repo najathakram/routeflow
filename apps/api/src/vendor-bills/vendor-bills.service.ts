@@ -535,6 +535,8 @@ export class VendorBillsService {
                 ? {
                     createMany: {
                       data: dto.items.map((item: any) => ({
+                        // Stamped explicitly: a nested write does not get the tenant extension's stamp.
+                        tenantId: this.prisma.getTenantId(),
                         productId: item.productId || null,
                         description: item.description || item.name || "",
                         qty: new Prisma.Decimal(item.qty || 1),
@@ -1037,6 +1039,7 @@ export class VendorBillsService {
                     // an edit used to silently drop sku/packSize/lineTotal,
                     // losing the case-size the receive conversion depends on.
                     data: dto.items.map((item: any) => ({
+                      tenantId: this.prisma.getTenantId(),
                       productId: item.productId || null,
                       description: item.description || item.name || "",
                       qty: new Prisma.Decimal(item.qty || 1),
@@ -2652,7 +2655,8 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       // that money back before its payment rows are destroyed with the bill.
       await this.refundDrawnSupplierCredits(tx, id);
       await tx.billPayment.deleteMany({ where: { vendorBillId: id } });
-      await tx.vendorBillItem.deleteMany({ where: { vendorBillId: id } });
+      // Parent-scoped, like update(): legacy lines carry a NULL tenantId a child-scoped delete can't see.
+      await tx.vendorBill.update({ where: { id }, data: { items: { deleteMany: {} } } });
       await tx.vendorBill.delete({ where: { id } });
     });
     return { success: true };
@@ -2679,7 +2683,12 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
           await this.refundDrawnSupplierCredits(tx, billId);
         }
         await tx.billPayment.deleteMany({ where: { vendorBillId: { in: deletableIds } } });
-        await tx.vendorBillItem.deleteMany({ where: { vendorBillId: { in: deletableIds } } });
+        for (const billId of deletableIds) {
+          await tx.vendorBill.update({
+            where: { id: billId },
+            data: { items: { deleteMany: {} } },
+          });
+        }
         await tx.vendorBill.deleteMany({ where: { id: { in: deletableIds } } });
       }
       return {
