@@ -1,3 +1,5 @@
+import * as fs from "fs";
+import * as path from "path";
 import {
   deactivateFailureToast,
   getReactivationRefusal,
@@ -80,11 +82,11 @@ describe("getReactivationRefusal — maps the 409 by code+field, never by the se
     expect(r).toMatchObject({ kind: "HOLDERS", canResolve: false });
   });
 
-  it("HOLDERS_CHANGED -> its own kind", () => {
+  it("the stale-holder-set code -> the retry kind", () => {
     expect(
       getReactivationRefusal(err({ code: "HOLDERS_CHANGED", message: "x", holders: [] })),
     ).toEqual({
-      kind: "HOLDERS_CHANGED",
+      kind: "RETRY",
     });
   });
 
@@ -133,6 +135,18 @@ describe("deactivateFailureToast — CODES_CHANGED on the deactivate/delete path
     });
   });
 
+  it("CATALOG_TOO_LARGE_FOR_CLEAR_ALL (clear-all and bulk delete above the lock cap) -> the fixed select-fewer sentence", () => {
+    const t = deactivateFailureToast(
+      err({ code: "CATALOG_TOO_LARGE_FOR_CLEAR_ALL", message: "RAW SERVER TEXT" }),
+      "Failed to delete products",
+    );
+    expect(t).toEqual({
+      title: "Failed to delete products",
+      description: "Too many products to remove at once. Select fewer and try again.",
+      variant: "error",
+    });
+  });
+
   it.each([
     ["another 409", err({ code: "CODE_TAKEN", message: "RAW" })],
     ["a 500", { response: { status: 500, data: { message: "boom" } } }],
@@ -145,10 +159,6 @@ describe("deactivateFailureToast — CODES_CHANGED on the deactivate/delete path
 });
 
 describe("the deactivate / delete call sites use deactivateFailureToast (source pin)", () => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const fs = require("fs") as typeof import("fs");
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const path = require("path") as typeof import("path");
   const read = (rel: string) => fs.readFileSync(path.join(__dirname, rel), "utf8");
 
   it("product detail: header Deactivate, variant deactivate and Delete", () => {

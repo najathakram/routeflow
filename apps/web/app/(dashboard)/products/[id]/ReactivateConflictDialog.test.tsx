@@ -93,8 +93,8 @@ describe("ReactivateConflictDialog", () => {
     expect(screen.getByRole("link", { name })).toBeInTheDocument();
   });
 
-  it("HOLDERS_CHANGED -> a retry prompt, no holder list", () => {
-    const { onRetry } = setup({ kind: "HOLDERS_CHANGED" });
+  it("retry kind -> a retry prompt, no holder list", () => {
+    const { onRetry } = setup({ kind: "RETRY" });
     fireEvent.click(screen.getByText("Try again"));
     expect(onRetry).toHaveBeenCalled();
     expect(screen.queryByTestId("reactivate-resolve")).toBeNull();

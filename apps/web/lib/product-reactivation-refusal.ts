@@ -7,7 +7,7 @@ import type {
 
 /**
  * WS7: reactivating a product can be refused with a 409 naming the ACTIVE product(s) that now hold one
- * of its codes or its name (CODE_TAKEN / BARCODE_TAKEN / NAME_TAKEN), or HOLDERS_CHANGED when a resolve
+ * of its codes or its name (CODE_TAKEN / BARCODE_TAKEN / NAME_TAKEN), or the stale-holder-set code when a resolve
  * was sent with a stale holder set. The copy is mapped from code + field only — the server `message` is
  * never shown (L: no raw server strings).
  */
@@ -30,7 +30,7 @@ export type ReactivationRefusal =
       /** False when any holder is blocked: only "change it on that product" is offered. */
       canResolve: boolean;
     }
-  | { kind: "HOLDERS_CHANGED" };
+  | { kind: "RETRY" };
 
 const WHAT: Record<"sku" | "unitSku" | "barcode", { noun: string; fix: string }> = {
   sku: { noun: "the SKU", fix: "a new SKU" },
@@ -56,7 +56,7 @@ export function getReactivationRefusal(err: unknown): ReactivationRefusal | null
   const data = (err as { response?: { data?: unknown } } | null)?.response?.data as
     (Partial<ProductCodeTakenError> & Partial<ProductHoldersChangedError>) | undefined;
   if (!data || typeof data !== "object") return null;
-  if (data.code === API_ERROR_CODES.HOLDERS_CHANGED) return { kind: "HOLDERS_CHANGED" };
+  if (data.code === API_ERROR_CODES.HOLDERS_CHANGED) return { kind: "RETRY" };
   if (
     data.code !== API_ERROR_CODES.CODE_TAKEN &&
     data.code !== API_ERROR_CODES.BARCODE_TAKEN &&
@@ -93,20 +93,24 @@ export function reactivationResolveLabel(names: string[]): string {
   return `Deactivate ${names.length} products and reactivate this`;
 }
 
-const CODES_CHANGED_LINE =
-  "Someone changed this product's codes at the same time. Refresh and try again.";
+const DEACTIVATE_CONFLICT_LINES: Record<string, string> = {
+  [API_ERROR_CODES.CODES_CHANGED]:
+    "Someone changed this product's codes at the same time. Refresh and try again.",
+  [API_ERROR_CODES.CATALOG_TOO_LARGE_FOR_CLEAR_ALL]:
+    "Too many products to remove at once. Select fewer and try again.",
+};
 
 /**
  * The toast for a failed deactivate / archive / delete. `CODES_CHANGED` (a live code the writer had
- * not locked up front) gets one fixed retry sentence; anything else is the bare `title` — the server
- * message is never shown.
+ * not locked up front) and `CATALOG_TOO_LARGE_FOR_CLEAR_ALL` (clear-all / bulk delete above the lock
+ * cap) each get one fixed sentence; anything else is the bare `title` — the server message is never
+ * shown.
  */
 export function deactivateFailureToast(
   err: unknown,
   title: string,
 ): { title: string; description?: string; variant: "error" } {
   const code = (err as { response?: { data?: { code?: unknown } } } | null)?.response?.data?.code;
-  return code === API_ERROR_CODES.CODES_CHANGED
-    ? { title, description: CODES_CHANGED_LINE, variant: "error" }
-    : { title, variant: "error" };
+  const line = typeof code === "string" ? DEACTIVATE_CONFLICT_LINES[code] : undefined;
+  return line ? { title, description: line, variant: "error" } : { title, variant: "error" };
 }

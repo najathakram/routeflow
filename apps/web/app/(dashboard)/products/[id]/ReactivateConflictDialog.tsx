@@ -27,12 +27,12 @@ export function ReactivateConflictDialog({
   onClose: () => void;
   /** Resend the reactivation with `deactivateHolderIds` = these ids. */
   onResolve: (holderIds: string[]) => void;
-  /** HOLDERS_CHANGED: nothing blocks any more (or the set moved) — just try again. */
+  /** Retry kind (the stale-holder-set code): nothing blocks any more (or the set moved) — just try again. */
   onRetry: () => void;
 }) {
   if (!refusal) return null;
 
-  if (refusal.kind === "HOLDERS_CHANGED") {
+  if (refusal.kind === "RETRY") {
     return (
       <Modal
         open
