@@ -149,6 +149,7 @@ export * from "./api/orders";
 export * from "./api/customers";
 export * from "./api/products";
 export * from "./api/finance";
+export * from "./api/credit-notes";
 export * from "./api/returns";
 export * from "./api/inline-returns";
 export * from "./api/regulated";
@@ -173,6 +174,7 @@ export * from "./api/order-tracking";
 export * from "./api/onboarding";
 export * from "./api/order-tracking-view";
 export * from "./api/error-codes";
+export * from "./api/preferences";
 
 // ─── Developer mode (hidden dispatch/driver/route addon) ──────────────────────
 

@@ -19,7 +19,9 @@ import {
   useBusinessSettings,
   type AdminProduct,
 } from "../../../../../lib/api/admin";
+import { resolveScanSellLevel } from "@routeflow/scanning";
 import { archivedMessage, resolveProductByCode } from "../../../../../lib/barcode-resolve";
+import { levelsForScan } from "../../../../../lib/wedge-scan";
 import type { ScanOutcome } from "../../../../../lib/scan-loop";
 import { canRemoveLooseUnits, looseUnitsVisible } from "../../../../../lib/loose-units";
 import { useUpdateInvoice } from "../../../../../lib/api/invoices";
@@ -33,7 +35,12 @@ import {
 } from "../../../../../lib/invoice-totals";
 import { isPendingOrderMirror } from "../../../../../lib/invoices-logic";
 import { hasUnitLine, unitLabelsOf } from "../../../../../lib/invoice-line-unit";
-import { computeLineSubtotal, isNsfLine, packFromOwnSplit } from "@routeflow/pricing";
+import {
+  computeLineSubtotal,
+  isNsfLine,
+  packFromOwnSplit,
+  type SellLevel,
+} from "@routeflow/pricing";
 import { showToast } from "../../../../../lib/toast";
 import {
   hasUnsavedInvoiceLineEdits,
@@ -212,19 +219,23 @@ export default function EditInvoiceScreen() {
     patch(l.key, { pieces: p, qty: (l.boxes ?? 0) * upb + p });
   };
 
-  const addCatalogLine = (p: AdminProduct) => {
+  // `level` is what a SCAN carried (SA-580 R1/R2): UNIT on a boxed product is one loose piece
+  // (0 boxes + 1 piece — both shown by the line's case/loose steppers), BOX one case. A tapped pick
+  // passes none: a case, as before. upb <= 1 has no distinction (R4).
+  const addCatalogLine = (p: AdminProduct, level: SellLevel = "BOX") => {
     setPickerOpen(false);
     const upb = Number(p.unitsPerBox ?? 0);
     const boxed = upb > 1;
+    const loose = boxed && level === "UNIT";
     setLines((ls) => [
       ...ls,
       {
         key: newKey(),
         productId: p.id,
         description: p.name,
-        qty: boxed ? upb : 1,
-        boxes: boxed ? 1 : null,
-        pieces: boxed ? 0 : null,
+        qty: loose ? 1 : boxed ? upb : 1,
+        boxes: boxed ? (loose ? 0 : 1) : null,
+        pieces: boxed ? (loose ? 1 : 0) : null,
         unitsPerBox: boxed ? upb : null,
         unitPrice: Number(p.pricePerUnit) || 0,
         discount: null,
@@ -256,7 +267,10 @@ export default function EditInvoiceScreen() {
         return { feedback: { kind: "error", text: archivedMessage(result.product) } };
       }
       if (!result.notFound) {
-        addCatalogLine(result.product);
+        addCatalogLine(
+          result.product,
+          resolveScanSellLevel(result.product, levelsForScan(trimmed, result.product)),
+        );
         return { feedback: { kind: "added", text: `${result.product.name} added` } };
       }
     } catch {

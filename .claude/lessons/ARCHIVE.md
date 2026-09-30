@@ -3313,3 +3313,14 @@ citations, closed-out with its own post-init assertion guard).
   condition across every one of them.
   (Archived 2026-09-29 whole and verbatim to make room at cap for L-244..L-248: zero or one outside
   citation and a shipped guard named in the entry; lead-directed, #2731's compaction still pending.)
+
+## Archived 2026-09-30 — headroom for L-249 (windows 9+11 bookkeeping)
+
+### L-219 · 2026-09-26 · security · judge a DB-target guard by how the DRIVER parses the URL (D-03)
+
+- **Symptom:** a local-only DB guard checked `new URL(url).hostname`, so `…@localhost/x?host=prod` passed the guard while the pg driver dialled prod.
+- **Root cause:** the guard and the driver parsed the same string differently (`?host=`, `hostaddr`, `service`, multi-host lists, sockets, an encoded `?` in the database name).
+- **Lesson:** **A safety guard on a connection string must parse it the way the DRIVER does (pg-connection-string), then dial the vetted explicit fields, never the raw string it just approved.**
+- **Guard:** `scripts/lib/local-db-target.cjs` and its bypass-list spec (`local-db-target.spec.ts`).
+  (Archived 2026-09-30 whole and verbatim to make room at cap for L-249: zero outside citations and a
+  shipped guard named in the entry; landing-coordinator bookkeeping, lead-directed.)

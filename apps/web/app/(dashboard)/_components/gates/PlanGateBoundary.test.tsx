@@ -11,13 +11,15 @@ import type { SubscriptionView } from "@/lib/api/billing";
  * any inline error) before the lock settled. `PlanGateBoundary` is the extracted, directly
  * testable decision RouteGuard now delegates to.
  *
- * Fix-round finding 2: the boundary now emits the navigation's ONE plan-gate notice itself
- * (naming this route's own gate tier) the moment it decides "locked", instead of relying on
- * whichever gated query happens to 403 first — and marks the pathname locked via
- * `setRouteLocked` so `PlanGateNotice` refuses to let a stray 403 add a second one.
+ * Fix-round finding 2: the boundary owns the navigation's ONE plan-gate notice: the lock card
+ * names this route and plan, the top-bar title is set here, and there is NO toast repeating the
+ * card. It still marks the pathname locked via `setRouteLocked` so `PlanGateNotice` refuses to let
+ * a stray 403 add a second one.
  */
 
 const mockToast = jest.fn();
+const mockSetTitle = jest.fn();
+jest.mock("@/lib/page-title-context", () => ({ usePageTitle: () => ({ setTitle: mockSetTitle }) }));
 jest.mock("@routeflow/ui/web", () => ({
   ...jest.requireActual("@routeflow/ui/web"),
   useToast: () => ({ toast: mockToast, dismiss: jest.fn() }),
@@ -50,6 +52,7 @@ function GatedPage({ onMount }: { onMount: () => void }) {
 
 afterEach(() => {
   mockToast.mockClear();
+  mockSetTitle.mockClear();
   cleanup();
 });
 
@@ -70,7 +73,7 @@ describe("PlanGateBoundary (B449)", () => {
 
     expect(onMount).not.toHaveBeenCalled();
     expect(screen.queryByTestId("gated-page-content")).not.toBeInTheDocument();
-    expect(screen.getByText("Not on your plan")).toBeInTheDocument();
+    expect(screen.getByText("Estimates isn't on your plan")).toBeInTheDocument();
   });
 
   it("never mounts the gated page while the subscription is still resolving (no flash)", () => {
@@ -90,7 +93,7 @@ describe("PlanGateBoundary (B449)", () => {
     expect(onMount).not.toHaveBeenCalled();
     expect(screen.queryByTestId("gated-page-content")).not.toBeInTheDocument();
     // Not the lock either — the answer isn't known yet, so neither surface renders.
-    expect(screen.queryByText("Not on your plan")).not.toBeInTheDocument();
+    expect(screen.queryByText("Estimates isn't on your plan")).not.toBeInTheDocument();
     // And no notice fires for an undecided route.
     expect(mockToast).not.toHaveBeenCalled();
   });
@@ -207,12 +210,12 @@ describe("PlanGateBoundary (B449)", () => {
 
       expect(onMount).not.toHaveBeenCalled();
       expect(screen.queryByTestId("gated-page-content")).not.toBeInTheDocument();
-      expect(screen.getByText("Not on your plan")).toBeInTheDocument();
+      expect(screen.getByText("Estimates isn't on your plan")).toBeInTheDocument();
     });
   });
 
   describe("fix-round finding 2 — the boundary owns the navigation's one notice", () => {
-    it("fires exactly one toast naming this route's plan when it decides locked", () => {
+    it("shows the lock card naming this route and plan, with NO duplicate toast", () => {
       render(
         <PlanGateBoundary
           planGateKey="flag.estimates"
@@ -225,12 +228,24 @@ describe("PlanGateBoundary (B449)", () => {
         </PlanGateBoundary>,
       );
 
-      expect(mockToast).toHaveBeenCalledTimes(1);
-      expect(mockToast).toHaveBeenCalledWith(
-        expect.objectContaining({
-          title: "This feature isn't included in the Lite plan.",
-        }),
+      expect(mockToast).not.toHaveBeenCalled();
+      expect(screen.getByText("Estimates isn't on the Lite plan.")).toBeInTheDocument();
+    });
+
+    it("sets the top-bar title to the gated route's own name", () => {
+      render(
+        <PlanGateBoundary
+          planGateKey="flag.ap_bills"
+          pathname="/vendor-bills"
+          subscription={subscription}
+          subscriptionResolved
+          subscriptionErrored={false}
+        >
+          <GatedPage onMount={jest.fn()} />
+        </PlanGateBoundary>,
       );
+      expect(mockSetTitle).toHaveBeenCalledWith("Supplier Bills");
+      expect(screen.getByText("Supplier Bills isn't on the Lite plan.")).toBeInTheDocument();
     });
 
     it("marks the pathname locked while rendering the lock, and releases it on unmount", () => {
@@ -263,7 +278,7 @@ describe("PlanGateBoundary (B449)", () => {
           <GatedPage onMount={jest.fn()} />
         </PlanGateBoundary>,
       );
-      expect(mockToast).toHaveBeenCalledTimes(1);
+      expect(mockToast).not.toHaveBeenCalled();
 
       // A background refetch that resolves to an equal-but-new subscription object —
       // still locked, same route — must not toast a second time.
@@ -278,7 +293,7 @@ describe("PlanGateBoundary (B449)", () => {
           <GatedPage onMount={jest.fn()} />
         </PlanGateBoundary>,
       );
-      expect(mockToast).toHaveBeenCalledTimes(1);
+      expect(mockToast).not.toHaveBeenCalled();
     });
 
     it("never toasts when unlocked or still resolving", () => {

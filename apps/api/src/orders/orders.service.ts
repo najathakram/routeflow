@@ -63,6 +63,7 @@ import {
   FulfillPath,
   RouteRunStatus,
   RouteRunStopStatus,
+  type Prisma,
 } from "@prisma/client";
 import { ListOrdersDto } from "./dto/list-orders.dto";
 import { nextOrderNumberFor } from "./order-number";
@@ -136,9 +137,9 @@ import { buildMergeLineWrites, type MergeLine, type MergeWarning } from "./merge
 import { assertReplaceAllPackMatchesLive } from "./replace-all-pack-resolution";
 import { decideAddedLinePrice, decideEditedLinePrice, isOverride } from "./staff-line-price";
 import {
-  buildBogoCounterpart,
   buildExistingLineMaps,
   buildReplaceAllLineData,
+  buildReplaceAllPairing,
   type ReplaceAllLineBuildCtx,
 } from "./replace-all-line-build";
 import {
@@ -155,6 +156,11 @@ import * as unitLines from "./unit-line-build";
 import * as unitEdit from "./unit-line-edit";
 import { loadCategoryMapForProducts } from "./category-map";
 import { assertBuyerCartPricesCurrent } from "./buyer-cart-price-check";
+import { compositionStampOf, syncOrderLineCompositions } from "./order-composition";
+import { withComponentViews } from "./component-view";
+import { captureCompositionCarry } from "./order-edit-composition";
+import { loadActivePromotionRules } from "./promotion-rules";
+import { FeatureConfigService } from "../billing/feature-config.service";
 import { reportPackWarnings } from "./merge-pack-warnings";
 import {
   warnBannedMergedLines,
@@ -226,6 +232,8 @@ export class OrdersService implements OnApplicationBootstrap {
     private readonly tenantCtx: TenantContextService,
     // #2094: optional so unrelated specs build; `inlineReturn` without it fails closed.
     @Optional() private readonly inlineReturns?: InlineReturnsService,
+    // #2717 M3: the `mixed_packs` mode read; absent = off (no composition work at all).
+    @Optional() private readonly featureConfig?: FeatureConfigService,
   ) {}
 
   /**
@@ -248,17 +256,11 @@ export class OrdersService implements OnApplicationBootstrap {
    * the customer's own buyer checkout, whoever triggers it.
    */
   async loadActivePromotions(role: UserRole): Promise<PromotionRule[]> {
-    if (role !== UserRole.CUSTOMER) return [];
-    const promos = await this.promotionsService.activeForCatalog();
-    return promos.map((p) => ({
-      id: p.id,
-      type: p.type as PromotionRule["type"],
-      value: Number(p.value),
-      minQty: p.minQty,
-      scope: p.scope as PromotionRule["scope"],
-      category: p.category,
-      productIds: p.productIds,
-    }));
+    return loadActivePromotionRules(this.promotionsService, role);
+  }
+
+  private syncCompositions(tx: Prisma.TransactionClient, orderId: string) {
+    return syncOrderLineCompositions(tx, orderId, this.prisma.getTenantId(), this.featureConfig);
   }
 
   /** Extracted verbatim to `buyer-merge-pricing.ts` (B585 prefactor #2); thin delegator. */
@@ -434,6 +436,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // (pos-cost-roles-spec §1).
         lineItems: {
           include: {
+            components: { orderBy: { position: "asc" } }, // #2717 M3: frozen FIXED-line components
             product: {
               select: {
                 id: true,
@@ -541,6 +544,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // `editableUntil` (the soft cutoff countdown) stays null until the per-weekday
     // routes-cutoff config lands — the HARD close is dispatch, which is authoritative.
     (order as any).editWindow = computeEditWindow(order, user.role);
+    order.lineItems = withComponentViews(order.lineItems) as typeof order.lineItems; // #2717 M3
 
     await attachPaymentCreditNotes(this.prisma.forTenant(), order); // #2404
 
@@ -815,6 +819,7 @@ export class OrdersService implements OnApplicationBootstrap {
                     categoryTaxType: write.data.categoryTaxType,
                     categoryTaxRate: write.data.categoryTaxRate,
                     categoryPriceIncludesTax: write.data.categoryPriceIncludesTax,
+                    ...compositionStampOf(write.data),
                   },
                 });
               }
@@ -878,6 +883,7 @@ export class OrdersService implements OnApplicationBootstrap {
             }
 
             // 4. Recompute winner totals.
+            await this.syncCompositions(tx, winner.id);
             const activeItems = await tx.orderItem.findMany({
               where: { orderId: winner.id, status: { not: ItemStatus.CANCELLED } },
             });
@@ -1068,6 +1074,7 @@ export class OrdersService implements OnApplicationBootstrap {
                     categoryTaxType: write.data.categoryTaxType,
                     categoryTaxRate: write.data.categoryTaxRate,
                     categoryPriceIncludesTax: write.data.categoryPriceIncludesTax,
+                    ...compositionStampOf(write.data),
                   },
                 });
               }
@@ -1114,6 +1121,7 @@ export class OrdersService implements OnApplicationBootstrap {
               await tx.orderItem.deleteMany({ where: { orderId: loser.id } });
               await tx.order.delete({ where: { id: loser.id } });
             }
+            await this.syncCompositions(tx, winner.id);
             const activeItems = await tx.orderItem.findMany({
               where: { orderId: winner.id, status: { not: ItemStatus.CANCELLED } },
             });
@@ -2052,6 +2060,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 },
               },
             });
+            await this.syncCompositions(tx, created.id);
             inlineMinted = await applyReturn(tx, inlineRet, {
               customerId,
               orderId: created.id,
@@ -3200,21 +3209,13 @@ export class OrdersService implements OnApplicationBootstrap {
               .filter((li) => li.productId && (li.boxes != null || li.pieces != null))
               .map((li) => li.productId as string),
           );
-          // Every product already carrying a line on this order. A boxed product
-          // that is NOT here is being ADDED fresh — on the buyer path its incoming
-          // `qty` is always PIECES (the portal create/merge is piece-denominated by
-          // design), so it must be split like a box-aware create. Only pre-existing
-          // box-UNAWARE lines (above) are protected from re-splitting.
-          const existingProductIds = new Set(
-            denomLines.filter((li) => li.productId).map((li) => li.productId as string),
-          );
-
           // B51 (REG-B51): buyers can neither author, reprice, nor drop unlisted
           // (catalog-free) lines — create()'s staff-only rule, mirrored. Stored
           // unlisted rows are preserved IN PLACE (same row ids — invoice/delivery
           // references survive); client-supplied unlisted input is ignored on the
           // buyer path. Drivers keep today's authoring behavior.
           // SA-422 (1): a buyer save never deletes the seller's CANCELLED rows (F07 reopen marks).
+          const carry = await captureCompositionCarry(tx, order.lineItems ?? [], dto.items); // #2717 SA-591(b)
           await tx.orderItem.deleteMany({
             where: {
               orderId,
@@ -3256,13 +3257,11 @@ export class OrdersService implements OnApplicationBootstrap {
             if (!item.qty) continue;
             const product = productMap.get(item.productId);
             if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
-            // Boxed line: `qty` is the piece count, so re-split it and prorate by the
-            // BOX price (mirrors createOrder + the operator path). Without this a plain
-            // qty*unitPrice over-charges boxed lines by unitsPerBox. Split when the line
-            // is already piece-denominated OR (buyer path only) the product is brand-new
-            // to the order — a NEW boxed line added via the buyer create/merge path
-            // arrives piece-denominated too. Pre-existing box-UNAWARE selling-unit lines
-            // keep qty*price, and DRIVER edits keep the strict pieceDenominated gate.
+            // An explicit boxes/pieces split (and DRIVER pieceDenominated lines) carry qty as
+            // PIECES: re-split and prorate by the BOX price, else qty*unitPrice over-charges
+            // by unitsPerBox. A PLAIN buyer qty (pre-existing or new) is the default selling
+            // unit (the pack), NOT pieces: it is never re-split and keeps qty*price.
+            // DRIVER edits keep the strict pieceDenominated gate.
             const upb = Number(product.unitsPerBox ?? 0);
             const shouldSplit =
               upb > 1 &&
@@ -3270,8 +3269,12 @@ export class OrdersService implements OnApplicationBootstrap {
                 // REG-B47: a folded merge payload carries an explicit box/piece split —
                 // treat it as piece-denominated and re-split server-side from qty + LIVE
                 // unitsPerBox (B13 posture: the split is a signal, never trusted verbatim).
-                (isBuyerEdit && (item.boxes != null || item.pieces != null)) ||
-                (isBuyerEdit && !existingProductIds.has(item.productId)));
+                (isBuyerEdit && (item.boxes != null || item.pieces != null)));
+            // SA-601 / #2780 (PACK ONLY): a PLAIN buyer qty (no boxes/pieces/unitLabel) on a
+            // product NEW to the order is NOT re-split as pieces — it is the DEFAULT SELLING
+            // UNIT (the pack: qty N = N packs), exactly as create() stores it. It falls through
+            // to the box-unaware branch below (qty as selling units, boxes/pieces/unitsPerBox
+            // null). An explicit boxes/pieces (clause above) still wins.
             const split = shouldSplit
               ? normalizeBoxesPieces({ qty: item.qty, unitsPerBox: upb })
               : null;
@@ -3304,7 +3307,7 @@ export class OrdersService implements OnApplicationBootstrap {
                   priceType: PriceType.STANDARD,
                   freeUnits: 0,
                 };
-            await tx.orderItem.create({
+            const made = await tx.orderItem.create({
               data: {
                 orderId,
                 productId: item.productId,
@@ -3345,6 +3348,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 position: pos++,
               },
             });
+            await carry.restore(tx, made.id, item);
           }
           if (isBuyerEdit) {
             // B51: the buyer's payload never mentions preserved unlisted rows,
@@ -3448,60 +3452,10 @@ export class OrdersService implements OnApplicationBootstrap {
             // this pack-line create() below needs every product this replaceAll touches.
             const operatorReplaceCategoryMap = await loadCategoryMapForProducts(tx, productMap);
 
-            // B60 (REG-B60): a staff replaceAll at an unchanged/echoed price must
-            // land exactly where a qty edit of the same line lands — reuse the
-            // stored price + priceType and RESCALE (never drop) the line's
-            // BUY_N_GET_M snapshot instead of silently re-creating it at full
-            // price. Built once from the PRE-edit lines, before the delete below
-            // erases them.
-            //
-            // ⚠️ UNAMBIGUOUS PAIRS ONLY. A replaceAll payload carries no line ids,
-            // and an order may legitimately hold SEVERAL lines of one product (the
-            // diff-add branch creates a new row for an id-less item even when a line
-            // for that product exists). Keying a counterpart by productId alone then
-            // hands the snapshot — and its override attribution — to every echoed
-            // line of that product, including a sibling that never earned one: two
-            // lines of prod-X (qty 10 with 2 free units, qty 5 with none) echoed by a
-            // no-op save would bill the second 5.00 x (5-1) = 20.00 instead of 25.00
-            // and stamp it with the first line's overrideReason/overriddenBy. The
-            // qty-edit oracle this arm copies yields 0 free units for that sibling
-            // (storedFreeUnits 0, canEarnNew false), and rescaleBogoFreeUnits' own
-            // contract is that no operator line gains a promo it never had.
-            // There is no sound N-to-N mapping to recover here, so preservation is
-            // registered ONLY when the pairing is unambiguous: exactly one pre-edit
-            // non-cancelled line for that product AND exactly one incoming line for
-            // it. Any other shape falls through to the pre-F06 behavior (re-created
-            // at the resolved price, snapshot dropped) — that shape is not fixed by
-            // F06, but it is never granted a snapshot it did not earn.
-            const preEditLinesByProduct = new Map<string, number>();
-            for (const li of order.lineItems ?? []) {
-              if (!li.productId || li.status === "CANCELLED") continue;
-              preEditLinesByProduct.set(
-                li.productId,
-                (preEditLinesByProduct.get(li.productId) ?? 0) + 1,
-              );
-            }
-            const incomingLinesByProduct = new Map<string, number>();
-            for (const it of dto.items ?? []) {
-              if (!it.productId) continue;
-              incomingLinesByProduct.set(
-                it.productId,
-                (incomingLinesByProduct.get(it.productId) ?? 0) + 1,
-              );
-            }
-            const bogoCounterparts = new Map<string, any>();
-            for (const li of order.lineItems ?? []) {
-              if (
-                li.productId &&
-                li.status !== "CANCELLED" &&
-                Number((li as any).promoFreeUnits ?? 0) > 0 &&
-                preEditLinesByProduct.get(li.productId) === 1 &&
-                incomingLinesByProduct.get(li.productId) === 1 &&
-                !bogoCounterparts.has(li.productId)
-              ) {
-                bogoCounterparts.set(li.productId, buildBogoCounterpart(li));
-              }
-            }
+            // B60 (REG-B60): the pre-edit BOGO counterparts and per-product line counts (see
+            // buildReplaceAllPairing) — built once from the PRE-edit lines, before the delete below.
+            const { preEditLinesByProduct, incomingLinesByProduct, bogoCounterparts } =
+              buildReplaceAllPairing(order, dto);
 
             // B465 fix round 3 (Opus BLOCK item 2) / SA-124i (option i, #938): both existingLine*
             // maps updateOrderItems' replaceAll rebuild needs — existingLineByProduct keeps the
@@ -3541,6 +3495,8 @@ export class OrdersService implements OnApplicationBootstrap {
               assertReplaceAllPackMatchesLive(item, Number(product.unitsPerBox ?? 0));
             }
 
+            // #2717 SA-591(b): a surviving FIXED line keeps its stamp + components (I11).
+            const carry = await captureCompositionCarry(tx, order.lineItems ?? [], dto.items);
             await tx.orderItem.deleteMany({ where: { orderId } });
             // R2: full replace — stamp position from the client's array order.
             let pos = 0;
@@ -3578,7 +3534,10 @@ export class OrdersService implements OnApplicationBootstrap {
 
               const lineData = buildReplaceAllLineData(itemCtx, item, product);
               if (!lineData) continue;
-              await tx.orderItem.create({ data: { orderId, ...lineData, position: pos++ } });
+              const made = await tx.orderItem.create({
+                data: { orderId, ...lineData, position: pos++ },
+              });
+              await carry.restore(tx, made.id, item);
             }
           } else {
             // Individual item updates (dispatcher workflow with explicit item IDs).
@@ -4161,6 +4120,7 @@ export class OrdersService implements OnApplicationBootstrap {
           }
         }
 
+        await this.syncCompositions(tx, orderId);
         // Recalculate order totals from all non-cancelled items
         const activeItems = await tx.orderItem.findMany({
           where: { orderId, status: { not: "CANCELLED" } },
@@ -5100,6 +5060,7 @@ export class OrdersService implements OnApplicationBootstrap {
           }
         }
 
+        await this.syncCompositions(tx, order.id);
         // ── Totals recompute — identical to updateOrderItems :2163-2168 ──────
         const activeItems = await tx.orderItem.findMany({
           where: { orderId: order.id, status: { not: "CANCELLED" } },
