@@ -1,0 +1,76 @@
+import * as React from "react";
+import { render, screen, fireEvent } from "@testing-library/react";
+import PurchaseOrdersPage from "./page";
+
+const setTitle = jest.fn();
+jest.mock("@/lib/page-title-context", () => ({ usePageTitle: () => ({ setTitle }) }));
+
+jest.mock("@routeflow/ui/web", () => {
+  const actual = jest.requireActual("@routeflow/ui/web");
+  return { ...actual, useToast: () => ({ toast: jest.fn() }) };
+});
+
+const refetch = jest.fn();
+let poState: { data?: unknown; isLoading: boolean; isError: boolean } = {
+  data: { data: [] },
+  isLoading: false,
+  isError: false,
+};
+jest.mock("@/lib/api/inventory", () => ({
+  usePurchaseOrders: () => ({ ...poState, refetch }),
+  usePurchaseOrder: () => ({ data: undefined, isLoading: false }),
+  useSendPurchaseOrder: () => ({ mutate: jest.fn(), isPending: false }),
+  useClosePurchaseOrder: () => ({ mutate: jest.fn(), isPending: false }),
+  useCreatePurchaseOrder: () => ({ mutate: jest.fn(), isPending: false }),
+  useReceivePurchaseOrder: () => ({ mutate: jest.fn(), isPending: false }),
+  useUpdatePurchaseOrder: () => ({ mutate: jest.fn(), isPending: false }),
+  useSuppliers: () => ({ data: [{ id: "s1", name: "Acme Supply", isActive: true }] }),
+}));
+jest.mock("@/lib/api/products", () => ({
+  useProducts: () => ({ data: { data: [{ id: "p1", name: "Widget", sku: "W-1" }] } }),
+}));
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  poState = { data: { data: [] }, isLoading: false, isError: false };
+});
+
+describe("/purchase-orders page", () => {
+  it("sets the page title and offers New purchase order", () => {
+    render(<PurchaseOrdersPage />);
+    expect(setTitle).toHaveBeenCalledWith("Purchase Orders");
+    fireEvent.click(screen.getByRole("button", { name: "New purchase order" }));
+    expect(screen.getByRole("button", { name: "Create PO" })).toBeInTheDocument();
+  });
+
+  it("shows the empty state copy", () => {
+    render(<PurchaseOrdersPage />);
+    expect(
+      screen.getByText(
+        "No purchase orders yet. Create one by hand, or scan a supplier invoice and we'll draft it for you.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows skeleton rows while loading, not the empty state", () => {
+    poState = { data: undefined, isLoading: true, isError: false };
+    const { container } = render(<PurchaseOrdersPage />);
+    expect(container.querySelectorAll(".skeleton").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/No purchase orders yet/)).not.toBeInTheDocument();
+  });
+
+  it("shows a readable error with Retry and never the raw message", () => {
+    poState = {
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      ...({ error: new Error("AxiosError: 500 boom") } as object),
+    };
+    render(<PurchaseOrdersPage />);
+    expect(screen.getByText("Couldn't load purchase orders.")).toBeInTheDocument();
+    expect(screen.queryByText(/boom|AxiosError/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(refetch).toHaveBeenCalled();
+    expect(screen.queryByText(/No purchase orders yet/)).not.toBeInTheDocument();
+  });
+});

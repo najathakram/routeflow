@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { Plus, Eye, Pencil, Send, PackageCheck, ChevronDown, ChevronUp } from "lucide-react";
-import { Badge, Button, useToast } from "@routeflow/ui/web";
+import { Badge, Button, EmptyState, Skeleton, useToast } from "@routeflow/ui/web";
 import { poDisplayTotal } from "@routeflow/pricing";
 import { formatMoney } from "@/lib/format";
 import { unitsLabel } from "@/lib/stock-label";
@@ -197,7 +197,12 @@ export function PurchaseOrdersTab({
   const [receivePO, setReceivePO] = React.useState<PurchaseOrder | null>(null);
   const [editPO, setEditPO] = React.useState<PurchaseOrder | null>(null);
 
-  const { data: poData, isLoading } = usePurchaseOrders({
+  const {
+    data: poData,
+    isLoading,
+    isError,
+    refetch,
+  } = usePurchaseOrders({
     status: statusFilter || undefined,
     supplierId: supplierFilter || undefined,
     from: dateFrom || undefined,
@@ -219,7 +224,7 @@ export function PurchaseOrdersTab({
           leftIcon={<Plus className="h-4 w-4" />}
           onClick={() => setShowCreateModal(true)}
         >
-          Create PO
+          New purchase order
         </Button>
       </div>
 
@@ -281,11 +286,22 @@ export function PurchaseOrdersTab({
       </div>
 
       {isLoading ? (
-        <div className="space-y-2">
+        <div className="space-y-2" aria-busy="true">
           {[...Array(5)].map((_, i) => (
-            <div key={i} className="h-12 animate-pulse rounded-lg bg-surface-raised" />
+            <Skeleton key={i} shape="block" height={48} />
           ))}
         </div>
+      ) : isError ? (
+        <EmptyState
+          title="Couldn't load purchase orders."
+          action={
+            <Button size="sm" variant="secondary" onClick={() => refetch()}>
+              Retry
+            </Button>
+          }
+        />
+      ) : orders.length === 0 && !(statusFilter || supplierFilter || dateFrom || dateTo) ? (
+        <EmptyState title="No purchase orders yet. Create one by hand, or scan a supplier invoice and we'll draft it for you." />
       ) : (
         <div className="overflow-x-auto rounded-xl border border-surface-border">
           <table className="w-full text-sm">
