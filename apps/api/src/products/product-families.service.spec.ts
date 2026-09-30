@@ -310,7 +310,7 @@ describe("PATCH /products/:id/variants (updateVariants)", () => {
       priceTier3: "4.00", // deliberately different
       priceTier4: "5.00",
       priceTier5: "5.00",
-    };
+    } as never;
     const off = build({ products: [famRow, k1] }, "off");
     await off.service.updateVariants("fam", { update: [{ id: "k1", pricePerUnit: "6" }] }, ACTOR);
     expect(off.tx.products.find((p) => p.id === "k1")).toMatchObject({
