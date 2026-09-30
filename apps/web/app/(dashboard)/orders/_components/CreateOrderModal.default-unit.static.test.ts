@@ -25,4 +25,9 @@ describe("CreateOrderModal default selling unit wiring (#2784)", () => {
     expect(src.match(/startOnDefaultUnit: opts\?\.startOnDefaultUnit/g)).toHaveLength(1);
     expect(src.match(/startOnDefaultUnit: true/g)).toHaveLength(1);
   });
+
+  it("Opus #2865 B1: setLineUnit CONSUMES the flag, so a remount after any unit choice (even the pack) cannot re-apply the default", () => {
+    const fn = src.slice(src.indexOf("const setLineUnit"), src.indexOf("const setDiscountedPrice"));
+    expect(fn).toMatch(/startOnDefaultUnit: false/);
+  });
 });

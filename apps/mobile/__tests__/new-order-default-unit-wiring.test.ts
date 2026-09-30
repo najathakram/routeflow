@@ -30,4 +30,21 @@ describe("mobile default selling unit wiring (#2784)", () => {
     expect(row).toMatch(/defaultStartOption\(/);
     expect(row).toMatch(/startedRef/);
   });
+
+  it("Opus #2865 B2: setUnitLabel CONSUMES the flag (any unit choice, incl. the pack), so a cart re-open never re-applies it", () => {
+    const fn = screen.slice(
+      screen.indexOf("const setUnitLabel"),
+      screen.indexOf("const setUnitLabel") + 900,
+    );
+    expect(fn).toMatch(/startOnDefaultUnit: undefined/);
+  });
+
+  it("Opus #2865 B2: CartRow only hands the flag on while the line is pristine (qty 1, no typed/operator price)", () => {
+    expect(cartRow).toMatch(
+      /startOnDefaultUnit=\{[\s\S]{0,260}line\.startOnDefaultUnit[\s\S]{0,260}\}/,
+    );
+    expect(cartRow).toMatch(/priceSource !== "operator"/);
+    expect(cartRow).toMatch(/\(line\.qty \?\? 0\) <= 1/);
+    expect(cartRow).toMatch(/line\.unitPrice == null/);
+  });
 });

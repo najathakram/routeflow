@@ -277,4 +277,23 @@ describe("OrderLineUnitPicker: a NEW line starts on the default selling unit (#2
       renderPicker({ ...packLine, priceEdited: true }, { startOnDefaultUnit: true }),
     ).not.toHaveBeenCalled();
   });
+
+  it("Opus #2865 B1: never re-units a line the operator already shaped (qty above 1, a typed/discounted price, a MANUAL price)", () => {
+    mockUnits = [FLAGGED];
+    const start = { startOnDefaultUnit: true };
+    expect(renderPicker({ ...packLine, qty: 5 }, start)).not.toHaveBeenCalled();
+    expect(renderPicker({ ...packLine, discountedPrice: 40 }, start)).not.toHaveBeenCalled();
+    expect(renderPicker({ ...packLine, priceType: "DISCOUNTED" }, start)).not.toHaveBeenCalled();
+    expect(renderPicker({ ...packLine, priceType: "MANUAL" }, start)).not.toHaveBeenCalled();
+    // a pristine line (qty 1, STANDARD, no override) still starts on the default
+    expect(renderPicker({ ...packLine, qty: 1 }, start)).toHaveBeenCalledTimes(1);
+  });
+
+  it("Opus #2865 B1: once the modal consumed the flag (prop false, as after any unit choice) a REMOUNT never re-applies it", () => {
+    mockUnits = [FLAGGED];
+    const first = renderPicker(packLine, { startOnDefaultUnit: true });
+    expect(first).toHaveBeenCalledTimes(1);
+    // the screen switch remounts the picker; the line's flag was cleared by setLineUnit
+    expect(renderPicker(packLine, { startOnDefaultUnit: false })).not.toHaveBeenCalled();
+  });
 });
