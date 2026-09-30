@@ -1761,7 +1761,7 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
 
   describe("updateCreditNote", () => {
     it("edits the reason at ANY status (e.g. APPLIED)", async () => {
-      prisma.creditNote.findUnique.mockResolvedValueOnce({ id: "cn-1", status: "APPLIED" });
+      prisma.creditNote.findFirst.mockResolvedValueOnce({ id: "cn-1", status: "APPLIED" });
       prisma.creditNote.update.mockResolvedValueOnce({ id: "cn-1", reason: "updated reason" });
 
       const result = await service.updateCreditNote("cn-1", { reason: "updated reason" });
@@ -1774,7 +1774,7 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
     });
 
     it("rejects an expiresAt edit when the credit note is not ISSUED", async () => {
-      prisma.creditNote.findUnique.mockResolvedValueOnce({ id: "cn-1", status: "APPLIED" });
+      prisma.creditNote.findFirst.mockResolvedValueOnce({ id: "cn-1", status: "APPLIED" });
       await expect(service.updateCreditNote("cn-1", { expiresAt: "2030-01-01" })).rejects.toThrow(
         /ISSUED/,
       );
@@ -1782,7 +1782,7 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
     });
 
     it("allows an expiresAt edit while ISSUED", async () => {
-      prisma.creditNote.findUnique.mockResolvedValueOnce({ id: "cn-1", status: "ISSUED" });
+      prisma.creditNote.findFirst.mockResolvedValueOnce({ id: "cn-1", status: "ISSUED" });
       await service.updateCreditNote("cn-1", { expiresAt: "2030-01-01" });
       expect(prisma.creditNote.update).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1792,8 +1792,115 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
       );
     });
 
+    // #2648 / SA-535(a): the in-place edit never touches a VOID note, refuses a past expiry, and
+    // leaves an EDITED audit row with what changed.
+    it("a VOID note is not editable (409), nothing written", async () => {
+      prisma.creditNote.findFirst.mockResolvedValueOnce({ id: "cn-1", status: "VOID" });
+      await expect(service.updateCreditNote("cn-1", { reason: "x" })).rejects.toThrow(
+        ConflictException,
+      );
+      expect(prisma.creditNote.update).not.toHaveBeenCalled();
+    });
+
+    it("a past expiresAt is a 400", async () => {
+      prisma.creditNote.findFirst.mockResolvedValueOnce({ id: "cn-1", status: "ISSUED" });
+      await expect(
+        service.updateCreditNote("cn-1", { expiresAt: "2020-01-01T00:00:00.000Z" }),
+      ).rejects.toThrow(/in the future/);
+      expect(prisma.creditNote.update).not.toHaveBeenCalled();
+    });
+
+    it("writes an EDITED audit row with the fields that changed", async () => {
+      prisma.creditNote.findFirst.mockResolvedValueOnce({
+        id: "cn-1",
+        status: "ISSUED",
+        reason: "old",
+        expiresAt: null,
+      });
+      prisma.creditNote.update.mockResolvedValueOnce({ id: "cn-1", reason: "new" });
+      await service.updateCreditNote("cn-1", { reason: "new" }, "user-1");
+      expect(prisma.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          action: "EDITED",
+          entityType: "CreditNote",
+          entityId: "cn-1",
+          userId: "user-1",
+          meta: { before: { reason: "old" }, after: { reason: "new" } },
+        }),
+      });
+    });
+
+    // SA-535b: a save that changes nothing writes nothing — no update, no EDITED row.
+    it("a no-op save (same reason, same expiry, or an empty body) writes nothing", async () => {
+      const exp = new Date("2031-05-01T00:00:00.000Z");
+      const note = { id: "cn-1", status: "ISSUED", reason: "same", expiresAt: exp };
+      prisma.creditNote.findFirst.mockResolvedValue(note);
+
+      await service.updateCreditNote("cn-1", { reason: "same", expiresAt: exp.toISOString() }, "u");
+      await service.updateCreditNote("cn-1", {}, "u");
+
+      expect(prisma.creditNote.update).not.toHaveBeenCalled();
+      expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it("only the fields that actually change reach the update and the audit row", async () => {
+      prisma.creditNote.findFirst.mockResolvedValueOnce({
+        id: "cn-1",
+        status: "ISSUED",
+        reason: "same",
+        expiresAt: null,
+      });
+      prisma.creditNote.update.mockResolvedValueOnce({ id: "cn-1" });
+      await service.updateCreditNote(
+        "cn-1",
+        { reason: "same", expiresAt: "2031-05-01T00:00:00.000Z" },
+        "u",
+      );
+      expect(prisma.creditNote.update.mock.calls[0][0].data).toEqual({
+        expiresAt: new Date("2031-05-01T00:00:00.000Z"),
+      });
+      expect(prisma.auditLog.create.mock.calls[0][0].data.meta).toEqual({
+        before: { expiresAt: null },
+        after: { expiresAt: new Date("2031-05-01T00:00:00.000Z") },
+      });
+    });
+
+    // SA-608 follow-up: the no-op filter runs BEFORE the status / past-date checks, so re-saving an
+    // unchanged expiry on an applied (or already-expired) note is a quiet no-op, not a 400.
+    it("re-saving an UNCHANGED expiresAt is a no-op even when the note is APPLIED or the date is past", async () => {
+      const past = new Date("2020-01-01T00:00:00.000Z");
+      prisma.creditNote.findFirst.mockResolvedValue({
+        id: "cn-1",
+        status: "APPLIED",
+        reason: "r",
+        expiresAt: past,
+      });
+
+      await service.updateCreditNote("cn-1", { expiresAt: past.toISOString(), reason: "r" }, "u");
+
+      expect(prisma.creditNote.update).not.toHaveBeenCalled();
+      expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it("insertCreditNoteInTx rounds the amount to cents on the write", async () => {
+      prisma.creditNote.create.mockResolvedValue({ id: "cn-new" });
+      await service.insertCreditNoteInTx(
+        prisma,
+        {
+          creditNoteNumber: "CN-1",
+          customerId: "c1",
+          amount: 19.999,
+          expiresAt: null,
+        },
+        [],
+        null,
+        { id: "c1" },
+      );
+      expect(prisma.creditNote.create.mock.calls[0][0].data.amount).toBe(20);
+    });
+
     it("throws NotFound for an unknown credit note id", async () => {
-      prisma.creditNote.findUnique.mockResolvedValueOnce(null);
+      prisma.creditNote.findFirst.mockResolvedValueOnce(null);
       await expect(service.updateCreditNote("cn-missing", { reason: "x" })).rejects.toThrow(
         /not found/i,
       );
