@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import {
   PIECE_LABEL,
+  defaultSellingLabel,
   UnknownUnitError,
   resolveLadderLevel,
   type LadderProduct,
@@ -66,8 +67,22 @@ export function resolveLineUnits(
   units: readonly LadderUnit[],
   requested?: { unitLabel?: string | null } | null,
   existing?: LineUnitsExisting | null,
+  /**
+   * #2784 / SA-601: a BUYER's plain qty (no unit requested, none held) resolves to the level flagged
+   * `isDefaultSelling`, else the pack. Off by default — the staff and driver arms stay exactly as SA-593g pinned.
+   * An explicit unit (incl. an explicit null/"" = the pack) always wins.
+   */
+  opts?: { honourDefaultSelling?: boolean },
 ): ResolvedLineUnits {
-  const explicit = requested?.unitLabel; // undefined = unchanged
+  let explicit = requested?.unitLabel; // undefined = unchanged
+  if (
+    opts?.honourDefaultSelling &&
+    explicit === undefined &&
+    !(existing?.unitLabel ?? "").trim()
+  ) {
+    const dflt = defaultSellingLabel({ pricePerUnit: 0, ...product }, units);
+    if (dflt) explicit = dflt;
+  }
   const asked = (explicit ?? "").trim();
   const held = (existing?.unitLabel ?? "").trim();
   const ladderProduct: LadderProduct = { pricePerUnit: 0, ...product };
