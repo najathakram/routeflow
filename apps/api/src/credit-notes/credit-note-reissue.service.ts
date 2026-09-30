@@ -104,6 +104,7 @@ export class CreditNoteReissueService {
         invoiceId: true,
         reason: true,
         expiresAt: true,
+        autoApplyExcluded: true,
       },
     });
     if (!old) throw new NotFoundException("Credit note not found");
@@ -188,6 +189,8 @@ export class CreditNoteReissueService {
               amount: Number(dto.amount),
               reason,
               expiresAt,
+              // SA-608: an operator's "keep out of the send-time sweep" survives the reissue.
+              autoApplyExcluded: old.autoApplyExcluded,
             },
             cnItemsData,
             tenantId,

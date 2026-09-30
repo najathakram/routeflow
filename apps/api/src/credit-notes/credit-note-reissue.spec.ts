@@ -41,6 +41,7 @@ describe("CreditNoteReissueService (#2648)", () => {
     invoiceId: "inv-1",
     reason: "Damaged case",
     expiresAt: null as Date | null,
+    autoApplyExcluded: false,
   };
   const REOPENED = [{ invoiceId: "inv-9", invoiceNumber: "INV-9", amount: 30 }];
   const NEW = { id: "cn-new", creditNoteNumber: "CN-2026-0012", customerId: "cust-1", amount: 20 };
@@ -109,6 +110,7 @@ describe("CreditNoteReissueService (#2648)", () => {
       amount: 20,
       reason: "Replaces CN-2026-0007 — Damaged case",
       expiresAt: null,
+      autoApplyExcluded: false,
     });
     expect(res).toEqual({
       voided: { id: "cn-old", creditNoteNumber: "CN-2026-0007" },
@@ -116,6 +118,18 @@ describe("CreditNoteReissueService (#2648)", () => {
       unapplied: REOPENED,
     });
   });
+
+  it.each([true, false])(
+    "SA-608: the replacement carries the old note's autoApplyExcluded (%s), so the sweep cannot apply it",
+    async (excluded) => {
+      prisma.creditNote.findFirst.mockResolvedValue({ ...OLD, autoApplyExcluded: excluded });
+
+      await service.reissue("cn-old", { amount: 20 }, "key-1", "user-1");
+
+      const [, data] = creditNotes.insertCreditNoteInTx.mock.calls[0];
+      expect(data.autoApplyExcluded).toBe(excluded);
+    },
+  );
 
   it("SA-535b(1): the dry run excludes the old note; the in-tx re-cap after the void does not", async () => {
     await service.reissue("cn-old", { amount: 20 }, "key-1", "user-1");

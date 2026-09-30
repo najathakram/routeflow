@@ -405,6 +405,41 @@ describeDb("#2648 credit-note reissue (SA-535b)", () => {
       ConflictException,
     );
   }, 60_000);
+
+  it("7: SA-608 — an autoApplyExcluded old note's replacement is excluded too, so the sweep skips it", async () => {
+    const { tenantId, customerId } = await seedTenant("excluded");
+    const invSrc = await seedSentInvoice(tenantId, customerId, 50);
+    const old = await seedSourcedCredit(tenantId, customerId, invSrc, 30);
+    await prisma.creditNote.update({ where: { id: old.id }, data: { autoApplyExcluded: true } });
+
+    const res = await run(tenantId, old.id, { amount: 20 }, "k-7");
+
+    const fresh = await prisma.creditNote.findUnique({ where: { id: res.creditNote.id } });
+    expect(fresh?.autoApplyExcluded).toBe(true);
+  }, 60_000);
+
+  it("8: SA-608 — two DIFFERENT keys racing on one source note: exactly one successor and one 409", async () => {
+    const { tenantId, customerId } = await seedTenant("race");
+    const invSrc = await seedSentInvoice(tenantId, customerId, 50);
+    const old = await seedSourcedCredit(tenantId, customerId, invSrc, 30);
+
+    // Two concurrent calls draw two pooled connections, each in its own Serializable tx.
+    const results = await Promise.allSettled([
+      run(tenantId, old.id, { amount: 20 }, "k-8a"),
+      run(tenantId, old.id, { amount: 25 }, "k-8b"),
+    ]);
+
+    const ok = results.filter((r) => r.status === "fulfilled");
+    const failed = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+    expect(ok).toHaveLength(1);
+    expect(failed).toHaveLength(1);
+    expect(failed[0].reason).toBeInstanceOf(ConflictException);
+    const successors = await prisma.creditNote.findMany({
+      where: { tenantId, reason: { startsWith: `Replaces ${old.creditNoteNumber}` } },
+    });
+    expect(successors).toHaveLength(1);
+    expect((await prisma.creditNote.findUnique({ where: { id: old.id } }))?.status).toBe("VOID");
+  }, 60_000);
 });
 
 /**
