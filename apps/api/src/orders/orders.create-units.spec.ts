@@ -182,6 +182,7 @@ describe("OrdersService.create — sell by a unit (units_v1, 4b-2b)", () => {
     scopedUnits.findMany.mockResolvedValue(
       ladder.map((u) => (u.label === "Case" ? { ...u, isDefaultSelling: true } : u)),
     );
+    (service as any).promotionsService.activeForCatalog.mockResolvedValue([]);
     await create([{ productId: "prod-1", qty: 2 }], {
       ...customerPayload,
       tenantId: "t-1",
