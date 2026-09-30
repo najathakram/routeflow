@@ -1865,6 +1865,40 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
       });
     });
 
+    // SA-608 follow-up: the no-op filter runs BEFORE the status / past-date checks, so re-saving an
+    // unchanged expiry on an applied (or already-expired) note is a quiet no-op, not a 400.
+    it("re-saving an UNCHANGED expiresAt is a no-op even when the note is APPLIED or the date is past", async () => {
+      const past = new Date("2020-01-01T00:00:00.000Z");
+      prisma.creditNote.findFirst.mockResolvedValue({
+        id: "cn-1",
+        status: "APPLIED",
+        reason: "r",
+        expiresAt: past,
+      });
+
+      await service.updateCreditNote("cn-1", { expiresAt: past.toISOString(), reason: "r" }, "u");
+
+      expect(prisma.creditNote.update).not.toHaveBeenCalled();
+      expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it("insertCreditNoteInTx rounds the amount to cents on the write", async () => {
+      prisma.creditNote.create.mockResolvedValue({ id: "cn-new" });
+      await service.insertCreditNoteInTx(
+        prisma,
+        {
+          creditNoteNumber: "CN-1",
+          customerId: "c1",
+          amount: 19.999,
+          expiresAt: null,
+        },
+        [],
+        null,
+        { id: "c1" },
+      );
+      expect(prisma.creditNote.create.mock.calls[0][0].data.amount).toBe(20);
+    });
+
     it("throws NotFound for an unknown credit note id", async () => {
       prisma.creditNote.findFirst.mockResolvedValueOnce(null);
       await expect(service.updateCreditNote("cn-missing", { reason: "x" })).rejects.toThrow(

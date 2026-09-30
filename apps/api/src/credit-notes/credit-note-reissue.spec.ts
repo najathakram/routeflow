@@ -27,6 +27,8 @@ describe("CreditNoteReissueService (#2648)", () => {
     validateAndBuildCnItems: jest.Mock;
     voidWithReversalInTx: jest.Mock;
     insertCreditNoteInTx: jest.Mock;
+    voidWithReversalRefusal: jest.Mock;
+    liveCreditPayments: jest.Mock;
   };
   let numbering: { reserveNext: jest.Mock };
   let idem: { acquireLock: jest.Mock; hashFor: jest.Mock; check: jest.Mock; save: jest.Mock };
@@ -42,6 +44,7 @@ describe("CreditNoteReissueService (#2648)", () => {
     reason: "Damaged case",
     expiresAt: null as Date | null,
     autoApplyExcluded: false,
+    amountUsed: 0,
   };
   const REOPENED = [{ invoiceId: "inv-9", invoiceNumber: "INV-9", amount: 30 }];
   const NEW = { id: "cn-new", creditNoteNumber: "CN-2026-0012", customerId: "cust-1", amount: 20 };
@@ -58,6 +61,8 @@ describe("CreditNoteReissueService (#2648)", () => {
         .fn()
         .mockResolvedValue({ creditNote: { ...OLD, status: "VOID" }, reopened: REOPENED }),
       insertCreditNoteInTx: jest.fn().mockResolvedValue({ ...NEW }),
+      voidWithReversalRefusal: jest.fn().mockResolvedValue(null),
+      liveCreditPayments: jest.fn().mockResolvedValue([]),
     };
     numbering = { reserveNext: jest.fn().mockResolvedValue("CN-2026-0012") };
     idem = {
@@ -130,6 +135,108 @@ describe("CreditNoteReissueService (#2648)", () => {
       expect(data.autoApplyExcluded).toBe(excluded);
     },
   );
+
+  describe("conflicts and refusals are readable 4xx, never a raw 500", () => {
+    const p2034 = () => Object.assign(new Error("write conflict"), { code: "P2034" });
+
+    it("exhausted serialization retries map to a 409, like create()", async () => {
+      creditNotes.voidWithReversalInTx.mockRejectedValue(p2034());
+      await expect(service.reissue("cn-old", { amount: 20 }, "key-1", "u")).rejects.toThrow(
+        ConflictException,
+      );
+      expect(creditNotes.voidWithReversalInTx).toHaveBeenCalledTimes(3);
+    });
+
+    it("a counter collision on the number (P2002) is a 409", async () => {
+      creditNotes.insertCreditNoteInTx.mockRejectedValue(
+        Object.assign(new Error("unique"), { code: "P2002" }),
+      );
+      await expect(service.reissue("cn-old", { amount: 20 }, "key-1", "u")).rejects.toThrow(
+        ConflictException,
+      );
+    });
+
+    it("a credit consumed somewhere a void cannot reverse is a 409 BEFORE the tx (no number burned)", async () => {
+      creditNotes.voidWithReversalRefusal.mockResolvedValue(
+        "Part of this credit was used somewhere it cannot be reversed from here (RETURN_CREDIT_CONSUMED). Nothing was changed.",
+      );
+      await expect(service.reissue("cn-old", { amount: 20 }, "key-1", "u")).rejects.toThrow(
+        /RETURN_CREDIT_CONSUMED/,
+      );
+      expect(numbering.reserveNext).not.toHaveBeenCalled();
+      expect(creditNotes.voidWithReversalInTx).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      "Credit line li-9 is not on invoice inv-1",
+      "Credit line amount must be greater than 0",
+      "Credit line amounts (25) must sum to the credit note amount (20)",
+    ])("a line-shape error is a 400, not a 409: %s", async (msg) => {
+      creditNotes.validateAndBuildCnItems.mockRejectedValueOnce(new BadRequestException(msg));
+      const err = await service
+        .reissue("cn-old", { amount: 20, items: [{ invoiceItemId: "li-9", amount: 20 }] }, "k", "u")
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err).not.toBeInstanceOf(ConflictException);
+    });
+
+    describe("SA-608c: a note with NO source invoice", () => {
+      const ORPHAN = { ...OLD, invoiceId: null as string | null, amount: 50 };
+      const noWrites = () => {
+        expect(numbering.reserveNext).not.toHaveBeenCalled();
+        expect(creditNotes.voidWithReversalInTx).not.toHaveBeenCalled();
+        expect(creditNotes.insertCreditNoteInTx).not.toHaveBeenCalled();
+      };
+
+      it("(a) an increase above the old amount is a 409 in the dry run: zero writes, no number burned", async () => {
+        prisma.creditNote.findFirst.mockResolvedValue({ ...ORPHAN });
+        await expect(service.reissue("cn-old", { amount: 500 }, "k", "u")).rejects.toThrow(
+          new ConflictException(
+            "A credit note without a source invoice can't be increased; issue a separate credit.",
+          ),
+        );
+        noWrites();
+      });
+
+      it.each([50, 30])("(a) an edit to %s (<= the old $50) passes", async (amount) => {
+        prisma.creditNote.findFirst.mockResolvedValue({ ...ORPHAN });
+        await service.reissue("cn-old", { amount }, "k", "u");
+        expect(creditNotes.insertCreditNoteInTx).toHaveBeenCalledTimes(1);
+      });
+
+      it("(a) re-checked IN the tx: a note orphaned after the pre-read (deleteInvoice) is still capped", async () => {
+        prisma.creditNote.findFirst.mockResolvedValue({ ...OLD, amount: 50 }); // sourced at pre-read
+        prisma.creditNote.findUnique.mockResolvedValue({ invoiceId: null, amount: 50 });
+        await expect(service.reissue("cn-old", { amount: 500 }, "k", "u")).rejects.toThrow(
+          /without a source invoice can't be increased/,
+        );
+        expect(creditNotes.insertCreditNoteInTx).not.toHaveBeenCalled();
+      });
+
+      it("(b) a line-bearing orphan is a 409 'source invoice was deleted', zero writes", async () => {
+        prisma.creditNote.findFirst.mockResolvedValue({ ...ORPHAN });
+        prisma.creditNoteItem.count.mockResolvedValue(2);
+        await expect(service.reissue("cn-old", { amount: 10 }, "k", "u")).rejects.toThrow(
+          new ConflictException("This credit's source invoice was deleted; it can't be edited."),
+        );
+        noWrites();
+      });
+
+      it("a sourced note is not subject to the no-invoice cap", async () => {
+        await service.reissue("cn-old", { amount: 9999 }, "k", "u"); // OLD is $50 with invoiceId
+        expect(creditNotes.insertCreditNoteInTx).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    it("a source invoice that is gone or no longer creditable stays a 409", async () => {
+      creditNotes.validateAndBuildCnItems.mockRejectedValueOnce(
+        new BadRequestException("Invoice not found"),
+      );
+      await expect(service.reissue("cn-old", { amount: 20 }, "key-1", "u")).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+    });
+  });
 
   it("SA-535b(1): the dry run excludes the old note; the in-tx re-cap after the void does not", async () => {
     await service.reissue("cn-old", { amount: 20 }, "key-1", "user-1");

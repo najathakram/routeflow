@@ -23,7 +23,7 @@ export interface CreditNoteVoidPreview {
  */
 export interface ReissueCreditNoteInput {
   amount: number;
-  items?: Array<{ invoiceItemId: string; amount: number }>;
+  items?: Array<{ invoiceItemId: string; amount: number; qty?: number }>;
   /** Omitted = the old reason; the server prefixes "Replaces <old number>". */
   reason?: string;
   /** Omitted = the old expiry (refused when already past); null = no expiry. */

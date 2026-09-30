@@ -385,7 +385,7 @@ export class CreditNotesService {
         creditNoteNumber: data.creditNoteNumber,
         customerId: data.customerId,
         invoiceId: data.invoiceId,
-        amount: data.amount,
+        amount: roundMoney(data.amount),
         reason: data.reason,
         status: "ISSUED",
         expiresAt: data.expiresAt,
@@ -1042,7 +1042,7 @@ export class CreditNotesService {
    * - amountUsed exceeds what its non-VOID CREDIT_NOTE payments account for: money consumed
    *   through a path this cannot find and restore (RETURN_CREDIT_CONSUMED).
    */
-  private async voidWithReversalRefusal(
+  async voidWithReversalRefusal(
     db: any,
     cn: { id: string; status: string; amountUsed: unknown },
     payments: Array<{ amount: unknown }>,
@@ -1063,7 +1063,7 @@ export class CreditNotesService {
   }
 
   /** The note's live CREDIT_NOTE applications (the rows a reversal restores), with their invoice. */
-  private liveCreditPayments(db: any, creditNoteId: string) {
+  liveCreditPayments(db: any, creditNoteId: string) {
     // A CREDIT_NOTE-method payment is only ever written CONFIRMED by applyCreditInTx, so not-VOID
     // is the complete filter here (see cancelStandaloneInTx).
     // scan-ok: draft-payment-not-void — CREDIT_NOTE payments are never DRAFT/PENDING.
@@ -1935,33 +1935,30 @@ export class CreditNotesService {
       if (!cn) throw new NotFoundException("Credit note not found");
       if (cn.status === "VOID") throw new ConflictException("A void credit note can't be edited.");
 
+      // SA-535b: the no-op filter runs FIRST, so a field that does not change is never validated
+      // (re-saving an unchanged expiry on an applied or expired note is a quiet no-op, not a 400).
+      const sameDate = (a: Date | null, b: Date | null) =>
+        (a ? new Date(a).getTime() : null) === (b ? b.getTime() : null);
       const data: any = {};
-      if (dto.reason !== undefined) data.reason = dto.reason;
+      if (dto.reason !== undefined && (cn.reason ?? null) !== (dto.reason ?? null))
+        data.reason = dto.reason;
       if (dto.expiresAt !== undefined) {
-        if (cn.status !== "ISSUED")
-          throw new BadRequestException(
-            "expiresAt can only be changed while the credit note is ISSUED",
-          );
-        if (dto.expiresAt === null) {
-          data.expiresAt = null;
-        } else {
-          const expiresAt = new Date(dto.expiresAt);
-          if (isNaN(expiresAt.getTime()))
+        let next: Date | null = null;
+        if (dto.expiresAt !== null) {
+          next = new Date(dto.expiresAt);
+          if (isNaN(next.getTime()))
             throw new BadRequestException("expiresAt must be a valid ISO date");
-          if (expiresAt.getTime() <= Date.now())
+        }
+        if (!sameDate(cn.expiresAt ?? null, next)) {
+          if (cn.status !== "ISSUED")
+            throw new BadRequestException(
+              "expiresAt can only be changed while the credit note is ISSUED",
+            );
+          if (next && next.getTime() <= Date.now())
             throw new BadRequestException("expiresAt must be in the future");
-          data.expiresAt = expiresAt;
+          data.expiresAt = next;
         }
       }
-
-      // SA-535b: only fields whose value actually changes count; a no-op save writes nothing,
-      // not even the audit row.
-      const same = (a: unknown, b: unknown) =>
-        a instanceof Date || b instanceof Date
-          ? (a == null ? null : new Date(a as any).getTime()) ===
-            (b == null ? null : new Date(b as any).getTime())
-          : (a ?? null) === (b ?? null);
-      for (const k of Object.keys(data)) if (same((cn as any)[k], data[k])) delete data[k];
       if (Object.keys(data).length === 0) return tx.creditNote.findFirst({ where: { id } });
 
       const updated = await tx.creditNote.update({ where: { id }, data });

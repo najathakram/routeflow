@@ -22,6 +22,7 @@ import { CreditNoteReissueService } from "./credit-note-reissue.service";
 import { ReissueCreditNoteDto } from "./dto/reissue-credit-note.dto";
 import { CreateCreditNoteDto } from "./dto/create-credit-note.dto";
 import { VoidCreditNoteDto } from "./dto/void-credit-note.dto";
+import { UpdateCreditNoteDto } from "./dto/update-credit-note.dto";
 import { SetAutoApplyExclusionDto } from "./dto/set-auto-apply-exclusion.dto";
 import { ApplyCreditNoteDto, UnapplyCreditNoteDto } from "./dto/apply-credit-note.dto";
 
@@ -153,7 +154,7 @@ export class CreditNotesController {
   @Roles(UserRole.OPERATOR)
   update(
     @Param("id") id: string,
-    @Body() body: { reason?: string; expiresAt?: string | null },
+    @Body() body: UpdateCreditNoteDto,
     @CurrentUser() user: JwtPayload,
   ) {
     return this.creditNotesService.updateCreditNote(id, body, user?.sub ?? null);

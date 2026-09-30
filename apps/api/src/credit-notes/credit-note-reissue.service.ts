@@ -5,12 +5,13 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { createHash } from "crypto";
+import { roundMoney } from "@routeflow/pricing";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NumberingService } from "../import/numbering.service";
 import { IdempotencyService } from "../common/idempotency.service";
 import { tenantTimeZone } from "../common/tenant-time-zone";
-import { retryOnTxConflict } from "../common/tx-retry";
+import { retryOnTxConflict, txConflictState } from "../common/tx-retry";
 import { CreditNotesService } from "./credit-notes.service";
 
 export interface ReissueInput {
@@ -35,6 +36,15 @@ interface StoredReissue {
 /** SA-535a(1): a return-backed note is edited through the return, never the note. */
 const RETURN_BACKED = (returnNumber?: string | null) =>
   `This credit note backs a return${returnNumber ? ` (${returnNumber})` : ""}. Edit the return instead.`;
+
+/** The 400s the cap and the void raise that are really a conflict with the current state. */
+const STATE_REFUSAL =
+  /would exceed|exceeds|Invoice not found|Cannot issue a credit note|changed while|backs a return|RETURN_CREDIT_CONSUMED|already void|Nothing was changed/;
+
+/** SA-608c: a note with no source invoice (born standalone, or orphaned by deleteInvoice). */
+const NO_SOURCE_CAP =
+  "A credit note without a source invoice can't be increased; issue a separate credit.";
+const SOURCE_DELETED = "This credit's source invoice was deleted; it can't be edited.";
 
 /** A carried reason from an earlier reissue loses its own "Replaces …" prefix (no chains). */
 const REPLACES_PREFIX = /^Replaces CN-\S+(?: — )?/;
@@ -105,6 +115,7 @@ export class CreditNoteReissueService {
         reason: true,
         expiresAt: true,
         autoApplyExcluded: true,
+        amountUsed: true,
       },
     });
     if (!old) throw new NotFoundException("Credit note not found");
@@ -116,6 +127,24 @@ export class CreditNoteReissueService {
       select: { returnNumber: true },
     });
     if (ret) throw new ConflictException(RETURN_BACKED(ret.returnNumber));
+    // Credit consumed somewhere a reversal cannot reach (RETURN_CREDIT_CONSUMED) is refused here,
+    // BEFORE a number is reserved, so a refused attempt burns none. The void re-checks in-tx.
+    const consumed = await this.creditNotes.voidWithReversalRefusal(
+      db,
+      old,
+      await this.creditNotes.liveCreditPayments(db, id),
+    );
+    if (consumed) throw new ConflictException(consumed);
+
+    // SA-608c (b): no invoice but line rows = its source was deleted (the rows survive); a reissue
+    // would silently drop the split, so it is refused. (a): every no-invoice note is capped at its
+    // own amount, so an edit can never create value the note did not already hold.
+    if (!old.invoiceId) {
+      const lineRows = await db.creditNoteItem.count({ where: { creditNoteId: id } });
+      if (lineRows > 0) throw new ConflictException(SOURCE_DELETED);
+      if (roundMoney(Number(dto.amount)) > roundMoney(Number(old.amount)) + 0.001)
+        throw new ConflictException(NO_SOURCE_CAP);
+    }
 
     const expiresAt = this.resolveExpiry(dto.expiresAt, old.expiresAt);
     const lineItems = Array.isArray(dto.items) && dto.items.length > 0 ? dto.items : undefined;
@@ -161,82 +190,100 @@ export class CreditNoteReissueService {
     });
     const tz = await tenantTimeZone(this.prisma);
 
-    const outcome = await retryOnTxConflict(`credit reissue cn=${id}`, () =>
-      this.prisma.tenantTransaction(
-        async (tx: any): Promise<{ replayed: boolean; stored: StoredReissue }> => {
-          await this.idempotency.acquireLock(this.idempotency.hashFor(key, tenantId, scope), tx);
-          const raced = await this.idempotency.check<StoredReissue>(key, tenantId, scope, tx);
-          if (raced) return { replayed: true, stored: raced };
+    let outcome: { replayed: boolean; stored: StoredReissue };
+    try {
+      outcome = await retryOnTxConflict(`credit reissue cn=${id}`, () =>
+        this.prisma.tenantTransaction(
+          async (tx: any): Promise<{ replayed: boolean; stored: StoredReissue }> => {
+            await this.idempotency.acquireLock(this.idempotency.hashFor(key, tenantId, scope), tx);
+            const raced = await this.idempotency.check<StoredReissue>(key, tenantId, scope, tx);
+            if (raced) return { replayed: true, stored: raced };
 
-          // The void, unchanged: Order → Invoice → CreditNote locks, refusal, reversal, apply
-          // blocks, CAS, ledger counter-entries, the VOIDED audit row. A refusal that only a
-          // race can reach here is a 409 (the return case keeps the reissue wording).
-          const { reopened } = await this.asConflict(
-            () => this.creditNotes.voidWithReversalInTx(tx, id, actorId, tz),
-            true,
-          );
+            // The void, unchanged: Order → Invoice → CreditNote locks, refusal, reversal, apply
+            // blocks, CAS, ledger counter-entries, the VOIDED audit row. A refusal that only a
+            // race can reach here is a 409 (the return case keeps the reissue wording).
+            const { reopened } = await this.asConflict(
+              () => this.creditNotes.voidWithReversalInTx(tx, id, actorId, tz),
+              true,
+            );
 
-          // B222 re-cap on the tx, AFTER the void and WITHOUT the exclude: authoritative.
-          const cnItemsData = await this.asConflict(() =>
-            this.creditNotes.validateAndBuildCnItems(tx, capDto),
-          );
-          const created = await this.creditNotes.insertCreditNoteInTx(
-            tx,
-            {
-              creditNoteNumber,
-              customerId: old.customerId,
-              invoiceId: old.invoiceId,
-              amount: Number(dto.amount),
-              reason,
-              expiresAt,
-              // SA-608: an operator's "keep out of the send-time sweep" survives the reissue.
-              autoApplyExcluded: old.autoApplyExcluded,
-            },
-            cnItemsData,
-            tenantId,
-            customer,
-          );
+            // SA-608c (a), again under the lock: deleteInvoice may have unlinked the note since the
+            // pre-read, which would turn a sourced edit into an uncapped standalone one.
+            const cur = await tx.creditNote.findUnique({
+              where: { id },
+              select: { invoiceId: true, amount: true },
+            });
+            if (
+              cur &&
+              !cur.invoiceId &&
+              roundMoney(Number(dto.amount)) > roundMoney(Number(cur.amount)) + 0.001
+            )
+              throw new ConflictException(NO_SOURCE_CAP);
 
-          // SA-535a(2): SUPERSEDED on the old note, REISSUED on the new one (SA-442 vocabulary).
-          await tx.auditLog.create({
-            data: {
+            // B222 re-cap on the tx, AFTER the void and WITHOUT the exclude: authoritative.
+            const cnItemsData = await this.asConflict(() =>
+              this.creditNotes.validateAndBuildCnItems(tx, capDto),
+            );
+            const created = await this.creditNotes.insertCreditNoteInTx(
+              tx,
+              {
+                creditNoteNumber,
+                customerId: old.customerId,
+                invoiceId: old.invoiceId,
+                amount: Number(dto.amount),
+                reason,
+                expiresAt,
+                // SA-608: an operator's "keep out of the send-time sweep" survives the reissue.
+                autoApplyExcluded: old.autoApplyExcluded,
+              },
+              cnItemsData,
               tenantId,
-              userId: actorId,
-              action: "SUPERSEDED",
-              entityType: "CreditNote",
-              entityId: old.id,
-              meta: { replacedById: created.id, replacedByNumber: created.creditNoteNumber },
-            },
-          });
-          await tx.auditLog.create({
-            data: {
-              tenantId,
-              userId: actorId,
-              action: "REISSUED",
-              entityType: "CreditNote",
-              entityId: created.id,
-              meta: {
-                replaces: old.id,
-                replacesNumber: old.creditNoteNumber,
+              customer,
+            );
+
+            // SA-535a(2): SUPERSEDED on the old note, REISSUED on the new one (SA-442 vocabulary).
+            await tx.auditLog.create({
+              data: {
+                tenantId,
+                userId: actorId,
+                action: "SUPERSEDED",
+                entityType: "CreditNote",
+                entityId: old.id,
+                meta: { replacedById: created.id, replacedByNumber: created.creditNoteNumber },
+              },
+            });
+            await tx.auditLog.create({
+              data: {
+                tenantId,
+                userId: actorId,
+                action: "REISSUED",
+                entityType: "CreditNote",
+                entityId: created.id,
+                meta: {
+                  replaces: old.id,
+                  replacesNumber: old.creditNoteNumber,
+                  unapplied: reopened,
+                } as any,
+              },
+            });
+
+            const stored: StoredReissue = {
+              fingerprint,
+              response: {
+                voided: { id: old.id, creditNoteNumber: old.creditNoteNumber },
+                creditNote: created,
                 unapplied: reopened,
-              } as any,
-            },
-          });
-
-          const stored: StoredReissue = {
-            fingerprint,
-            response: {
-              voided: { id: old.id, creditNoteNumber: old.creditNoteNumber },
-              creditNote: created,
-              unapplied: reopened,
-            },
-          };
-          await this.idempotency.save(key, tenantId, scope, stored, tx);
-          return { replayed: false, stored };
-        },
-        { isolationLevel: "Serializable" },
-      ),
-    );
+              },
+            };
+            await this.idempotency.save(key, tenantId, scope, stored, tx);
+            return { replayed: false, stored };
+          },
+          { isolationLevel: "Serializable" },
+        ),
+      );
+    } catch (err) {
+      throw this.asReadableConflict(err);
+    }
 
     if (outcome.replayed) return this.replay(outcome.stored, fingerprint);
 
@@ -282,6 +329,20 @@ export class CreditNoteReissueService {
   }
 
   /**
+   * Exhausted serialization retries (40001 / 40P01 / P2034) and a number collision (P2002) are
+   * 409s with create()'s wording, never a raw 500. Everything else propagates unchanged.
+   */
+  private asReadableConflict(err: unknown): unknown {
+    if (txConflictState(err))
+      return new ConflictException(
+        "Another change to this credit note or its invoice was in progress. Nothing was changed; please retry.",
+      );
+    if ((err as { code?: string })?.code === "P2002")
+      return new ConflictException("Credit note number conflict — please retry.");
+    return err;
+  }
+
+  /**
    * The cap and the void refuse with 400; for a reissue every such refusal is a 409 (SA-535(b)):
    * the source is gone, the headroom is exceeded, or the note changed underneath. `fromVoid`
    * swaps the void's return-backed wording for the reissue's "edit the return instead".
@@ -293,6 +354,9 @@ export class CreditNoteReissueService {
       if (!(err instanceof BadRequestException)) throw err;
       const message = (err.getResponse() as any)?.message ?? err.message;
       const text = Array.isArray(message) ? message.join("; ") : String(message);
+      // Only a STATE refusal (cap exceeded, source gone/uncreditable, void raced or refused) is a
+      // 409; a malformed line (unknown line, amount <= 0, lines not summing) stays the 400 it is.
+      if (!STATE_REFUSAL.test(text)) throw err;
       if (fromVoid && /backs a return/.test(text)) {
         const m = /\(([^)]+)\)/.exec(text);
         throw new ConflictException(RETURN_BACKED(m?.[1]));
