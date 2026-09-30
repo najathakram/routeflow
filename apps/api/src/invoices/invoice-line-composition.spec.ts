@@ -7,7 +7,9 @@ import { InvoicesService } from "./invoices.service";
  * back to OrderItemComponent. `displayUnitPrice4` is computed per invoice line, from that line's
  * own net subtotal over the pieces it bills (never a line column, never the order's basis).
  */
-const service = new (InvoicesService as unknown as new (...a: unknown[]) => InvoicesService)(...Array(14).fill(undefined));
+const service = new (InvoicesService as unknown as new (...a: unknown[]) => InvoicesService)(
+  ...Array(14).fill(undefined),
+);
 const build = (li: object, billQty: number, opts?: object, tenantId: string | null = "t-1") =>
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (service as any).buildInvoiceItemData(li, billQty, tenantId, opts);
@@ -51,7 +53,9 @@ describe("buildInvoiceItemData carries a FIXED composition (case 11)", () => {
     });
     const rows = line.components.create;
     expect(rows.map((r: { qty: number }) => r.qty)).toEqual([12, 12]);
-    expect(rows.map((r: { displayUnitPrice4: number }) => r.displayUnitPrice4)).toEqual([1.25, 1.25]);
+    expect(rows.map((r: { displayUnitPrice4: number }) => r.displayUnitPrice4)).toEqual([
+      1.25, 1.25,
+    ]);
     expect(rows[0]).toMatchObject({
       tenantId: "t-1",
       componentProductId: "a",
@@ -81,14 +85,27 @@ describe("buildInvoiceItemData carries a FIXED composition (case 11)", () => {
   });
 
   it("an unrounded float subtotal does not throw (lead condition 2)", () => {
-    const li = fixedLine({ qty: 24, boxes: 1, subtotal: 0.1 + 0.2, components: [comp("a", 12, 0), comp("o", 12, 1)] });
+    const li = fixedLine({
+      qty: 24,
+      boxes: 1,
+      subtotal: 0.1 + 0.2,
+      components: [comp("a", 12, 0), comp("o", 12, 1)],
+    });
     expect(() => build(li, 24, { priorBilledQty: 0 })).not.toThrow();
-    expect(build(li, 24, { priorBilledQty: 0 }).components.create[0].displayUnitPrice4).toBe(0.0125);
+    expect(build(li, 24, { priorBilledQty: 0 }).components.create[0].displayUnitPrice4).toBe(
+      0.0125,
+    );
   });
 
   it("a plain line gets none of the new keys (byte-identical to before)", () => {
     const plain = build(
-      { ...fixedLine(), compositionMode: null, recipeId: null, recipeVersion: null, components: [] },
+      {
+        ...fixedLine(),
+        compositionMode: null,
+        recipeId: null,
+        recipeVersion: null,
+        components: [],
+      },
       48,
       { priorBilledQty: 0 },
     );
