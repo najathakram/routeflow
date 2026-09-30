@@ -284,6 +284,28 @@ describe("B920 — lines of the same product are summed before the oversell chec
     expect(products[0].currentStock).toBe(-1);
   });
 
+  it("boxed + loose lines of one product are summed in PIECES: 2 boxes of 12 + 5 pieces against 28 -> requested 29", async () => {
+    const tx = fakeTx([
+      { id: "m12", name: "Mango 12ct", unit: "Box", currentStock: 28, unitsPerBox: 12 },
+    ]);
+    const err = await caught(() =>
+      decrementStockForSale(
+        deps,
+        tx,
+        [
+          { productId: "m12", qty: 2, boxes: null, pieces: null, unitsPerBox: 12 }, // 2 boxes = 24 pieces
+          { productId: "m12", qty: 5, boxes: 0, pieces: 5, unitsPerBox: 12 }, // 5 loose pieces
+        ],
+        false,
+        event,
+      ),
+    );
+    const { lines } = err.getResponse() as any;
+    expect(lines).toHaveLength(1);
+    expect([lines[0].available, lines[0].requested]).toEqual([28, 29]);
+    expect(tx.$queryRaw).not.toHaveBeenCalled();
+  });
+
   it("the edit path already sums per product: an edit adding two lines of 3 against 5 gives one entry {5, 6}", async () => {
     const order = { id: "o-1", status: "PENDING" };
     const l = (qty: number) => ({

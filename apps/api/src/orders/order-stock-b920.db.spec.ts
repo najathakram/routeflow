@@ -76,6 +76,13 @@ describeDb("B920 — buyer oversell is per product — real Postgres", () => {
     await pool?.end();
   }, 120_000);
 
+  // Each case starts from 5 on hand and an empty ledger, so a regression in one case can never
+  // cascade into the next (they share ONE product).
+  beforeEach(async () => {
+    await raw.stockMovement.deleteMany({ where: { productId } });
+    await raw.product.update({ where: { id: productId }, data: { currentStock: "5" } });
+  });
+
   it("B920: two lines of 3 against 5 — a buyer gets ONE 409 entry {5, 6}; stock and the ledger are untouched", async () => {
     let err: ConflictException | null = null;
     try {
@@ -95,8 +102,6 @@ describeDb("B920 — buyer oversell is per product — real Postgres", () => {
   it("two lines that together fit (2 + 3 of 5) are accepted and stock reaches 0", async () => {
     await sell([2, 3], false);
     expect(await stockNow()).toBe(0);
-    await raw.product.update({ where: { id: productId }, data: { currentStock: "5" } });
-    await raw.stockMovement.deleteMany({ where: { productId } });
   });
 
   it("staff behaviour unchanged: two lines of 3 against 5 oversell (stock -1)", async () => {
