@@ -455,6 +455,14 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
 
+    // ── #2791: /invoices/[id]/edit redirects a pending-mirror draft to its order (spec 64).
+    {
+      name: "invoice-edit-pending-mirror",
+      testMatch: /64-invoice-edit-pending-mirror\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
     // ── Recurring-template edit + standing-order item edit (F13, spec 30) ──────
     // REG-B92: /invoices/recurring/[id]/edit exists and persists a schedule/notes
     // change; every list card links to it. REG-B09: the Edit Standing Order modal
