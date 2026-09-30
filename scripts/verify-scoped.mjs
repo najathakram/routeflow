@@ -18,10 +18,22 @@ const argv = process.argv.slice(2);
 for (let i = 0; i < argv.length; i++) {
   const k = argv[i];
   if (k === "--dry-run") a.dryRun = true;
-  else if (k === "--root") a.root = path.resolve(argv[++i]);
-  else if (k === "--jest") a.jest = argv[++i];
-  else if (["--base", "--files", "--diff"].includes(k)) a.pass.push(k, argv[++i]);
-  else {
+  else if (k === "--root" || k === "--jest") {
+    const v = argv[++i];
+    if (v === undefined || v.startsWith("--")) {
+      console.error(`verify-scoped: ${k} needs a value`);
+      process.exit(2);
+    }
+    if (k === "--root") a.root = path.resolve(v);
+    else a.jest = v;
+  } else if (["--base", "--files", "--diff"].includes(k)) {
+    const v = argv[++i];
+    if (v === undefined || v.startsWith("--")) {
+      console.error(`verify-scoped: ${k} needs a value`);
+      process.exit(2);
+    }
+    a.pass.push(k, v);
+  } else {
     console.error(`verify-scoped: unknown argument ${k}`);
     process.exit(2);
   }

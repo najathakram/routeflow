@@ -97,6 +97,17 @@ function walk(root, rel, out) {
 }
 
 const IMPORT_RE = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|\bimport\s+)(["'])([^"'\n]+)\1/g;
+const TOKEN_RE =
+  /\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/g;
+const SPEC_POS_RE = /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)$/;
+
+/** Comments blanked; a string survives only in import position (`from "x"`, `import("x")`, `require("x")`). */
+function importText(text) {
+  return text.replace(TOKEN_RE, (m, off) => {
+    if (m[0] === "/") return " ";
+    return SPEC_POS_RE.test(text.slice(Math.max(0, off - 24), off)) ? m : '""';
+  });
+}
 const LITERAL_RE = /["'`]((?:apps\/api\/)?(?:scripts|prisma)\/[\w./-]+\.(?:mjs|cjs|ts))["'`]/g;
 
 /** Resolve `spec` (relative or @routeflow/x) from file `from` to a repo-relative path in `known`, or null. */
@@ -124,7 +135,7 @@ function buildGraph(root, changed) {
   for (const f of files) {
     const text = readFileSync(path.join(root, f), "utf8");
     const deps = new Set();
-    for (const m of text.matchAll(IMPORT_RE)) {
+    for (const m of importText(text).matchAll(IMPORT_RE)) {
       const spec = m[2];
       if (!spec.startsWith(".") && !spec.startsWith("@routeflow/")) continue;
       const hit = resolveImport(f, spec, known);
@@ -227,7 +238,11 @@ function main() {
       console.error(`db-lane: cannot diff against ${args.base}`);
       return 2;
     }
-    if (mergeBase) diffText = gitOut(root, ["diff", "--no-renames", "-U0", mergeBase]) ?? "";
+    if (mergeBase) {
+      // --files names the change set, so read only those paths' lines for the model channel
+      const scope = args.files ? ["--", ...changed] : [];
+      diffText = gitOut(root, ["diff", "--no-renames", "-U0", mergeBase, ...scope]) ?? "";
+    }
   }
 
   const { known, rev, unresolved } = buildGraph(root, changed);

@@ -229,6 +229,21 @@ describe("db-lane.mjs — FULL mode, flags and exits", () => {
     expect(r3.err + r3.out).toContain("./missing");
   });
 
+  it("13b. an import-shaped string or comment in a changed file is not an import (exit 0); a real one still is", () => {
+    const body = [
+      "const fixture = 'import \"./nope\";';",
+      "const other = `from './also-nope'`;",
+      '// import "./commented-out";',
+      '/* require("./block-commented") */',
+      "export { fixture, other };",
+      "",
+    ].join("\n");
+    const root = fixture({ "apps/api/src/k/strings.ts": body });
+    const r = lane(root, ["--files", "apps/api/src/k/strings.ts"]);
+    expect(r.status).toBe(0);
+    expect(r.err).not.toContain("unresolvable");
+  });
+
   it("14. Windows separators are normalised and --json equals the text set", () => {
     const root = fixture({
       "apps/api/src/a/x.service.ts": "export const x = 1;\n",
@@ -286,6 +301,10 @@ describe("db-lane.mjs — this repo", () => {
     const scoped = lane(REPO, ["--files", files.join(","), "--max-ratio", "1", "--json"]);
     const parsed = JSON.parse(scoped.out);
     expect(parsed.mode).toBe("scoped");
+    const full = JSON.parse(lane(REPO, ["--files", files.join(","), "--json"]).out);
+    expect(full.mode).toBe("full");
+    expect(parsed.specs.length).toBeLessThan(full.specs.length);
+    for (const sp of parsed.specs) expect(full.specs).toContain(sp);
     expect(parsed.specs).toEqual(
       expect.arrayContaining([
         "apps/api/src/billing/publish-plan-catalog-v12.db.spec.ts",
@@ -337,6 +356,13 @@ describe("verify-scoped.mjs", () => {
     expect(r.out).toContain("enum-parity");
     expect(r.out).toContain("no-bare-cron");
     expect(r.out).toContain("addon-gate-registry");
+  });
+
+  it("17b. a flag with no value (or another flag as its value) ⇒ exit 2", () => {
+    const root = fixture({ "apps/api/src/k/a.ts": "export {};\n" });
+    expect(scoped(root, ["--dry-run", "--files"]).status).toBe(2);
+    expect(scoped(root, ["--files", "--dry-run"]).status).toBe(2);
+    expect(scoped(root, ["--dry-run", "--base"]).status).toBe(2);
   });
 
   it("18. --dry-run with 0 DB specs prints no test:db line", () => {
