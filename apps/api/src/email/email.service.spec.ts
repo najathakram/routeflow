@@ -2185,3 +2185,42 @@ describe("EmailService — send() logs never carry a full recipient address; Res
     expect(text).toContain("[address]");
   });
 });
+
+describe("redactAddresses — masks IP literals AND email addresses (keeps the domain)", () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { redactAddresses } = require("./email.service") as {
+    redactAddresses: (s: string) => string;
+  };
+
+  it("masks a plain address, keeping the domain", () => {
+    expect(redactAddresses("rejected owner@acme.example today")).toBe(
+      "rejected ***@acme.example today",
+    );
+  });
+
+  it("masks the address inside a display-name form", () => {
+    expect(redactAddresses('bad recipient "Acme Store <owner@acme.example>"')).toBe(
+      'bad recipient "Acme Store <***@acme.example>"',
+    );
+  });
+
+  it("masks every address in one string, including plus-tags and subdomains", () => {
+    expect(redactAddresses("to a.b+tag@mail.acme.example, cc c@other.org and d@x.co.uk")).toBe(
+      "to ***@mail.acme.example, cc ***@other.org and ***@x.co.uk",
+    );
+  });
+
+  it("leaves IP masking unchanged", () => {
+    expect(redactAddresses("connect EHOSTUNREACH 10.0.1.4:587")).toBe(
+      "connect EHOSTUNREACH [address]:587",
+    );
+    expect(redactAddresses("connect ECONNREFUSED ::1:587")).toContain("[address]");
+  });
+
+  it("handles an address and an IP together, and text with neither", () => {
+    expect(redactAddresses("x@acme.example failed at 10.0.1.4")).toBe(
+      "***@acme.example failed at [address]",
+    );
+    expect(redactAddresses("plain message")).toBe("plain message");
+  });
+});

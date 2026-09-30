@@ -179,17 +179,22 @@ export function mapSmtpError(
 }
 
 /**
- * Strip IPv4/IPv6 address literals from an error string (see mapSmtpError fallback).
+ * Strip IPv4/IPv6 address literals AND email addresses (local part masked, domain kept) from
+ * an error string (see mapSmtpError fallback; also the Resend error text we log).
  * The IPv6 pattern is intentionally NOT \b-anchored at the start and requires ≥2 colon
  * groups: that catches "::"-compressed forms Node actually emits (e.g. "::1:587",
  * ":::53408" for the unspecified address), which a \b-anchored, single-group-minimum
  * pattern would miss. Quantifiers stay bounded ({0,4}/{2,8}) so there is no ReDoS risk,
  * and over-redaction of address-shaped tokens in this fallback branch is acceptable.
  */
-function redactAddresses(msg: string): string {
-  return msg
-    .replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, "[address]") // IPv4 (and IPv4-mapped tail)
-    .replace(/(?:[0-9a-f]{0,4}:){2,8}[0-9a-f]{0,4}/gi, "[address]"); // IPv6 incl. ::-compressed
+export function redactAddresses(msg: string): string {
+  return (
+    msg
+      // Email addresses: keep the domain (what an operator needs), mask the local part (PII).
+      .replace(/[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)/g, "***@$1")
+      .replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, "[address]") // IPv4 (and IPv4-mapped tail)
+      .replace(/(?:[0-9a-f]{0,4}:){2,8}[0-9a-f]{0,4}/gi, "[address]")
+  ); // IPv6 incl. ::-compressed
 }
 
 /** Platform-level Google Workspace SMTP config (B452, owner ruling 2026-09-16). */
