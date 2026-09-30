@@ -186,7 +186,7 @@ export class ProductFamiliesService {
     copiedPrice?: string,
     familyCost?: string | null,
   ): Prisma.ProductUncheckedCreateInput {
-    const cost = v.standardCost ?? familyCost;
+    const cost = blank(v.standardCost) ?? familyCost;
     const price = copiedPrice ?? money(v.pricePerUnit);
     return {
       name: v.name.trim(),
