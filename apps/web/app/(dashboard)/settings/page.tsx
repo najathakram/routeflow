@@ -90,6 +90,7 @@ import { StripeConnectCard } from "./_components/StripeConnectCard";
 import GoHighLevelSettingsTab from "./_components/GoHighLevelSettingsTab";
 import NextLink from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
+import { describeSaveError } from "@/lib/reason-copy";
 
 // ─── TAB 1: Business Profile ──────────────────────────────────────────────────
 
@@ -506,7 +507,7 @@ function AddUserModal({
       ) : (
         <form id="add-user-form" onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4">
           {createOperator.error && (
-            <p className="text-sm text-danger">{createOperator.error.message}</p>
+            <p className="text-sm text-danger">{describeSaveError(createOperator.error)}</p>
           )}
           <Input
             label="Full Name"
@@ -643,7 +644,9 @@ function EditUserModal({
       }
     >
       <form id="edit-user-form" onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4">
-        {updateUser.error && <p className="text-sm text-danger">{updateUser.error.message}</p>}
+        {updateUser.error && (
+          <p className="text-sm text-danger">{describeSaveError(updateUser.error)}</p>
+        )}
         {user?.role === "TENANT_ADMIN" ? (
           <div>
             <label className="mb-1 block text-sm font-medium text-navy">Role</label>

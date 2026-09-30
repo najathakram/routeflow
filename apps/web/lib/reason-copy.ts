@@ -77,3 +77,61 @@ export function deliveryFixTarget(link: string): { label: string; href: string }
     ? DELIVERY_FIX_TARGET[link as DeliveryFixLink]
     : null;
 }
+
+// ─── Recurring invoice run failures ──────────────────────────────────────────
+
+const RUN_UNFINALIZED = "The invoice was created but the run could not be finalized";
+const RUN_SUSPENDED = "Suspended:";
+
+/**
+ * A recurring invoice's `lastError` is free text from the API (an exception message). It is never
+ * shown: known prefixes map to a fixed sentence, everything else to a generic one. `retryable`
+ * mirrors `isRetryableRunFailure` (REG-B106): an unfinalized cycle is already billed, so no re-run.
+ */
+export function describeRunFailure(lastError: string): { text: string; retryable: boolean } {
+  if (lastError.startsWith(RUN_UNFINALIZED)) {
+    return {
+      text: "The invoice was created, but the run couldn't be finalized. Don't run it again.",
+      retryable: false,
+    };
+  }
+  if (lastError.startsWith(RUN_SUSPENDED)) {
+    return {
+      text: "Paused because a line is under a selling restriction. Fix the template and reactivate it; the skipped cycle isn't billed.",
+      retryable: true,
+    };
+  }
+  return { text: "The last run failed. Use Run Now to retry.", retryable: true };
+}
+
+// ─── Return reasons (realtime toast) ─────────────────────────────────────────
+
+const RETURN_REASON_COPY: Record<string, string> = {
+  DAMAGED: "Damaged",
+  WRONG_ITEM: "Wrong item",
+  CUSTOMER_REFUSED: "Customer refused",
+  QUALITY_ISSUE: "Quality issue",
+  EXCESS_ORDER: "Excess order",
+};
+
+export function describeReturnReason(reason: string): string {
+  return Object.prototype.hasOwnProperty.call(RETURN_REASON_COPY, reason)
+    ? RETURN_REASON_COPY[reason]
+    : "No reason given";
+}
+
+// ─── Save errors (mutations) ─────────────────────────────────────────────────
+
+/** Maps an axios-style error to a fixed sentence by HTTP status; never echoes `message`. */
+export function describeSaveError(err: unknown): string {
+  const status = (err as { response?: { status?: number } })?.response?.status;
+  if (status === 409) return "That username or email is already in use.";
+  if (status === 400 || status === 422) return "Check the details and try again.";
+  if (status === 403) return "You don't have permission to do that.";
+  return "Couldn't save, please try again.";
+}
+
+// ─── Scan modal ──────────────────────────────────────────────────────────────
+
+export const SCAN_FAILED_COPY = "We couldn't read this page. Try a clearer photo.";
+export const RECORDS_FAILED_COPY = "We couldn't create the records. Please try again.";
