@@ -41,6 +41,18 @@ export interface ExactScanMatch<T> {
 }
 
 /**
+ * The server stamps `scanMatch` on the row the FIRST scan resolved, and builders snapshot that row, so a
+ * later scan of ANOTHER code on the same product would inherit the first code's levels (scan box, then the
+ * unit code -> +1 case). `scanMatch.levels` is only evidence for the code that produced it: the two codes
+ * must share a `normalizeScanCode` candidate (a stub with no code is taken as-is) (UPC-A vs EAN-13 forms of one code still agree).
+ */
+export function scanMatchIsForCode(term: string, matchCode: string | null | undefined): boolean {
+  if (!matchCode) return true; // the server always stamps a code; a codeless stub cannot be disproved
+  const mine = new Set(normalizeScanCode(term.trim()).map((c) => c.toLowerCase()));
+  return normalizeScanCode(matchCode.trim()).some((c) => mine.has(c.toLowerCase()));
+}
+
+/**
  * The levels the scanned `term` has on a resolved `product` (#2717 M4a-1, SA-580). The server's
  * `scanMatch.levels` wins when the row carries one (it saw the row that hit); otherwise the levels
  * come from the cached `barcodes[]` / the legacy columns via the shared `levelsForScannedCode`.
@@ -55,7 +67,9 @@ export function levelsForScan(
   },
 ): SellLevel[] {
   const fromServer = product.scanMatch?.levels;
-  if (fromServer && fromServer.length > 0) return [...fromServer];
+  if (fromServer && fromServer.length > 0 && scanMatchIsForCode(term, product.scanMatch?.code)) {
+    return [...fromServer];
+  }
   return levelsForScannedCode(term.trim(), product);
 }
 

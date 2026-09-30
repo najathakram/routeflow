@@ -1,5 +1,9 @@
 import { renderHook, waitFor } from "@testing-library/react";
-import { useScanCodeHandler, type ScanCodeHandlerDeps } from "./useScanCodeHandler";
+import {
+  scanLevelForHit,
+  useScanCodeHandler,
+  type ScanCodeHandlerDeps,
+} from "./useScanCodeHandler";
 
 /**
  * #2717 M4a-1 (SA-580 R1/R2, web): the scan handler works out WHICH LEVEL the scanned code is and
@@ -107,5 +111,26 @@ describe("useScanCodeHandler — passes the scanned level (R1/R2)", () => {
     expect((await scan("CHIPS-1", p)).addLineItem).toHaveBeenCalledWith(p, "UNIT");
     const one = boxed({ barcodes: rows, unitsPerBox: 1 });
     expect((await scan("CHIPS-12", one)).addLineItem).toHaveBeenCalledWith(one, "BOX");
+  });
+});
+
+describe("scanLevelForHit — scanMatch only speaks for the code that produced it (Opus blocker, #2764)", () => {
+  const snap = (code: string, levels: Array<"BOX" | "UNIT">) =>
+    boxed({ unitsPerBox: 24, barcode: "SHARED-B", unitSku: "UNIT-U", scanMatch: { code, levels } });
+
+  it("box+unit code first (snapshot [UNIT, BOX]), then the unitSku on the same product -> UNIT", () => {
+    const p = snap("SHARED-B", ["UNIT", "BOX"]);
+    expect(scanLevelForHit("SHARED-B", p)).toBe("BOX");
+    expect(scanLevelForHit("UNIT-U", p)).toBe("UNIT");
+  });
+
+  it("the reverse: unitSku first (snapshot [UNIT]), then the shared code -> the default BOX", () => {
+    const p = snap("UNIT-U", ["UNIT"]);
+    expect(scanLevelForHit("UNIT-U", p)).toBe("UNIT");
+    expect(scanLevelForHit("SHARED-B", p)).toBe("BOX");
+  });
+
+  it("a rescan of the same code (case-insensitive) keeps the server levels", () => {
+    expect(scanLevelForHit("unit-u", snap("UNIT-U", ["UNIT"]))).toBe("UNIT");
   });
 });

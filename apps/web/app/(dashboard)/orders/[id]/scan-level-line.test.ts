@@ -1,4 +1,4 @@
-import { bumpLineForScan, explicitBumpLevel } from "./scan-level-line";
+import { bumpLineForScan, explicitBumpLevel, splitLineHintText } from "./scan-level-line";
 
 // Review item 4 (#2764): a picker TAP (no explicit level) keeps the OLD +1 on a boxSplit line;
 // only an explicit scan level BOX adds a whole case (+upb pieces).
@@ -40,5 +40,13 @@ describe("explicitBumpLevel + bumpLineForScan — shared code equals a picker ta
     const p = { barcode: null, sku: "CASE1", unitSku: "PC1", unitsPerBox: 12 };
     expect(explicitBumpLevel("PC1", p)).toBeUndefined();
     expect(bumpLineForScan(split, true, "UNIT").qty).toBe(14);
+  });
+});
+
+describe("splitLineHintText — singular/plural (Opus nit, #2764)", () => {
+  it("1 case (not '1 cases'), plural otherwise, loose stays a count", () => {
+    expect(splitLineHintText(12, 12)).toBe("1 case + 0 loose");
+    expect(splitLineHintText(25, 12)).toBe("2 cases + 1 loose");
+    expect(splitLineHintText(5, 12)).toBe("0 cases + 5 loose");
   });
 });

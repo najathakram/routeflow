@@ -88,6 +88,13 @@ describe("findScanMatches — row tier (#2717 M4a-1)", () => {
     expect([...(hit?.scanMatch.levels ?? [])].sort()).toEqual(["BOX", "UNIT"]);
   });
 
+  it("a row with a level outside BOX/UNIT never reaches scanMatch.levels (Opus nit, #2764)", async () => {
+    const rows = [row({ code: "SH", level: "CASE" }), row({ code: "SH", level: "UNIT" })];
+    const db = makeDb({ rows, products: [product({ barcodes: rows })] });
+    const hit = await findScanMatches(db as any, ["SH"], {});
+    expect(hit?.scanMatch.levels).toEqual(["UNIT"]);
+  });
+
   it("returns null when nothing matches on any tier", async () => {
     const db = makeDb({});
     await expect(findScanMatches(db as any, ["NOPE"], {})).resolves.toBeNull();

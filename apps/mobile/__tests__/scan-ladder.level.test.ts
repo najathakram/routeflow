@@ -137,6 +137,47 @@ describe("scan ladder — level from the server rung", () => {
   });
 });
 
+describe("scanMatch snapshots never outlive the code that produced them (Opus blocker, #2764)", () => {
+  // The server stamps scanMatch on the product the FIRST scan resolved; addOne snapshots that row and
+  // the local fast path reuses the snapshot for the NEXT scan. A level list for code B must not decide
+  // the level of code U.
+  const snapshot = (code: string, levels: Array<"BOX" | "UNIT">): P => ({
+    ...boxed,
+    unitsPerBox: 24,
+    barcode: "SHARED-B",
+    sku: "COLA-24",
+    unitSku: "UNIT-U",
+    scanMatch: { code, levels },
+  });
+
+  it("box+unit code via the server (+1 case), then unitSku locally -> UNIT, not the stale [BOX, UNIT] default", async () => {
+    const hit = snapshot("SHARED-B", ["UNIT", "BOX"]);
+    const first = harness([], async () => ({ product: hit, source: "barcode" }) as any);
+    await first.scan("SHARED-B");
+    expect(first.accepted).toEqual([{ id: "p1", level: "BOX" }]);
+    const second = harness([hit]); // the snapshot is now the cached row
+    await second.scan("UNIT-U");
+    expect(second.accepted).toEqual([{ id: "p1", level: "UNIT" }]);
+  });
+
+  it("the reverse: unitSku via the server (UNIT), then the shared code locally -> the default BOX", async () => {
+    const hit = snapshot("UNIT-U", ["UNIT"]);
+    const first = harness([], async () => ({ product: hit, source: "barcode" }) as any);
+    await first.scan("UNIT-U");
+    expect(first.accepted).toEqual([{ id: "p1", level: "UNIT" }]);
+    const second = harness([hit]);
+    await second.scan("SHARED-B");
+    expect(second.accepted).toEqual([{ id: "p1", level: "BOX" }]);
+  });
+
+  it("a rescan of the SAME code keeps the server's levels (the guard only drops foreign snapshots)", async () => {
+    const hit = snapshot("UNIT-U", ["UNIT"]);
+    const again = harness([hit]);
+    await again.scan("UNIT-U");
+    expect(again.accepted).toEqual([{ id: "p1", level: "UNIT" }]);
+  });
+});
+
 describe("scan-accept-guard sameScanCode is unchanged on the package normaliser (SA-578 test 23)", () => {
   it("still treats UPC-A and its zero-padded EAN-13 as one label, and different labels as different", () => {
     expect(sameScanCode("042100005264", "0042100005264")).toBe(true);

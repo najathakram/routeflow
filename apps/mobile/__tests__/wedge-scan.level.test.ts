@@ -54,3 +54,23 @@ describe("scanUnitKind is replaced by the shared resolver (SA-580)", () => {
     expect((wedge as Record<string, unknown>).scanUnitKind).toBeUndefined();
   });
 });
+
+describe("levelsForScan — trusts scanMatch only for the code that produced it (Opus blocker, #2764)", () => {
+  const prod = {
+    barcode: "SHARED-B", sku: "COLA-24", unitSku: "UNIT-U", unitsPerBox: 24,
+    scanMatch: { code: "SHARED-B", levels: ["UNIT", "BOX"] as Array<"BOX" | "UNIT"> },
+  };
+  it("a different code re-derives locally (unitSku -> UNIT)", () => {
+    expect(wedge.levelsForScan("UNIT-U", prod)).toEqual(["UNIT"]);
+  });
+  it("the same code (any case / whitespace) keeps the server levels", () => {
+    expect(wedge.levelsForScan(" shared-b ", prod)).toEqual(["UNIT", "BOX"]);
+  });
+  it("a UPC-A scan of the code the server resolved as EAN-13 still counts as the same code", () => {
+    const p = { barcode: "0042100005264", unitsPerBox: 6, scanMatch: { code: "0042100005264", levels: ["BOX"] as Array<"BOX" | "UNIT"> } };
+    expect(wedge.levelsForScan("042100005264", p)).toEqual(["BOX"]);
+  });
+  it("a codeless scanMatch stub (never sent by the server) is taken as-is", () => {
+    expect(wedge.levelsForScan("UNIT-U", { ...prod, scanMatch: { levels: ["BOX"] as Array<"BOX" | "UNIT"> } })).toEqual(["BOX"]);
+  });
+});

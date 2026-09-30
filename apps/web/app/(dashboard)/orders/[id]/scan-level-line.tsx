@@ -45,6 +45,12 @@ export function bumpLineForScan<
     : { ...it, qty: it.qty + 1 };
 }
 
+/** "1 case + 0 loose", "2 cases + 1 loose" — the count word agrees with its number. */
+export function splitLineHintText(qty: number, upb: number): string {
+  const cases = Math.floor(qty / upb);
+  return `${cases} ${cases === 1 ? "case" : "cases"} + ${qty % upb} loose`;
+}
+
 /** No hidden quantity (SA-580): a split line counts PIECES, so say cases + loose. */
 export function SplitLineHint({ item }: { item: any }) {
   const upb = Number(item.unitsPerBox ?? 0);
@@ -54,7 +60,7 @@ export function SplitLineHint({ item }: { item: any }) {
       data-testid="edit-line-split"
       className="text-[11px] normal-case tracking-normal text-navy/60"
     >
-      pcs = {Math.floor(item.qty / upb)} cases + {item.qty % upb} loose
+      pcs = {splitLineHintText(item.qty, upb)}
     </span>
   );
 }

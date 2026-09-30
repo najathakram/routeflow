@@ -4,6 +4,7 @@ import * as React from "react";
 import type { useToast } from "@routeflow/ui/web";
 import {
   levelsForScannedCode,
+  normalizeScanCode,
   resolveScanSellLevel,
   type ScanBarcodeRow,
 } from "@routeflow/scanning";
@@ -42,14 +43,22 @@ export function isConnectivityError(err: unknown): boolean {
   );
 }
 
+function scanMatchIsForCode(code: string, matchCode: string | undefined): boolean {
+  if (!matchCode) return true; // the server always stamps a code; a codeless stub cannot be disproved
+  const mine = new Set(normalizeScanCode(code.trim()).map((c) => c.toLowerCase()));
+  return normalizeScanCode(matchCode.trim()).some((c) => mine.has(c.toLowerCase()));
+}
+
 /**
  * #2717 M4a-1 (SA-580 R1/R2/R4): the level the scanned `code` carries on `product`. The server's
  * `scanMatch.levels` wins when present (it saw the row that hit); otherwise the levels are worked
  * out from the product's cached `barcodes[]` / legacy columns. The line's mode never matters.
  */
 export function scanLevelsForHit(code: string, product: any): SellLevel[] {
-  const sm = product?.scanMatch as { levels?: SellLevel[] } | undefined;
-  return sm?.levels && sm.levels.length > 0
+  const sm = product?.scanMatch as { code?: string; levels?: SellLevel[] } | undefined;
+  // scanMatch is stamped by the FIRST scan and snapshotted on the line's product: trust it only for
+  // the code that produced it, else a later unit-code scan inherits the box code's levels.
+  return sm?.levels && sm.levels.length > 0 && scanMatchIsForCode(code, sm.code)
     ? sm.levels
     : levelsForScannedCode(code, {
         barcode: product?.barcode,
