@@ -17,6 +17,7 @@ import { AppConfig } from "../config/configuration";
 import { JwtPayload } from "./jwt-payload.interface";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { escapeHtml } from "../common/html-escape";
+import { isLoginEligible, isSignInBlocked } from "./login-eligibility";
 
 export interface DeviceInfo {
   userAgent?: string;
@@ -61,12 +62,12 @@ export class AuthService {
       }
     }
 
-    if (!user || user.deletedAt !== null) return null;
-    // Account lockout: a locked account fails WITHOUT running bcrypt (no
+    // Deleted, or the account lockout: refused WITHOUT running bcrypt (no
     // timing oracle, no counter churn) and with the same null as any bad
     // credential — enumeration-safe. Time-based auto-unlock; TENANT_ADMIN can
-    // clear it early via POST /users/:id/unlock.
-    if (user.lockedUntil && user.lockedUntil > new Date()) return null;
+    // clear it early via POST /users/:id/unlock. The rule itself lives in
+    // login-eligibility.ts (one rule for every sign-in path, #2653).
+    if (!user || isSignInBlocked(user)) return null;
     // Google-only accounts have no password
     if (!user.password) return null;
     const valid = await bcrypt.compare(password, user.password);
@@ -98,7 +99,7 @@ export class AuthService {
     // gated safely without a schema discriminator (e.g. a nullable
     // `emailVerifiedAt` column or a distinct `PENDING_VERIFICATION` status) —
     // proposed as a follow-up, not built here.
-    if (user.status !== "ACTIVE") return null;
+    if (!isLoginEligible(user)) return null;
     if (user.failedLoginAttempts > 0 || user.lockedUntil) {
       await this.prisma.user.update({
         where: { id: user.id },
