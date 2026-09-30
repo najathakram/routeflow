@@ -1,6 +1,8 @@
 "use client";
 
 import * as React from "react";
+import type { LineComponentView } from "@routeflow/types";
+import { ComponentSubLines } from "./ComponentSubLines";
 import { Package } from "lucide-react";
 import { Badge, cn, type BadgeStatus } from "@routeflow/ui/web";
 import {
@@ -60,6 +62,8 @@ export interface LineItemRowReadOnlyProps {
   note?: string | null;
   /** An ad-hoc (unlisted, non-catalog) line — shows the "Custom" pill the table shows. */
   custom?: boolean;
+  /** #2717 M3: frozen components of a composed (mixed-pack) line, shown as "(included)" sub-lines. */
+  components?: ReadonlyArray<LineComponentView> | null;
   className?: string;
 }
 
@@ -91,6 +95,7 @@ export function LineItemRowReadOnly({
   showDeliveryProgress,
   note,
   custom,
+  components,
   className,
 }: LineItemRowReadOnlyProps) {
   const [imageFailed, setImageFailed] = React.useState(false);
@@ -227,6 +232,7 @@ export function LineItemRowReadOnly({
         {note?.trim() && (
           <p className="mt-1 whitespace-pre-line text-xs italic text-navy/70">{note.trim()}</p>
         )}
+        <ComponentSubLines components={components} />
         {lineStatus && (
           <div className="mt-1.5">
             <Badge status={lineStatus} />
