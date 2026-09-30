@@ -488,6 +488,18 @@ describeDb("B285 — PO receive vs concurrent writers — real Postgres, separat
         // receive won -> 50 + 10 = 60 and the undo was refused; undo won -> the 4 received were
         // reversed (50) and the top-up refused. Anything else (54, 64) is stock counted twice.
         expect([60, 50]).toContain(Number(p.currentStock));
+        // the bill's own record must agree with the stock: received in full, or back to nothing
+        const finalBill = await A.prisma.vendorBill.findUniqueOrThrow({
+          where: { id: bill.id },
+          include: { items: true },
+        });
+        const qty = Number(finalBill.items[0].qtyReceived ?? 0);
+        if (Number(p.currentStock) === 60) {
+          expect(qty).toBe(10);
+          expect(finalBill.status).not.toBe(undo === "voidBill" ? "VOID" : "DRAFT");
+        } else {
+          expect(finalBill.status).toBe(undo === "voidBill" ? "VOID" : "DRAFT");
+        }
       });
     },
   );
@@ -531,4 +543,64 @@ describeDb("B285 — PO receive vs concurrent writers — real Postgres, separat
       });
     },
   );
+
+  // (g) the first receive racing voidBill of a never-received bill: a void that reverses nothing
+  // must not land after the receive's stock (phantom stock on a VOID bill).
+  it("(g) first receive vs voidBill of a never-received bill: one wins, one readable 409", async () => {
+    const w = await seedWorld("g", 50, 2);
+    const bill: any = await inTenant(A, w, () =>
+      A.bills.create({
+        supplierId: w.supplierId,
+        billDate: "2026-09-01",
+        items: [{ productId: w.productId, description: "Widget", qty: 10, unitCost: 6 }],
+      } as never),
+    );
+    const barrier = new Barrier(2, 1500);
+    for (const svc of [A, C]) {
+      const prismaSvc = svc.prisma as unknown as {
+        tenantTransaction: (...a: unknown[]) => Promise<unknown>;
+      };
+      const original = prismaSvc.tenantTransaction.bind(prismaSvc);
+      jest.spyOn(prismaSvc, "tenantTransaction").mockImplementation(async (...args: unknown[]) => {
+        await barrier.arrive();
+        return original(...args);
+      });
+    }
+    const settled = await Promise.allSettled([
+      inTenant(A, w, () => A.bills.receive(bill.id, undefined, w.userId)),
+      inTenant(C, w, () => C.bills.voidBill(bill.id, w.userId)),
+    ]);
+    const p = await productOf(w);
+    const finalBill = await A.prisma.vendorBill.findUniqueOrThrow({ where: { id: bill.id } });
+    const rejected = settled.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+    console.log(
+      `B285(g) observed: fulfilled=${settled.length - rejected.length} stock=${p.currentStock} ` +
+        `status=${finalBill.status} rejected=${rejected.map((r) => r.reason?.message).join(" | ")}`,
+    );
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0].reason?.message).toMatch(/just changed by someone else|void|reload/i);
+    const stock = Number(p.currentStock);
+    expect(
+      (stock === 60 && finalBill.status === "RECEIVED") ||
+        (stock === 50 && finalBill.status === "VOID"),
+    ).toBe(true);
+  });
+
+  it("(g2) a voided bill cannot be received afterwards: 409, stock unchanged, still VOID", async () => {
+    const w = await seedWorld("g2", 50, 2);
+    const bill: any = await inTenant(A, w, () =>
+      A.bills.create({
+        supplierId: w.supplierId,
+        billDate: "2026-09-01",
+        items: [{ productId: w.productId, description: "Widget", qty: 10, unitCost: 6 }],
+      } as never),
+    );
+    await inTenant(A, w, () => A.bills.voidBill(bill.id, w.userId));
+    await expect(
+      inTenant(A, w, () => A.bills.receive(bill.id, undefined, w.userId)),
+    ).rejects.toThrow(/void/i);
+    expect(Number((await productOf(w)).currentStock)).toBe(50);
+    const finalBill = await A.prisma.vendorBill.findUniqueOrThrow({ where: { id: bill.id } });
+    expect(finalBill.status).toBe("VOID");
+  });
 });

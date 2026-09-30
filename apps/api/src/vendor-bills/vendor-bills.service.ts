@@ -1044,6 +1044,10 @@ export class VendorBillsService {
       },
     });
     if (!bill) throw new NotFoundException("Bill not found");
+    // A voided bill is closed: receiving it would silently un-void it and post its stock.
+    if (bill.status === "VOID") {
+      throw new ConflictException("This bill is void and cannot be received.");
+    }
     // RF-084: idempotency guard — prevent double-receive doubling stock.
     // Guarded on receivedDate + per-line qtyReceived, NOT status: recordPayment
     // overwrites status to PAID/PARTIAL, so a status-only check let a paid bill
@@ -1550,6 +1554,9 @@ export class VendorBillsService {
     // void land together — a void that took the credit back but failed to void
     // would be worse than either alone.
     return this.prisma.tenantTransaction(async (tx) => {
+      // B285: a first receive committing between our pre-read and this write would leave its
+      // stock on a VOID bill (nothing here reverses it) — lock and re-check like the branch above.
+      await this.lockBillAndAssertReceiptState(tx, bill);
       const refunded = await this.refundDrawnSupplierCredits(tx, id);
       return tx.vendorBill.update({
         where: { id },
