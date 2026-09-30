@@ -185,8 +185,8 @@ async function checkLane(ctx: Ctx, lane: string, fresh?: Snapshot): Promise<Snap
 /* ------------------------------------------------------------------ change verbs */
 
 const LINE_MAX = 240;
-/** Lines the library allows up to 1,024 B for (lead-side, long titles); everything else is 240. */
-const WIDE_TYPES = new Set(["task.created", "task.proposed"]);
+/** Lines the library allows up to 1,024 B for (lead verb, long titles); everything else is 240. */
+const WIDE_TYPES = new Set(["task.created"]);
 
 function headShort(cwd: string): string | undefined {
   const r = gitTry(cwd, ["rev-parse", "--short", "HEAD"]);
@@ -265,7 +265,7 @@ async function emit(
     }
     throw e;
   }
-  adoptOfflinePending(ctx, clone);
+  await withLock(lockDirOf(clone), LOCK_STALE_MS, () => adoptOfflinePending(ctx, clone));
   await checkLane(ctx, lane, opts.fresh);
   let ev: ControlEvent;
   try {
@@ -328,17 +328,44 @@ const note: Command = (ctx) => {
 };
 
 const propose: Command = async (ctx) => {
-  const title = trunc(pos(ctx, 0, "title"), 120);
   const lane = laneOf(ctx);
   const snap = await snapshot(ctx, "local");
   const tmpId = `${lane}.${lastSeq(snap.tree, lane) + 1}`;
   const prio = flag(ctx, "priority");
+  const kind = need(ctx, "kind");
+  const areas = csv(need(ctx, "areas"));
+  const sha = headShort(ctx.cwd);
+  const size = (title: string, a: string[]): number =>
+    Buffer.byteLength(
+      JSON.stringify({
+        seq: 999999,
+        ts: ctx.env.now(),
+        lane,
+        type: "task.proposed",
+        by: "agent",
+        ...(sha ? { sha } : {}),
+        tmpId,
+        title,
+        kind,
+        areas: a,
+        ...(prio ? { priority: prio } : {}),
+      }),
+      "utf8",
+    );
+  // R9: <= 240 B. Shorten the title first, then drop trailing areas; still over => exit 3.
+  let title = trunc(pos(ctx, 0, "title"), 120);
+  let fit = areas;
+  while (size(title, fit) > LINE_MAX && Array.from(title).length > 12) {
+    title = trunc(title, Array.from(title).length - 4);
+  }
+  while (size(title, fit) > LINE_MAX && fit.length > 1) fit = fit.slice(0, -1);
+  if (size(title, fit) > LINE_MAX) throw new CtlError(3, `propose: line over ${LINE_MAX} bytes`);
   await emit(ctx, {
     type: "task.proposed",
     tmpId,
     title,
-    kind: need(ctx, "kind"),
-    areas: csv(need(ctx, "areas")),
+    kind,
+    areas: fit,
     ...(prio ? { priority: prio } : {}),
   });
 };
@@ -615,6 +642,7 @@ const next: Command = async (ctx) => {
         state: snap.state,
         next: res,
         piggybackCount: pig.count,
+        offline: snap.offline === true,
         overlaps,
       }),
     );

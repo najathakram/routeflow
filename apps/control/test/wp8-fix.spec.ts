@@ -72,6 +72,7 @@ describe("2 offline durability", () => {
     fs.renameSync(world.originDir + ".gone", world.originDir);
     expect(r.code).toBe(5);
     expect(r.stderr.trim().split("\n")).toHaveLength(1);
+    expect(r.stderr).toMatch(/^ctl: event parked in pending\//);
     expect((await runCli(world, ["note", "w"], { machine: "b" })).code).toBe(0);
     expect(
       world
@@ -241,5 +242,49 @@ describe("6 adopt is atomic across a failed second push", () => {
     const created = lead.filter((l) => l.type === "task.created" && l.id !== "RF-1");
     expect(created.map((l) => l.id)).toEqual(["RF-2"]);
     expect(lead.filter((l) => l.type === "task.adopted")).toHaveLength(1);
+  });
+});
+
+describe("round 3", () => {
+  beforeEach(() => {
+    world = makeWorld();
+    world.seedBranch("ctl/state", baseState(4));
+  });
+
+  it("propose fits 240 B by truncating the title and dropping areas; hopeless => exit 3", async () => {
+    const ok = await runCli(world, [
+      "propose",
+      "t".repeat(120),
+      "--kind",
+      "feature",
+      "--areas",
+      "apps/api/src/a/**,apps/api/src/b/**,apps/api/src/c/**,apps/api/src/d/**",
+    ]);
+    expect(ok.code).toBe(0);
+    const raw = world.remoteFile("events/lane-u.jsonl").split("\n").filter(Boolean).pop()!;
+    expect(bytes(raw)).toBeLessThanOrEqual(240);
+    expect(JSON.parse(raw).type).toBe("task.proposed");
+    const tip = world.remoteHead();
+    const bad = await runCli(world, [
+      "propose",
+      "x",
+      "--kind",
+      "feature",
+      "--areas",
+      "a/".repeat(150),
+    ]);
+    expect(bad.code).toBe(3);
+    expect(world.remoteHead()).toBe(tip);
+  });
+
+  it("next with the origin gone prints the state plus an offline marker line", async () => {
+    expect((await runCli(world, ["note", "a"])).code).toBe(0);
+    fs.renameSync(world.originDir, world.originDir + ".gone");
+    const r = await runCli(world, ["next"]);
+    fs.renameSync(world.originDir + ".gone", world.originDir);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toMatch(/offline/);
+    expect(r.stdout).toMatch(/lane lane-u/);
+    expect(lineCount(r.stdout)).toBeLessThanOrEqual(30);
   });
 });

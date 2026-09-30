@@ -195,7 +195,14 @@ export async function main(argv: string[]): Promise<void> {
       return;
     }
     // validate lists its errors (exit 3); everything else is one line
-    process.stderr.write(`ctl: ${code === 3 ? msg : oneLine(msg)}\n`);
+    // the "parked" notice goes first so oneLine can never cut it off a multi-line git error
+    const parked = /;?\s*event parked in pending\/\s*$/.test(msg);
+    const line = parked
+      ? `event parked in pending/ (${oneLine(msg.replace(/;?\s*event parked in pending\/\s*$/, ""), 150)})`
+      : code === 3
+        ? msg
+        : oneLine(msg);
+    process.stderr.write(`ctl: ${line}\n`);
     process.exitCode = code;
   }
 }

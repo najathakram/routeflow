@@ -51,6 +51,8 @@ export interface NextView {
   next: NextResult;
   piggybackCount: number;
   overlaps: OverlapPair[];
+  /** The last fetch failed; the block shows the last clone state. */
+  offline?: boolean;
 }
 
 /** The `ctl next` block (R10). Lines are dropped from the tail if a cap would be exceeded. */
@@ -58,6 +60,7 @@ export function formatNext(v: NextView): string {
   const { lane, state } = v;
   const l = has(state.lanes, lane) ? state.lanes[lane] : undefined;
   const lines: string[] = [];
+  if (v.offline) lines.push("(offline \u2014 last fetch failed)");
   const cur = l?.current.value ?? null;
   if (cur === null) lines.push(`lane ${lane} · no current task`);
   else {
