@@ -128,6 +128,12 @@ for (const vp of [
       await exportBtn.click();
       await expect(page.getByTestId("products-export-popover")).toBeVisible();
 
+      // The popover must stay inside the viewport (was clipped at left = -59px at 390).
+      const box = await page.getByTestId("products-export-popover").boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.x).toBeGreaterThanOrEqual(0);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(vp.width);
+
       const reqP = page.waitForRequest(/\/api\/v1\/products\/export\.csv/);
       const dlP = page.waitForEvent("download");
       await page.getByTestId("products-export-download").click();

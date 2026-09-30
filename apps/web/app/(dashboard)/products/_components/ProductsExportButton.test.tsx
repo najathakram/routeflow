@@ -206,4 +206,17 @@ describe("ProductsExportButton", () => {
     await waitFor(() => expect(downloadCsvBlob).toHaveBeenCalledTimes(1));
     expect(toast).not.toHaveBeenCalled();
   });
+  // jsdom cannot measure layout, so pin the viewport-bounding classes; the 390px bounding-box
+  // check lives in e2e/63-csv-export.spec.ts.
+  it("bounds the popover to the viewport (left-anchored on phones, right-aligned from sm)", () => {
+    renderBtn();
+    open();
+    const cls = screen.getByTestId("products-export-popover").className;
+    expect(cls).toContain("w-[min(20rem,calc(100vw-2rem))]");
+    expect(cls).toContain("left-0");
+    expect(cls).toContain("sm:left-auto");
+    expect(cls).toContain("sm:right-0");
+    expect(cls).not.toMatch(/(^|\s)right-0(\s|$)/);
+    expect(cls).not.toMatch(/(^|\s)w-72(\s|$)/);
+  });
 });
