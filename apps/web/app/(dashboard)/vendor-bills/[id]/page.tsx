@@ -1,5 +1,6 @@
 "use client";
 
+import { PREF } from "@routeflow/types";
 import * as React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -1010,7 +1011,7 @@ export default function VendorBillDetailPage() {
       {
         onSuccess: () => {
           setIsPaymentOpen(false);
-          savePrefs.mutate({ "payment.lastMethod": data.method });
+          savePrefs.mutate({ [PREF.paymentLastMethod]: data.method });
           toast({
             title: "Payment recorded",
             description: `Payment of ${fmt(parseFloat(data.amount))} recorded.`,
@@ -1573,7 +1574,7 @@ export default function VendorBillDetailPage() {
         onRecord={handleRecordPayment}
         balance={balance}
         isPending={recordPayment.isPending}
-        defaultMethod={(prefs?.["payment.lastMethod"] as PaymentFormState["method"]) ?? "ACH"}
+        defaultMethod={(prefs?.[PREF.paymentLastMethod] as PaymentFormState["method"]) ?? "ACH"}
       />
 
       <VoidConfirmModal

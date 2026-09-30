@@ -23,6 +23,15 @@
 // apps/api/src/common/api-error-codes-parity.spec.ts, which `require`s THIS file.
 module.exports = {
   UserRole: {},
+  // Hand copy of packages/types/api/preferences.ts PREF; pinned equal by
+  // apps/api/src/users/users.controller.preferences.spec.ts.
+  PREF: {
+    lowStockDigestEnabled: "lowStockDigestEnabled",
+    pushEnabled: "pushEnabled",
+    locale: "locale",
+    billLastSupplierId: "bill.lastSupplierId",
+    paymentLastMethod: "payment.lastMethod",
+  },
   VENDOR_BILL_STATUS_VALUES: ["DRAFT", "RECEIVED", "PARTIAL", "PAID", "OVERDUE", "VOID"],
   PURCHASE_ORDER_STATUS_VALUES: ["DRAFT", "SENT", "PARTIAL", "RECEIVED", "CLOSED"],
   // #2722: hand-copied; the parity sweep pins it to Prisma PaymentMethod (via enums.ts).
@@ -60,6 +69,19 @@ module.exports = {
     COMPONENT_SUM_MISMATCH: "COMPONENT_SUM_MISMATCH",
     COMPOSITION_CORRUPT: "COMPOSITION_CORRUPT",
     COMPOSED_LINE_EDIT: "COMPOSED_LINE_EDIT",
+    CREDIT_NOTE_VOID_NOT_EDITABLE: "CREDIT_NOTE_VOID_NOT_EDITABLE",
+    CREDIT_NOTE_RETURN_BACKED: "CREDIT_NOTE_RETURN_BACKED",
+    CREDIT_NOTE_CREDIT_CONSUMED: "CREDIT_NOTE_CREDIT_CONSUMED",
+    CREDIT_NOTE_OVER_HEADROOM: "CREDIT_NOTE_OVER_HEADROOM",
+    CREDIT_NOTE_SOURCE_GONE: "CREDIT_NOTE_SOURCE_GONE",
+    CREDIT_NOTE_NO_SOURCE_CAP: "CREDIT_NOTE_NO_SOURCE_CAP",
+    CREDIT_NOTE_CHANGED_CONCURRENTLY: "CREDIT_NOTE_CHANGED_CONCURRENTLY",
+    CREDIT_NOTE_KEY_REUSED: "CREDIT_NOTE_KEY_REUSED",
+    CREDIT_NOTE_KEY_REQUIRED: "CREDIT_NOTE_KEY_REQUIRED",
+    CREDIT_NOTE_EXPIRY_PAST: "CREDIT_NOTE_EXPIRY_PAST",
+    CREDIT_NOTE_EXPIRY_NOT_EDITABLE: "CREDIT_NOTE_EXPIRY_NOT_EDITABLE",
+    CREDIT_NOTE_LINES_REQUIRED: "CREDIT_NOTE_LINES_REQUIRED",
+    CREDIT_NOTE_LINE_INVALID: "CREDIT_NOTE_LINE_INVALID",
   },
   CHECK_TRANSITIONS: {
     RECORDED: ["DEPOSITED", "BOUNCED"],
