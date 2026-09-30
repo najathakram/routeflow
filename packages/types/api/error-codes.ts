@@ -18,6 +18,9 @@
 //                    qty/price/tax/pack changed mid-create; nothing billed, retriable).
 //   NSF_LINE_UNTAXED — `body.code` of the 400 when an invoice write gives the NSF fee line a
 //                    tax rate (#2656: the NSF line is never taxed; clients lock the field at 0).
+//   BARCODE_TAKEN — `body.code` of the 409 a product barcode write answers when another product
+//                    of the same tenant already holds the code (#2717 M1, SA-572b Q3); body also
+//                    carries `barcode` and the holder's `productId`.
 
 export const API_ERROR_CODES = {
   ADDON_GATE: "ADDON_GATE",
@@ -29,6 +32,7 @@ export const API_ERROR_CODES = {
   CLEANUP_IMPORTED_DISABLED: "CLEANUP_IMPORTED_DISABLED",
   ORDER_LINE_CHANGED: "ORDER_LINE_CHANGED",
   NSF_LINE_UNTAXED: "NSF_LINE_UNTAXED",
+  BARCODE_TAKEN: "BARCODE_TAKEN",
 } as const;
 
 export type ApiErrorCode = (typeof API_ERROR_CODES)[keyof typeof API_ERROR_CODES];

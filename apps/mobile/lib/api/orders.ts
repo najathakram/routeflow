@@ -180,6 +180,8 @@ export type CreateOrderItemInput =
       pieces?: number;
       /** One-time discounted price override (per catalog unit; box price for boxed). */
       unitPrice?: number;
+      /** #2696(c): required by the server when unitPrice moves off a special (tier) price. */
+      overrideReason?: string;
       /** Optional per-line note — carried onto the invoice line (buyer-visible). */
       notes?: string;
     })
@@ -363,6 +365,8 @@ export type CreateSaleItemInput =
       boxes?: number;
       pieces?: number;
       unitPrice?: number;
+      /** #2696(c) SA-558e: required when unitPrice moves off a special (tier) price. */
+      overrideReason?: string;
       notes?: string;
     }
   | { name: string; qty: number; unitPrice: number; notes?: string };

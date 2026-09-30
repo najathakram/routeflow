@@ -25,7 +25,7 @@ import {
 } from "@/lib/api/estimates";
 import { useCustomers, useCustomerPrices } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
-import { computeLineSubtotal, getTierPrice } from "@routeflow/pricing";
+import { isSpecialTier, computeLineSubtotal, getTierPrice } from "@routeflow/pricing";
 import { apiClient } from "@/lib/api-client";
 import { useTierLabels } from "@/lib/api/tier-labels";
 import { tierLabel } from "@/lib/tier-label";
@@ -235,7 +235,7 @@ function CreateEstimateModal({
     const tierOverride = cpMap.get(product.id);
     const effectiveTier = tierOverride ?? customerTier;
     const tierPrice = getTierPrice(product, effectiveTier);
-    const priceType = effectiveTier !== 1 ? ("SPECIAL" as const) : ("STANDARD" as const);
+    const priceType = isSpecialTier(effectiveTier) ? ("SPECIAL" as const) : ("STANDARD" as const);
     setLineItems((prev) => [
       ...prev,
       {

@@ -19,6 +19,12 @@ import * as crypto from "crypto";
 import { addressStateFields } from "../customers/address-state";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import {
+  assertBarcodeAvailable,
+  lockBarcodeCodes,
+  mapBarcodeUniqueViolation,
+  syncProductBarcodesFromLegacy,
+} from "../products/product-catalog-sync";
+import {
   flagRestrictedLines,
   writeRestrictedLinesAudit,
 } from "../selling-restrictions/restricted-lines-flag";
@@ -1951,18 +1957,36 @@ export class ImportService {
           // with the product create, so the replay treats it as a legitimate
           // baseline rather than a gap. No cost column exists in this CSV, so
           // the movement carries no unitCost — it fixes the quantity gap only.
-          await this.prisma.tenantTransaction(async (tx) => {
-            const createdProduct = await tx.product.create({
-              data: {
-                name,
-                barcode: rawSku || null,
-                sku: rawSku || null,
-                currentStock: closingStock,
-                pricePerUnit: 0,
-                unit: "unit",
-                isActive: true,
-              },
-            });
+          const tenantIdForZoho = this.prisma.getTenantId();
+          if (!tenantIdForZoho) throw new BadRequestException("No tenant context");
+          const zohoBarcode = rawSku || null;
+          await this.prisma.tenantTransaction(async (tx: any) => {
+            // #2717 M1 (SA-572b Q4/Q6): lock+check BEFORE the create, same pattern as
+            // products.service.ts create().
+            if (zohoBarcode) {
+              await lockBarcodeCodes(tx, tenantIdForZoho, [zohoBarcode]);
+              await assertBarcodeAvailable(tx, {
+                tenantId: tenantIdForZoho,
+                productId: null,
+                code: zohoBarcode,
+              });
+            }
+            let createdProduct: { id: string };
+            try {
+              createdProduct = await tx.product.create({
+                data: {
+                  name,
+                  barcode: zohoBarcode,
+                  sku: rawSku || null,
+                  currentStock: closingStock,
+                  pricePerUnit: 0,
+                  unit: "unit",
+                  isActive: true,
+                },
+              });
+            } catch (e) {
+              mapBarcodeUniqueViolation(e, zohoBarcode ?? "");
+            }
             if (closingStock !== 0) {
               await tx.stockMovement.create({
                 data: {
@@ -1974,6 +1998,12 @@ export class ImportService {
                 },
               });
             }
+            await syncProductBarcodesFromLegacy(tx, {
+              tenantId: tenantIdForZoho,
+              productId: createdProduct.id,
+              barcode: zohoBarcode,
+              unitsPerBox: null,
+            });
           });
           created++;
         }
